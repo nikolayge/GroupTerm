@@ -9,8 +9,9 @@ DEFINE DATA
 PARAMETER
   USING ORDPDA
 LOCAL
-1 PrimaryBene (N2) const <5>
+1 PrimaryBene    (N2) const <5>
 1 ContingentBene (N2) const <7>
+1 #ERROR-LOG     (I4) CONST <3>
 1 #AT   /* USING C1008AAT
   2 MEMBER-CN (A6)
   2 REDEFINE MEMBER-CN 
@@ -104,6 +105,7 @@ LOCAL
   2 WEIGHT         (N3.0)
   2 HEIGHT-IN      (N2.0)
   2 HEIGHT-FT      (N2.0)
+  2 MODE           (A1)
   2 PAYER          (A1)
   2 YES-ON-MED     (A1)
 
@@ -167,6 +169,20 @@ LOCAL
 1 cnt-v view of a-contacts
   2 contact-id (n8)
   2 id-number  (n6)
+1 PaymentOptions (A/10) DYNAMIC INIT <
+  'MonthlyMilitaryAllotment',
+  'MonthlyBankAccountWithdrawal',
+  'QuarterlyBill',
+  'SemiannualBill',
+  'AnnualBill',
+  'MonthlyBill',
+  'CreditCardMonthly',
+  'CreditCardQuarterly',
+  'CreditCardSemiAnnually',
+  'CreditCardAnnually'
+  >
+1 PaymentOptionCode (A1/10) INIT <'G','E','Q','S','A','M','0','4','2','1'>     
+
 END-DEFINE
 /* 
 
@@ -228,6 +244,7 @@ MOVE EDITED IASOrder.BenePercent (J,K) (EM=999.99) TO  #AT-ROLES.BenePercent
   APR-V.BENE-RESTRICTED := #AT-ROLES.IsBeneRestricted
   APR-V.ALL-CHILDREN    := #AT-ROLES.AllChildren
   APR-V.BENE-PERCENT    := #AT-ROLES.BenePercent
+  APR-V.BENE-SETTLEMENT := 'B'
 
   STORE APR-V
 
@@ -280,6 +297,11 @@ END-DECIDE
 #face := IASOrder.FaceAmount  (J)
 
 #AT.RATING-CODE    := IASOrder.PremiumClass (J)
+IF #AT.RATING-CODE = '1' OR= '2' OR= '3'
+  IGNORE
+ELSE
+  RESET #AT.RATING-CODE
+END-IF
 #AT.PAYER          := 'M'  /* Logic for I,O
 #AT.POLICY-TYPE    := 'M'  /* Logic for I,T,S,N,C
 #AT.FACE-AMT-DOLS  := #Dollars
@@ -290,6 +312,11 @@ if #AT.APPL-SOURCE = BLANK
   #AT.APPL-SOURCE := 'QUOTE'
 end-if
 #AT.DATE-RECEIVED-A := IASOrder.CreatedOn (J)
+IF #AT.DATE-RECEIVED-A = MASK(YYYYMMDD)
+  IGNORE
+ELSE
+  RESET  #AT.DATE-RECEIVED
+END-IF
 **move edited IASOrder.CreatedOn (J) to #date (em=MM'/'DD'/'YYYY)
 **move edited #date (EM=YYYYMMDD) to #AT.DATE-RECEIVED-A
 #AT.AT-STATUS := IASOrder.ATStatus (J)
@@ -302,6 +329,10 @@ AP-Tracking.ST-NOTE-USER   (1) := #CLERK-ID
 AP-Tracking.YES-ON-MED := 'Y'
 AP-Tracking.AT-GUID := IASOrder.CrmApplicationID (J)
 
+EXAMINE FULL PaymentOptions (*) FOR FULL IASOrder.PaymentOption INDEX j
+if j > 0
+  AP-Tracking.MODE := PaymentOptionCode (j)
+end-if
 
 MOVE EDITED *DATX (EM=YYYYMMDD) TO ST-NOTE-DATE-A
 FOR K 1 TO 3000
@@ -309,6 +340,7 @@ FOR K 1 TO 3000
     ASSIGN NOTES-A (K) = 32
   END-IF
 END-FOR
+
 for j 1 to C@ApplicationRoles (1)
   if IASOrder.Name(1,j) = 'Insured'
     find (1) cnt-v with CRM-CONTACT-GUI = IASOrder.CRMContactID (1,j)
@@ -317,6 +349,7 @@ for j 1 to C@ApplicationRoles (1)
     escape bottom
   end-if
 end-for
+
 IF AP-Tracking.MEMBER-CN NE BLANK   /* Member CN doesn't exist
   FIND ST-V WITH ID-NUMBER = AP-Tracking.MEMBER-CN-N
     IF NO RECORDS FOUND
@@ -324,6 +357,7 @@ IF AP-Tracking.MEMBER-CN NE BLANK   /* Member CN doesn't exist
     END-NOREC
   END-FIND
 END-IF
+
 IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
   FIND ST-V WITH ID-NUMBER = AP-Tracking.REFERING-ID-NUMBER (1)
     IF NO RECORDS FOUND
@@ -334,7 +368,7 @@ IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
       FOR K 1 TO 30
         IF ST-V.LINKED-CN ( K ) = 0
           ST-V.LINKED-CN ( K ) := AP-Tracking.ID-NUMBER
-          UPDATE (0328)
+          UPDATE (0362)
           ESCAPE BOTTOM
         END-IF
       END-FOR
@@ -342,7 +376,7 @@ IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
   END-FIND
 END-IF
 
-STORE-AT.
+  STORE-AT.
 STORE AP-Tracking
 #AT-ISN := *ISN ( STORE-AT. )
 
