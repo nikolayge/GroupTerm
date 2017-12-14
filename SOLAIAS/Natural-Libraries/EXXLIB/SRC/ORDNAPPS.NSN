@@ -8,9 +8,8 @@
 DEFINE DATA
 PARAMETER
   USING ORDPDA
+LOCAL USING POSLROLE
 LOCAL
-1 PrimaryBene    (N2) const <5>
-1 ContingentBene (N2) const <7>
 1 #ERROR-LOG     (I4) CONST <3>
 1 #AT   /* USING C1008AAT
   2 MEMBER-CN (A6)
@@ -182,7 +181,9 @@ LOCAL
   'CreditCardAnnually'
   >
 1 PaymentOptionCode (A1/10) INIT <'G','E','Q','S','A','M','0','4','2','1'>     
-
+1 InsuredGuid (A36)
+1 MemberGUID  (A36)
+1 PayerGUID   (A36)
 END-DEFINE
 /* 
 
@@ -199,7 +200,9 @@ FOR J 1 TO IASOrder.C@Application
   FIND AT-V WITH AT-GUID = IASOrder.CrmApplicationID (J)
     IF NO RECORDS FOUND
       PERFORM CREATE-APPLICATION
+      ESCAPE ROUTINE
     END-NOREC
+    IASOrder.ATNumber(j) := AT-V.ID-NUMBER
   END-FIND
 END-FOR
 
@@ -212,11 +215,23 @@ FIND APR-V WITH AT-GUID = IASOrder.CrmApplicationID (J)
   DELETE
 END-FIND
 /*
+**IASOrder.CRMMemberID
+
 FOR K 1 TO C@ApplicationRoles (J) 
   RESET #AT-ROLES
   #AT-ROLES.AT-GUID      := IASOrder.CrmApplicationID (J)
   #AT-ROLES.CONTACT-GUID := IASOrder.CRMContactID     (J,K)
   #AT-ROLES.RELATION := GET-RELATION-ID (< IASOrder.Name (J,K) >)
+  DECIDE ON FIRST VALUE OF #AT-ROLES.RELATION
+    VALUE InsuredRole
+      InsuredGuid := IASOrder.CRMContactID (J,K)
+    VALUE MemberRole
+      MemberGUID := IASOrder.CRMContactID (J,K)
+    VALUE PayorRole
+      PayerGUID := IASOrder.CRMContactID (J,K)
+    NONE VALUE IGNORE
+  END-DECIDE
+
   IF IASOrder.IsBeneRestricted (J,K)
     #AT-ROLES.IsBeneRestricted := YES
   ELSE
@@ -227,7 +242,8 @@ FOR K 1 TO C@ApplicationRoles (J)
   ELSE
     #AT-ROLES.AllChildren := NO
   END-IF
-MOVE EDITED IASOrder.BenePercent (J,K) (EM=999.99) TO  #AT-ROLES.BenePercent
+  MOVE EDITED IASOrder.BenePercent (J,K) (EM=999.99)
+    TO  #AT-ROLES.BenePercent
   #AT-ROLES.SettlementType :=
     GET-SETTLEMENT-ID (< IASOrder.SettlementType (J,K) >)
 /* 
@@ -290,6 +306,11 @@ DECIDE ON FIRST VALUE OF #AT.PLAN-A1
     #AT.PLAN-A1 := 'R'
   VALUE 'W'
     #AT.PLAN-A1 := 'Q'
+  ANY VALUE
+    IF #AT.PLAN-A3 = BLANK
+      #AT.PLAN-A3 := #AT.PLAN-A2
+      #AT.PLAN-A2 := '0'
+    END-IF
   NONE VALUE
     IGNORE
 END-DECIDE
@@ -302,12 +323,26 @@ IF #AT.RATING-CODE = '1' OR= '2' OR= '3'
 ELSE
   RESET #AT.RATING-CODE
 END-IF
-#AT.PAYER          := 'M'  /* Logic for I,O
-#AT.POLICY-TYPE    := 'M'  /* Logic for I,T,S,N,C
+
+IF InsuredGUID = IASOrder.CRMMemberID
+  #AT.POLICY-TYPE := 'M'
+ELSE
+  #AT.POLICY-TYPE := 'S' /* Logic for I,T,S,N,C
+END-IF
+
+DECIDE FOR FIRST CONDITION
+  WHEN PayerGUID = IASOrder.CRMMemberID
+    #AT.PAYER := 'M'  /* Logic for I,O
+  WHEN PayerGUID = InsuredGUID
+    #AT.PAYER := 'I'
+  WHEN NONE
+    #AT.PAYER := 'O'
+END-DECIDE
+
 #AT.FACE-AMT-DOLS  := #Dollars
 #AT.FACE-AMT-UNITS := #Units
 #AT.CAP-IND        := IASOrder.CapIndicator (J);
-#AT.APPL-SOURCE    := IASOrder.ApplSource (J);
+**#AT.APPL-SOURCE    := IASOrder.ApplSource (J);
 if #AT.APPL-SOURCE = BLANK
   #AT.APPL-SOURCE := 'QUOTE'
 end-if
@@ -368,7 +403,7 @@ IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
       FOR K 1 TO 30
         IF ST-V.LINKED-CN ( K ) = 0
           ST-V.LINKED-CN ( K ) := AP-Tracking.ID-NUMBER
-          UPDATE (0362)
+          UPDATE (0397)
           ESCAPE BOTTOM
         END-IF
       END-FOR
