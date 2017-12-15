@@ -116,6 +116,7 @@ LOCAL
 1 #AT-ROLES
   2 AT-GUID          (A50)
   2 CONTACT-GUID     (A50)
+  2 CONTACT-ID       (N8)
   2 RELATION         (N2)
   2 BenePercent      (A10)
   2 IsBeneRestricted (A1)
@@ -137,7 +138,8 @@ LOCAL
   2 BENE-PERCENT (A10)        
   2 BENE-SETTLEMENT (A1)
   2 SETTLEMENT-TYPE (A1)
-  2 ALL-CHILDREN (A1)     
+  2 ALL-CHILDREN (A1)  
+  2 CONTACT-ID   (N8)   
 
 1 BLANK   (A1) CONST <' '>
 1 YES     (A1) CONST <'Y'>
@@ -183,6 +185,7 @@ LOCAL
 1 PaymentOptionCode (A1/10) INIT <'G','E','Q','S','A','M','0','4','2','1'>     
 1 InsuredGuid (A36)
 1 MemberGUID  (A36)
+1 MemberCI    (N8)
 1 PayerGUID   (A36)
 END-DEFINE
 /* 
@@ -216,19 +219,25 @@ FIND APR-V WITH AT-GUID = IASOrder.CrmApplicationID (J)
 END-FIND
 /*
 **IASOrder.CRMMemberID
-
+MemberGUID := IASOrder.CRMMemberID
 FOR K 1 TO C@ApplicationRoles (J) 
   RESET #AT-ROLES
   #AT-ROLES.AT-GUID      := IASOrder.CrmApplicationID (J)
   #AT-ROLES.CONTACT-GUID := IASOrder.CRMContactID     (J,K)
+  #AT-ROLES.CONTACT-ID   := IASOrder.IASContactID     (J,K)
   #AT-ROLES.RELATION := GET-RELATION-ID (< IASOrder.Name (J,K) >)
   DECIDE ON FIRST VALUE OF #AT-ROLES.RELATION
     VALUE InsuredRole
       InsuredGuid := IASOrder.CRMContactID (J,K)
     VALUE MemberRole
       MemberGUID := IASOrder.CRMContactID (J,K)
+      MemberCI   := IASOrder.IASContactID (J,K)
     VALUE PayorRole
       PayerGUID := IASOrder.CRMContactID (J,K)
+    VALUE PrimaryOwner
+      IF PayerGUID = BLANK
+        PayerGUID := IASOrder.CRMContactID (J,K)
+      END-IF
     NONE VALUE IGNORE
   END-DECIDE
 
@@ -314,6 +323,9 @@ DECIDE ON FIRST VALUE OF #AT.PLAN-A1
   NONE VALUE
     IGNORE
 END-DECIDE
+IF #AT.PLAN-A3 = 'P'
+  RESET #AT.PLAN-A3
+END-IF
 #term := IASOrder.Term (J)
 #face := IASOrder.FaceAmount  (J)
 
@@ -324,14 +336,24 @@ ELSE
   RESET #AT.RATING-CODE
 END-IF
 
-IF InsuredGUID = IASOrder.CRMMemberID
+IF InsuredGUID = MemberGUID
   #AT.POLICY-TYPE := 'M'
 ELSE
-  #AT.POLICY-TYPE := 'S' /* Logic for I,T,S,N,C
+  #AT.POLICY-TYPE := 'M' /* Logic for I,T,S,N,C
+  #AT.INTRO-FLAG  := 'S' 
+  IF MemberCI > 0
+    FIND (1) CNT-V WITH CONTACT-ID = MemberCI
+      #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
+    END-FIND
+  ELSE
+    FIND (1) CNT-V WITH CRM-CONTACT-GUI = MemberGUID
+      #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
+    END-FIND
+  END-IF
 END-IF
 
 DECIDE FOR FIRST CONDITION
-  WHEN PayerGUID = IASOrder.CRMMemberID
+  WHEN PayerGUID = MemberGUID
     #AT.PAYER := 'M'  /* Logic for I,O
   WHEN PayerGUID = InsuredGUID
     #AT.PAYER := 'I'
@@ -341,7 +363,11 @@ END-DECIDE
 
 #AT.FACE-AMT-DOLS  := #Dollars
 #AT.FACE-AMT-UNITS := #Units
-#AT.CAP-IND        := IASOrder.CapIndicator (J);
+IF IASOrder.CapIndicator (J)
+  #AT.CAP-IND := 'Y'
+ELSE
+  #AT.CAP-IND := 'N'
+END-IF
 **#AT.APPL-SOURCE    := IASOrder.ApplSource (J);
 if #AT.APPL-SOURCE = BLANK
   #AT.APPL-SOURCE := 'QUOTE'
@@ -399,11 +425,11 @@ IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
       RESET AP-Tracking.REFERING-ID-NUMBER (1)
       ESCAPE BOTTOM
     END-NOREC
-    IF AP-Tracking.INTRO-FLAG = 'S' OR = 'K' OR = 'G'  /* NG2
+    IF AP-Tracking.INTRO-FLAG = 'S' OR = 'K' OR = 'G'  
       FOR K 1 TO 30
         IF ST-V.LINKED-CN ( K ) = 0
           ST-V.LINKED-CN ( K ) := AP-Tracking.ID-NUMBER
-          UPDATE (0397)
+          UPDATE (0423)
           ESCAPE BOTTOM
         END-IF
       END-FOR
