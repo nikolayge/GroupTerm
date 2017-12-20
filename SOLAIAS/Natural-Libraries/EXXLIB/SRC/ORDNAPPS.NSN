@@ -114,15 +114,16 @@ LOCAL
   2 AT-GUID        (A50)
 
 1 #AT-ROLES
-  2 AT-GUID          (A50)
-  2 CONTACT-GUID     (A50)
-  2 CONTACT-ID       (N8)
-  2 RELATION         (N2)
-  2 BenePercent      (A10)
-  2 IsBeneRestricted (A1)
-  2 SettlementType   (A1) 
-  2 AllChildren      (A1)
-  2 BeneType         (A1)  /* PRIMARY=
+  2 AT-GUID           (A50)
+  2 CONTACT-GUID      (A50)
+  2 CONTACT-ID        (N8)
+  2 RELATION          (N2)
+  2 RelationToInsured (A20)
+  2 BenePercent       (A10)
+  2 IsBeneRestricted  (A1)
+  2 SettlementType    (A1) 
+  2 AllChildren       (A1)
+  2 BeneType          (A1)  /* PRIMARY=
 /*
 1 APR-V VIEW OF A-APPL-ROLES
   2 ADD-USER (A8)
@@ -139,7 +140,11 @@ LOCAL
   2 BENE-SETTLEMENT (A1)
   2 SETTLEMENT-TYPE (A1)
   2 ALL-CHILDREN (A1)  
-  2 CONTACT-ID   (N8)   
+  2 CONTACT-ID   (N8) 
+  2 RELATION-INSURED (A20)  
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 ROLE-1-CD  (A1)
+  2 ROLE-2-CD  (A1)
 
 1 BLANK   (A1) CONST <' '>
 1 YES     (A1) CONST <'Y'>
@@ -183,10 +188,12 @@ LOCAL
   'CreditCardAnnually'
   >
 1 PaymentOptionCode (A1/10) INIT <'G','E','Q','S','A','M','0','4','2','1'>     
-1 InsuredGuid (A36)
-1 MemberGUID  (A36)
-1 MemberCI    (N8)
-1 PayerGUID   (A36)
+1 InsuredGuid   (A36)
+1 MemberGUID    (A36)
+1 MemberCI      (N8)
+1 CrmMemberRole (L)
+1 InsuredCI     (N8)
+1 PayerGUID     (A36)
 END-DEFINE
 /* 
 
@@ -219,19 +226,31 @@ FIND APR-V WITH AT-GUID = IASOrder.CrmApplicationID (J)
 END-FIND
 /*
 **IASOrder.CRMMemberID
+RESET CrmMemberRole
 MemberGUID := IASOrder.CRMMemberID
+FIND (1) CNT-V WITH CRM-CONTACT-GUI = MemberGUID
+  MemberCI := CNT-V.contact-id
+END-FIND
+
+
 FOR K 1 TO C@ApplicationRoles (J) 
   RESET #AT-ROLES
   #AT-ROLES.AT-GUID      := IASOrder.CrmApplicationID (J)
   #AT-ROLES.CONTACT-GUID := IASOrder.CRMContactID     (J,K)
   #AT-ROLES.CONTACT-ID   := IASOrder.IASContactID     (J,K)
   #AT-ROLES.RELATION := GET-RELATION-ID (< IASOrder.Name (J,K) >)
+  #AT-ROLES.RelationToInsured := IASOrder.InsuredRelation (J,K)
+
   DECIDE ON FIRST VALUE OF #AT-ROLES.RELATION
     VALUE InsuredRole
       InsuredGuid := IASOrder.CRMContactID (J,K)
+      find (1) cnt-v with CRM-CONTACT-GUI = InsuredGuid
+        InsuredCI := cnt-v.contact-id
+      end-find
     VALUE MemberRole
       MemberGUID := IASOrder.CRMContactID (J,K)
       MemberCI   := IASOrder.IASContactID (J,K)
+      CrmMemberRole := TRUE
     VALUE PayorRole
       PayerGUID := IASOrder.CRMContactID (J,K)
     VALUE PrimaryOwner
@@ -266,6 +285,7 @@ FOR K 1 TO C@ApplicationRoles (J)
   APR-V.SETTLEMENT-TYPE := #AT-ROLES.SettlementType
   APR-V.BENE-RESTRICTED := #AT-ROLES.IsBeneRestricted
   APR-V.RELATION-ROLE   := #AT-ROLES.RELATION
+  APR-V.RELATION-INSURED := #AT-ROLES.RelationToInsured
   APR-V.BENE-RESTRICTED := #AT-ROLES.IsBeneRestricted
   APR-V.ALL-CHILDREN    := #AT-ROLES.AllChildren
   APR-V.BENE-PERCENT    := #AT-ROLES.BenePercent
@@ -274,6 +294,35 @@ FOR K 1 TO C@ApplicationRoles (J)
   STORE APR-V
 
 END-FOR
+
+IF NOT CrmMemberRole
+  RESET APR-V
+  APR-V.ADD-USER := *USER
+  APR-V.ADD-DATE := *DATN
+  APR-V.ADD-TIME := *TIMN
+  APR-V.LAST-UPD-USER := *USER
+  APR-V.LAST-UPD-DATE := *DATN
+  APR-V.LAST-UPD-TIME := *TIMN
+
+  APR-V.AT-GUID       := IASOrder.CrmApplicationID (J)
+  APR-V.CONTACT-GUID  := MemberGUID
+  APR-V.CONTACT-ID    := MemberCI
+  APR-V.RELATION-ROLE := MemberRole
+
+  FIND CR-V WITH CONTACT-1-ID = InsuredCI
+      and CONTACT-2-ID = MemberCI
+    decide on first value of ROLE-1-CD
+      value 'K', 'D', 'B'
+        #AT-ROLES.RelationToInsured := 'Parent'
+      value 'G'
+        #AT-ROLES.RelationToInsured := 'Grandparent'
+      none value
+        #AT-ROLES.RelationToInsured  := 'Spouse'
+    end-decide
+  END-FIND
+
+  STORE APR-V
+END-IF
 END-SUBROUTINE
 
 DEFINE CREATE-APPLICATION
@@ -299,6 +348,7 @@ IF IASOrder.Nicotine
 ELSE
   #AT.SMOKER-FLAG := 'N'
 END-IF
+
 /*  Populate CRM GUID of insured to be used in Application roles
 PERFORM CREATE-APPLICATION-ROLES
 
@@ -323,6 +373,9 @@ DECIDE ON FIRST VALUE OF #AT.PLAN-A1
   NONE VALUE
     IGNORE
 END-DECIDE
+IF #AT.PLAN-A1 = 'L' and #AT.PLAN-A2 = 'T'
+  RESET  #AT.PLAN-A3
+END-IF
 IF #AT.PLAN-A3 = 'P'
   RESET #AT.PLAN-A3
 END-IF
@@ -340,7 +393,7 @@ IF InsuredGUID = MemberGUID
   #AT.POLICY-TYPE := 'M'
 ELSE
   #AT.POLICY-TYPE := 'M' /* Logic for I,T,S,N,C
-  #AT.INTRO-FLAG  := 'S' 
+
   IF MemberCI > 0
     FIND (1) CNT-V WITH CONTACT-ID = MemberCI
       #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
@@ -350,6 +403,19 @@ ELSE
       #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
     END-FIND
   END-IF
+
+  /*             Check contact relation
+  FIND CR-V WITH CONTACT-1-ID = InsuredCI
+      and CONTACT-2-ID = MemberCI
+    decide on first value of ROLE-1-CD
+      value 'K', 'D', 'B'
+        #AT.INTRO-FLAG  := 'K'
+      value 'G'
+        #AT.INTRO-FLAG  := 'G'
+      none value
+        #AT.INTRO-FLAG  := 'S'
+    end-decide
+  END-FIND
 END-IF
 
 DECIDE FOR FIRST CONDITION
@@ -425,11 +491,11 @@ IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
       RESET AP-Tracking.REFERING-ID-NUMBER (1)
       ESCAPE BOTTOM
     END-NOREC
-    IF AP-Tracking.INTRO-FLAG = 'S' OR = 'K' OR = 'G'  
+    IF AP-Tracking.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
       FOR K 1 TO 30
         IF ST-V.LINKED-CN ( K ) = 0
           ST-V.LINKED-CN ( K ) := AP-Tracking.ID-NUMBER
-          UPDATE (0423)
+          UPDATE (0489)
           ESCAPE BOTTOM
         END-IF
       END-FOR
