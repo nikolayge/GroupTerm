@@ -1,0 +1,1757 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+/** New Subprogram AUCNDSM1.
+/**
+/** :author nguentchev
+/* Main program to update Designation
+/*
+************** MODIFICATIONS ***************************************
+* NAME     DATE   TAG   DESCRIPTION
+* NGG   20151105  NG1   Changes for Error description
+* vxt 11/06/2015  vt1 Add transaction register logic
+* ngg 11/10/2015  ng2 Populate BD sho
+* NGG 04/27/2016  NG3 Ticket IO-4440
+* vxt 04/14/2016  vt2 /Ticket 4384/
+* bz-Name 07/07/2017     Fine Names  
+* NGG  20171201   NG4 SOLA project
+*
+DEFINE DATA
+PARAMETER USING AUCADSG2
+LOCAL USING POSAGET
+LOCAL USING POSADSGN
+LOCAL USING POSALOAD
+LOCAL USING POSAPBC
+LOCAL USING POSAPBCI
+LOCAL USING ERROR_L
+LOCAL USING AUCTRPDA    /* transaction register parm data vt1
+LOCAL USING POSLROLE
+LOCAL
+1 #PolicyID    (A16/99)
+1 #PolicyStatus (A1/99)
+1 #inSameDsgn  (L/99)
+1 #DSGN-LINKED-POLICIES  (A16/99)
+1 #DLP         (I2)
+1 #ClerkID     (A3)
+1 #UnixUser    (A8)
+1 #ERROR-LOG   (I4) CONST <3>
+*
+1 CONT-REL-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER       (N6)
+  2 DATE-OF-BIRTH   (N8)
+  2 DATE-OF-DEATH   (N8)
+  2 SSN             (N9)
+  2 CONTACT-TYPE    (A1)
+1 MEMBER VIEW OF A-STATUS
+  2 LINKED-CN      (N6/30)
+1 PC-V VIEW OF A-POLICY-CONTACTS
+  2 POLICY-NUMBER
+  2 DESIGNATION-ID
+  2 RELATION
+  2 BENE-TYPE
+  2 BENE-SHARE-TYPE
+  2 VERSION
+1 PB-V VIEW OF A-PENDING-BENE
+  2 POLICY-NUMBER
+  2 DESIGNATION-ID
+  2 RELATION
+  2 BENE-TYPE
+  2 BENE-SHARE-TYPE
+  2 VERSION
+1 BD-V   VIEW OF A-BENE-FINAL
+1 BD-P-V VIEW OF A-BENE-DRAFT
+1 design VIEW OF A-DESIGNATION           /* vt1 \/
+  2 last-upd-date
+  2 STATUS-CODE       (A1)
+  2 PER-STIRPES       (A2)
+  2 ALL-CHILDREN      (A1)
+  2 DATE-SIGNED       (N8)
+  2 COMMON-DISASTER   (N3)
+  2 DESIGNATION-ID    (N8)
+  2 restricted-irrevo (a1)
+1 POLICY VIEW OF A-POLICY-CONTACTS
+  2 POLICY-NUMBER
+  2 DESIGNATION-ID                         /* vt1 /\
+*   REQUESTED OPERATION
+1 #GET           (I4) CONSTANT <0>
+1 #UPDATE        (I4) CONSTANT <2>
+1 #DELETE        (I4) CONSTANT <3>
+1 #GETUPDATE     (I4) CONSTANT <4>
+1 #ADD           (I4) CONSTANT <1>
+1 #DELETE-PENDING(I4) CONSTANT <5>
+1 #GET-PDF-P     (I4) CONSTANT <6>
+1 #GET-PDF-F     (I4) CONSTANT <7>
+1 #LOG-BENE-CHANGES    (A) DYNAMIC CONSTANT <3>
+/*
+1 BLANK          (A1) CONSTANT <' '>
+1 #CRLF          (A1) CONST <H'0A'>
+1 YES            (A1) CONST <'Y'>
+1 NO             (A1) CONST <'N'>
+1 OWNER-CI       (N8)
+1 OWNER-CN       (N6)
+1 #INSURED-CN    (N6)
+1 #CN            (N6)
+1 #CI            (N8)
+1 #Prim-Instruction (L)
+1 #ERROR-CODE    (A3)
+1 #TEXT          (A300)
+1 REDEFINE #TEXT
+  2 #TEXT-I      (I1/300)
+1 REDEFINE #TEXT
+  2 #TEXT-H (B300)
+1 #BENE-LIST-TYPE  (I4)
+1 I              (I2)
+1 J              (I2)
+1 JJ             (I2)
+1 K              (I2)
+1 L              (I2)
+1 L1             (I2)
+1 M              (I2)
+1 X              (I2)
+1 Z              (I2)
+1 #x1            (I2)          /* vt1  \/
+1 #Z1            (I2)
+1 #ssn           (a11)
+1 redefine #ssn
+  2 #ssn-3  (n3)
+  2 redefine #ssn-3
+    3 #ssn-3-a (a3)
+  2 #ssn-2  (n2)
+  2 redefine #ssn-2
+    3 #ssn-2-a (a2)
+  2 #ssn-4  (n4)
+  2 redefine #ssn-4
+    3 #ssn-4-a (a3)
+1 #POLICY-NBRS    (A30)
+1 #pol-nbr        (a16)
+1 #user-id  (a8)              /* vt1 /\
+1 #FUNCTION      (A) DYNAMIC
+1 #OUTPUT        (A500)
+END-DEFINE
+/*
+PERFORM GET-POLICY-CONTACTS
+#ClerkID  := FUNCTION-WEB-USER(<DesignationUpdate.User>)(1)
+#UnixUser := FUNCTION-WEB-USER(<DesignationUpdate.User>)(2)
+DesignationUpdate.FormClerkId := #ClerkID
+/*
+DECIDE ON FIRST VALUE OF ActionType
+  VALUE #GET
+    PERFORM GET-RECORDS
+  VALUE #GETUPDATE
+    PERFORM GET-FOR-UPDATE
+  VALUE #UPDATE
+    PERFORM UPDATE-RECORDS
+    IF DesignationUpdate.ErrorCode = 0
+      END TRANSACTION
+*      BACKOUT TRANSACTION  /* temp
+    ELSE
+      BACKOUT TRANSACTION
+    END-IF
+  VALUE #ADD
+*     PERFORM TR-BEFORE-DESIGNATION
+*     PERFORM TR-BEFORE-BENEFICIARIES
+*     PERFORM LOG-BENE-CHANGE
+    PERFORM ADD-RECORD
+    IF DesignationUpdate.ErrorCode = 0
+      END TRANSACTION
+    ELSE
+      BACKOUT TRANSACTION
+    END-IF
+  VALUE #DELETE-PENDING
+    PERFORM DELETE-PENDING-DSGN
+    IF DesignationUpdate.ErrorCode = 0
+      END TRANSACTION
+    ELSE
+      BACKOUT TRANSACTION
+    END-IF
+  VALUE #GET-PDF-F
+    PERFORM GET-RECORDS
+  VALUE #GET-PDF-P
+    PERFORM GET-PDF-DATA-P
+  NONE VALUE
+    IGNORE
+END-DECIDE
+/*
+DEFINE GET-PDF-DATA-P
+/*     --------------
+FIND (1) PB-V WITH POLICY-NUMBER = DesignationUpdate.PolicyNumber
+  IF NO RECORDS FOUND  /* No Pending
+    #ERROR-CODE := #UNKNOWN-DSGN-TYPE
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+    DesignationUpdate.ErrorDescription :=
+      F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-NOREC
+  MOVE PB-V.DESIGNATION-ID TO DesignationUpdate.EditDesignationID
+    #DSGN.DESIGNATION-ID
+/* Get pending designation
+  PERFORM GET-PENDING
+END-FIND
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE GET-RECORDS
+/*                -----------
+* There is only one designation status F or C (Current)
+*
+CALLNAT 'POSN0011' #GET #MSG DesignationUpdate.DesignationISN #DSGN
+IF #MSG = BLANK
+  DECIDE ON FIRST VALUE OF #DSGN.STATUS-CODE
+    VALUE 'F'  /* Final  - only one designation
+      DesignationUpdate.DesignationStatus := 'Final'
+      MOVE #DSGN.DESIGNATION-ID TO DesignationUpdate.EditDesignationID
+        DesignationUpdate.DesignationID
+    VALUE 'N'  /* New - onlt one designation   NG4
+      DesignationUpdate.DesignationStatus := 'New'
+      MOVE #DSGN.DESIGNATION-ID TO DesignationUpdate.DesignationID
+        DesignationUpdate.EditDesignationID
+    VALUE 'C'  /* Current - DesignationID is for pending one
+      DesignationUpdate.DesignationStatus := 'Current'
+      MOVE #DSGN.DESIGNATION-ID TO DesignationUpdate.DesignationID
+    VALUE 'V'  /* Validated  - no updates
+      DesignationUpdate.DesignationStatus := 'Validated'
+      MOVE #DSGN.DESIGNATION-ID TO DesignationUpdate.DesignationID
+    NONE VALUE
+      #ERROR-CODE := #UNKNOWN-DSGN-TYPE
+      DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription :=
+        F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+      ESCAPE ROUTINE
+  END-DECIDE
+  /* DESIGNATION IS 'CURRENT' OR 'FINAL' FOR GET METHOD
+  PERFORM MAP-DESIGNATION-DATA
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+    DesignationUpdate.ErrorDescription
+    := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+*
+*  Get primary beneficiaries
+*
+RESET K
+#RELATIONSHIP-TYPE := PrimaryBene
+CALLNAT 'POSNCNTS'  /* Get all contacts with role primary beneficiary
+  PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG = BLANK
+  IF #NUMBER-OF-RELATIONS > 0
+    EXPAND ARRAY DesignationContact TO (1:#NUMBER-OF-RELATIONS)
+    DesignationUpdate.PrimaryType := #POLICY-RELATIONS.BENE-TYPE (1)
+    DesignationUpdate.PrimaryShareType :=
+      #POLICY-RELATIONS.BENE-SHARE-TYPE (1)
+  END-IF
+  PERFORM GET-BENEFICIARIES
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  IF #ERROR-CODE EQ #NOT-EXIST
+    RESET #ERROR-CODE
+    /* Get BD Type and share type from unformated
+    FIND PC-V WITH DESIGNATION-ID = #DSGN.DESIGNATION-ID
+      IF PC-V.RELATION = UnformatedBene
+        DesignationUpdate.PrimaryType := PC-V.BENE-TYPE
+        DesignationUpdate.PrimaryShareType := PC-V.BENE-SHARE-TYPE
+        ESCAPE BOTTOM
+      END-IF
+    END-FIND
+  ELSE
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription
+      := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+*  Get contingent beneficiaries
+*
+#RELATIONSHIP-TYPE := ContingentBene
+C@DesignationContact := #NUMBER-OF-RELATIONS
+CALLNAT 'POSNCNTS'  /* Get all contacts with contingent beneficiary role
+  PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG = BLANK
+  IF #NUMBER-OF-RELATIONS > 0
+    ADD #NUMBER-OF-RELATIONS TO C@DesignationContact
+    EXPAND ARRAY DesignationContact TO (1:C@DesignationContact)
+    DesignationUpdate.ContingentType := #POLICY-RELATIONS.BENE-TYPE (1)
+    DesignationUpdate.ContingentShareType :=
+      #POLICY-RELATIONS.BENE-SHARE-TYPE (1)
+  END-IF
+  PERFORM GET-BENEFICIARIES
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  IF #ERROR-CODE EQ #NOT-EXIST
+    RESET #ERROR-CODE
+    FIND PC-V WITH DESIGNATION-ID = #DSGN.DESIGNATION-ID
+      IF PC-V.RELATION = UnformContBene
+        DesignationUpdate.ContingentType := PC-V.BENE-TYPE
+        DesignationUpdate.ContingentShareType := PC-V.BENE-SHARE-TYPE
+        ESCAPE BOTTOM
+      END-IF
+    END-FIND
+  ELSE
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription
+      := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE GET-BENEFICIARIES
+/*     -----------------
+FOR L 1 TO #NUMBER-OF-RELATIONS
+  DECIDE ON FIRST VALUE OF #RELATIONSHIP-TYPE
+    VALUE PrimaryBene, ContingentBene
+      ADD 1 TO K
+      IF #RELATIONSHIP-TYPE = PrimaryBene
+        BeneficiaryType (K) := 'Primary'
+      ELSE
+        BeneficiaryType (K) := 'Contingent'
+      END-IF
+      BeneficiaryContactID (K) := #POLICY-RELATIONS.CONTACT-ID (L)
+      DesignationUpdate.Share (K) := #POLICY-RELATIONS.BENE-FRACTION (L)
+      EXAMINE  DesignationUpdate.Share (K) FOR '%' DELETE
+      SettlementCode (K) := #POLICY-RELATIONS.SETTLEMENT-TYPE (L)
+      IF SettlementCode (K) < '1'
+          OR SettlementCode (K) > '6'
+        RESET SettlementCode (K)
+      END-IF
+      IF #POLICY-RELATIONS.BENE-RESTRICTED (L) = 'Y'
+        RestrictedCode (K) := TRUE
+      ELSE
+        RestrictedCode (K) := FALSE
+      END-IF
+      DesignationUpdate.ISN(K) := #ISNS(L)
+BeneficiaryName (K) := /* EDIT_NAME_LOWCASE (<                             /* bz-Name
+        FUNCTION-CONTACT-NAME
+        (< #POLICY-RELATIONS.CONTACT-ID (L),
+        #POLICY-RELATIONS.VERSION (L) >)
+/*        >)                                                                     /* bz-Name
+      FIND (1) CNT-V WITH CONTACT-ID = #POLICY-RELATIONS.CONTACT-ID (L)
+*         MOVE EDITED CNT-V.SSN (EM=999-99-9999) TO BeneficiarySSN (K)                  /* vt2
+*         BeneficiaryBirthDate (K) := CNT-V.DATE-OF-BIRTH                               /* vt2
+        BeneficiaryCN (K) := CNT-V.ID-NUMBER
+      END-FIND
+      BeneficiarySSN (K)       := GET-SSN(<
+        #POLICY-RELATIONS.CONTACT-ID (L),
+        #POLICY-RELATIONS.VERSION (L) >)             /* vt2
+      BeneficiaryBirthDate (K) := GET-DATE-OF-BIRTH(<
+        #POLICY-RELATIONS.CONTACT-ID (L),
+        #POLICY-RELATIONS.VERSION (L) >)             /* vt2
+      PERFORM GET-RELATION
+      LastUpdatedDate_001 (K) := #POLICY-RELATIONS.LAST-UPD-DATE (L)
+      LastUpdatedTime_001 (K) := #POLICY-RELATIONS.LAST-UPD-TIME (L)
+      ClerkId_001 (K) := #POLICY-RELATIONS.LAST-UPD-USER (L)
+      LastUpdatedUser_001 (K) :=
+        FUNCTION-NAME (< #POLICY-RELATIONS.LAST-UPD-USER (L) >)
+      IF LastUpdatedUser_001 (K) NE BLANK
+        LastUpdatedUser_001 (K) :=
+          EDIT_NAME_LOWCASE (< LastUpdatedUser_001 (K) >)
+        LUUWindows_001 (K) :=
+          WINDOWS-USER (< #POLICY-RELATIONS.LAST-UPD-USER (L) >)
+      ELSE
+        LastUpdatedUser_001 (K) := #POLICY-RELATIONS.LAST-UPD-USER (L)
+      END-IF
+*     VALUE UnformatedBene
+*       BeneficiaryType (K) := 'UnformatedPrimary'
+*     VALUE UnformContBene
+*       BeneficiaryType (K) := 'UnformatedContingent'
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+END-FOR
+END-SUBROUTINE
+/*
+DEFINE GET-RELATION
+/*     ------------
+#CI := InsuredContactID
+#CN := #INSURED-CN
+FIND CONT-REL-V WITH CONTACT-1-ID = #CI
+    AND CONTACT-2-ID = BeneficiaryContactID (K)
+  RelationToInsured (K) :=
+    FUNCTION-DISP-RL-DESC(<ROLE-2-CD>)
+  RelationToInsured (K) :=
+    EDIT_NAME_LOWCASE (< RelationToInsured (K) >)
+END-FIND
+* IF RelationToOwner (K) = BLANK
+*   FIND CONT-REL-V WITH CONTACT-1-ID = DesignationCI (K)
+*       AND CONTACT-2-ID = #CI
+*     RelationToOwner (K) :=
+*       FUNCTION-DISP-RL-DESC(<ROLE-1-CD>)
+*   END-FIND
+* END-IF
+IF RelationToInsured (K) = BLANK
+  FIND (1) MEMBER WITH ID-NUMBER = #CN
+    FOR M 1 TO 30
+      IF MEMBER.LINKED-CN (M) = CNT-V.ID-NUMBER
+        RelationToInsured (K) := 'Linked CN'
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+END-IF
+IF RelationToInsured (K) = BLANK
+  RelationToInsured (K) := 'No relation'
+*   FIND (1) MEMBER WITH ID-NUMBER = CNT-V.ID-NUMBER
+*     FOR M 1 TO 30
+*       IF MEMBER.LINKED-CN (M) = #CN
+*         RelationToOwner (K) := 'Linked from'
+*         ESCAPE BOTTOM
+*       END-IF
+*     END-FOR
+*   END-FIND
+END-IF
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE GET-FOR-UPDATE
+/*                --------------
+/* Linnked policies IN pending status
+FIND PC-V WITH DESIGNATION-ID = #DSGN.DESIGNATION-ID
+  FIND (1) PB-V WITH POLICY-NUMBER = PC-V.POLICY-NUMBER
+    IF NO RECORDS FOUND  /* No Pending
+      ESCAPE BOTTOM
+    END-NOREC
+    /* There is pending designation
+    MOVE PB-V.DESIGNATION-ID TO DesignationUpdate.EditDesignationID
+      #DSGN.DESIGNATION-ID
+    PERFORM GET-PENDING
+    ESCAPE ROUTINE
+  END-FIND
+END-FIND
+PERFORM GET-RECORDS
+/*
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE GET-PENDING
+/*                -----------
+* InsuredContactID and OwnerContactID ARE populated
+* There is only one designation status F or C (Current)
+*
+CALLNAT 'POSN0011' #GET #MSG DesignationUpdate.DesignationISN #DSGN
+IF #MSG = BLANK
+  DesignationUpdate.DesignationStatus := 'Pending'
+  MOVE #DSGN.DESIGNATION-ID TO DesignationUpdate.EditDesignationID
+  PERFORM MAP-DESIGNATION-DATA
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+    DesignationUpdate.ErrorDescription
+    := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+*
+*  Get primary beneficiaries
+*
+RESET K
+#BENE-TYPE := PrimaryBene
+CALLNAT 'POSNPBC'  /* Get all contacts with role primary beneficiary
+  PolicyNumber
+  #BENE-TYPE
+  #NUMBER-OF-BENE
+  #BENE-RELATIONS (*)
+  #BISNS(*)
+  #MSG
+IF #MSG = BLANK
+  IF #NUMBER-OF-BENE > 0
+    EXPAND ARRAY DesignationContact TO (1:#NUMBER-OF-BENE)
+    DesignationUpdate.PrimaryType := #BENE-RELATIONS.BENE-TYPE (1)
+    DesignationUpdate.PrimaryShareType :=
+      #BENE-RELATIONS.BENE-SHARE-TYPE (1)
+  END-IF
+  PERFORM GET-PENDING-BENE
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  IF #ERROR-CODE EQ #NOT-EXIST
+    RESET #ERROR-CODE
+    /* Get BD Type and share type from unformated
+    FIND PB-V WITH DESIGNATION-ID = #DSGN.DESIGNATION-ID
+      IF PB-V.RELATION = UnformatedBene
+        DesignationUpdate.PrimaryType := PB-V.BENE-TYPE
+        DesignationUpdate.PrimaryShareType := PB-V.BENE-SHARE-TYPE
+        ESCAPE BOTTOM
+      END-IF
+    END-FIND
+  ELSE
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription
+      := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+*  Get contingent beneficiaries
+*
+#BENE-TYPE := ContingentBene
+C@DesignationContact := #NUMBER-OF-BENE
+CALLNAT 'POSNPBC'  /* Get all contacts with contingent beneficiary role
+  PolicyNumber
+  #BENE-TYPE
+  #NUMBER-OF-BENE
+  #BENE-RELATIONS (*)
+  #BISNS(*)
+  #MSG
+IF #MSG = BLANK
+  IF #NUMBER-OF-BENE > 0
+    ADD #NUMBER-OF-BENE TO C@DesignationContact
+    EXPAND ARRAY DesignationContact TO (1:C@DesignationContact)
+    DesignationUpdate.ContingentType := #BENE-RELATIONS.BENE-TYPE (1)
+    DesignationUpdate.ContingentShareType :=
+      #BENE-RELATIONS.BENE-SHARE-TYPE (1)
+  END-IF
+  PERFORM GET-PENDING-BENE
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  IF #ERROR-CODE EQ #NOT-EXIST
+    RESET #ERROR-CODE
+    FIND PB-V WITH DESIGNATION-ID = #DSGN.DESIGNATION-ID
+      IF PB-V.RELATION = UnformContBene
+        DesignationUpdate.ContingentType := PB-V.BENE-TYPE
+        DesignationUpdate.ContingentShareType := PB-V.BENE-SHARE-TYPE
+        ESCAPE BOTTOM
+      END-IF
+    END-FIND
+  ELSE
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription
+      := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+/*
+DEFINE GET-PENDING-BENE
+/*     ----------------
+FOR L 1 TO #NUMBER-OF-BENE
+  ADD 1 TO K
+  BeneficiaryContactID (K) := #BENE-RELATIONS.CONTACT-ID (L)
+  DesignationUpdate.Share (K) := #BENE-RELATIONS.BENE-FRACTION (L)
+  EXAMINE  DesignationUpdate.Share (K) FOR '%' DELETE
+  IF #BENE-TYPE = PrimaryBene
+    BeneficiaryType (K) := 'Primary'
+  ELSE
+    BeneficiaryType (K) := 'Contingent'
+  END-IF
+  SettlementCode (K) := #BENE-RELATIONS.SETTLEMENT-TYPE (L)
+  IF SettlementCode (K) < '1'
+      OR SettlementCode (K) > '6'
+    RESET SettlementCode (K)
+  END-IF
+  IF #BENE-RELATIONS.BENE-RESTRICTED (L) = 'Y'
+    RestrictedCode (K) := TRUE
+  ELSE
+    RestrictedCode (K) := FALSE
+  END-IF
+BeneficiaryName (K) := /* EDIT_NAME_LOWCASE (<                        /* bz-Name
+    FUNCTION-CONTACT-NAME
+    (< #BENE-RELATIONS.CONTACT-ID (L),
+    #BENE-RELATIONS.VERSION(L) >)
+/*    >)                                                                /* bz-Name
+  DesignationUpdate.ISN(K) := #BISNS(L)
+  FIND (1) CNT-V WITH CONTACT-ID = #BENE-RELATIONS.CONTACT-ID (L)
+*     MOVE EDITED CNT-V.SSN (EM=999-99-9999) TO BeneficiarySSN (K)               /* vt2
+*     BeneficiaryBirthDate (K) := CNT-V.DATE-OF-BIRTH                            /* vt2
+    BeneficiaryCN (K) := CNT-V.ID-NUMBER
+  END-FIND
+  BeneficiarySSN (K)       := GET-SSN(<
+    #BENE-RELATIONS.CONTACT-ID (L),
+    #BENE-RELATIONS.VERSION(L) >)             /* vt2
+  BeneficiaryBirthDate (K) := GET-DATE-OF-BIRTH(<
+    #BENE-RELATIONS.CONTACT-ID (L),
+    #BENE-RELATIONS.VERSION(L) >)             /* vt2
+*
+  PERFORM GET-RELATION
+  LastUpdatedDate_001 (K) := #BENE-RELATIONS.LAST-UPD-DATE (L)
+  LastUpdatedTime_001 (K) := #BENE-RELATIONS.LAST-UPD-TIME (L)
+  ClerkId_001 (K) := #BENE-RELATIONS.LAST-UPD-USER (L)
+  LastUpdatedUser_001 (K) :=
+    FUNCTION-NAME (< #BENE-RELATIONS.LAST-UPD-USER (L) >)
+  IF LastUpdatedUser_001 (K) NE BLANK
+    LastUpdatedUser_001 (K) :=
+      EDIT_NAME_LOWCASE (<LastUpdatedUser_001 (K) >)
+    LUUWindows_001 (K) :=
+      WINDOWS-USER (< #BENE-RELATIONS.LAST-UPD-USER (L) >)
+  ELSE
+    LastUpdatedUser_001 (K) := #BENE-RELATIONS.LAST-UPD-USER (L)
+  END-IF
+END-FOR
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE ADD-RECORD
+* --------------------------
+IF #DSGN.DESIGNATION-ID NE 0
+  #ERROR-CODE := #ADD-FOR-EXISNG
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+/*
+RESET #DSGN
+PERFORM POPULATE-DSGN
+#DSGN.STATUS-CODE := 'F'
+#DSGN.DESIGNATION-ID := GET-DSGN-ID (< >)
+#DSGN.ADD-USER      := #ClerkId
+#DSGN.LAST-UPD-USER := #ClerkId
+CALLNAT 'POSN0011' #ADD #MSG DesignationUpdate.DesignationISN #DSGN
+IF #MSG EQ BLANK
+  MOVE #DSGN.DESIGNATION-ID TO DesignationUpdate.DesignationID
+    DesignationUpdate.EditDesignationID
+  DECIDE ON FIRST VALUE OF #DSGN.STATUS-CODE
+    VALUE 'F'
+      DesignationUpdate.DesignationStatus := 'Final'
+    VALUE 'C'
+      DesignationUpdate.DesignationStatus := 'Current'
+    VALUE 'P'
+      DesignationUpdate.DesignationStatus := 'Pending'
+    NONE VALUE IGNORE
+  END-DECIDE
+  DesignationUpdate.LastUpdatedDate := #DSGN.LAST-UPD-DATE
+  DesignationUpdate.LastUpdatedTime := #DSGN.LAST-UPD-TIME
+  ClerkId := #DSGN.LAST-UPD-USER
+  DesignationUpdate.LastUpdatedUser :=
+    FUNCTION-NAME (< #DSGN.LAST-UPD-USER >)
+  IF DesignationUpdate.LastUpdatedUser NE BLANK
+    LastUpdatedUser := EDIT_NAME_LOWCASE (< LastUpdatedUser >)
+    LUUWindows := WINDOWS-USER (< #DSGN.LAST-UPD-USER >)
+  ELSE
+    DesignationUpdate.LastUpdatedUser := #DSGN.LAST-UPD-USER
+  END-IF
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+/* Create final Beneficiaries list
+RESET #PolicyId (*)
+#DLP := 1
+#PolicyId (1) := DesignationUpdate.PolicyNumber
+PERFORM ADD-BENE-LIST
+*
+/* Create BD...SHO Fetch return E4703PBD will do
+/* BackOut transaction
+END TRANSACTION
+RESET #MSG
+CALLNAT 'POSN0031' EditDesignationID #MSG
+*
+perform populate-after-tr                                /* vt1
+/*
+END-SUBROUTINE
+/*
+/*           Update Designation Data
+/*                --------------
+DEFINE SUBROUTINE UPDATE-RECORDS
+/*                --------------
+*
+#DSGN.DESIGNATION-ID := DesignationUpdate.EditDesignationID
+IF #DSGN.DESIGNATION-ID = 0
+  #DSGN.DESIGNATION-ID := DesignationUpdate.DesignationID
+END-IF
+
+IF #DSGN.DESIGNATION-ID = 0
+  #ERROR-CODE := #DESIGNATION-ID
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+
+RESET DesignationUpdate.DesignationISN
+CALLNAT 'POSN0011' #GET #MSG DesignationUpdate.DesignationISN #DSGN
+IF #MSG NE BLANK
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+*
+IF #DSGN.STATUS-CODE = 'C' /* Status C is not updatable
+  #ERROR-CODE := #UPDATE-CURRENT
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+/*
+/* Temporary set off   >>>>>
+/*
+* IF LastUpdatedDate = #DSGN.LAST-UPD-DATE
+*     AND LastUpdatedTime = #DSGN.LAST-UPD-TIME
+*     AND LastUpdatedUser =  #DSGN.LAST-UPD-USER
+*   IGNORE
+* ELSE
+*   #ERROR-CODE := #UPDATE-CONFLICT
+*   ErrorCode   := VAL(#ERROR-CODE)
+*   DesignationUpdate.ErrorDescription :=
+*     F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+*   ESCAPE ROUTINE
+* END-IF
+/* Temporary set off   >>>>>
+*
+IF #DSGN.STATUS-CODE = 'F'
+    OR= 'V'  /* TEMP
+    OR= 'N'  /* NEW status code
+  IF DesignationUpdate.DesignationStatus = 'Validated'
+    /* Change Final to Validated
+    #DSGN.STATUS-CODE := 'V'
+    #DSGN.LAST-UPD-USER := #UnixUser
+    RESET #DSGN.LAST-UPD-DATE #DSGN.LAST-UPD-TIME
+    CALLNAT 'POSN0011' #UPDATE #MSG DesignationUpdate.DesignationISN
+      #DSGN
+    IF #MSG NE BLANK
+      #ERROR-CODE := SUBSTR(#MSG,1,3)
+      DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription :=
+        F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+      ESCAPE ROUTINE
+    END-IF
+
+    /* Create message
+    CALLNAT 'POSN0017' #ClerkID #INSURED-CN
+      #DSGN.LAST-UPD-DATE
+      #MSG
+  
+  ELSE
+    /* Change Final to Current
+    #DSGN.STATUS-CODE := 'C'
+*
+    CALLNAT 'POSN0011' #UPDATE #MSG DesignationUpdate.DesignationISN
+      #DSGN
+    IF #MSG NE BLANK
+      #ERROR-CODE := SUBSTR(#MSG,1,3)
+      DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription :=
+        F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+      ESCAPE ROUTINE
+    END-IF
+    PERFORM POPULATE-DSGN
+*
+    /* Create Pending designation
+    #DSGN.STATUS-CODE := 'P'
+    #DSGN.DESIGNATION-ID := GET-DSGN-ID (< >)
+    #DSGN.LAST-UPD-DATE := *DATN
+    #DSGN.LAST-UPD-USER := #ClerkID
+    RESET #DSGN.DATE-SIGNED
+      DesignationUpdate.DateSigned
+    CALLNAT 'POSN0011' #ADD #MSG DesignationUpdate.DesignationISN #DSGN
+    IF #MSG EQ BLANK
+      MOVE #DSGN.DESIGNATION-ID TO DesignationUpdate.EditDesignationID
+/*      DesignationUpdate.DesignationID
+      DECIDE ON FIRST VALUE OF #DSGN.STATUS-CODE
+        VALUE 'F'
+          DesignationUpdate.DesignationStatus := 'Final'
+        VALUE 'C'
+          DesignationUpdate.DesignationStatus := 'Current'
+        VALUE 'P'
+          DesignationUpdate.DesignationStatus := 'Pending'
+        NONE VALUE IGNORE
+      END-DECIDE
+      DesignationUpdate.LastUpdatedDate := #DSGN.LAST-UPD-DATE
+      DesignationUpdate.LastUpdatedTime := #DSGN.LAST-UPD-TIME
+      ClerkId := #DSGN.LAST-UPD-USER
+      DesignationUpdate.LastUpdatedUser :=
+        FUNCTION-NAME (< #DSGN.LAST-UPD-USER >)
+      IF DesignationUpdate.LastUpdatedUser NE BLANK
+        LastUpdatedUser := EDIT_NAME_LOWCASE (<LastUpdatedUser >)
+        LUUWindows := WINDOWS-USER (< #DSGN.LAST-UPD-USER >)
+      ELSE
+        DesignationUpdate.LastUpdatedUser := #DSGN.LAST-UPD-USER
+      END-IF
+    ELSE
+      #ERROR-CODE := SUBSTR(#MSG,1,3)
+      DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription :=
+        F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+      ESCAPE ROUTINE
+    END-IF
+    /* Create policy list
+    RESET #PolicyId (*) #DLP
+    FIND PC-V WITH DESIGNATION-ID = DesignationUpdate.DesignationID
+*        SORTED BY POLICY-NUMBER
+      IF #DLP = 0
+        ADD 1 TO #DLP
+        #PolicyId ( #DLP ) := PC-V.POLICY-NUMBER
+      END-IF
+      FOR J 1 TO #DLP
+        IF #PolicyId ( J ) EQ PC-V.POLICY-NUMBER
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+      IF J > #DLP
+        ADD 1 TO #DLP
+        #PolicyId ( #DLP ) := PC-V.POLICY-NUMBER
+      END-IF
+    END-FIND
+    /* Create PENDING Beneficiaries list
+    PERFORM ADD-PENDING-BENE-LIST
+  END-IF
+ELSE  /* Update Pending
+  PERFORM POPULATE-DSGN
+  #DSGN.LAST-UPD-USER := #ClerkID
+  CALLNAT 'POSN0011' #UPDATE #MSG DesignationUpdate.DesignationISN #DSGN
+  IF #MSG NE BLANK
+    #ERROR-CODE := SUBSTR(#MSG,1,3)
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+    DesignationUpdate.ErrorDescription :=
+      F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-IF
+  DesignationUpdate.LastUpdatedDate := #DSGN.LAST-UPD-DATE
+  DesignationUpdate.LastUpdatedTime := #DSGN.LAST-UPD-TIME
+  ClerkId := #DSGN.LAST-UPD-USER
+  DesignationUpdate.LastUpdatedUser :=
+    FUNCTION-NAME (< #DSGN.LAST-UPD-USER >)
+  IF DesignationUpdate.LastUpdatedUser NE BLANK
+    LastUpdatedUser := EDIT_NAME_LOWCASE (< LastUpdatedUser >)
+    LUUWindows := WINDOWS-USER (< #DSGN.LAST-UPD-USER >)
+  ELSE
+    DesignationUpdate.LastUpdatedUser := #DSGN.LAST-UPD-USER
+  END-IF
+  DECIDE ON FIRST VALUE OF #DSGN.STATUS-CODE
+    VALUE 'F'
+  perform populate-before-tr                                      /* vt1
+      /* Delete current Beneficiaries list
+      RESET #PolicyId (*) #DLP
+      FIND PC-V WITH DESIGNATION-ID = DesignationUpdate.DesignationID
+*          SORTED BY POLICY-NUMBER
+        DELETE
+        IF #DLP = 0
+          ADD 1 TO #DLP
+          #PolicyId ( #DLP ) := PC-V.POLICY-NUMBER
+          ESCAPE TOP
+        END-IF
+        FOR J 1 TO #DLP
+          IF #PolicyId ( J ) EQ PC-V.POLICY-NUMBER
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+        IF J > #DLP
+          ADD 1 TO #DLP
+          #PolicyId ( #DLP ) := PC-V.POLICY-NUMBER
+        END-IF
+      END-FIND
+      /* Create final Beneficiaries list
+      PERFORM ADD-BENE-LIST
+      /* Delete pending Beneficiaries list
+     FIND PB-V WITH DESIGNATION-ID = DesignationUpdate.EditDesignationID
+        DELETE
+      END-FIND
+      /* Make PENDING designation Final
+      PERFORM POPULATE-DSGN
+      #DSGN.DESIGNATION-ID := EditDesignationID
+      #DSGN.STATUS-CODE    := 'F'
+      #DSGN.LAST-UPD-USER := #ClerkID
+      RESET #DSGN.PRIMARY-BD (*) #DSGN.SECONDARY-BD (*)
+        DesignationUpdate.ContingentBD DesignationUpdate.PrimaryBD
+      CALLNAT 'POSN0011' #UPDATE #MSG
+        DesignationUpdate.DesignationISN #DSGN
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      /* Delete pending designation
+      #DSGN.DESIGNATION-ID := DesignationID
+      RESET DesignationUpdate.DesignationISN
+      CALLNAT 'POSN0011' #DELETE #MSG
+        DesignationUpdate.DesignationISN #DSGN
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      /* Delete legacy BD designation record ? all designations ?
+*       FIND BD-V WITH ID-NUMBER = #INSURED-CN
+*         DELETE
+*       END-FIND
+*       FIND BD-P-V WITH ID-NUMBER = #INSURED-CN
+*         DELETE
+*       END-FIND
+      /* Create message
+      #MSG := 'Endorsement Sent'
+      CALLNAT 'POSN0017' #ClerkID #INSURED-CN
+        #DSGN.DATE-SIGNED
+        #MSG
+      IF DesignationUpdate.Irrevocable
+        #MSG := 'Beneficiary restricted'
+        CALLNAT 'POSN0017' #ClerkID #INSURED-CN
+          #DSGN.DATE-SIGNED
+          #MSG
+      END-IF
+      perform populate-after-tr                    /* vt1
+*
+  /* Create BD...SHO Fetch return E4703PBD will do             /* ng2 \/
+      /* BackOut transaction
+      END TRANSACTION
+      RESET #MSG
+ CALLNAT 'POSN0031' EditDesignationID #MSG                     /* ng2 /\
+    VALUE 'P'
+      /* Delete pending Beneficiaries list
+      RESET #PolicyId (*) #DLP
+     FIND PB-V WITH DESIGNATION-ID = DesignationUpdate.EditDesignationID
+*          SORTED BY POLICY-NUMBER
+        DELETE
+        IF #DLP = 0
+          ADD 1 TO #DLP
+          #PolicyId ( #DLP ) := PB-V.POLICY-NUMBER
+        END-IF
+        FOR J 1 TO #DLP
+          IF PB-V.POLICY-NUMBER EQ #PolicyId (J)
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+        IF J > #DLP
+          ADD 1 TO #DLP
+          #PolicyId ( #DLP ) := PB-V.POLICY-NUMBER
+        END-IF
+      END-FIND
+      /* Create PENDING Beneficiaries list
+      PERFORM ADD-PENDING-BENE-LIST
+    NONE VALUE
+      #ERROR-CODE := #DESIGNATION-STATUS
+      DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+      DesignationUpdate.ErrorDescription :=
+        F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+      ESCAPE ROUTINE
+  END-DECIDE
+END-IF
+END-SUBROUTINE
+*
+*       Add Final Designation beneficiaries
+*
+DEFINE ADD-BENE-LIST
+/*     -------------
+FOR JJ 1 TO #DLP
+  RESET #POWN
+  #POWN.DESIGNATION-ID := EditDesignationID
+  #POWN.POLICY-NUMBER  := #PolicyId (JJ)
+  #POWN.REFERENCE-NUMBER := #INSURED-CN
+  #POWN.ADD-USER := #ClerkId
+  #POWN.LAST-UPD-USER := #ClerkId
+  DECIDE ON FIRST VALUE OF #BENE-LIST-TYPE
+    VALUE 0 /* FREE FORM DESIGNATION=Primary+Cont
+      #POWN.RELATION   := UnformatedBene
+      #POWN.BENE-TYPE := DesignationUpdate.PrimaryType
+      #POWN.BENE-SHARE-TYPE := DesignationUpdate.PrimaryShareType
+      CALLNAT 'POSN0001' #ADD #MSG #POWN
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      #POWN.RELATION  := UnformContBene
+      #POWN.BENE-TYPE := DesignationUpdate.ContingentType
+      #POWN.BENE-SHARE-TYPE := DesignationUpdate.ContingentShareType
+      CALLNAT 'POSN0001' #ADD #MSG #POWN
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+    VALUE 1 /* PRIMARY FREE FORM
+      #POWN.RELATION   := UnformatedBene
+      #POWN.BENE-TYPE := DesignationUpdate.PrimaryType
+      #POWN.BENE-SHARE-TYPE := DesignationUpdate.PrimaryShareType
+      CALLNAT 'POSN0001' #ADD #MSG #POWN
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      PERFORM ADD-BENE-FORMATED
+    VALUE 2 /* CONTINGENT FREE FORM
+      #POWN.RELATION  := UnformContBene
+      #POWN.BENE-TYPE := DesignationUpdate.ContingentType
+      #POWN.BENE-SHARE-TYPE := DesignationUpdate.ContingentShareType
+      CALLNAT 'POSN0001' #ADD #MSG #POWN
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      PERFORM ADD-BENE-FORMATED
+    VALUE 3
+      PERFORM ADD-BENE-FORMATED
+    NONE VALUE
+      ESCAPE ROUTINE
+  END-DECIDE
+END-FOR
+END-SUBROUTINE
+*
+DEFINE ADD-BENE-FORMATED
+/*     -------------
+FOR J 1 TO C@DesignationContact
+  #POWN.CONTACT-ID := BeneficiaryContactID (J)
+  IF DesignationUpdate.ISN (J) = 0
+    FIND (1) CNT-V WITH CONTACT-ID = BeneficiaryContactID (J)
+      DesignationUpdate.ISN (J) := *ISN
+    END-FIND
+  END-IF
+  IF BeneficiaryType (J) = 'Primary'
+      OR= 'PRIMARY'
+    #POWN.RELATION  := PrimaryBene
+    #POWN.BENE-TYPE := DesignationUpdate.PrimaryType
+    #POWN.BENE-SHARE-TYPE := DesignationUpdate.PrimaryShareType
+  ELSE
+    #POWN.RELATION   := ContingentBene
+    #POWN.BENE-TYPE := DesignationUpdate.ContingentType
+    #POWN.BENE-SHARE-TYPE := DesignationUpdate.ContingentShareType
+  END-IF
+  #POWN.SETTLEMENT-TYPE := SettlementCode (J)
+  #POWN.BENE-FRACTION := DesignationUpdate.Share (J)
+  IF RestrictedCode (J)
+    #POWN.BENE-RESTRICTED := 'Y'
+  ELSE
+    RESET #POWN.BENE-RESTRICTED
+  END-IF
+  CALLNAT 'POSN0001' #ADD #MSG #POWN
+  IF #MSG NE BLANK
+    #ERROR-CODE := SUBSTR(#MSG,1,3)
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+    DesignationUpdate.ErrorDescription :=
+      F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-IF
+  DesignationUpdate.LastUpdatedDate_001 (J) := #POWN.LAST-UPD-DATE
+  DesignationUpdate.LastUpdatedTime_001 (J) := #POWN.LAST-UPD-TIME
+  ClerkId_001 (J) := #POWN.LAST-UPD-USER
+  DesignationUpdate.LastUpdatedUser_001 (J) :=
+    FUNCTION-NAME (< #POWN.LAST-UPD-USER >)
+  IF DesignationUpdate.LastUpdatedUser_001 (J) NE BLANK
+    LastUpdatedUser_001 (J) :=
+      EDIT_NAME_LOWCASE (<LastUpdatedUser_001 (J) >)
+    LUUWindows_001 (J) := WINDOWS-USER (< #POWN.LAST-UPD-USER >)
+  ELSE
+    LastUpdatedUser_001 (J) := #POWN.LAST-UPD-USER
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+*       Add Pending Designation beneficiaries
+*
+DEFINE ADD-PENDING-BENE-LIST
+/*     -------------
+FOR JJ 1 TO #DLP
+  RESET #PBENE
+  #PBENE.DESIGNATION-ID := EditDesignationID
+  #PBENE.POLICY-NUMBER  := #PolicyId (JJ)
+  #PBENE.INSURED-CN     := #INSURED-CN
+  #PBENE.ADD-USER       := #ClerkId
+  #PBENE.LAST-UPD-USER  := #ClerkId
+  DECIDE ON FIRST VALUE OF #BENE-LIST-TYPE
+    VALUE 0 /* FREE FORM DESIGNATION
+      #PBENE.RELATION   := UnformatedBene
+      #PBENE.BENE-TYPE := DesignationUpdate.PrimaryType
+      #PBENE.BENE-SHARE-TYPE := DesignationUpdate.PrimaryShareType
+      CALLNAT 'POSN0012' #ADD #MSG #PBENE
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      #PBENE.RELATION   := UnformContBene
+      #PBENE.BENE-TYPE := DesignationUpdate.ContingentType
+      #PBENE.BENE-SHARE-TYPE := DesignationUpdate.ContingentShareType
+      CALLNAT 'POSN0012' #ADD #MSG #PBENE
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+    VALUE 1 /* PRIMARY FREE FORM
+      #PBENE.RELATION   := UnformatedBene
+      #PBENE.BENE-TYPE := DesignationUpdate.PrimaryType
+      #PBENE.BENE-SHARE-TYPE := DesignationUpdate.PrimaryShareType
+      CALLNAT 'POSN0012' #ADD #MSG #PBENE
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      PERFORM ADD-PENDING-BENE-FORMATED
+    VALUE 2 /* CONTINGENT FREE FORM
+      #PBENE.RELATION   := UnformContBene
+      #PBENE.BENE-TYPE := DesignationUpdate.ContingentType
+      #PBENE.BENE-SHARE-TYPE := DesignationUpdate.ContingentShareType
+      CALLNAT 'POSN0012' #ADD #MSG #PBENE
+      IF #MSG NE BLANK
+        #ERROR-CODE := SUBSTR(#MSG,1,3)
+        DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+        DesignationUpdate.ErrorDescription :=
+          F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+        ESCAPE ROUTINE
+      END-IF
+      PERFORM ADD-PENDING-BENE-FORMATED
+    VALUE 3
+      PERFORM ADD-PENDING-BENE-FORMATED
+    NONE VALUE
+      ESCAPE ROUTINE
+  END-DECIDE
+END-FOR
+END-SUBROUTINE
+*
+DEFINE ADD-PENDING-BENE-FORMATED
+/*     -------------------------
+FOR J 1 TO C@DesignationContact
+  #PBENE.CONTACT-ID := BeneficiaryContactID (J)
+  IF DesignationUpdate.ISN (J) = 0
+    FIND (1) CNT-V WITH CONTACT-ID = BeneficiaryContactID (J)
+      DesignationUpdate.ISN (J) := *ISN
+    END-FIND
+  END-IF
+  IF BeneficiaryType (J) = 'Primary'
+      OR= 'PRIMARY'
+    #PBENE.RELATION  := PrimaryBene
+    #PBENE.BENE-TYPE := DesignationUpdate.PrimaryType
+    #PBENE.BENE-SHARE-TYPE := DesignationUpdate.PrimaryShareType
+  ELSE
+    #PBENE.RELATION   := ContingentBene
+    #PBENE.BENE-TYPE := DesignationUpdate.ContingentType
+    #PBENE.BENE-SHARE-TYPE := DesignationUpdate.ContingentShareType
+  END-IF
+  #PBENE.SETTLEMENT-TYPE := SettlementCode (J)
+  #PBENE.BENE-FRACTION := DesignationUpdate.Share (J)
+  IF RestrictedCode (J)
+    #PBENE.BENE-RESTRICTED := 'Y'
+  ELSE
+    RESET #PBENE.BENE-RESTRICTED
+  END-IF
+  CALLNAT 'POSN0012' #ADD #MSG #PBENE
+  IF #MSG NE BLANK
+    #ERROR-CODE := SUBSTR(#MSG,1,3)
+    DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+    DesignationUpdate.ErrorDescription :=
+      F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+    ESCAPE ROUTINE
+  END-IF
+  DesignationUpdate.LastUpdatedDate_001 (J) := #PBENE.LAST-UPD-DATE
+  DesignationUpdate.LastUpdatedTime_001 (J) := #PBENE.LAST-UPD-TIME
+  ClerkId_001 (J) := #PBENE.LAST-UPD-USER
+  DesignationUpdate.LastUpdatedUser_001 (J) :=
+    FUNCTION-NAME (< #PBENE.LAST-UPD-USER >)
+  IF LastUpdatedUser_001 (J) NE BLANK
+    LastUpdatedUser_001 (J) :=
+      EDIT_NAME_LOWCASE (<LastUpdatedUser_001 (J) >)
+    LUUWindows_001 (J) := WINDOWS-USER (< #PBENE.LAST-UPD-USER >)
+  ELSE
+    LastUpdatedUser_001 (J) := #PBENE.LAST-UPD-USER
+  END-IF
+END-FOR
+END-SUBROUTINE
+/*     -------------
+/*
+DEFINE POPULATE-DSGN
+/*     --------------
+#DSGN.STATUS-CODE := DesignationStatus
+#DSGN.DATE-SIGNED := DateSigned
+#DSGN.COMMON-DISASTER := CommonDisaster
+RESET #DSGN.PER-STIRPES
+* DECIDE FOR FIRST CONDITION
+*   WHEN PerStirpesPrimary AND PerStirpesContingent
+*     #DSGN.PER-STIRPES := '3'
+*   WHEN PerStirpesPrimary
+*     #DSGN.PER-STIRPES := '1'
+*   WHEN PerStirpesContingent
+*     #DSGN.PER-STIRPES := '2'
+*   WHEN NONE
+*     RESET #DSGN.PER-STIRPES
+* END-DECIDE
+*               NG3 IO-4440
+**COMPRESS PerStirpesPrimary PerStirpesContingent
+**  INTO #DSGN.PER-STIRPES LEAVING NO
+MOVE PerStirpesPrimary TO SUBSTR(#DSGN.PER-STIRPES,1,1)
+MOVE PerStirpesContingent TO SUBSTR(#DSGN.PER-STIRPES,2,1)
+*               NG3 IO-4440
+DECIDE FOR FIRST CONDITION
+  WHEN AllChildrenPrimary AND AllChildrenContingent
+    #dsgn.ALL-CHILDREN := '3'
+  WHEN AllChildrenPrimary
+    #dsgn.ALL-CHILDREN := '1'
+  WHEN AllChildrenContingent
+    #dsgn.ALL-CHILDREN := '2'
+  WHEN NONE
+    RESET #dsgn.ALL-CHILDREN
+END-DECIDE
+IF DesignationUpdate.Irrevocable
+  #DSGN.RESTRICTED-IRREVO := 'Y'
+ELSE
+  RESET #DSGN.RESTRICTED-IRREVO
+END-IF
+L := *LENGTH (PrimaryInstruction)
+IF L > 0
+  #TEXT := PrimaryInstruction
+  #Prim-Instruction := TRUE
+  RESET #DSGN.INSTRUCTIONS (*)
+  PERFORM POPULATE-INSTRUCTON
+ELSE
+  RESET #DSGN.INSTRUCTIONS (*)
+END-IF
+L := *LENGTH (ContingentInstruction)
+IF L > 0
+  #TEXT := ContingentInstruction
+  RESET #Prim-Instruction #DSGN.CONTINGENT-INSTR (*)
+  PERFORM POPULATE-INSTRUCTON
+ELSE
+  RESET #DSGN.CONTINGENT-INSTR (*)
+END-IF
+RESET #DSGN.LAST-UPD-DATE #DSGN.LAST-UPD-TIME #DSGN.LAST-UPD-USER
+END-SUBROUTINE
+/*
+DEFINE POPULATE-INSTRUCTON
+/*     -------------------
+RESET K
+J := 1
+L1 := 2
+REPEAT
+  UNTIL L1 > L
+  IF #TEXT-I (L1) = 10
+    ADD 1 TO K
+    M := L1 - J + 1
+    IF #Prim-Instruction
+      #DSGN.INSTRUCTIONS (K) := SUBSTR(#TEXT,J,M)
+    ELSE
+      #DSGN.CONTINGENT-INSTR (K) := SUBSTR(#TEXT,J,M)
+    END-IF
+    J := L1 + 1
+  END-IF
+  ADD 1 TO L1
+END-REPEAT
+L1 := L1 - J   /* Length of last line
+IF L1 > 0
+  L := L1
+  REPEAT
+    UNTIL L <= 0
+    IF L1 > 70 M := 70 ELSE M:= L1 END-IF
+    ADD 1 TO K
+    IF #Prim-Instruction
+      #DSGN.INSTRUCTIONS (K) := SUBSTR(#TEXT,J,M)
+    ELSE
+      #DSGN.CONTINGENT-INSTR (K) := SUBSTR(#TEXT,J,M)
+    END-IF
+    SUBTRACT M FROM L
+    ADD M TO J
+  END-REPEAT
+END-IF
+END-SUBROUTINE
+/*
+DEFINE GET-POLICY-CONTACTS
+/*     -------------------
+RESET #NUMBER-OF-RELATIONS #MSG #DSGN
+#RELATIONSHIP-TYPE := AllRoles
+CALLNAT 'POSNCNTS'  /* Get all contacts related to the policy
+  PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG = BLANK
+  FOR K 1 TO #NUMBER-OF-RELATIONS
+    IF #POLICY-RELATIONS.RELATION (K) = InsuredRole
+      InsuredContactID := #POLICY-RELATIONS.CONTACT-ID (K)
+    END-IF
+    IF #POLICY-RELATIONS.RELATION (K) = PrimaryOwner
+      OWNER-CI := #POLICY-RELATIONS.CONTACT-ID (K)
+      OWNER-CN := #POLICY-RELATIONS.REFERENCE-NUMBER (K)
+      OwnerContactID := OWNER-CI
+    END-IF
+    IF #POLICY-RELATIONS.RELATION (K) = PrimaryBene
+        OR= ContingentBene
+        OR= UnformatedBene
+        OR= UnformContBene
+      IF #DSGN.DESIGNATION-ID = 0
+        MOVE #POLICY-RELATIONS.DESIGNATION-ID (K)
+          TO #DSGN.DESIGNATION-ID /* Type: F or C
+          DesignationUpdate.DesignationID
+      END-IF
+    END-IF
+  END-FOR
+  FIND (1) CNT-V WITH CONTACT-ID = InsuredContactID
+    #INSURED-CN := CNT-V.ID-NUMBER
+    DesignationUpdate.InsuredName :=                     
+      FUNCTION-CONTACT-NAME (< InsuredContactID >)          /* bz-Name
+*      EDIT_NAME_LOWCASE                                    /* bz-Name 
+*      (< FUNCTION-CONTACT-NAME (< InsuredContactID >) >)   /* bz-Name
+
+    IF CNT-V.DATE-OF-DEATH > 0
+      DesignationUpdate.InsuredDeceased := TRUE
+    ELSE
+      RESET  DesignationUpdate.InsuredDeceased
+    END-IF
+  END-FIND
+  PERFORM GET-OWNER-POLICIES
+  PERFORM GET-INSURED-POLICIES
+  /*
+  RESET C@Owner
+  FOR K 1 TO #NUMBER-OF-RELATIONS
+    IF #POLICY-RELATIONS.RELATION (K) = PrimaryOwner
+*         OR= CoOwner
+*         OR= SuccessorOwner
+      ADD 1 TO C@Owner
+      EXPAND ARRAY Owner TO (1:C@Owner)
+      FIND (1) CNT-V WITH CONTACT-ID = #POLICY-RELATIONS.CONTACT-ID (K)
+        IF CNT-V.CONTACT-TYPE = 'O'
+          OwnerTIN ( C@Owner ) := CNT-V.SSN
+        ELSE
+          OwnerSSN ( C@Owner ) := CNT-V.SSN
+        END-IF
+        DesignationUpdate.FormatedName ( C@Owner ) :=                       
+FUNCTION-CONTACT-NAME (<#POLICY-RELATIONS.CONTACT-ID (K)>)     /* bz-Name
+*          EDIT_NAME_LOWCASE                                                 /* bz-Name 
+*          (< FUNCTION-CONTACT-NAME (<#POLICY-RELATIONS.CONTACT-ID (K)>) >)  /* bz-Name
+
+
+      END-FIND
+    END-IF
+  END-FOR
+ELSE
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+    DesignationUpdate.ErrorDescription
+    := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+END-IF
+RESET #BENE-LIST-TYPE K L
+FOR J 1 TO C@DesignationContact
+  IF BeneficiaryType (J) = 'Primary'
+      OR= 'PRIMARY'
+    K := 2
+  ELSE
+    L := 1
+  END-IF
+END-FOR
+#BENE-LIST-TYPE := K + L
+END-SUBROUTINE
+/*
+DEFINE GET-OWNER-POLICIES
+/*     ------------------
+RESET #PolicyID (*)
+  #inSameDsgn (*) K
+FIND PC-V WITH CONTACT-ID = OwnerContactID
+  IF PC-V.RELATION = PrimaryOwner
+    IF GET-POLICY-DSGN (< PC-V.POLICY-NUMBER >) = #DSGN.DESIGNATION-ID
+      ADD 1 TO K
+      #inSameDsgn (K) := TRUE
+      #PolicyID (K) := PC-V.POLICY-NUMBER
+    END-IF
+  END-IF
+END-FIND
+IF K > 0
+  C@Policy := K
+  EXPAND ARRAY OwnerPolicy TO (1:C@Policy)
+  DesignationUpdate.PolicyID (1:K) := #PolicyID (1:K)
+  DesignationUpdate.InSameDesignation (1:K) := #inSameDsgn (1:K)
+END-IF
+END-SUBROUTINE
+/*
+DEFINE GET-INSURED-POLICIES
+/*     ------------------
+RESET #PolicyID (*)
+  #inSameDsgn (*) K
+FIND PC-V WITH CONTACT-ID = InsuredContactID
+  IF PC-V.RELATION = InsuredRole
+    IF GET-POLICY-DSGN (< PC-V.POLICY-NUMBER >) = #DSGN.DESIGNATION-ID
+      ADD 1 TO K
+      #PolicyID (K) := PC-V.POLICY-NUMBER
+      #PolicyStatus (K) := GET-POLICY-STATUS (< PC-V.POLICY-NUMBER >)
+    END-IF
+  END-IF
+END-FIND
+IF K > 0
+  C@PolicyA := K
+  EXPAND ARRAY InsuredPolicy TO (1:C@PolicyA)
+  DesignationUpdate.PolicyIDA (1:K) := #PolicyID (1:K)
+  DesignationUpdate.PolicyStatus(1:K) := #PolicyStatus (1:K)
+END-IF
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE DELETE-PENDING-DSGN
+*                 -------------------
+/* Delete pending Beneficiaries list
+FIND (1) PB-V WITH POLICY-NUMBER = PolicyNumber
+  #DSGN.DESIGNATION-ID := PB-V.DESIGNATION-ID
+  DELETE
+END-FIND
+*       Linked policies
+FIND PB-V WITH DESIGNATION-ID = #DSGN.DESIGNATION-ID
+  DELETE
+END-FIND
+/* Delete pending designation
+RESET DesignationUpdate.DesignationISN
+CALLNAT 'POSN0011' #DELETE #MSG
+  DesignationUpdate.DesignationISN #DSGN
+IF #MSG NE BLANK
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+/*
+FIND PC-V WITH POLICY-NUMBER = PolicyNumber
+  IF PC-V.RELATION = PrimaryBene OR= ContingentBene
+      OR= UnformatedBene OR= UnformContBene
+    #DSGN.DESIGNATION-ID := PC-V.DESIGNATION-ID
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+CALLNAT 'POSN0011' #GET #MSG
+  DesignationUpdate.DesignationISN #DSGN
+IF #MSG NE BLANK
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+#DSGN.STATUS-CODE := 'F'
+CALLNAT 'POSN0011' #UPDATE #MSG
+  DesignationUpdate.DesignationISN #DSGN
+IF #MSG NE BLANK
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  DesignationUpdate.ErrorCode := VAL (#ERROR-CODE)
+  DesignationUpdate.ErrorDescription :=
+    F-ERROR-DESCRIPTION (<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*      --------------------
+DEFINE MAP-DESIGNATION-DATA
+/*     --------------------
+DateSigned := #DSGN.DATE-SIGNED
+IF #DSGN.STATUS-CODE NE 'P'
+  COMPRESS #DSGN.SECONDARY-BD (*) INTO DesignationUpdate.ContingentBD
+  COMPRESS #DSGN.PRIMARY-BD   (*) INTO DesignationUpdate.PrimaryBD
+END-IF
+COMPRESS #DSGN.INSTRUCTIONS (*) INTO PrimaryInstruction
+  LEAVING NO
+COMPRESS #DSGN.CONTINGENT-INSTR (*) INTO ContingentInstruction
+  LEAVING NO
+PerStirpesPrimary := SUBSTR(#DSGN.PER-STIRPES,1,1)
+PerStirpesContingent := SUBSTR(#DSGN.PER-STIRPES,2,1)
+DECIDE ON FIRST VALUE OF #DSGN.ALL-CHILDREN
+  VALUE '1'
+    AllChildrenPrimary := TRUE
+  VALUE '2'
+    AllChildrenContingent := TRUE
+    DesignationUpdate.ContingentType := 'A'
+  VALUE '3'
+    AllChildrenPrimary := TRUE
+    AllChildrenContingent := TRUE
+  NONE VALUE
+    RESET AllChildrenPrimary AllChildrenContingent
+END-DECIDE
+CommonDisaster := #DSGN.COMMON-DISASTER
+IF #DSGN.RESTRICTED-IRREVO = 'Y'
+  DesignationUpdate.Irrevocable := TRUE
+END-IF
+LastUpdatedDate := #DSGN.LAST-UPD-DATE
+LastUpdatedTime := #DSGN.LAST-UPD-TIME
+ClerkId := #DSGN.LAST-UPD-USER
+LastUpdatedUser := FUNCTION-NAME (< #DSGN.LAST-UPD-USER >)
+IF LastUpdatedUser NE BLANK
+  LastUpdatedUser := EDIT_NAME_LOWCASE (< LastUpdatedUser >)
+  LUUWindows := WINDOWS-USER (< #DSGN.LAST-UPD-USER >)
+ELSE
+  LastUpdatedUser := #DSGN.LAST-UPD-USER
+END-IF
+END-SUBROUTINE
+/*
+*****************
+define subroutine populate-before-tr                       /* vt1 \/
+*****************
+*
+find design with design.designation-id = DesignationUpdate.DesignationID
+*
+  BEFORE-IMAGE.DATE-LAST-UPDATE := design.LAST-UPD-DATE
+  DECIDE ON FIRST VALUE OF design.STATUS-CODE
+    VALUE 'F'
+      BEFORE-IMAGE.DESIGNATION-STATUS        := 'Final'
+    VALUE 'C'
+      BEFORE-IMAGE.DESIGNATION-STATUS        := 'Current'
+    VALUE 'P'
+      BEFORE-IMAGE.DESIGNATION-STATUS        := 'Pending'
+    NONE VALUE IGNORE
+  END-DECIDE
+  reset #pol-nbr
+  FIND POLICY WITH DESIGNATION-ID = DesignationUpdate.DesignationID
+    if no
+      escape bottom
+    end-norec
+    if policy.policy-number ne #pol-nbr
+      COMPRESS #POLICY-NBRS POLICY.POLICY-NUMBER INTO #POLICY-NBRS
+      move policy.policy-number to #pol-nbr
+    end-if
+  END-FIND
+  BEFORE-IMAGE.POLICY-NUMBER                := #POLICY-NBRS
+  BEFORE-IMAGE.DATE-SIGNED                   := design.DATE-SIGNED
+  BEFORE-IMAGE.COMMON-DISASTER               := design.COMMON-DISASTER
+  before-image.beneficiary-designation       := design.designation-id
+
+  DECIDE ON FIRST VALUE OF design.ALL-CHILDREN
+    VALUE '1'
+      BEFORE-IMAGE.ALL-CHILDREN-PRIMARY      := 'Y'
+      BEFORE-IMAGE.ALL-CHILDREN-CONTINGENT   := 'N'
+    VALUE '2'
+      BEFORE-IMAGE.ALL-CHILDREN-PRIMARY      := 'N'
+      BEFORE-IMAGE.ALL-CHILDREN-CONTINGENT   := 'Y'
+    VALUE '3'
+      BEFORE-IMAGE.ALL-CHILDREN-PRIMARY      := 'Y'
+      BEFORE-IMAGE.ALL-CHILDREN-CONTINGENT   := 'Y'
+    NONE VALUE
+      BEFORE-IMAGE.ALL-CHILDREN-PRIMARY      := 'N'
+      BEFORE-IMAGE.ALL-CHILDREN-CONTINGENT   := 'N'
+  END-DECIDE
+*
+  IF design.RESTRICTED-IRREVO ne ' '
+    BEFORE-IMAGE.IRREVOCABLE                   := 'Y'
+  ELSE
+    before-image.irrevocable                   := 'N'
+  END-IF
+*
+  BEFORE-IMAGE.PER-STIRPES-PRIMARY := SUBSTR(DESIGN.PER-STIRPES,1,1)
+  BEFORE-IMAGE.PER-STIRPES-CONTINGENT := SUBSTR(DESIGN.PER-STIRPES,2,1)
+*   DECIDE ON FIRST VALUE OF design.PER-STIRPES
+*     VALUE '1'
+*       BEFORE-IMAGE.PER-STIRPES-PRIMARY       := 'Y'
+*       BEFORE-IMAGE.PER-STIRPES-CONTINGENT    := 'N'
+*     VALUE '2'
+*       BEFORE-IMAGE.PER-STIRPES-PRIMARY       := 'N'
+*       BEFORE-IMAGE.PER-STIRPES-CONTINGENT    := 'Y'
+*     VALUE '3'
+*       BEFORE-IMAGE.PER-STIRPES-PRIMARY       := 'Y'
+*       BEFORE-IMAGE.PER-STIRPES-CONTINGENT    := 'Y'
+*     NONE VALUE
+*       BEFORE-IMAGE.PER-STIRPES-PRIMARY       := 'N'
+*       BEFORE-IMAGE.PER-STIRPES-CONTINGENT    := 'N'
+*   END-DECIDE
+
+end-find
+*
+*   Values for Beneficieres
+*
+#RELATIONSHIP-TYPE := PrimaryBene
+CALLNAT 'POSNCNTS'  /* Get all contacts with role primary beneficiary
+  DesignationUpdate.PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+*
+IF #NUMBER-OF-RELATIONS > 0
+  FOR #Z1 1 TO #NUMBER-OF-RELATIONS
+    ADD 1 TO #x1
+    EXPAND ARRAY BEFORE-IMAGE.ROLL-GROUP TO (1:#x1)
+    before-image.BENEFICIARY-TYPE(#x1) := 'P'
+BEFORE-IMAGE.FULL-NAME(#x1)   :=   /* EDIT_NAME_LOWCASE (<       /* bz-Name
+      FUNCTION-CONTACT-NAME
+      (< #POLICY-RELATIONS.CONTACT-ID(#Z1),
+      #POLICY-RELATIONS.VERSION(#Z1) >)
+/*      >)                                                           /* bz-Name 
+BEFORE-IMAGE.SSN(#x1)                 := GET-SSN(<#POLICY-RELATIONS.CONTACT-ID(#Z1),#POLICY-RELATIONS.VERSION(#Z1)>)             /* vt2
+BEFORE-IMAGE.DOB(#x1)                 := GET-DATE-OF-BIRTH(<#POLICY-RELATIONS.CONTACT-ID(#Z1),#POLICY-RELATIONS.VERSION(#Z1)>)   /* vt2
+ before-image.primary-bd-type          := #POLICY-RELATIONS.BENE-type(1)
+before-image.primary-nbr              := #POLICY-RELATIONS.BENE-share-type(1)
+BEFORE-IMAGE.SHARE(#x1)               := #POLICY-RELATIONS.BENE-fraction(#Z1)
+    examine before-image.share(#x1) for '%' replace ' '
+BEFORE-IMAGE.SETTLEMENT(#x1)          := #POLICY-RELATIONS.SETTLEMENT-TYPE(#Z1)
+BEFORE-IMAGE.RESTRICTION(#x1)         := #POLICY-RELATIONS.BENE-RESTRICTED(#Z1)
+    #CI := InsuredContactID
+    FIND CONT-REL-V WITH CONTACT-1-ID = #ci
+        AND CONTACT-2-ID =  #POLICY-RELATIONS.CONTACT-ID(#z1)
+before-image.Relation-To-Insured (#x1) :=  FUNCTION-DISP-RL-DESC(<ROLE-2-CD>)
+    END-FIND
+
+  END-FOR
+END-IF
+*
+if before-image.primary-bd-type  = ' '
+  #RELATIONSHIP-TYPE := UnformatedBene
+  CALLNAT 'POSNCNTS'  /* Get all contacts with role primary beneficiary
+    DesignationUpdate.PolicyNumber
+    #RELATIONSHIP-TYPE
+    #NUMBER-OF-RELATIONS
+    #POLICY-RELATIONS (*)
+    #ISNS(*)
+    #MSG
+  before-image.primary-bd-type      := #POLICY-RELATIONS.BENE-type(1)
+before-image.primary-nbr          :=  #POLICY-RELATIONS.BENE-share-type(1)
+end-if
+*
+#RELATIONSHIP-TYPE := ContingentBene
+CALLNAT 'POSNCNTS'  /* Get all contacts with role primary beneficiary
+  DesignationUpdate.PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #NUMBER-OF-RELATIONS > 0
+  FOR #Z1 1 TO #NUMBER-OF-RELATIONS
+    ADD 1 TO #x1
+    EXPAND ARRAY BEFORE-IMAGE.ROLL-GROUP TO (1:#x1)
+    before-image.BENEFICIARY-TYPE(#x1)       := 'C'
+*    BEFORE-IMAGE.FULL-NAME(#x1)             := EDIT_NAME_LOWCASE (<FUNCTION-CONTACT-NAME(< #POLICY-RELATIONS.CONTACT-ID(#Z1),#POLICY-RELATIONS.VERSION(#Z1) >)>)  /* bz-Name
+BEFORE-IMAGE.FULL-NAME(#x1)             := FUNCTION-CONTACT-NAME(< #POLICY-RELATIONS.CONTACT-ID(#Z1),#POLICY-RELATIONS.VERSION(#Z1) >)                         /* bz-Name
+BEFORE-IMAGE.SSN(#x1)                   := GET-SSN(<#POLICY-RELATIONS.CONTACT-ID(#Z1),#POLICY-RELATIONS.VERSION(#Z1)>)              /* vt2
+    if BEFORE-IMAGE.SSN(#x1) = ' '
+      move '000-00-0000' to before-image.ssn(#x1)
+    end-if
+BEFORE-IMAGE.DOB(#x1)                   := GET-DATE-OF-BIRTH(<#POLICY-RELATIONS.CONTACT-ID(#Z1),#POLICY-RELATIONS.VERSION(#Z1)>)    /* vt2
+before-image.contingent-bd-type         := #POLICY-RELATIONS.BENE-type(1)
+before-image.contingent-nbr             := #policy-relations.bene-share-type(1)
+BEFORE-IMAGE.SHARE(#x1)                 := #POLICY-RELATIONS.BENE-fraction(#Z1)
+BEFORE-IMAGE.SETTLEMENT(#x1)            := #POLICY-RELATIONS.SETTLEMENT-TYPE(#Z1)
+BEFORE-IMAGE.RESTRICTION(#x1)           := #POLICY-RELATIONS.BENE-RESTRICTED(#Z1)
+
+    FIND CONT-REL-V WITH CONTACT-1-ID = InsuredContactId
+        AND CONTACT-2-ID =  #POLICY-RELATIONS.CONTACT-ID(#z1)
+before-image.Relation-To-Insured (#x1) :=   FUNCTION-DISP-RL-DESC(<ROLE-2-CD>)
+    END-FIND
+
+  END-FOR
+END-IF
+*
+if before-image.contingent-bd-type  = ' '
+  #RELATIONSHIP-TYPE := UnformContBene
+  CALLNAT 'POSNCNTS'  /* Get all contacts with role primary beneficiary
+    DesignationUpdate.PolicyNumber
+    #RELATIONSHIP-TYPE
+    #NUMBER-OF-RELATIONS
+    #POLICY-RELATIONS (*)
+    #ISNS(*)
+    #MSG
+ before-image.contingent-bd-type      :=  #POLICY-RELATIONS.BENE-type(1)
+before-image.contingent-nbr          :=  #POLICY-RELATIONS.BENE-share-type(1)
+end-if
+*
+END-SUBROUTINE                                            /* vt1 /\
+*
+*****************
+DEFINE SUBROUTINE populate-after-tr                      /* vt1 \/
+*****************
+/*
+IF #INSURED-CN = 0
+  #INSURED-CN := F-GET-CN(<InsuredContactID>)
+END-IF
+*
+AFTER-IMAGE.POLICY-NUMBER             := #policy-nbrs           /* PolicyNumber
+AFTER-IMAGE.DESIGNATION-STATUS        := DesignationStatus
+AFTER-IMAGE.COMMON-DISASTER           := CommonDisaster
+AFTER-IMAGE.DATE-SIGNED               := DateSigned
+*
+after-image.primary-bd-type    := PrimaryType
+after-image.primary-nbr        := PrimaryShareType
+after-image.contingent-bd-type := ContingentType
+after-image.contingent-nbr     := ContingentShareType
+If  DesignationUpdate.Irrevocable
+  after-image.irrevocable        :=  'Y'
+else
+  after-image.irrevocable        := 'N'
+end-if
+
+IF AllChildrenPrimary
+  AFTER-IMAGE.ALL-CHILDREN-PRIMARY      := 'Y'
+ELSE
+  AFTER-IMAGE.ALL-CHILDREN-PRIMARY      := 'N'
+END-IF
+*
+IF AllChildrenContingent
+  AFTER-IMAGE.ALL-CHILDREN-CONTINGENT   := 'Y'
+ELSE
+  AFTER-IMAGE.ALL-CHILDREN-CONTINGENT   := 'N'
+END-IF
+*
+AFTER-IMAGE.PER-STIRPES-PRIMARY := PerStirpesPrimary
+AFTER-IMAGE.PER-STIRPES-CONTINGENT := PerStirpesContingent
+*
+IF C@DesignationContact > 0
+  IF #x1 > C@DesignationContact
+    EXPAND ARRAY AFTER-IMAGE.ROLL-GROUP TO (1:#x1)
+  ELSE
+    EXPAND ARRAY AFTER-IMAGE.ROLL-GROUP TO (1:C@DesignationContact)
+    EXPAND ARRAY BEFORE-IMAGE.ROLL-GROUP TO (1:C@DesignationContact)
+  END-IF
+END-IF
+*
+FOR I 1 TO C@DesignationContact
+
+  after-image.beneficiary-type(i)      := substr(BeneficiaryType(i),1,1)
+  AFTER-IMAGE.FULL-NAME(I)             := BeneficiaryName(I)
+  AFTER-IMAGE.SSN(I)                   := BENEFICIARYSSN(I)
+  move after-image.ssn(i) to #ssn
+  if #ssn-3 = 0
+    move '000-00-0000' to after-image.ssn(i)
+  else
+    AFTER-IMAGE.SSN(I) := get-ssn (<BeneficiaryContactID(i)>)
+  end-if
+  AFTER-IMAGE.DOB(I)                   := BeneficiaryBirthDate(I)
+  AFTER-IMAGE.SHARE(I)                 := DesignationUpdate.Share(I)
+  AFTER-IMAGE.SETTLEMENT(I)            := SettlementCode(I)
+  AFTER-image.Relation-to-insured (i)  := RelationToInsured (I)
+  IF RestrictedCode(I)
+    AFTER-IMAGE.RESTRICTION(I) := 'Y'
+  ELSE
+    AFTER-IMAGE.RESTRICTION(I) := 'N'
+  END-IF
+END-FOR
+
+TR-ID-NUMBER := F-GET-CN(<InsuredContactID>)
+TR-NAME      := FUNCTION-CONTACT-NAME(<InsuredContactID>)  /* Upper?
+tr-clerk     := #clerkId
+#FUNCTION    := #LOG-BENE-CHANGES
+CALLNAT 'GPRNTR05'  TRAN-LOG-HEADER BEFORE-IMAGE AFTER-IMAGE
+
+END-SUBROUTINE                                                       /* vt1 /\
+*
+*/
+ON ERROR
+  BACKOUT TRANSACTION
+  RESET DesignationUpdate.ErrorCode  /* NG1
+  CALLNAT 'AUCLOG'
+    DesignationUpdate.ErrorCode
+    DesignationUpdate.ErrorDescription
+    #ERROR-LOG
+  ESCAPE ROUTINE
+END-ERROR
+*
+END
