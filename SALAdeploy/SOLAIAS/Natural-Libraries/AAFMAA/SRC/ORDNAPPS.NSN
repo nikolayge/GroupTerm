@@ -142,16 +142,28 @@ LOCAL
   2 ALL-CHILDREN (A1)  
   2 CONTACT-ID   (N8) 
   2 RELATION-INSURED (A20)  
+
 1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
   2 ROLE-1-CD  (A1)
   2 ROLE-2-CD  (A1)
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER  (N6)
+  2 AT-GUID    (A50)
+  2 AT-STATUS  (A2)
+1 #GEN-KEY   (A4)
+1 GEN-TABLE-V VIEW OF A-GEN-TABLE
+  2 GEN-KEY (A4)
+  2 GEN-SUB-KEY (A3)
+  2 GEN-ALPHA-VALUE (A50)
+1 ST-V VIEW OF A-STATUS
+  2 LINKED-CN      (N6/30)
+1 cnt-v view of a-contacts
+  2 contact-id (n8)
+  2 id-number  (n6)
 
 1 BLANK   (A1) CONST <' '>
 1 YES     (A1) CONST <'Y'>
 1 NO      (A1) CONST <'N'>
-1 AT-V VIEW OF A-APPL-TRACKING
-  2 ID-NUMBER  (N6)
-  2 AT-GUID    (A50)
 1 J     (I4)
 1 K     (I4)
 1 #MSG  (A) DYNAMIC
@@ -161,20 +173,10 @@ LOCAL
   2 #Units   (n4)
   2 #Dollars (n3)
 1 #AT-ISN    (N8)
-
-1 #GEN-KEY   (A4)
-1 GEN-TABLE-V VIEW OF A-GEN-TABLE
-  2 GEN-KEY (A4)
-  2 GEN-SUB-KEY (A3)
-  2 GEN-ALPHA-VALUE (A50)
-1 ST-V VIEW OF A-STATUS
-  2 LINKED-CN      (N6/30)
 1 #CLERK-ID       (A3)
 1 FROM-ONLINE-APP (A1) 
 
-1 cnt-v view of a-contacts
-  2 contact-id (n8)
-  2 id-number  (n6)
+
 1 PaymentOptions (A/10) DYNAMIC INIT <
   'MonthlyMilitaryAllotment',
   'MonthlyBankAccountWithdrawal',
@@ -207,56 +209,63 @@ FIND GEN-TABLE-V WITH GEN-KEY = #GEN-KEY
 END-FIND
 
 FOR J 1 TO IASOrder.C@Application
-  FIND AT-V WITH AT-GUID = IASOrder.CrmApplicationID (J)
+  F1.
+  FIND (1) AT-V WITH AT-GUID = IASOrder.CrmApplicationID (J)
     IF NO RECORDS FOUND
       PERFORM CREATE-APPLICATION
-      ESCAPE ROUTINE
+      ESCAPE BOTTOM
     END-NOREC
-    IASOrder.ATNumber(j) := AT-V.ID-NUMBER
+    IF AT-V.AT-STATUS = 'SD'
+      DELETE (F1.)
+      PERFORM CREATE-APPLICATION
+    ELSE
+      IASOrder.ATNumber(j) := AT-V.ID-NUMBER
+    END-IF
   END-FIND
 END-FOR
 
 DEFINE CREATE-APPLICATION-ROLES
 /*     ------------------------
 *
-* Application roles are CrmApplicationID Role CRMContactID
+* Application roles are [CrmApplicationID, Role, CRMContactID]
 *
 FIND APR-V WITH AT-GUID = IASOrder.CrmApplicationID (J)
   DELETE
 END-FIND
 /*
-**IASOrder.CRMMemberID
+
 RESET CrmMemberRole
 MemberGUID := IASOrder.CRMMemberID
+PayerGUID  := IASOrder.CRMMemberID
 FIND (1) CNT-V WITH CRM-CONTACT-GUI = MemberGUID
   MemberCI := CNT-V.contact-id
 END-FIND
-
 
 FOR K 1 TO C@ApplicationRoles (J) 
   RESET #AT-ROLES
   #AT-ROLES.AT-GUID      := IASOrder.CrmApplicationID (J)
   #AT-ROLES.CONTACT-GUID := IASOrder.CRMContactID     (J,K)
   #AT-ROLES.CONTACT-ID   := IASOrder.IASContactID     (J,K)
+  IF #AT-ROLES.CONTACT-ID = 0
+    find (1) cnt-v with CRM-CONTACT-GUI = IASOrder.CRMContactID (J,K)
+      if no records found
+        #AT-ROLES.CONTACT-ID := MemberCI
+      end-norec
+      #AT-ROLES.CONTACT-ID := cnt-v.contact-id
+    end-find
+  END-IF
   #AT-ROLES.RELATION := GET-RELATION-ID (< IASOrder.Name (J,K) >)
   #AT-ROLES.RelationToInsured := IASOrder.InsuredRelation (J,K)
 
   DECIDE ON FIRST VALUE OF #AT-ROLES.RELATION
     VALUE InsuredRole
       InsuredGuid := IASOrder.CRMContactID (J,K)
-      find (1) cnt-v with CRM-CONTACT-GUI = InsuredGuid
-        InsuredCI := cnt-v.contact-id
-      end-find
+      InsuredCI   := #AT-ROLES.CONTACT-ID
     VALUE MemberRole
       MemberGUID := IASOrder.CRMContactID (J,K)
-      MemberCI   := IASOrder.IASContactID (J,K)
       CrmMemberRole := TRUE
     VALUE PayorRole
       PayerGUID := IASOrder.CRMContactID (J,K)
-    VALUE PrimaryOwner
-      IF PayerGUID = BLANK
-        PayerGUID := IASOrder.CRMContactID (J,K)
-      END-IF
     NONE VALUE IGNORE
   END-DECIDE
 
@@ -294,7 +303,7 @@ FOR K 1 TO C@ApplicationRoles (J)
   STORE APR-V
 
 END-FOR
-
+*                   Create Member role if it is not passed from CRM
 IF NOT CrmMemberRole
   RESET APR-V
   APR-V.ADD-USER := *USER
@@ -308,16 +317,17 @@ IF NOT CrmMemberRole
   APR-V.CONTACT-GUID  := MemberGUID
   APR-V.CONTACT-ID    := MemberCI
   APR-V.RELATION-ROLE := MemberRole
+  APR-V.RELATION-INSURED  := 'Self'
 
   FIND CR-V WITH CONTACT-1-ID = InsuredCI
       and CONTACT-2-ID = MemberCI
     decide on first value of ROLE-1-CD
       value 'K', 'D', 'B'
-        #AT-ROLES.RelationToInsured := 'Parent'
+        apr-v.RELATION-INSURED := 'Parent'
       value 'G'
-        #AT-ROLES.RelationToInsured := 'Grandparent'
+        apr-v.RELATION-INSURED := 'Grandparent'
       none value
-        #AT-ROLES.RelationToInsured  := 'Spouse'
+        apr-v.RELATION-INSURED  := 'Spouse'
     end-decide
   END-FIND
 
@@ -396,13 +406,20 @@ ELSE
 
   IF MemberCI > 0
     FIND (1) CNT-V WITH CONTACT-ID = MemberCI
-      #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
     END-FIND
   ELSE
     FIND (1) CNT-V WITH CRM-CONTACT-GUI = MemberGUID
-      #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
     END-FIND
   END-IF
+
+  IF CNT-V.contact-id > 0 /* Create payer CN
+      AND CNT-V.ID-NUMBER = 0
+    CALLNAT 'C2002NNM'
+      CNT-V.contact-id
+      CNT-V.id-number
+      #MSG
+  END-IF
+  #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
 
   /*             Check contact relation
   FIND CR-V WITH CONTACT-1-ID = InsuredCI
@@ -495,7 +512,7 @@ IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
       FOR K 1 TO 30
         IF ST-V.LINKED-CN ( K ) = 0
           ST-V.LINKED-CN ( K ) := AP-Tracking.ID-NUMBER
-          UPDATE (0489)
+          UPDATE (0506)
           ESCAPE BOTTOM
         END-IF
       END-FOR
