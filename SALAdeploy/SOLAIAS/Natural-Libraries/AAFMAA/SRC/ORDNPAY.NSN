@@ -10,6 +10,9 @@
 /*  The Contact ID abd ID-NUMBER are required to create payor information
 /*  For all applications there is one insured and one payer
 /*
+/* If the CC information is input in the Sales App process, the E-Deposit 
+/* flag on AT should be populated with C 
+/*
 DEFINE DATA
 PARAMETER
   USING ORDPDA
@@ -26,6 +29,10 @@ LOCAL
 1 cnt-v view of a-contacts
   2 contact-id (n8)
   2 id-number  (n6)
+1 #msg  (a) Dynamic
+1 Payer-Contact-Id  (a36)
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 E-DEPOSIT-IND (A1)
 END-DEFINE
 /* 
 RESET PARM-CC-DATA
@@ -38,22 +45,29 @@ end-if
 /* get insured/payor CN and Contact ID
 for j 1 to C@ApplicationRoles (1)
   if IASOrder.Name(1,j) = 'Insured'
-    PARM-CC-INFO.CRM-CONTACT-ID := IASOrder.CRMContactID (1,j)
+    PARM-CC-INFO.CRM-CONTACT-ID := IASOrder.CRMContactID (1,j)  /* Guid
     find (1) cnt-v with CRM-CONTACT-GUI = IASOrder.CRMContactID (1,j)
       PARM-CC-DATA.#PARM-ID-NUMBER := cnt-v.id-number
     end-find
   end-if
-/* The payer has to have a CN Number
   if IASOrder.Name(1,j) = 'Payer'
-      and PARM-CC-INFO.CRM-CONTACT-ID NE IASOrder.CRMContactID (1,j)
-    PARM-CC-INFO.CRM-CONTACT-ID := IASOrder.CRMContactID (1,j)
-    find (1) cnt-v with CRM-CONTACT-GUI = IASOrder.CRMContactID (1,j)
-      if cnt-v.id-number > 0
-        PARM-CC-DATA.#PARM-ID-NUMBER := cnt-v.id-number
-      end-if
-    end-find
+    Payer-Contact-Id := IASOrder.CRMContactID (1,j)
   end-if
 end-for
+
+if Payer-Contact-Id NE BLANK
+    and Payer-Contact-Id NE PARM-CC-INFO.CRM-CONTACT-ID /* Insured
+  find (1) cnt-v with CRM-CONTACT-GUI = Payer-Contact-Id
+    if cnt-v.id-number = 0
+      /* Create payer CN
+      CALLNAT 'C2002NNM'
+        cnt-v.contact-id
+        cnt-v.id-number
+        #msg
+      update
+    end-if
+  end-find
+end-if
 
 PARM-CC-DATA.#ACTION := #GET-BY-ID
 PARM-CC-INFO.CC-GUID := IASOrder.CCSageGuid
@@ -78,13 +92,13 @@ if PARM-CC-DATA.#NUMBER-OF-RECORDS = 0
   PARM-CC-INFO.CCHOLDER-ADDL-ADDR := IASOrder.Unit
   PARM-CC-INFO.CCHOLDER-CITY     := *TRANSLATE(IASOrder.City,UPPER)
   PARM-CC-INFO.CCHOLDER-STATE-CD := *TRANSLATE(IASOrder.State,UPPER)
-  PARM-CC-INFO.CCHOLDER-COUNTRY  := *TRANSLATE(IASorder.CountryCode,UPPER)
+PARM-CC-INFO.CCHOLDER-COUNTRY  := *TRANSLATE(IASorder.CountryCode,UPPER)
   PARM-CC-INFO.CC-DEFAULT-IND := 'Y'
-  PARM-CC-INFO.LAST-TIME-UPDATE := *TIMN 
-  PARM-CC-INFO.LAST-USER-UPDATE := FUNCTION-WEB-USER(<IASOrder.UserCode>)(2) 
+  PARM-CC-INFO.LAST-TIME-UPDATE := *TIMN
+PARM-CC-INFO.LAST-USER-UPDATE := FUNCTION-WEB-USER(<IASOrder.UserCode>)(2)
   PARM-CC-INFO.LAST-DATE-UPDATE := *DATN
 /* Only US address
-  IF PARM-CC-INFO.CCHOLDER-COUNTRY ='US' OR = 'USA' OR = BLANK 
+  IF PARM-CC-INFO.CCHOLDER-COUNTRY ='US' OR = 'USA' OR = BLANK
     PARM-CC-INFO.CCHOLDER-ZIP-CODE := val(IASOrder.Zip)
     PARM-CC-INFO.CC-ADDR-FORMAT-CODE := '1'
   ELSE
@@ -95,6 +109,17 @@ if PARM-CC-DATA.#NUMBER-OF-RECORDS = 0
   CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
   if PARM-CC-DATA.#RESULT-CODE NE BLANK
     IASOrder.ErrorDescription := F-ERROR-DESCRIPTION(<#RESULT-CODE>)
+  else
+    FOR j 1 TO IASOrder.C@Application
+      F1.
+      FIND (1) AT-V WITH AT-GUID = IASOrder.CrmApplicationID (j)
+        IF NO RECORDS FOUND
+          ESCAPE BOTTOM
+        END-NOREC
+        AT-V.E-DEPOSIT-IND := 'C'
+        update
+      END-FIND
+    END-FOR
   end-if
 end-if
 END
