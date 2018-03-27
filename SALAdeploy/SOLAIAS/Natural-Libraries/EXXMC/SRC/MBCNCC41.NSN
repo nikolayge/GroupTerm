@@ -1,0 +1,210 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online / MC-II
+* MBCNCC41 - ManageCreditCardInformation business logic
+* Called from MBCNCC40 / MBCNEP31
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    09012016       Initial Creation
+*                       Added to handle multiple credit cards for CN
+*                       This program will handle 'GET' function
+*                       Add/Update/Delete of a single card moved to MBCNCC42
+* YAK    09142016  YK1  Populate recurring indicator
+* YAK    09142016  YK2  Changes for EB&P III Payer project
+*                       Populate last update fields
+************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCACC40
+PARAMETER
+1 #ErrorCode  (A3)
+1 #LINKED_CN  (N6/*) OPTIONAL
+LOCAL USING OBJACC01
+LOCAL USING ERROR_L
+LOCAL
+1 #GET-ALL         (A) DYNAMIC CONST <'GET-ALL'>
+1 #GET-BY-ISN      (A) DYNAMIC CONST <'GET-BY-ISN'>
+1 #GET-DEFAULT-CARD(A) DYNAMIC CONST <'GET'>
+1 #INTER           (A) DYNAMIC CONST <'2'>
+1 #DOMESTIC        (A) DYNAMIC CONST <'1'>
+1 #US              (A) DYNAMIC CONST <'US'>
+1 #FULL-NAME       (A) DYNAMIC
+1 #ZIP             (N5)
+1 #MasterCard      (A) DYNAMIC CONST <'MasterCard'>
+1 #Visa            (A) DYNAMIC CONST <'Visa'>
+1 #Unknown         (A) DYNAMIC CONST <'Unknown'>
+1 #CC-ARRAY        (P9/3)
+1 #NUMBER-CC       (N2)
+1 #I               (I2)
+1 #I1              (I2)
+1 #I2              (I2)
+1 #II              (I2)
+* YK1>
+1 #CC-MODE         (A1/4) CONST <'0','1','2','4'>
+1 #ACTIVE          (A1)   CONST <'D'>
+1 #SERV-PAYABLE    (A3/2) CONST <'PSM','SAS'>
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 C*ACTIVE-SEGMENTS
+  2 MODE (9)
+  2 STATUS (9)
+  2 PAY-STATUS (9)
+  2 X-ALT-LP-IND (9)
+  2 X-LOAN-AMOUNT(9)
+  2 X-ALT-LP-IND-2 (9)
+  2 X-LOAN-AMOUNT-2 (9)
+  2 X-ALT-LP-AMT (9)
+1 SVC-MEMBER-V VIEW OF A-SVC-MEMBER
+  2 SVC-ID-NUMBER
+  2 SVC-PLAN
+  2 SVC-STATUS
+  2 SVC-MODE
+* > YK1
+END-DEFINE
+*
+DECIDE ON FIRST VALUE CreditCards.ActionType
+  VALUE #GET-ALL
+    #PARM-ID-NUMBER := CreditCards.ViewCN
+    PERFORM GET-CC-CARD-ARRAY
+    PERFORM GET-LINKED-CARDS
+  VALUE #GET-DEFAULT-CARD
+    PERFORM GET-DEFAULT-CARD
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+***********************************
+DEFINE SUBROUTINE GET-CC-CARD-ARRAY
+***********************************
+*
+#ACTION := #GET-ALL
+* #PARM-ID-NUMBER := CreditCards.OwnerCN
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO #CC-ARRAY(*)
+IF #NUMBER-OF-RECORDS <> 0
+  #NUMBER-CC := #NUMBER-OF-RECORDS
+  FOR #I1 = 1 TO #NUMBER-CC
+    RESET PARM-CC-INFO PARM-CC-DATA
+    if  #CC-ARRAY(#I1) > 0
+      #ISN := #CC-ARRAY(#I1)
+      PERFORM GET-CC-DATA
+    end-if
+  END-FOR
+END-IF
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-LINKED-CARDS
+**********************************
+*
+* #I := C@Account
+IF #LINKED_CN SPECIFIED
+  FOR #I2 = 1 TO *OCCURRENCE(#LINKED_CN)
+    RESET PARM-CC-INFO PARM-CC-DATA
+    PARM-CC-DATA.#PARM-ID-NUMBER := #LINKED_CN(#I2)
+    PERFORM GET-CC-CARD-ARRAY
+*   PERFORM GET-DEFAULT-CARD
+  END-FOR
+END-IF
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE GET-CC-DATA
+*****************************
+*
+#ACTION := #GET-BY-ISN
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+IF #RESULT-CODE = ' '
+* #I := #I + 1
+  PERFORM POPULATE-PARAMETER
+END-IF
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-DEFAULT-CARD
+**********************************
+*
+#ACTION := #GET-DEFAULT-CARD
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+IF #RESULT-CODE = ' '
+* #I := #I + 1
+  PERFORM POPULATE-PARAMETER
+END-IF
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE POPULATE-PARAMETER
+************************************
+*
+#I := #I + 1
+EXPAND ARRAY Account TO (*:#I)
+CreditCards.AccountCN(#I)    := PARM-CC-INFO.ID-NUMBER
+CreditCards.CardNumber(#I)   := PARM-CC-INFO.CC-NUMBER              /* YK3
+CreditCards.CardGUID(#I)     := PARM-CC-INFO.CC-GUID                /* YK3
+IF PARM-CC-INFO.CC-DEFAULT-IND = 'Y'                                /* YK4
+  CreditCards.DefaultInd(#I) := 'true'
+ELSE
+  CreditCards.DefaultInd(#I) := 'false'
+END-IF
+DECIDE FOR FIRST CONDITION
+  WHEN SUBSTR(CreditCards.CardNumber(#I),1,1) = '4'
+    CreditCards.CardType(#I) := #Visa
+WHEN SUBSTR(CreditCards.CardNumber(#I),1,2) > '50' AND SUBSTR(CreditCards.CardNumber(#I),1,2) < '56'
+    CreditCards.CardType(#I) := #MasterCard
+  WHEN NONE
+    CreditCards.CardType(#I) := #Unknown
+END-DECIDE
+CreditCards.ExMonth(#I)      := PARM-CC-INFO.CC-EXPIRATION-MONTH
+CreditCards.ExYear(#I)       := PARM-CC-INFO.CC-EXPIRATION-YEAR
+CreditCards.Street(#I)       := PARM-CC-INFO.CCHOLDER-STREET-ADDR
+CreditCards.Street2(#I)      := PARM-CC-INFO.CCHOLDER-ADDL-ADDR
+CreditCards.City(#I)         := PARM-CC-INFO.CCHOLDER-CITY
+CreditCards.StateProvinceRegion(#I) := PARM-CC-INFO.CCHOLDER-STATE-CD
+IF CC-ADDR-FORMAT-CODE = '1'
+MOVE EDITED PARM-CC-INFO.CCHOLDER-ZIP-CODE (EM=99999) TO CreditCards.ZipCode(#I)
+ELSE
+  CreditCards.ZipCode(#I)    := PARM-CC-INFO.CCHOLDER-POSTAL-CODE
+END-IF
+CreditCards.CountryCode(#I)  := PARM-CC-INFO.CCHOLDER-COUNTRY
+* YK2 >
+* Format Card Holder name if not already formatted
+IF PARM-CC-INFO.CCHOLDER-NAME = SCAN(',')              /* Convert Last, First Middle to default
+  #FULL-NAME := PARM-CC-INFO.CCHOLDER-NAME
+  #FULL-NAME := FUNCTION-FORM-NAME(<#FULL-NAME,'C'>)
+  CreditCards.CardHolder(#I) := #FULL-NAME
+ELSE
+CreditCards.CardHolder(#I) := PARM-CC-INFO.CCHOLDER-NAME    /* First MI Last - default
+END-IF
+* YK2 >
+CreditCards.LastUpdatedDate(#I) := PARM-CC-INFO.LAST-DATE-UPDATE
+CreditCards.LastUpdatedTime(#I) := PARM-CC-INFO.LAST-TIME-UPDATE
+CreditCards.LastUpdatedUser(#I) := PARM-CC-INFO.LAST-USER-UPDATE
+* < YK2
+* Check if has recurring CC payments and mark default card
+CreditCards.Recurring(#I) := 'false'
+CreditCards.Modifiable(#I):= 'true'
+IF CreditCards.DefaultInd(#I) = 'true'
+  PERFORM CHECK-RECURRING-PAYMENTS
+END-IF
+CreditCards.C@Account := #I
+*
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE CHECK-RECURRING-PAYMENTS
+******************************************
+*
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = CreditCards.ViewCN
+  ACCEPT IF SVC-MEMBER-V.SVC-PLAN = #SERV-PAYABLE(*)
+  IF (SVC-STATUS = 'A' OR SVC-PLAN = 'SAS' AND SVC-STATUS = 'P')
+      AND SVC-MEMBER-V.SVC-MODE = #CC-MODE(*)
+    CreditCards.Recurring(#I) := 'true'
+  END-IF
+END-FIND
+END-SUBROUTINE
+*
+END
