@@ -1,0 +1,655 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* <Natural Source Header
+/** New Subprogram LWSNSRV.
+/**
+/** :author nguentchev
+/* This is the main program to pass Policy data to CRM
+/* There are TEST, DEVL and PROD services
+/* The URI are stored in LWSLURI. LWSNURIA makes URI environment aware
+/* Codding the names of natural objects
+/* Prefix LWSN
+/* Next two lettes are for entity name:
+/*  AT = application tracking
+/*  PD = policy details
+/*  DS = designation
+/*  PR = policy relations
+/* Next two letters are for what:
+/*  DA = DAta collection
+/*  JS = JSON generation
+/*  
+/* services
+/* 
+DEFINE DATA
+PARAMETER
+1 #REQUEST        (I4)
+1 #INSURED-CI     (N8)
+1 #POLICY-ID      (A16)
+1 #AT-NUMBER      (N6)
+1 #DESIGNATION-ID (N8)
+1 ErrorMsg        (A) DYNAMIC
+LOCAL USING CDRDOCL   /* Web Service return codes
+LOCAL USING LWSAPD    /* Policy data
+LOCAL USING LWSADS    /* Designation
+LOCAL USING LWSAPR    /* Policy roles
+LOCAL USING LWSAAT    /* Application data
+LOCAL USING LWSLURI   /* Service URIs
+LOCAL USING LWSLITRL  /* Test constants
+LOCAL USING AUCAPOLS  /* Policy structure AUC
+LOCAL USING POSADSGN  /* Designation data AUC
+LOCAL USING LWSLUID   /* GIUD operations
+LOCAL USING LWSLRQST  /* REQUEST codes
+LOCAL USING POSLROLE
+LOCAL USING POSAGET
+LOCAL
+1 BLANK             (A1) CONST <' '>
+1 #GET              (I4) CONST <0>
+1 #URI              (A) DYNAMIC
+1 #Resultxml (A) DYNAMIC
+1 #rc        (I4)
+1 ##ERROR
+  2 ##ERROR-DESC (A) DYNAMIC
+  2 ##HTTP-ERROR-CODE (I4)
+1 jSonString (A) DYNAMIC
+1 #NAT-ERROR (I4)
+
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 DATE-OF-DEATH
+  2 C*ACTIVE-SEGMENTS  (N3)
+  2 STATUS    (9)
+  2 MODE      (9)
+  2 POLICY-ID (9)
+
+1 #CVALUSXX-PARMS /* for AUCNPOG1 call
+  2 #SUFFIX                    (A3)
+  2 #AS-OF-YYYYMMDD            (N8)
+  2 #LOAN-BAL                  (N7.2/9)
+  2 #LOAN-BAL-2                (N7.2/9)
+  2 #ACC-INT                   (N7.2/9)
+  2 #ACC-INT-2                 (N7.2/9)
+  2 #CSV                       (N7.2/9)
+  2 #CVALUE                    (N7.2/9)
+  2 #LVALUE                    (N7.2/9)
+  2 #MCSV                      (N7.2/9)
+  2 #DB                        (N7.2/9)
+  2 #ANN-PREM                  (N7.2/9)
+  2 #FACE-AMT                  (N7.2/9)
+  2 #TPP                       (N7.2/9)
+1 #INSURED-ISN             (P10)
+
+1 #D       (N8) 1 REDEFINE #D
+  2 #YYYY  (A4)
+  2 #MM    (A2)
+  2 #DD    (A2)
+1 CUR-LINE (A70)
+1 I      (I2)
+1 J      (I2)
+1 J1     (I2)
+1 L      (I2)
+1 K      (I2)
+1 N      (I2)
+1 #POLICY-ROLE-GUID  (A50/99)
+1 #POLICY-ROLE-CODE  (N2/99)
+END-DEFINE
+/* 
+DECIDE ON FIRST VALUE OF #REQUEST
+  VALUE POLICY-REQ
+    PERFORM POLICY-SYNC
+  VALUE POLICY-DELETE-REQ
+    PERFORM POLICY-DELETE-SYNC
+  VALUE POLICY-GET-REQ
+    PERFORM POLICY-GET-REQUEST
+
+  VALUE DSGNTN-REQ
+    PERFORM DESIGNATION-SYNC
+  VALUE DSGNTN-DELETE-REQ
+    PERFORM DESIGNATION-DELETE-SYNC
+  VALUE DSGNTN-GET-REQ
+    PERFORM DESIGNATION-GET-REQUEST
+
+  VALUE POROLE-REQ
+    PERFORM POLICYROLE-SYNC
+  VALUE POROLE-DELETE-REQ
+    PERFORM POLICYROLE-DELETE-SYNC
+
+  VALUE APPLCTN-REQ
+    PERFORM APPLICATION-SYNC
+  VALUE APPLCTN-DELETE-REQ
+    PERFORM APPLICATION-DELETE-SYNC
+  VALUE APPLCTN-GET-REQ
+    PERFORM APPLICATION-GET-REQUEST
+
+  VALUE CONTACT-GET-REQ
+    PERFORM CONTACT-GET-REQUEST
+
+  VALUE PING
+    #URI := #URI-PING
+    REQUEST DOCUMENT FROM #URI
+      RETURN
+        PAGE #Resultxml
+    RESPONSE #rc
+      GIVING #NAT-ERROR
+  NONE VALUE
+    ErrorMsg := 'Not supported request'
+END-DECIDE
+/*
+DEFINE CONTACT-GET-REQUEST
+/*    ------------------------
+#URI := #URI-CNT-GET
+COMPRESS 'iascontactid' #INSURED-CI 
+  INTO jSonString WITH DELIMITER '='
+COMPRESS #URI jSonString INTO #URI WITH DELIMITER '?'
+PERFORM GET-DOCUMENT
+IF SUBSTR(ErrorMsg,1,4) EQ 'GUID' 
+  AT-DATA.ContactGUID := #Resultxml
+  CALLNAT 'LWSNATID' 
+    UPDATE-CONT-GUID
+    #AT-NUMBER
+    AT-DATA.ContactGUID
+    ErrorMsg
+  COMPRESS 'GUID' #Resultxml INTO ErrorMsg WITH DELIMITER '='
+END-IF
+END-SUBROUTINE
+/*
+DEFINE APPLICATION-GET-REQUEST
+/*    ------------------------
+#URI := #URI-AT-GET
+COMPRESS 'atnumber' #AT-NUMBER 
+  INTO jSonString WITH DELIMITER '='
+COMPRESS #URI jSonString INTO #URI WITH DELIMITER '?'
+PERFORM GET-DOCUMENT
+IF SUBSTR(ErrorMsg,1,4) EQ 'GUID' 
+**    and #Resultxml NE BLANK
+  IF #Resultxml = BLANK
+    AT-DATA.applicationtrackingid := 'Not Found'
+  ELSE
+    AT-DATA.applicationtrackingid := #Resultxml
+  END-IF
+  CALLNAT 'LWSNATID' 
+    UPDATE-AT-GUID
+    #AT-NUMBER
+    AT-DATA.applicationtrackingid
+    ErrorMsg
+  COMPRESS 'GUID' #Resultxml INTO ErrorMsg WITH DELIMITER '='
+END-IF
+END-SUBROUTINE
+/*
+DEFINE APPLICATION-SYNC
+/*      ----------------
+RESET AT-DATA
+AT-DATA.atnumber := #AT-NUMBER
+
+CALLNAT 'LWSNATDA'
+  AT-DATA
+  ErrorMsg
+IF ErrorMsg = #RD-SUCCESS OR= BLANK
+
+  IF AT-DATA.applicationtrackingid EQ BLANK OR= 'Not Found'
+    #URI := #URI-AT-CREATE
+  ELSE
+    #URI := #URI-AT-UPDATE
+  END-IF
+
+  CALLNAT 'LWSNATJS' AT-DATA jSonString
+  PERFORM REQ-DOCUMENT  /* Application Data Create/Update
+ELSE
+  CALLNAT 'LWSNLOG'
+    #URI
+    #NAT-ERROR
+    jSonString
+    ErrorMsg
+    #Resultxml
+END-IF
+
+IF ErrorMsg = #RD-SUCCESS
+    AND AT-DATA.applicationtrackingid EQ BLANK
+  AT-DATA.applicationtrackingid := #Resultxml
+
+  CALLNAT 'LWSNATID' 
+    UPDATE-AT-GUID
+    AT-DATA.atnumber
+    AT-DATA.applicationtrackingid
+    ErrorMsg
+END-IF
+
+END-SUBROUTINE
+/*
+DEFINE APPLICATION-DELETE-SYNC
+/*     -----------------------
+RESET AT-DATA
+AT-DATA.atnumber := #AT-NUMBER
+CALLNAT 'LWSNATDA'
+  AT-DATA
+  ErrorMsg
+IF ErrorMsg = BLANK
+    AND AT-DATA.applicationtrackingid NE BLANK
+  #URI := #URI-AT-DELETE
+  COMPRESS '=' AT-DATA.applicationtrackingid INTO
+    jSonString LEAVING NO
+  PERFORM REQ-DOCUMENT  /* Policy Data
+  IF ErrorMsg = #RD-SUCCESS
+      OR= #RD-NOT-FOUND
+    RESET AT-DATA.applicationtrackingid
+    CALLNAT 'LWSNATID' 
+      DELETE-AT-GUID
+      AT-DATA.atnumber
+      AT-DATA.applicationtrackingid
+      ErrorMsg
+  END-IF
+ELSE
+  CALLNAT 'LWSNLOG'
+    #URI
+    #NAT-ERROR
+    jSonString
+    ErrorMsg
+    #Resultxml
+END-IF
+END-SUBROUTINE
+
+/*                    ==============
+/*                    POLICY REQUEST
+/*                    ==============
+
+DEFINE POLICY-GET-REQUEST
+/*     ------------------
+#URI := #URI-POL-GET
+COMPRESS 'policynumber' #POLICY-ID 
+  INTO jSonString WITH DELIMITER '='
+COMPRESS #URI jSonString INTO #URI WITH DELIMITER '?'
+PERFORM GET-DOCUMENT
+IF SUBSTR(ErrorMsg,1,4) EQ 'GUID' 
+  Policy-Flat.PolicyGUID := #Resultxml
+  CALLNAT 'LWSNGUID' SAVE-PO-GUID
+    #POLICY-ID
+    #DESIGNATION-ID
+    Policy-Flat.PolicyGUID
+    #POLICY-ROLE-GUID (*)
+    #POLICY-ROLE-CODE (*)
+    PolicyDesignation.DesignationGUID
+    ErrorMsg
+  COMPRESS 'GUID' #Resultxml INTO ErrorMsg WITH DELIMITER '='
+END-IF
+END-SUBROUTINE
+/*
+DEFINE POLICY-SYNC
+/*    ------------
+FIND ST-V WITH MEMBER-CONTACT-ID = #INSURED-CI
+  #INSURED-CI := ST-V.MEMBER-CONTACT-ID
+  FOR I 1 TO C*ACTIVE-SEGMENTS
+    IF ST-V.POLICY-ID (I) = #POLICY-ID
+      RESET Policy
+      Policy.PolicyNumber := #POLICY-ID
+      /* Collect policy data
+      CALLNAT 'AUCNPOG1' Policy
+        #INSURED-CI
+        I
+        #CVALUSXX-PARMS
+        #INSURED-ISN
+
+      MOVE BY NAME Policy to Policy-Flat
+      Policy-Flat.ContactId := #INSURED-CI
+      Policy-Flat.Premium := Policy.ModalPremium
+
+      CALLNAT 'LWSNGUID' GET-PO-GUID
+        #POLICY-ID
+        #DESIGNATION-ID
+        Policy-Flat.PolicyGUID
+        #POLICY-ROLE-GUID (*)
+        #POLICY-ROLE-CODE (*)
+        PolicyDesignation.DesignationGUID
+        ErrorMsg
+
+      IF Policy-Flat.PolicyGUID NE BLANK
+        #URI := #URI-POL-UPDATE
+      ELSE
+        #URI := #URI-POL-CREATE
+      END-IF
+      CALLNAT 'LWSNPDJS' Policy-Flat jSonString
+      PERFORM REQ-DOCUMENT  /* Policy Data
+
+      IF ErrorMsg = #RD-SUCCESS
+          AND Policy-Flat.PolicyGUID EQ BLANK
+        Policy-Flat.PolicyGUID := #Resultxml
+
+        CALLNAT 'LWSNGUID' SAVE-PO-GUID
+          #POLICY-ID
+          #DESIGNATION-ID
+          Policy-Flat.PolicyGUID
+          #POLICY-ROLE-GUID (*)
+          #POLICY-ROLE-CODE (*)
+          PolicyDesignation.DesignationGUID
+          ErrorMsg
+      END-IF
+      ESCAPE BOTTOM  /* Only one policy
+    END-IF
+  END-FOR
+END-FIND
+END-SUBROUTINE
+/*
+DEFINE POLICY-DELETE-SYNC
+/*     ------------------
+Policy-Flat.PolicyNumber := #POLICY-ID
+CALLNAT 'LWSNGUID' GET-PO-GUID
+  #POLICY-ID
+  #DESIGNATION-ID
+  Policy-Flat.PolicyGUID
+  #POLICY-ROLE-GUID (*)
+  #POLICY-ROLE-CODE (*)
+  PolicyDesignation.DesignationGUID
+  ErrorMsg
+
+IF Policy-Flat.PolicyGUID NE BLANK
+  #URI := #URI-POL-DELETE
+  COMPRESS '=' Policy-Flat.PolicyGUID INTO
+    jSonString LEAVING NO
+  PERFORM REQ-DOCUMENT  /* Policy delete
+
+/*  IF ErrorMsg = #RD-SUCCESS
+  RESET Policy-Flat.PolicyGUID
+  CALLNAT 'LWSNGUID' DELETE-PO-GUID
+    #POLICY-ID
+    #DESIGNATION-ID
+    Policy-Flat.PolicyGUID
+    #POLICY-ROLE-GUID (*)
+    #POLICY-ROLE-CODE (*)
+    PolicyDesignation.DesignationGUID
+    ErrorMsg
+/*  END-IF
+END-IF
+END-SUBROUTINE
+/*                           =====================
+/*                           POLICY ROLES REQUESTS
+/*                           =====================
+
+DEFINE POLICYROLE-DELETE-SYNC
+/*     ----------------------
+/* api/policyrole/get?policyguid=eb59241b-b62a-e711-80cd-005056a21fa2
+
+CALLNAT 'LWSNGUID' GET-PR-GUID
+  #POLICY-ID
+  #DESIGNATION-ID
+  Policy-Flat.PolicyGUID
+  #POLICY-ROLE-GUID (*)
+  #POLICY-ROLE-CODE (*)
+  PolicyDesignation.DesignationGUID
+  ErrorMsg
+#URI := #URI-POLR-GET
+COMPRESS 'policyguid' Policy-Flat.PolicyGUID 
+  INTO jSonString WITH DELIMITER '='
+COMPRESS #URI jSonString INTO #URI WITH DELIMITER '?'
+PERFORM GET-DOCUMENT
+CALLNAT 'LWSNPRGE'
+  #Resultxml 
+  #POLICY-ROLE-GUID (*)
+  #POLICY-ROLE-CODE (*)
+
+N := 1
+REPEAT UNTIL #POLICY-ROLE-GUID (N) = BLANK
+  #URI := #URI-POLR-DELETE
+  COMPRESS '=' #POLICY-ROLE-GUID (N) INTO
+    jSonString LEAVING NO
+  PERFORM REQ-DOCUMENT  /* Policy Data
+  ADD 1 TO N
+END-REPEAT
+
+CALLNAT 'LWSNGUID' DELETE-PR-GUID
+  #POLICY-ID
+  #DESIGNATION-ID
+  Policy-Flat.PolicyGUID
+  #POLICY-ROLE-GUID (*)
+  #POLICY-ROLE-CODE (*)
+  PolicyDesignation.DesignationGUID
+  ErrorMsg
+
+END-SUBROUTINE
+/*
+DEFINE POLICYROLE-SYNC
+/*     ---------------
+CALLNAT 'POSNCNTS'
+  #POLICY-ID
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  ErrorMsg
+RESET N
+
+#URI := #URI-POLR-CREATE
+
+FOR J 1 TO #NUMBER-OF-RELATIONS
+  K := #POLICY-RELATIONS.RELATION (J)
+  IF #POLICY-RELATIONS.CONTACT-ID (J) > 0
+      AND K > AllRoles AND K < PendingPrmBene
+    RESET POR
+    IF #POLICY-RELATIONS.SETTLEMENT-TYPE (J) IS (N1)
+      L := VAL ( #POLICY-RELATIONS.SETTLEMENT-TYPE (J) )
+      IF L > 0 AND L < 7
+        POR.settlementtype := #SttlText (L)
+      END-IF
+    ELSE
+      POR.settlementtype := #POLICY-RELATIONS.SETTLEMENT-TYPE (J)
+    END-IF
+    POR.rolename           := #RoleText (K)
+    POR.policynumber       := #POLICY-ID
+    POR.contactid          := #POLICY-RELATIONS.CONTACT-ID (J)
+    POR.beneficiarypercent := #POLICY-RELATIONS.BENE-FRACTION (J)
+    IF #POLICY-RELATIONS.BENE-RESTRICTED (J) = 'Y'
+      POR.beneficiaryrestricted := 'true'
+    ELSE
+      POR.beneficiaryrestricted := 'false'
+    END-IF
+    POR.designationid := #POLICY-RELATIONS.DESIGNATION-ID (J)
+    /* Get GUID for policy and contact Optional Designation GUID
+    CALLNAT 'LWSNPRUI' POR ErrorMsg
+    CALLNAT 'LWSNPRJS' POR jSonString
+
+    PERFORM REQ-DOCUMENT  /* Designation Data
+
+    IF ErrorMsg = #RD-SUCCESS
+      ADD 1 TO N
+      #POLICY-ROLE-GUID (N) := #Resultxml
+      #POLICY-ROLE-CODE (N) := K
+    END-IF
+
+  END-IF
+END-FOR
+
+IF N > 0
+  CALLNAT 'LWSNGUID' SAVE-PR-GUID
+    #POLICY-ID
+    #DESIGNATION-ID
+    Policy-Flat.PolicyGUID
+    #POLICY-ROLE-GUID (*)
+    #POLICY-ROLE-CODE (*)
+    PolicyDesignation.DesignationGUID
+    ErrorMsg
+END-IF
+END-SUBROUTINE
+/*                               ====================
+/*                               DESIGNATION REQUESTS
+/*                               ====================
+
+DEFINE DESIGNATION-GET-REQUEST
+/*     -----------------------
+#URI := #URI-DSG-GET
+COMPRESS 'iasdesignationid' #DESIGNATION-ID 
+  INTO jSonString WITH DELIMITER '='
+COMPRESS #URI jSonString INTO #URI WITH DELIMITER '?'
+PERFORM GET-DOCUMENT
+IF SUBSTR(ErrorMsg,1,4) EQ 'GUID' 
+  PolicyDesignation.DesignationGUID := #Resultxml
+  CALLNAT 'LWSNGUID' SAVE-DS-GUID
+    #POLICY-ID
+    #DESIGNATION-ID
+    Policy-Flat.PolicyGUID
+    #POLICY-ROLE-GUID (*)
+    #POLICY-ROLE-CODE (*)
+    PolicyDesignation.DesignationGUID
+    ErrorMsg
+  COMPRESS 'GUID' #Resultxml INTO ErrorMsg WITH DELIMITER '='
+END-IF
+END-SUBROUTINE
+/*
+DEFINE DESIGNATION-SYNC
+/*     ----------------   
+RESET PolicyDesignation
+PolicyDesignation.DESIGNATION-ID := #DESIGNATION-ID
+CALLNAT 'LWSNDSDA'
+  PolicyDesignation
+  ErrorMsg
+
+IF PolicyDesignation.DesignationGUID NE BLANK
+  #URI := #URI-DSG-UPDATE
+ELSE
+  #URI := #URI-DSG-CREATE
+END-IF
+
+CALLNAT 'LWSNDSJS' PolicyDesignation jSonString
+PERFORM REQ-DOCUMENT  /* Designation Data
+
+IF ErrorMsg = #RD-SUCCESS
+    AND PolicyDesignation.DesignationGUID EQ BLANK
+  PolicyDesignation.DesignationGUID := #Resultxml
+  CALLNAT 'LWSNGUID' SAVE-DS-GUID
+    #POLICY-ID
+    #DESIGNATION-ID
+    Policy-Flat.PolicyGUID
+    #POLICY-ROLE-GUID (*)
+    #POLICY-ROLE-CODE (*)
+    PolicyDesignation.DesignationGUID
+    ErrorMsg
+END-IF
+END-SUBROUTINE
+/*
+DEFINE DESIGNATION-DELETE-SYNC
+/*     -----------------------
+RESET PolicyDesignation
+CALLNAT 'LWSNGUID' GET-PO-GUID
+  #POLICY-ID
+  #DESIGNATION-ID
+  Policy-Flat.PolicyGUID
+  #POLICY-ROLE-GUID (*)
+  #POLICY-ROLE-CODE (*)
+  PolicyDesignation.DesignationGUID
+  ErrorMsg
+IF PolicyDesignation.DesignationGUID NE BLANK
+  #URI := #URI-DSG-DELETE
+  COMPRESS '=' PolicyDesignation.DesignationGUID INTO
+    jSonString LEAVING NO
+  PERFORM REQ-DOCUMENT  /* Designation delete
+
+  IF ErrorMsg = #RD-SUCCESS
+    CALLNAT 'LWSNGUID' DELETE-DS-GUID
+      #POLICY-ID
+      #DESIGNATION-ID
+      Policy-Flat.PolicyGUID
+      #POLICY-ROLE-GUID (*)
+      #POLICY-ROLE-CODE (*)
+      PolicyDesignation.DesignationGUID
+      ErrorMsg
+  END-IF
+END-IF
+END-SUBROUTINE
+/*          ================
+/*          REQUEST DOCUMENT
+/*          ================
+DEFINE REQ-DOCUMENT
+/*     ------------
+CALLNAT 'LWSNURIA' #URI
+REQUEST DOCUMENT FROM #URI
+  WITH
+    DATA
+      NAME ' '  VALUE jSonString
+  RETURN
+    PAGE #Resultxml  /* GUID if create request
+RESPONSE #rc
+  GIVING #NAT-ERROR
+
+FOR J1 1 TO C#NBSREQUEST-DOCUMENT-RC
+  IF NBSRETURN-CODE (J1) = #RC
+    ErrorMsg := NBSRETURN-CODE-DESC (J1)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+
+IF J1 > C#NBSREQUEST-DOCUMENT-RC
+  IF #NAT-ERROR = 8304
+    ErrorMsg := TransportError
+  ELSE
+    COMPRESS #NAT-ERROR 'Unsupported' INTO ErrorMsg
+  END-IF
+END-IF
+CALLNAT 'LWSNLOG'
+  #URI
+  #NAT-ERROR
+  jSonString
+  ErrorMsg
+  #Resultxml
+IF ErrorMsg ='No information to return'
+  ErrorMsg := #RD-SUCCESS
+END-IF
+END-SUBROUTINE
+/*
+/*          ================
+/*          GET DOCUMENT
+/*          ================
+DEFINE GET-DOCUMENT
+/*     ------------
+CALLNAT 'LWSNURIA' #URI
+REQUEST DOCUMENT FROM #URI
+  RETURN
+    PAGE #Resultxml
+RESPONSE #rc
+  GIVING #NAT-ERROR
+
+FOR J1 1 TO C#NBSREQUEST-DOCUMENT-RC
+  IF NBSRETURN-CODE (J1) = #RC
+    ErrorMsg := NBSRETURN-CODE-DESC (J1)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+
+IF J1 > C#NBSREQUEST-DOCUMENT-RC
+  IF #NAT-ERROR = 8304
+    ErrorMsg := TransportError
+  ELSE
+    COMPRESS #NAT-ERROR 'Unsupported' INTO ErrorMsg
+  END-IF
+END-IF
+CALLNAT 'LWSNLOG'
+  #URI
+  #NAT-ERROR
+  jSonString
+  ErrorMsg
+  #Resultxml
+IF ErrorMsg ='No information to return'
+  ErrorMsg := #RD-SUCCESS
+END-IF
+
+IF #Resultxml = #RECORD-NOT-FOUND
+  RESET #Resultxml
+END-IF
+
+IF ErrorMsg = #RD-SUCCESS
+*    AND #Resultxml NE BLANK
+  COMPRESS 'GUID' #Resultxml INTO ErrorMsg WITH DELIMITER '='
+END-IF
+
+END-SUBROUTINE
+/*
+
+ON ERROR
+  CALLNAT 'LWSNIELG' ErrorMsg
+  CALLNAT 'LWSNLOG'
+    #URI
+    #NAT-ERROR
+    jSonString
+    ErrorMsg
+    #Resultxml
+  ESCAPE ROUTINE
+END-ERROR
+
+END

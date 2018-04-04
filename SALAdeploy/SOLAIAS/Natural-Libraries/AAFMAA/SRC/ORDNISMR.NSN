@@ -1,0 +1,109 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP
+* <Natural Source Header
+/** New Subprogram ORDNISMR.
+/**
+/** :author nguentchev
+/*    Check what is the type of contact
+/*    Possible values are 
+/* MembershipTypevALUES (A10/5) INIT <'Member', 'Spouse', 'Child', 'Grandchild','Other'>
+DEFINE DATA
+PARAMETER
+1 INPUT-DATA          (A) Dynamic        /* In
+1 RESPONSE-DATA       (A) Dynamic        /* Out
+LOCAL USING ORDAISM
+LOCAL
+1 BLANK   (A1) CONST <' '>
+
+1 #NUMBER-MEMBERSHIPS (P1)
+1 #STATUS-CD          (A1)
+1 #SVC-CD             (A1)
+1 #SVC-STATUS         (A1)
+1 #SSN                (N9)
+1 REDEFINE #SSN
+  2 #SSN-FIRST-5 (N5)
+  2 #SSN-LAST-4  (N4)
+1 CONTACT VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 ID-NUMBER
+  2 DATE-OF-BIRTH
+  2 SSN
+  2 FIRST-NAME
+  2 LAST-NAME
+1 CONTACT-REL VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+END-DEFINE
+/*         Parse the AuthenticateMember request from CRM
+CALLNAT 'ORDNISMP' INPUT-DATA AuthenticateMemberInfo
+RESPONSE-DATA := AuthenticateMemberInfo.ErrorDescription
+IF AuthenticateMemberInfo.ErrorDescription NE BLANK
+  CALLNAT 'ORDNISMS' RESPONSE-DATA AuthenticateMemberInfo
+  ESCAPE ROUTINE
+END-IF
+
+IF AuthenticateMemberInfo.DateOfBirth = MASK(YYYYMMDD)
+  FIND CONTACT WITH CONTACT.DATE-OF-BIRTH
+      = AuthenticateMemberInfo.DateOfBirth-N
+    IF NO RECORDS FOUND
+      ESCAPE BOTTOM
+    END-NOREC
+    #SSN := CONTACT.SSN
+    IF #SSN > 0
+      IF AuthenticateMemberInfo.SSNLast4 = #SSN-LAST-4
+        AuthenticateMemberInfo.ContactID := CONTACT.CONTACT-ID
+        ESCAPE BOTTOM
+      END-IF
+    ELSE
+      IF AuthenticateMemberInfo.FirstName = CONTACT.FIRST-NAME
+          AND AuthenticateMemberInfo.LastName = CONTACT.LAST-NAME
+        AuthenticateMemberInfo.ContactID := CONTACT.CONTACT-ID
+        ESCAPE BOTTOM
+      END-IF
+    END-IF
+  END-FIND
+ELSE
+  AuthenticateMemberInfo.ErrorCode := -1
+  AuthenticateMemberInfo.ErrorDescription := 'Incorrect date format'
+  CALLNAT 'ORDNISMS' RESPONSE-DATA AuthenticateMemberInfo
+  ESCAPE ROUTINE
+END-IF
+
+if AuthenticateMemberInfo.ContactID NE 0
+    AuthenticateMemberInfo.MembershipType
+    := CONTACT-TYPE (< AuthenticateMemberInfo.ContactID >)
+  IF AuthenticateMemberInfo.MembershipType NE 'Member'
+*   IF AuthenticateMemberInfo.MembershipType = 'NoCN'
+*       or= 'Other'
+*       or= 'Employee'
+    FIND CONTACT-REL WITH CONTACT-2-ID =
+        AuthenticateMemberInfo.ContactID
+      DECIDE ON FIRST VALUE OF CONTACT-REL.ROLE-1-CD
+        VALUE 'P'
+          AuthenticateMemberInfo.MembershipType := 'Child'
+        VALUE 'S'
+          AuthenticateMemberInfo.MembershipType := 'Spouse'
+        VALUE 'H'
+          AuthenticateMemberInfo.MembershipType := 'Grandchild'
+        ANY VALUE
+          AuthenticateMemberInfo.MemberContactID :=
+            CONTACT-REL.CONTACT-1-ID
+          ESCAPE BOTTOM
+        NONE VALUE
+          AuthenticateMemberInfo.MembershipType := 'Other'
+      END-DECIDE
+    END-FIND
+  ELSE
+    AuthenticateMemberInfo.MemberContactID :=
+      AuthenticateMemberInfo.ContactID
+  END-IF
+ELSE
+  AuthenticateMemberInfo.ErrorCode := -2
+  AuthenticateMemberInfo.ErrorDescription := 'Contact not found'
+END-IF
+CALLNAT 'ORDNISMS' RESPONSE-DATA AuthenticateMemberInfo
+
+END

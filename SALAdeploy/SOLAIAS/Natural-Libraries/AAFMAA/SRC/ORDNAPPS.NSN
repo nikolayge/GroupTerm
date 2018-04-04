@@ -198,6 +198,7 @@ LOCAL
   >
 1 PaymentOptionCode (A1/10) INIT <'G','E','Q','S','A','M','0','4','2','1'>
 1 InsuredGuid     (A36)
+1 OwnerGuid       (A36)
 1 MemberGUID      (A36)
 1 MemberGUIDupper (A36)
 1 MemberCI        (N8)
@@ -261,17 +262,28 @@ FOR K 1 TO C@ApplicationRoles (AN)
   #AT-ROLES.CONTACT-GUID := IASOrder.CRMContactID     (AN,K)
   #AT-ROLES.CC-GUID      := IASOrder.CCSageGuid
   #AT-ROLES.CONTACT-ID   := IASOrder.IASContactID     (AN,K)
+
   IF #AT-ROLES.CONTACT-ID = 0
+    #AT-ROLES.CONTACT-ID := MemberCI
     find (1) cnt-v with CRM-CONTACT-GUI = IASOrder.CRMContactID (AN,K)
       if no records found
-        #AT-ROLES.CONTACT-ID := MemberCI
+        MemberGUIDupper := IASOrder.CRMContactID (AN,K)
+        MemberGUIDupper := *translate(MemberGUID,UPPER)
+        FIND (1) CNT-V WITH CRM-CONTACT-GUI = MemberGUIDupper
+          #AT-ROLES.CONTACT-ID := CNT-V.contact-id
+        END-FIND
+        ESCAPE BOTTOM
       end-norec
       #AT-ROLES.CONTACT-ID := cnt-v.contact-id
     end-find
   END-IF
-  #AT-ROLES.RELATION := GET-RELATION-ID (< IASOrder.Name (AN,K) >)
-  #AT-ROLES.RelationToInsured := IASOrder.InsuredRelation (AN,K)
 
+  #AT-ROLES.RELATION := GET-RELATION-ID (< IASOrder.Name (AN,K) >)
+  /*              Self,Spouse,Child,Grandchild
+  #AT-ROLES.RelationToInsured := IASOrder.InsuredRelation (AN,K)
+*  
+*  Set #AT.INTRO-FLAG
+*
   DECIDE ON FIRST VALUE OF #AT-ROLES.RELATION
     VALUE InsuredRole
       InsuredGuid := IASOrder.CRMContactID (AN,K)
@@ -279,8 +291,19 @@ FOR K 1 TO C@ApplicationRoles (AN)
     VALUE MemberRole
       MemberGUID := IASOrder.CRMContactID (AN,K)
       CrmMemberRole := TRUE
+      DECIDE ON FIRST VALUE OF #AT-ROLES.RelationToInsured
+        VALUE 'Child'
+          #AT.INTRO-FLAG := 'K'
+        VALUE 'Grandchild'
+          #AT.INTRO-FLAG := 'G'
+        VALUE 'Spouse'
+          #AT.INTRO-FLAG := 'S'       
+        NONE VALUE ignore          
+      END-DECIDE
     VALUE PayorRole
       PayerGUID := IASOrder.CRMContactID (AN,K)
+    VALUE PrimaryOwner
+      OwnerGuid := IASOrder.CRMContactID (AN,K)
     NONE VALUE IGNORE
   END-DECIDE
 
@@ -318,7 +341,8 @@ FOR K 1 TO C@ApplicationRoles (AN)
   STORE APR-V
 
 END-FOR
-*                   Create Member role if it is not passed from CRM
+*    Create Member role if it is not passed from CRM
+*    Insured is a Member and MemberCI = InsuredCI
 IF NOT CrmMemberRole
   RESET APR-V
   APR-V.ADD-USER := *USER
@@ -414,11 +438,7 @@ ELSE
   RESET #AT.RATING-CODE
 END-IF
 
-IF InsuredGUID = MemberGUID
-  #AT.POLICY-TYPE := 'M'
-ELSE
-  #AT.POLICY-TYPE := 'M' /* Logic for I,T,S,N,C
-
+IF InsuredGUID NE MemberGUID
   IF MemberCI > 0
     FIND (1) CNT-V WITH CONTACT-ID = MemberCI
     END-FIND
@@ -427,7 +447,7 @@ ELSE
     END-FIND
   END-IF
 
-  IF CNT-V.contact-id > 0 /* Create payer CN
+  IF CNT-V.contact-id > 0 /* Create member CN
       AND CNT-V.ID-NUMBER = 0
     CALLNAT 'C2002NNM'
       CNT-V.contact-id
@@ -435,24 +455,32 @@ ELSE
       #MSG
   END-IF
   #AT.REFERING-ID-NUMBER (1) := CNT-V.id-number
-
-  /*             Check contact relation
-  FIND CR-V WITH CONTACT-1-ID = InsuredCI
-      and CONTACT-2-ID = MemberCI
-    decide on first value of ROLE-1-CD
-      value 'K', 'D', 'B'
-        #AT.INTRO-FLAG  := 'K'
-      value 'G'
-        #AT.INTRO-FLAG  := 'G'
-      none value
-        #AT.INTRO-FLAG  := 'S'
-    end-decide
-  END-FIND
 END-IF
+
+/* Check EXISTING contact relation to populate INTRO-FLAG
+FIND CR-V WITH CONTACT-1-ID = InsuredCI
+    and CONTACT-2-ID = MemberCI
+  decide on first value of ROLE-1-CD
+    value 'K', 'D', 'B'
+      #AT.INTRO-FLAG  := 'K'
+    value 'G'
+      #AT.INTRO-FLAG  := 'G'
+    none value
+      #AT.INTRO-FLAG  := 'S'
+  end-decide
+END-FIND
+/*  Logic for Insure,Trust,Spouse,NonMember,Company
+/*  #AT.POLICY-TYPE IS SET UP IN CREATE-APPLICATION-ROLES
+#AT.POLICY-TYPE := 'M'
+if OwnerGUID ne BLANK
+    and InsuredGUID = OwnerGUID
+    and #AT.INTRO-FLAG = 'K' OR= 'G' OR= 'S'
+  #AT.POLICY-TYPE := 'I'
+end-if
 
 DECIDE FOR FIRST CONDITION
   WHEN PayerGUID = MemberGUID
-    #AT.PAYER := 'M'  /* Logic for I,O
+    #AT.PAYER := 'M'  
   WHEN PayerGUID = InsuredGUID
     #AT.PAYER := 'I'
   WHEN NONE
@@ -477,10 +505,10 @@ ELSE
 *  RESET  #AT.DATE-RECEIVED
   #AT.DATE-RECEIVED := *DATN 
 END-IF
+#AT.AT-STATUS    := IASOrder.ATStatus (AN)
+
 **move edited IASOrder.CreatedOn (J) to #date (em=MM'/'DD'/'YYYY)
 **move edited #date (EM=YYYYMMDD) to #AT.DATE-RECEIVED-A
-#AT.AT-STATUS    := IASOrder.ATStatus (AN)
-* #AT.RANK         :=
 
 MOVE BY NAME #AT TO AP-Tracking
 *
@@ -529,7 +557,7 @@ IF AP-Tracking.REFERING-ID-NUMBER (1) NE 0  /* Linked CN = Obsolete
       FOR K 1 TO 30
         IF ST-V.LINKED-CN ( K ) = 0
           ST-V.LINKED-CN ( K ) := AP-Tracking.ID-NUMBER
-          UPDATE (0523)
+          UPDATE (0551)
           ESCAPE BOTTOM
         END-IF
       END-FOR
@@ -540,7 +568,7 @@ END-IF
 AP-Tracking.DRIVERS-LICENSE-NUM := IASOrder.Drivers-License-Num
 AP-Tracking.STATE-ISSUED := IASOrder.State-Issued
 
-STORE-AT.
+  STORE-AT.
 STORE AP-Tracking
 #AT-ISN := *ISN ( STORE-AT. )
 
