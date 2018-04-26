@@ -1,0 +1,348 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online/AUC
+* Phone Information - MBCN
+* Add/Update/Delete/Transaction Register logic - MBCN0042
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    04232012       Initial Creation
+* YAK    06182012  YK1  Add transaction logic for non-CN
+*                       contacts
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0004
+LOCAL USING OBJACPHN
+LOCAL USING P_PHONE
+LOCAL USING ERROR_L
+LOCAL USING GPRATR00
+LOCAL
+*
+1 #DEL              (A1) CONST <'-'>
+1 #MC               (A) DYNAMIC INIT <'MC'>
+1 #AUC              (A) DYNAMIC INIT <'AUC'>
+1 #USER             (A) DYNAMIC INIT <'MEMBER'>
+1 #CLERK            (A) DYNAMIC INIT <'MBR'>
+1 #UPDATE           (A) DYNAMIC CONST <'UPDATE'>
+1 #OAUPDATE         (A) DYNAMIC CONST <'OAUPDATE'>
+1 #ADD              (A) DYNAMIC CONST <'ADD'>
+1 #HIST-KEY         (A) DYNAMIC CONST <'HIST-KEY'>
+1 #DELETE           (A) DYNAMIC CONST <'DELETE'>
+1 #GET              (A) DYNAMIC CONST <'GET'>
+1 #GET-PREFERRED    (A) DYNAMIC CONST <'GET-PREFERRED'>
+1 #RESET-PREFERRED  (A) DYNAMIC CONST <'RESET-PREFERRED'>
+1 #SOURCE-WEBSITE   (A) DYNAMIC CONST <'W'>
+1 #SOURCE-AUC       (A) DYNAMIC CONST <'U'>
+1 #DOMESTIC         (A1) CONST <'D'>
+1 #INTERNATIONAL    (A1) CONST <'I'>
+1 #NO               (A1) CONST <'N'>
+1 #YES              (A1) CONST <'Y'>
+1 FUNCTION_CODE     (A) DYNAMIC CONST <'PHONE'>
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #I                (I2)
+1 #II               (I2)
+1 #J                (I2)
+1 #GetPhoneID       (N6)
+1 #PrefPhoneID      (N6)
+1 #RESET-PREF       (L)
+1 #PHONE-DIAL-NUMBER(A20)
+*
+END-DEFINE
+*
+* Call Business Logic
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+DECIDE FOR FIRST CONDITION
+  WHEN Phone.SystemSource = ' ' AND Phone.UserID IS (N6)   /* YK2
+    IGNORE
+  WHEN Phone.UserID <> ' '
+    #CLERK := FUNCTION-WEB-USER(<Phone.UserID>)(1)
+    #USER  := FUNCTION-WEB-USER(<Phone.UserID>)(2)
+  WHEN Phone.SystemSource = #AUC
+    #CLERK := #USER := #AUC
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF C@PhoneInfo = 0
+  ESCAPE ROUTINE
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN Phone.CN NE 0 AND Phone.ContactID = 0
+    Phone.ContactID := F-GET-CONTACT-ID(<Phone.CN>)
+  WHEN Phone.CN = 0 AND Phone.ContactID <> 0
+    Phone.CN        := F-GET-CN(<Phone.ContactID>)
+  WHEN Phone.ContactID = 0
+    Phone.ErrorCode := #CN-INVALID
+    ESCAPE ROUTINE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+PERFORM GET-BEFORE-IMAGE
+FOR #I = 1 TO C@PhoneInfo
+  RESET PARM-PHONE
+  PARM-PHONE.CONTACT-ID := Phone.ContactID
+  DECIDE ON FIRST VALUE Phone.ActionType_s(#I)
+    VALUE '0'
+      ESCAPE TOP
+    VALUE '1'
+      PARM-PHONE.#ACTION := #ADD
+    VALUE '2'
+      PARM-PHONE.#ACTION := #UPDATE
+    VALUE '3'
+      PARM-PHONE.#ACTION := #DELETE
+    VALUE '6'
+      PARM-PHONE.#ACTION := #OAUPDATE
+    NONE VALUE
+      Phone.ErrorCode  := #ACTION-INVALID
+      ESCAPE ROUTINE
+  END-DECIDE
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN Phone.PhoneId(#I) = 0 AND
+        (PARM-PHONE.#ACTION = #UPDATE OR PARM-PHONE.#ACTION = #DELETE)
+      Phone.ErrorCode  := #MISSING-PHONE-ID
+      ESCAPE ROUTINE
+    WHEN Phone.PhoneId(#I) <> 0 AND PARM-PHONE.#ACTION = #ADD
+      Phone.ErrorCode  := #ADD-HAS-PHONE-ID
+      ESCAPE ROUTINE
+    WHEN ANY
+      ESCAPE ROUTINE
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+  PARM-PHONE.PHONE-ID            := Phone.PhoneID(#I)
+  PARM-PHONE.PHONE-TYPE-CODE     := Phone.PhoneType(#I)
+  PARM-PHONE.TYPE                := Phone.Type(#I)
+  PARM-PHONE.PREFERRED-PHONE-IND := Phone.PreferredInd(#I)
+  DECIDE ON FIRST VALUE PARM-PHONE.TYPE
+    VALUE #DOMESTIC
+      PARM-PHONE.AREA-CODE           := Phone.AreaCode(#I)
+      PARM-PHONE.DIAL-NUMBER         := Phone.DialNumber(#I)
+      PARM-PHONE.EXT                 := Phone.Extension(#I)
+    VALUE #INTERNATIONAL
+      PARM-PHONE.INTL-ACCESS-CODE    := Phone.AreaCode(#I)
+      PARM-PHONE.INTL-DIAL-NUMBER    := Phone.DialNumber(#I)
+      PARM-PHONE.EXT                 := Phone.Extension(#I)
+    NONE
+      IGNORE
+  END-DECIDE
+  IF Phone.Remarks(#I) <> ' '
+    RESET #II
+    REPEAT
+      #II := #II + 1
+      IF #II > 3
+        ESCAPE BOTTOM
+      END-IF
+      PARM-PHONE.REMARKS(#II) := Phone.Remarks(#I)
+      IF *LENGTH(Phone.Remarks(#I)) > 70
+        Phone.Remarks(#I) := SUBSTR(Phone.Remarks(#I),71)
+      ELSE
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT
+  END-IF
+* Check if preferred ind was changed (AUC and MC II)  YK2
+  IF Phone.PreferredInd(#I) = #YES AND #PrefPhoneID <> Phone.PhoneID(#I)
+    #RESET-PREF := TRUE
+  END-IF
+*
+  DECIDE ON FIRST VALUE Phone.SystemSource
+    VALUE #MC
+      PARM-PHONE.INVALID-IND         := #NO
+      PARM-PHONE.PHONE-SOURCE        := #SOURCE-WEBSITE
+* New functionality for AUC
+    VALUE #AUC
+      PARM-PHONE.BEST-TIME-TO-CALL   := Phone.BestCallTime(#I)
+      PARM-PHONE.INVALID-IND         := Phone.InvalidInd(#I)
+      PARM-PHONE.PHONE-SOURCE        := #SOURCE-AUC
+      PARM-PHONE.START-DATE          := Phone.StartDate(#I)
+      PARM-PHONE.END-DATE            := Phone.EndDate(#I)
+    NONE
+      IGNORE
+  END-DECIDE
+*
+  PARM-PHONE.LAST-DATE-UPD       := #DATN
+  PARM-PHONE.LAST-TIME-UPD       := #TIMN
+  PARM-PHONE.LAST-USER-UPD       := #USER
+*
+  CALLNAT 'OBJNCPHN' PARM-PHONE
+  IF PARM-PHONE.#RETURN-CODE NE ' '
+    Phone.ErrorCode := PARM-PHONE.#RETURN-CODE
+    BACKOUT TRANSACTION
+    ESCAPE ROUTINE
+  END-IF
+END-FOR
+PERFORM POPULATE-BEFORE-AFTER-IMAGE
+PERFORM WRITE-TRANSACTION-LOG
+*
+* Handle preferred ind reset for AUC (if changed)
+IF #RESET-PREF
+  RESET #PHONE-ARRAY(*) AFTER_IMAGE BEFORE_IMAGE
+  EXPAND ARRAY #PHONE-ARRAY TO (*:1)
+  EXPAND ARRAY AFTER_IMAGE.PHONE_GROUP  TO (*:1)
+  EXPAND ARRAY BEFORE_IMAGE.PHONE_GROUP TO (*:1)
+  CALLNAT 'GET_PHM' Phone.ContactID #PrefPhoneID #PHONE-ARRAY(*)
+  #I := #J := 1
+  PERFORM DO_BEFORE_IMAGE
+  RESET PARM-PHONE
+  #ACTION := #RESET-PREFERRED
+  PARM-PHONE.CONTACT-ID := Phone.ContactID
+  PARM-PHONE.PHONE-ID   := #PrefPhoneID
+  PARM-PHONE.PREFERRED-PHONE-IND := #NO
+  CALLNAT 'OBJNCPHN' PARM-PHONE
+  MOVE BY NAME BEFORE_IMAGE.PHONE_GROUP(1) TO AFTER_IMAGE.PHONE_GROUP(1)
+  RESET AFTER_IMAGE.PHONE-PREFERRED-IND(1)
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+*
+**********************************
+DEFINE SUBROUTINE GET-BEFORE-IMAGE
+**********************************
+* get all phones before update
+* AUC updates one email at a time
+* Change for MC II - updates one email at a time too   YK2
+IF Phone.SystemSource = #AUC OR Phone.SystemSource = #MC
+  #GetPhoneID := Phone.PhoneId(1)
+END-IF
+EXPAND ARRAY #PHONE-ARRAY TO (*:1)
+CALLNAT 'GET_PHM' Phone.ContactID #GetPhoneID #PHONE-ARRAY(*)
+IF Phone.SystemSource = #AUC
+  IF Phone.ActionType_s(1) = '2' OR = '3'    /* Update or delete
+* Compare date/time of the last update
+    DECIDE FOR FIRST CONDITION
+      WHEN #PHONE-ARRAY.LAST-DATE-UPD(1) > Phone.LastUpdatedDate(1)
+        Phone.ErrorCode := #NOT-LATEST-INFO
+      WHEN #PHONE-ARRAY.LAST-DATE-UPD(1) = Phone.LastUpdatedDate(1) AND
+          #PHONE-ARRAY.LAST-TIME-UPD(1) > Phone.LastUpdatedTime(1)
+        Phone.ErrorCode := #NOT-LATEST-INFO
+      WHEN ANY
+        ESCAPE MODULE
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-IF
+END-IF
+*
+* Handle Preferred flag for AUC and MC II
+IF Phone.SystemSource = #AUC OR Phone.SystemSource = #MC
+  IF #PHONE-ARRAY.PREFERRED-PHONE-IND(1) <> #YES
+    RESET PARM-PHONE
+    #ACTION := #GET-PREFERRED
+    PARM-PHONE.CONTACT-ID := Phone.ContactID
+    PARM-PHONE.PREFERRED-PHONE-IND := #YES
+    CALLNAT 'OBJNCPHN' PARM-PHONE
+    #PrefPhoneID := PARM-PHONE.PHONE-ID
+  ELSE
+    #PrefPhoneID := #PHONE-ARRAY.PHONE-ID(1)
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+*********************************************
+DEFINE SUBROUTINE POPULATE-BEFORE-AFTER-IMAGE
+*********************************************
+* 011 78125523200 ( International Preferred Home )
+* 703 447-0590 Ext 260 ( Preferred Business )
+* 301 262-0492 ( Home )
+EXPAND ARRAY AFTER_IMAGE.PHONE_GROUP  TO (*:C@PhoneInfo)
+EXPAND ARRAY BEFORE_IMAGE.PHONE_GROUP TO (*:C@PhoneInfo)
+RESET #J
+FOR #I = 1 TO C@PhoneInfo
+  DECIDE ON FIRST VALUE Phone.ActionType_s(#I)
+    VALUE '1'    /* #ADD
+      RESET BEFORE_IMAGE.PHONE_GROUP(#I)
+      PERFORM DO_AFTER_IMAGE
+    VALUE '3'    /* #DELETE
+      #J := #J + 1
+      RESET AFTER_IMAGE.PHONE_GROUP(#I)
+      PERFORM DO_BEFORE_IMAGE
+    VALUE '0', '2'
+      #J := #J + 1
+      PERFORM DO_BEFORE_IMAGE
+      PERFORM DO_AFTER_IMAGE
+    NONE
+      IGNORE
+  END-DECIDE
+*
+END-FOR
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE DO_BEFORE_IMAGE
+*********************************
+IF BEFORE_IMAGE.DATE-LAST-UPDATE < #PHONE-ARRAY.LAST-DATE-UPD(#J)
+  BEFORE_IMAGE.DATE-LAST-UPDATE     := #PHONE-ARRAY.LAST-DATE-UPD(#J)
+END-IF
+BEFORE_IMAGE.PHONE-TYPE-CODE(#I)    := #PHONE-ARRAY.PHONE-TYPE-CODE(#J)
+BEFORE_IMAGE.TYPE(#I)               := #PHONE-ARRAY.TYPE(#J)
+BEFORE_IMAGE.PHONE-PREFERRED-IND(#I):= #PHONE-ARRAY.PREFERRED-PHONE-IND(#J)
+* Compose Phone Number
+DECIDE FOR EVERY CONDITION
+  WHEN BEFORE_IMAGE.TYPE(#I) = #INTERNATIONAL
+COMPRESS #PHONE-ARRAY.INTL-ACCESS-CODE(#J) #PHONE-ARRAY.INTL-DIAL-NUMBER(#J)
+      INTO BEFORE_IMAGE.PHONE-NUMBER(#I)
+  WHEN BEFORE_IMAGE.TYPE(#I) = #DOMESTIC
+MOVE EDITED #PHONE-ARRAY.DIAL-NUMBER(#J) (EM=999-9999) TO #PHONE-DIAL-NUMBER
+    COMPRESS #PHONE-ARRAY.AREA-CODE(#J) #PHONE-DIAL-NUMBER
+      INTO BEFORE_IMAGE.PHONE-NUMBER(#I)
+  WHEN #PHONE-ARRAY.EXT(#J) <> 0
+COMPRESS BEFORE_IMAGE.PHONE-NUMBER(#I) 'Ext' #PHONE-ARRAY.EXT(#J) INTO BEFORE_IMAGE.PHONE-NUMBER(#I)
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+
+********************************
+DEFINE SUBROUTINE DO_AFTER_IMAGE
+********************************
+AFTER_IMAGE.PHONE-TYPE-CODE(#I)     := Phone.PhoneType(#I)
+AFTER_IMAGE.TYPE(#I)                := Phone.Type(#I)
+AFTER_IMAGE.PHONE-PREFERRED-IND(#I) := Phone.PreferredInd(#I)
+* Compose Phone Number
+DECIDE FOR EVERY CONDITION
+  WHEN AFTER_IMAGE.TYPE(#I) = #INTERNATIONAL
+    COMPRESS Phone.AreaCode(#I) Phone.DialNumber(#I)
+      INTO AFTER_IMAGE.PHONE-NUMBER(#I)
+  WHEN AFTER_IMAGE.TYPE(#I) = #DOMESTIC
+    #PHONE-DIAL-NUMBER := Phone.DialNumber(#I)
+    MOVE EDITED Phone.DialNumber(#I) (EM=999-9999) TO #PHONE-DIAL-NUMBER
+    COMPRESS Phone.AreaCode(#I) #PHONE-DIAL-NUMBER
+      INTO AFTER_IMAGE.PHONE-NUMBER(#I)
+  WHEN Phone.Extension(#I) <> 0
+COMPRESS AFTER_IMAGE.PHONE-NUMBER(#I) 'Ext' Phone.Extension(#I) INTO AFTER_IMAGE.PHONE-NUMBER(#I)
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+TR_ID_NUMBER  := Phone.CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<Phone.ContactID>)
+IF Phone.CN <> 0                                            /* YK1 Start
+  TR_ID_NUMBER := Phone.CN
+ELSE
+  TR_ID_NUMBER     := F-GET-PARENT-CN(<Phone.ContactID>)
+  TR_CONTACT_ID    := F-GET-CONTACT-ID(<TR_ID_NUMBER>)
+END-IF                                                             /* YK1 End
+TR_CLERK      := #CLERK
+CALLNAT 'GPRNTR00' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+END

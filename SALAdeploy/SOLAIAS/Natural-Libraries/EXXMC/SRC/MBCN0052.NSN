@@ -1,0 +1,316 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online/AUC
+* Email Information
+* Add/Update/Delete/Transaction Register logic - MBCN0052
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    04062012       Initial Creation
+* YAK    06182012  YK1  Add transaction logic for non-CN
+*                       contacts
+* YAK    12042014  YK2  Adjust logic to do updates for one
+*                       record at a time, same as AUC                                          
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0005
+LOCAL USING OBJACEML
+LOCAL USING P_EMAIL
+LOCAL USING ERROR_L
+LOCAL USING GPRATR00
+LOCAL
+*
+1 #DEL              (A1) CONST <'-'>
+1 #MC               (A) DYNAMIC INIT <'MC'>
+1 #AUC              (A) DYNAMIC INIT <'AUC'>
+1 #USER             (A) DYNAMIC INIT <'MEMBER'>
+1 #CLERK            (A) DYNAMIC INIT <'MBR'>
+1 #UPDATE           (A) DYNAMIC CONST <'UPDATE'>
+1 #ADD              (A) DYNAMIC CONST <'ADD'>
+1 #HIST-KEY         (A) DYNAMIC CONST <'HIST-KEY'>
+1 #DELETE           (A) DYNAMIC CONST <'DELETE'>
+1 #GET              (A) DYNAMIC CONST <'GET'>
+1 #GET-PREFERRED    (A) DYNAMIC CONST <'GET-PREFERRED'>
+1 #RESET-PREFERRED  (A) DYNAMIC CONST <'RESET-PREFERRED'>
+1 #SOURCE-WEBSITE   (A) DYNAMIC CONST <'W'>
+1 #SOURCE-AUC       (A) DYNAMIC CONST <'U'>
+1 #NO               (A1) CONST <'N'>
+1 #YES              (A1) CONST <'Y'>
+1 FUNCTION_CODE     (A) DYNAMIC CONST <'EMAIL'>
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #I                (I2)
+1 #II               (I2)
+1 #J                (I2)
+1 #GetEmailID       (N6)
+1 #PrefEmailID      (N6)
+1 #RESET-PREF       (L)
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+DECIDE FOR FIRST CONDITION
+  WHEN Email.SystemSource = ' ' AND Email.UserID IS (N6)   /* YK2
+    IGNORE
+  WHEN Email.UserID <> ' '
+    #CLERK := FUNCTION-WEB-USER(<Email.UserID>)(1)
+    #USER  := FUNCTION-WEB-USER(<Email.UserID>)(2)
+  WHEN Email.SystemSource = #AUC
+    #CLERK := #USER := #AUC
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF C@EmailInfo = 0
+  ESCAPE ROUTINE
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN Email.CN NE 0 AND Email.ContactID = 0
+    Email.ContactID := F-GET-CONTACT-ID(<Email.CN>)
+  WHEN Email.CN = 0 AND Email.ContactID <> 0
+    Email.CN        := F-GET-CN(<Email.ContactID>)
+  WHEN Email.ContactID = 0
+    Email.ErrorCode := #CN-INVALID
+    ESCAPE ROUTINE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+PERFORM GET-BEFORE-IMAGE
+FOR #I = 1 TO C@EmailInfo
+  RESET PARM-EMAIL
+  PARM-EMAIL.CONTACT-ID := Email.ContactID
+  DECIDE ON FIRST VALUE Email.ActionType_s(#I)
+    VALUE '0'
+      ESCAPE TOP
+    VALUE '1'
+      PARM-EMAIL.#ACTION := #ADD
+    VALUE '2'
+      PARM-EMAIL.#ACTION := #UPDATE
+    VALUE '3'
+      PARM-EMAIL.#ACTION := #DELETE
+    VALUE '6'
+      callnat 'ORDNEML'
+        Email.EmailAddress(#I)
+        Email.ContactID
+        Email.EmailId(#I)
+        PARM-EMAIL.#ACTION
+    NONE VALUE
+      Email.ErrorCode  := #ACTION-INVALID
+      ESCAPE ROUTINE
+  END-DECIDE
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN Email.EmailId(#I) = 0 AND
+        (PARM-EMAIL.#ACTION = #UPDATE OR PARM-EMAIL.#ACTION = #DELETE)
+      Email.ErrorCode  := #MISSING-EMAIL-ID
+      ESCAPE ROUTINE
+    WHEN Email.EmailId(#I) <> 0 AND PARM-EMAIL.#ACTION = #ADD
+      Email.ErrorCode  := #ADD-HAS-EMAIL-ID
+      ESCAPE ROUTINE
+    WHEN ANY
+      ESCAPE ROUTINE
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+  PARM-EMAIL.EMAIL-ID             := Email.EmailId(#I)
+  PARM-EMAIL.EMAIL-ADDRESS        := Email.EmailAddress(#I)
+  PARM-EMAIL.EMAIL-PREFERRED-IND  := Email.EmailPreferredInd(#I)
+  IF Email.Remarks(#I) <> ' '
+    RESET #II
+    REPEAT
+      #II := #II + 1
+      IF #II > 3
+        ESCAPE BOTTOM
+      END-IF
+      PARM-EMAIL.REMARKS(#II) := Email.Remarks(#I)
+      IF *LENGTH(Email.Remarks(#I)) > 70
+        Email.Remarks(#I) := SUBSTR(Email.Remarks(#I),71)
+      ELSE
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT
+  END-IF
+* Check if preferred ind was changed (AUC and MC II)  YK2
+IF Email.EmailPreferredInd(#I) = #YES AND #PrefEmailID <> Email.EmailID(#I)
+    #RESET-PREF := TRUE
+  END-IF
+*
+  DECIDE ON FIRST VALUE Email.SystemSource
+    VALUE #MC
+PARM-EMAIL.EMAIL-UNDELIV        := Email.EmailUndeliverableInd(#I) := #NO
+      PARM-EMAIL.EMAIL-SOURCE         := #SOURCE-WEBSITE
+* New functionality for AUC
+    VALUE #AUC
+      PARM-EMAIL.EMAIL-UNDELIV        := Email.EmailUndeliverableInd(#I)
+      PARM-EMAIL.EMAIL-SOURCE         := #SOURCE-AUC
+      PARM-EMAIL.EMAIL-PROTECTION-IND := Email.EmailProtectedInd(#I)
+      PARM-EMAIL.EMAIL-TYPE           := Email.EmailType(#I)
+      PARM-EMAIL.START-DATE           := Email.EmailStartDate(#I)
+      PARM-EMAIL.END-DATE             := Email.EmailEndDate(#I)
+      PARM-EMAIL.STATUS               := Email.EmailStatus(#I)
+      PARM-EMAIL.STATUS-DATE          := #DATN
+    NONE
+      IGNORE
+  END-DECIDE
+*
+  PARM-EMAIL.LAST-DATE-UPD        := #DATN
+  PARM-EMAIL.LAST-TIME-UPD        := #TIMN
+  PARM-EMAIL.LAST-USER-UPD        := #USER
+*
+  CALLNAT 'OBJNCEML' PARM-EMAIL
+  IF PARM-EMAIL.#RETURN-CODE NE ' '
+    Email.ErrorCode := PARM-EMAIL.#RETURN-CODE
+    BACKOUT TRANSACTION
+    ESCAPE ROUTINE
+  END-IF
+END-FOR
+PERFORM POPULATE-BEFORE-AFTER-IMAGE
+PERFORM WRITE-TRANSACTION-LOG
+*
+* Handle preferred ind reset for AUC and MC II (if changed)  YK2
+IF #RESET-PREF
+  RESET #EMAIL-ARRAY(*) AFTER_IMAGE BEFORE_IMAGE
+  EXPAND ARRAY #EMAIL-ARRAY TO (*:1)
+  EXPAND ARRAY AFTER_IMAGE.EMAIL_GROUP  TO (*:1)
+  EXPAND ARRAY BEFORE_IMAGE.EMAIL_GROUP TO (*:1)
+  CALLNAT 'GET_EMM' Email.ContactID #PrefEmailID #EMAIL-ARRAY(*)
+  #I := #J := 1
+  PERFORM DO_BEFORE_IMAGE
+  RESET PARM-EMAIL
+  #ACTION := #RESET-PREFERRED
+  PARM-EMAIL.CONTACT-ID := Email.ContactID
+  PARM-EMAIL.EMAIL-ID   := #PrefEmailID
+  PARM-EMAIL.EMAIL-PREFERRED-IND := #NO
+  CALLNAT 'OBJNCEML' PARM-EMAIL
+  MOVE BY NAME BEFORE_IMAGE.EMAIL_GROUP(1) TO AFTER_IMAGE.EMAIL_GROUP(1)
+  RESET AFTER_IMAGE.EMAIL-PREFERRED-IND(1)
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+*
+**********************************
+DEFINE SUBROUTINE GET-BEFORE-IMAGE
+**********************************
+* get all emails before update
+* AUC updates one email at a time
+* Change for MC II - updates one email at a time too   YK2
+#GetEmailID := Email.EmailId(1)
+EXPAND ARRAY #EMAIL-ARRAY TO (*:1)
+CALLNAT 'GET_EMM' Email.ContactID #GetEmailID #EMAIL-ARRAY(*)
+IF Email.SystemSource = #AUC
+  IF Email.ActionType_s(1) = '2' or = '3'    /* Update or delete
+* Compare date/time of the last update
+    DECIDE FOR FIRST CONDITION
+      WHEN #EMAIL-ARRAY.LAST-DATE-UPD(1) > Email.LastUpdatedDate(1)
+        Email.ErrorCode := #NOT-LATEST-INFO
+      WHEN #EMAIL-ARRAY.LAST-DATE-UPD(1) = Email.LastUpdatedDate(1) AND
+          #EMAIL-ARRAY.LAST-TIME-UPD(1) > Email.LastUpdatedTime(1)
+        Email.ErrorCode := #NOT-LATEST-INFO
+      WHEN ANY
+        ESCAPE MODULE
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-IF
+END-IF
+*
+* Handle Preferred flag for AUC and MC II
+IF #EMAIL-ARRAY.EMAIL-PREFERRED-IND(1) <> #YES
+  RESET PARM-EMAIL
+  #ACTION := #GET-PREFERRED
+  PARM-EMAIL.CONTACT-ID := Email.ContactID
+  PARM-EMAIL.EMAIL-PREFERRED-IND := #YES
+  CALLNAT 'OBJNCEML' PARM-EMAIL
+  #PrefEmailID := PARM-EMAIL.EMAIL-ID
+ELSE
+  #PrefEmailID := #EMAIL-ARRAY.EMAIL-ID(1)
+END-IF
+*
+END-SUBROUTINE
+*
+*********************************************
+DEFINE SUBROUTINE POPULATE-BEFORE-AFTER-IMAGE
+*********************************************
+*
+EXPAND ARRAY AFTER_IMAGE.EMAIL_GROUP  TO (*:C@EmailInfo)
+EXPAND ARRAY BEFORE_IMAGE.EMAIL_GROUP TO (*:C@EmailInfo)
+RESET #J
+FOR #I =1 TO C@EmailInfo
+  DECIDE ON FIRST VALUE Email.ActionType_s(#I)
+    VALUE '1'    /* #ADD
+      RESET BEFORE_IMAGE.EMAIL_GROUP(#I)
+      PERFORM DO_AFTER_IMAGE
+    VALUE '3'    /* #DELETE
+      #J := #J + 1
+      RESET AFTER_IMAGE.EMAIL_GROUP(#I)
+      PERFORM DO_BEFORE_IMAGE
+    VALUE '0', '2'
+      #J := #J + 1
+      PERFORM DO_BEFORE_IMAGE
+      PERFORM DO_AFTER_IMAGE
+    NONE
+      IGNORE
+  END-DECIDE
+*
+END-FOR
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE DO_BEFORE_IMAGE
+IF BEFORE_IMAGE.DATE-LAST-UPDATE < #EMAIL-ARRAY.LAST-DATE-UPD(#J)
+  BEFORE_IMAGE.DATE-LAST-UPDATE      := #EMAIL-ARRAY.LAST-DATE-UPD(#J)
+END-IF
+BEFORE_IMAGE.EMAIL-ADDRESS(#I)       := #EMAIL-ARRAY.EMAIL-ADDRESS(#J)
+BEFORE_IMAGE.EMAIL-PREFERRED-IND(#I) := #EMAIL-ARRAY.EMAIL-PREFERRED-IND(#J)
+BEFORE_IMAGE.EMAIL-UNDELIV(#I)       := #EMAIL-ARRAY.EMAIL-UNDELIV(#J)
+BEFORE_IMAGE.EMAIL-TYPE(#I)          := #EMAIL-ARRAY.EMAIL-TYPE(#J)
+BEFORE_IMAGE.EMAIL-PROTECTION-IND(#I):= #EMAIL-ARRAY.EMAIL-PROTECTION-IND(#J)
+BEFORE_IMAGE.EMAIL-STATUS(#I)        := #EMAIL-ARRAY.STATUS(#J)
+BEFORE_IMAGE.STATUS-DATE(#I)         := #EMAIL-ARRAY.START-DATE(#J)
+BEFORE_IMAGE.START-DATE(#I)          := #EMAIL-ARRAY.START-DATE(#J)
+BEFORE_IMAGE.END-DATE(#I)            := #EMAIL-ARRAY.START-DATE(#J)
+BEFORE_IMAGE.DATE-LAST-UPDATE        := #EMAIL-ARRAY.LAST-DATE-UPD(#J)
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE DO_AFTER_IMAGE
+AFTER_IMAGE.EMAIL-ADDRESS(#I)        := Email.EmailAddress(#I)
+AFTER_IMAGE.EMAIL-PREFERRED-IND(#I)  := Email.EmailPreferredInd(#I)
+AFTER_IMAGE.EMAIL-UNDELIV(#I)        := Email.EmailUndeliverableInd(#I)
+AFTER_IMAGE.EMAIL-TYPE(#I)           := Email.EmailType(#I)
+* If update is from Member Center - keep email type  
+IF Email.SystemSource = #MC AND AFTER_IMAGE.EMAIL-TYPE(#I) = ' '
+  AFTER_IMAGE.EMAIL-TYPE(#I) := BEFORE_IMAGE.EMAIL-TYPE(#I)
+END-IF
+AFTER_IMAGE.EMAIL-PROTECTION-IND(#I) := Email.EmailProtectedInd(#I)
+AFTER_IMAGE.EMAIL-STATUS(#I)         := Email.EmailStatus(#I)
+AFTER_IMAGE.STATUS-DATE(#I)          := Email.EmailStatusDate(#I)
+AFTER_IMAGE.START-DATE(#I)           := Email.EmailStartDate(#I)
+AFTER_IMAGE.END-DATE(#I)             := Email.EmailEndDate(#I)
+END-SUBROUTINE
+
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+TR_ID_NUMBER  := Email.CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<Email.ContactID>)
+IF Email.CN <> 0                                            /* YK1 Start
+  TR_ID_NUMBER := Email.CN
+ELSE
+  TR_ID_NUMBER     := F-GET-PARENT-CN(<Email.ContactID>)
+  TR_CONTACT_ID    := F-GET-CONTACT-ID(<TR_ID_NUMBER>)
+END-IF                                                             /* YK1 End
+TR_CLERK      := #CLERK
+CALLNAT 'GPRNTR00' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+END
