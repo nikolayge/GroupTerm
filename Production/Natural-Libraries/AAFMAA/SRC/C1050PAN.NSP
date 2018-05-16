@@ -1,0 +1,675 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C1050PAN
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    01112005  PM1     Change status to 'U1' when underwriting     *
+*                          adds a note to apps in 'P1,P2,or P3' status *
+* DRW    09092005  DW2     Add Katrina Disaster Note                   *
+* SAG    02082006  RH1AS - Added logic which removes 15 leading spaces *
+*                   when placing text on the V.NOTES file.             *
+* DRW 11292007     DW3     Fix Bad Date problem in some cases on long  *
+*                          notes                                       *
+* PAM  03/11/2008  PM4     Protect first 15 bytes - clerk and date     *
+* PAM  03/18/2008  PM5     Allow underwriting to remove date for newest*
+*                          note                                        *
+* PAM  04/04/2008  PM6     Reset CV for underwriting notes             *
+* DRW  10/01/2008  DW7     Allow Additional Users to See Underwriting  *
+*                          Notes                                       *
+* PAM  08/18/2009  PM8     Added JSF to underwriting                   *
+* PAM  08/25/2009  PM9     Allow underwriting notes to be seen for apps*
+*                          in 'U' status                               *
+* DRW  10/02/2009  DW10    600000 Changes                              *
+* PAM  08/08/2010  PM11    Added Amy to underwriting notes             *
+* NGG  20130809    NG1     Address normalization                       *
+* bz                       Add EMSI and PMD direct request
+* vxt  05/05/2015 vt1      /Ticket 3511/                               * 
+* vxt  02/06/2017 vt2      /Ticket 2681/                               *
+* yf   02/27/2017 yf1      /Ticket 2944/                               *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX
+LOCAL
+*
+* 1 #KATRINA-ZIP   (L)  /* DW2        vt1
+1 #ZIP-CODE      (N9)
+1 #ST-DESC    (A40)
+1 #SCR-ST-NOTES  (A75/20)
+1 REDEFINE #SCR-ST-NOTES
+  2 #SCR-ST-NOTES-OCC   (20)
+    3  #SCR-ST-NOTES-DATE   (A10)
+    3  #SCR-ST-NOTES-SP1    (A1)
+    3  #SCR-ST-NOTES-USER   (A3)
+    3  #SCR-ST-NOTES-SP2    (A1)
+    3  #SCR-ST-NOTES-BAR1   (A1)
+    3  #SCR-ST-NOTES-SP3    (A1)
+    3  #SCR-ST-NOTES-STATUS (A2)
+    3  #SCR-ST-NOTES-SP4    (A1)
+    3  #SCR-ST-NOTES-BAR2   (A1)
+    3  #SCR-ST-NOTES-SP5    (A1)
+    3  #SCR-ST-NOTES-DESC   (A53)
+1 #SCR-ST-NOTES-C (C/20)
+1 #ST-NOTE-DATE  (N8)
+1 #INVALID       (L)
+1 #ERR-MSG       (A60)
+*
+1 #CHG-NOTES (A1)
+1 #HOLD-MULT-LINES (A75/10)
+1 #NON-DISPLAY   (L)
+1 #MANAGER       (L)
+1 #CAN-SEE-UNDERWRITING (L)
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 SSN
+  2 ID-NUMBER
+  2 ACTION-FLAG
+  2 INTRO-FLAG
+  2 NAME
+  2 CONTACT-ID                 /*   NG1
+*  2 ZIP-CODE                       NG1
+  2 AT-STATUS                                                      /* PM1
+  2 CAP-IND                                                        /* PM1
+  2 NEXT-ACTION-DATE                                               /* PM1
+  2 ACTION-DATE                                                    /* PM1
+  2 NOTES      (A75/40)
+  2 REDEFINE NOTES
+    3 NOTES-TBL  (40)
+      4 NOTES-75   (A75)
+      4 REDEFINE NOTES-75
+        5 NOTES-AST  (A1)
+        5 NOTES-USER (A3)
+        5 NOTES-DASH (A1)
+        5 NOTES-DATE (A10)
+        5 REDEFINE NOTES-DATE
+          6 NOTES-MM   (A2)
+          6 NOTES--1   (A1)
+          6 NOTES-DD   (A2)
+          6 NOTES--2   (A1)
+          6 NOTES-YYYY (A4)
+        5 NOTES-REST (A60)
+      4 REDEFINE NOTES-75
+        5 NOTES-15   (A15)
+        5 NOTES-60   (A60)
+*
+  2 ST-NOTE-USER (50)
+  2 ST-NOTE-DATE (50)
+  2 ST-NOTE-STATUS (50)
+  2 PM-STATUS 
+*
+1 ST-V VIEW OF A-STATUS
+  2 SSN
+*
+1 #NOTES    (A75/20)
+*
+1 #NOTES-CV        (C/40)
+1 #NOTES-CV-1      (C/40)                                         /* PM4
+
+1 #SCR-CV          (C)
+1 #N-A-CV          (C)
+*
+1 #HOLD-NOTES      (A75/40)
+1 REDEFINE #HOLD-NOTES
+  2 #HOLD-NOTES-TBL  (40)
+    3 #HOLD-NOTES-15  (A15)
+    3 #HOLD-NOTES-60  (A60)
+1 #I1    (I2)
+1 #I2    (I2)
+1 #I3    (I2)
+1 #I4    (I2)
+1 #S-X   (I2)
+1 #A-X   (I2)
+1 #SAVE-I1 (I2)
+1 #ADMIN  (L)
+1 #USER-DATE (A15)
+1 REDEFINE #USER-DATE
+  2 #USER-DATE-USER  (A4)
+  2 #USER-DATE-DATE  (A11)
+1 #TEXT      (A75)
+1 #APPL-FND     (L)
+1 #STAT-FND     (L)
+1 #NO-NOTES     (L)
+1 #NOTES-CHGED  (L)
+1 #SUBTRACT-CAP-STATS (L)                                         /* PM1
+1 #ISN          (P8)
+*
+1 #YYYYMMDD (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY     (A4)
+  2 #MM       (A2)
+  2 #DD       (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-N   (N4)
+  2 #MM-N     (N2)
+  2 #DD-N     (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A (A8)
+*
+END-DEFINE
+************************************************************************
+INCLUDE GONERCXX
+*
+IF #CGA-SCR-SUFFIX = 'AT*'
+  MOVE 'Press ENTER for "AT"' TO #TEXT
+END-IF
+*
+IF  (#CGA-SCR-ID LT 500000)           /* INQUIRY ON EXISTING MBR
+* OR ((#CGA-SCR-ID GE 600000) AND (#CGA-SCR-ID LT 700000))
+    OR (#CGA-SCR-ID GE 600000)                         /* DW10
+  MOVE #CGA-SCR-ID TO #CGA-ID
+  MOVE TRUE TO #STAT-FND
+  FIND (1) ST-V WITH MEMBER-KEY = #CGA-ID-G
+    IF NO RECORDS FOUND
+      RESET #STAT-FND
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    MOVE ST-V.SSN TO #CGA-SCR-ID
+  END-FIND
+*
+  IF #STAT-FND
+    RESET #APPL-FND
+    FIND AT-V WITH SSN = #CGA-SCR-ID
+      IF  ((#CGA-USER-COMPANY = 'I') AND (AT-V.INTRO-FLAG = 'V'))
+          OR ((#CGA-USER-COMPANY = 'S') AND (AT-V.INTRO-FLAG NE 'V'))
+        ESCAPE TOP
+      END-IF
+*
+      MOVE TRUE TO #APPL-FND
+      MOVE *ISN TO #ISN
+    END-FIND
+  END-IF
+ELSE
+  MOVE TRUE TO #APPL-FND
+  IF #CGA-SCR-ID LT 700000    /* INQUIRY ON at number
+    FIND (1) AT-V WITH ID-NUMBER = #CGA-SCR-ID
+      IF NO RECORDS FOUND
+        RESET #APPL-FND
+      END-NOREC
+      MOVE *ISN TO #ISN
+    END-FIND
+  ELSE
+    RESET #APPL-FND
+    FIND AT-V WITH SSN = #CGA-SCR-ID
+      IF  ((#CGA-USER-COMPANY = 'I') AND (AT-V.INTRO-FLAG = 'V'))
+          OR ((#CGA-USER-COMPANY = 'S') AND (AT-V.INTRO-FLAG NE 'V'))
+        ESCAPE TOP
+      END-IF
+*
+      MOVE TRUE TO #APPL-FND
+      MOVE *ISN TO #ISN
+    END-FIND
+  END-IF
+END-IF
+*
+IF #APPL-FND
+  GET AT-V #ISN
+ELSE
+  MOVE 'No Appl Rec Found' TO #TEXT
+  INPUT TEXT #TEXT USING MAP 'G1000MXX'
+  FETCH 'G1000PXX'
+END-IF
+*
+#ZIP-CODE := GET-ZIP-CODE (< AT-V.CONTACT-ID >)   /* NG1
+*
+IF #CGA-SECURITY-CODE = 6 OR = 8 OR = 12 OR = 98 OR = 99
+  MOVE TRUE TO #ADMIN    /* able to add notes
+END-IF
+*
+IF #CGA-CLERK = 'KHB'   /* only these can modify notes          /* vt was 'DRW'
+    OR = 'BMG' OR = 'RLB' OR = 'CEB' OR = 'VXT'             /* vt was 'PAM'
+  MOVE TRUE TO #MANAGER
+END-IF
+*
+IF (#CGA-CLERK = 'KHB'   /*only these can view underwriting nts
+    OR = 'BMG' OR = 'RLB' OR = 'CEB'   OR = 'OLM'   /* vt removed 'LCC'
+    OR = 'ALB' OR = 'AJK'  or = 'VXT'  or = 'ALS'               /* PM11  vt2 was OR = 'ALB' OR = 'AJK'  or = 'VXT'
+    OR = 'MAL' OR = 'EAC' OR = 'GME' OR = 'EH' OR = 'JSF' OR = 'GMS')      /* DW7 PM8 yf1
+    OR AT-V.ACTION-FLAG = 'U'                                       /* PM9
+  MOVE TRUE TO #CAN-SEE-UNDERWRITING
+END-IF
+*
+MOVE *DATN TO #YYYYMMDD
+*
+IF #CGA-SCR-SUFFIX = '2ND'
+  PERFORM BUILD-REG-NOTE-SCREEN
+END-IF
+*
+* prepare for new AN
+MOVE 50 TO #S-X   /* STATUS notes
+MOVE 40 TO #A-X   /* AN notes
+MOVE 'N' TO #CHG-NOTES
+*
+PERFORM BUILD-NOTES-SCREEN   /* show 1st 20 entries
+*
+IF #CHG-NOTES = 'Y'
+  PERFORM BUILD-REG-NOTE-SCREEN
+  FETCH 'G1000PXX'
+END-IF
+*
+IF (#S-X NE 0) OR (#A-X NE 0)
+  PERFORM BUILD-NOTES-SCREEN
+*
+  IF #CHG-NOTES = 'Y'
+    PERFORM BUILD-REG-NOTE-SCREEN  /* show 2nd 20 entries
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+IF (#S-X NE 0) OR (#A-X NE 0)
+  PERFORM BUILD-NOTES-SCREEN
+*
+  IF #CHG-NOTES = 'Y'
+    PERFORM BUILD-REG-NOTE-SCREEN  /* show 3rd 10 entries
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+MOVE 'AT' TO #CGA-SCR-COMMAND
+MOVE 'AN*' TO #CGA-SCR-SUFFIX
+FETCH 'G1000PXX'
+*
+************************************************************************
+DEFINE SUBROUTINE BUILD-REG-NOTE-SCREEN
+************************************************************************
+*
+COMPRESS '*' #CGA-CLERK INTO #USER-DATE-USER LEAVING NO
+MOVE *DATN TO #YYYYMMDD
+COMPRESS '-' #MM '/' #DD '/' #YYYY INTO #USER-DATE-DATE LEAVING NO
+*
+*     SETUP 1ST 20 notes ***********
+*
+IF NOT #MANAGER                 /* only these can modify notes
+  MOVE (AD=P) TO #NOTES-CV (*)
+  MOVE (AD=P) TO #N-A-CV
+END-IF
+MOVE (AD=P) TO #SCR-CV
+MOVE (AD=P) TO #NOTES-CV-1 (*)                          /* PM4
+*
+MOVE NOTES (*) TO #HOLD-NOTES (*)
+*
+FOR #I1 1 TO 40
+  IF NOTES (#I1)  = MASK ('*'...'-'MM'/'DD'/'YYYY) /* 1ST LINE
+    COMPRESS NOTES-YYYY (#I1) NOTES-MM (#I1) NOTES-DD (#I1)
+      INTO #YYYYMMDD-A LEAVING NO
+    IF #YYYYMMDD = *DATN
+        OR #MANAGER                                        /* PM4
+      RESET #NOTES-CV (#I1)  /* okay to delete or chg todays notes
+*
+      IF #I1 LT 40
+        COMPUTE #I2 = #I1 + 1
+        FOR #I2 #I2 TO 40
+          IF  (NOTES (#I2)  = MASK ('*'...'-'MM'/'DD'/'YYYY)) /* 1ST LINE
+              OR (NOTES (#I2) = ' ')
+            ESCAPE BOTTOM
+          END-IF
+*
+          RESET #NOTES-CV (#I2)                 /* multiple line note
+          RESET #NOTES-CV-1 (#I2)               /* PM4
+        END-FOR
+      END-IF
+    END-IF
+  END-IF
+END-FOR
+*
+IF #ADMIN                                       /* these can add new notes
+  RESET  #SCR-CV
+  FOR #I1 40 TO 1 STEP -1
+    RESET  #NOTES-CV (#I1)
+    IF #CGA-SECURITY-CODE = 8                  /* PM5
+      RESET #NOTES-CV-1 (#I1)                  /* PM5
+    END-IF                                     /* PM5
+    IF (#I1 = 1) OR (NOTES (#I1 - 1) NE ' ')
+      MOVE #USER-DATE TO NOTES (#I1)
+      MOVE #I1 TO #SAVE-I1
+      COMPUTE *CURS-LINE = #SAVE-I1 + 3
+      MOVE 18 TO *CURS-COL
+*
+      ESCAPE BOTTOM
+    ELSE
+      RESET #NOTES-CV-1 (#I1)                  /* PM4
+    END-IF
+  END-FOR
+END-IF
+*
+FOR #I1 1 TO 40
+  IF NOTES (#I1)  = MASK ('*'...'-'MM'/'DD'/'YYYY) /* 1ST LINE
+    RESET #NON-DISPLAY
+  END-IF
+*
+  IF   ((NOT #CAN-SEE-UNDERWRITING)
+      AND (NOTES-USER (#I1)   = 'OLM')) /* underwriting note  vt removed 'LCC'
+      OR #NON-DISPLAY   /* must be a continuation line
+    MOVE (AD=PN) TO #NOTES-CV (#I1)
+    MOVE (AD=PN) TO #NOTES-CV-1 (#I1)         /* PM4
+    MOVE TRUE TO #NON-DISPLAY
+  END-IF
+END-FOR
+*
+* CALLNAT 'GKATRSXX' #ZIP-CODE #KATRINA-ZIP   /* DW2                       /* vt1 \/
+* IF #KATRINA-ZIP
+*   COMPRESS '*Resides in Katrina disaster area*' #TEXT INTO #TEXT
+* END-IF                                                                   /* vt1 /\
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+IF #CGA-SCR-SUFFIX = '2ND'
+  INPUT TEXT #TEXT MARK *NOTES (1) USING MAP 'C1051MAN'
+ELSE
+  INPUT TEXT #TEXT MARK *NOTES (1) USING MAP 'C1050MAN'
+END-IF
+*
+IF #CGA-SCR-COMMAND NE '*'
+  END TRANSACTION
+  FETCH 'G1000PXX'
+END-IF
+*
+FOR #I1 1 TO 40
+  IF   (#HOLD-NOTES (#I1)  = MASK ('*'...'-'MM'/'DD'/'YYYY)) /* 1ST LIN
+      AND (#HOLD-NOTES-15 (#I1) NE NOTES-15 (#I1))
+      AND (NOTES-60    (#I1) NE ' ')   /* they can be deleted
+    COMPRESS '1st 15 chars cannot be changed, it was'
+      #HOLD-NOTES-15 (#I1) INTO #ERR-MSG
+    REINPUT #ERR-MSG
+      MARK *NOTES (#I1)
+  END-IF
+*
+  IF   (NOTES-15 (#I1) = MASK ('*'...'-'MM'/'DD'/'YYYY)) /* 1ST LIN
+      AND (NOTES-60 (#I1) = ' ')   /* they can be deleted
+      AND (#I1 NE #SAVE-I1)
+    RESET NOTES (#I1) /* clear all of note
+  END-IF
+END-FOR
+*
+IF (NOTES (#SAVE-I1) = #USER-DATE)    /* no note was added
+    AND ((#SAVE-I1 = 40) OR (NOTES (#SAVE-I1 + 1) = ' '))
+  RESET NOTES (#SAVE-I1)
+END-IF
+*
+MOVE TRUE TO #NO-NOTES
+FOR #I1 1 TO 40
+  IF NOTES (#I1) NE ' '
+    RESET #NO-NOTES
+  END-IF
+*
+  IF NOTES (#I1) NE #HOLD-NOTES (#I1)
+    MOVE TRUE TO #NOTES-CHGED
+    IF NOTES-15 (#I1) = ' '                /* SAG RH1 02082006 AS
+      MOVE NOTES-60 (#I1) TO NOTES (#I1)    /* SAG RH1 02082006 AS
+    END-IF                                  /* SAG RH1 02082006 AS
+**  ESCAPE BOTTOM                           /* SAG RH1 02082006 AS
+  END-IF
+END-FOR
+*
+IF #NO-NOTES
+  RESET #NOTES-CHGED
+END-IF
+*
+IF   (#NOTES-CHGED OR #NO-NOTES)
+    AND #APPL-FND
+*
+  IF (#CGA-CLERK = 'LCC' OR = 'OLM' OR = 'BMG')                   /* PM1
+      AND (AT-STATUS = 'P1' OR = 'P2' OR = 'P3')
+    IF CAP-IND = 'Y'
+      MOVE TRUE TO #SUBTRACT-CAP-STATS
+      CALLNAT 'C1012SAT'
+        AT-V.AT-STATUS
+        #SUBTRACT-CAP-STATS
+    END-IF
+*
+    MOVE 'U1' TO AT-STATUS
+    MOVE 'U1' TO ACTION-FLAG
+*
+    RESET NEXT-ACTION-DATE  /* used to ind aged status chg in ATHPATLB
+    CALLNAT 'GADDNSXX' /* add a status note
+      #CGA-CLERK
+      AT-STATUS
+      ST-NOTE-DATE   (1:50)
+      ST-NOTE-USER   (1:50)
+      ST-NOTE-STATUS (1:50)
+      ACTION-DATE
+*
+    IF CAP-IND = 'Y'
+      RESET #SUBTRACT-CAP-STATS
+      CALLNAT 'C1012SAT'
+        AT-V.AT-STATUS
+        #SUBTRACT-CAP-STATS
+    END-IF
+  END-IF
+*
+  UPDATE (0212)
+  END TRANSACTION
+*
+  MOVE 'Record Updated' TO #TEXT
+  MOVE (AD=P) TO #NOTES-CV (*)
+  MOVE (AD=P) TO #NOTES-CV-1 (*)                                /* PM6
+  MOVE (AD=P) TO #SCR-CV #N-A-CV
+  INPUT TEXT #TEXT USING MAP 'C1050MAN'
+ELSE
+  END TRANSACTION
+END-IF
+*
+IF #CGA-SCR-COMMAND NE '*'
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'AN' TO #CGA-SCR-COMMAND
+*
+IF NOTES (20) NE ' '   /* show 2nd 20 notes
+  MOVE '2ND' TO #CGA-SCR-SUFFIX
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE BUILD-NOTES-SCREEN
+************************************************************************
+*
+MOVE (AD=I) TO #SCR-ST-NOTES-C (*)
+RESET #SCR-ST-NOTES (*)
+*
+FOR #I3 1 TO 20
+  RESET #NON-DISPLAY
+  IF (#S-X = 0) AND (#A-X = 0) ESCAPE BOTTOM END-IF
+*
+  IF (#A-X GE 1) AND (NOTES (#A-X) = ' ')
+    SUBTRACT 1 FROM #A-X
+    SUBTRACT 1 FROM #I3
+    ESCAPE TOP
+  END-IF
+*
+  IF (#S-X GE 1) AND (ST-NOTE-DATE (#S-X) = 0)
+    SUBTRACT 1 FROM #S-X
+    SUBTRACT 1 FROM #I3
+    ESCAPE TOP
+  END-IF
+*
+  IF   (#A-X NE 0)   /* able to handle 10 line notes
+      AND (NOTES (#A-X) NE ' ')  /* multiple lined note
+      AND (NOTES (#A-X) NE MASK ('*'...'-')) /* NOT 1ST LINE OF A NOTE
+    ADD 1 TO #I4
+*   DISPLAY #A-X #I4 NOTES (#A-X) (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+    IF #I4 LT 11    /* TEMP
+      MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+    ELSE
+      WRITE // 'NOTES ONLY SHOW UP TO 11 CONTIGUOUS LINES'
+        /  'DELETE 1 EXCESS LINE'
+        /  'PRESS ENTER TO CONTINUE'
+    END-IF
+    SUBTRACT 1 FROM #A-X
+*
+    IF   (#A-X) NE 0   /* 2nd addl note
+        AND (NOTES (#A-X) NE ' ')
+        AND (NOTES (#A-X) NE MASK ('*'...'-')) /* NOT 1ST LINE OF A NOTE
+      ADD 1 TO #I4
+      IF #I4 LT 11    /* TEMP
+        MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+      END-IF
+      SUBTRACT 1 FROM #A-X
+*
+      IF   (#A-X NE 0)  /* 3nd addl note
+          AND (NOTES (#A-X) NE ' ')
+          AND (NOTES (#A-X) NE MASK ('*'...'-'))
+        ADD 1 TO #I4
+        MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+        SUBTRACT 1 FROM #A-X
+*
+        IF   (#A-X NE 0)  /* 4th addl note
+            AND (NOTES (#A-X) NE ' ')
+            AND (NOTES (#A-X) NE MASK ('*'...'-'))
+          ADD 1 TO #I4
+          MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+          SUBTRACT 1 FROM #A-X
+*
+          IF   (#A-X NE 0)  /* 5th addl note
+              AND (NOTES (#A-X) NE ' ')
+              AND (NOTES (#A-X) NE MASK ('*'...'-'))
+            ADD 1 TO #I4
+            MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+            SUBTRACT 1 FROM #A-X
+*
+            IF   (#A-X NE 0)  /* 6th addl note
+                AND (NOTES (#A-X) NE ' ')
+                AND (NOTES (#A-X) NE MASK ('*'...'-'))
+              ADD 1 TO #I4
+              MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+              SUBTRACT 1 FROM #A-X
+*
+              IF   (#A-X NE 0)  /* 7th addl note
+                  AND (NOTES (#A-X) NE ' ')
+                  AND (NOTES (#A-X) NE MASK ('*'...'-'))
+                ADD 1 TO #I4
+                MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+                SUBTRACT 1 FROM #A-X
+*
+                IF   (#A-X NE 0)  /* 8th addl note
+                    AND (NOTES (#A-X) NE ' ')
+                    AND (NOTES (#A-X) NE MASK ('*'...'-'))
+                  ADD 1 TO #I4
+                  MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+                  SUBTRACT 1 FROM #A-X
+*
+                  IF   (#A-X NE 0)   /* 9th addl note
+                      AND (NOTES (#A-X) NE ' ')
+                      AND (NOTES (#A-X) NE MASK ('*'...'-'))
+                    ADD 1 TO #I4
+                    MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+                    SUBTRACT 1 FROM #A-X
+*
+                    IF   (#A-X NE 0)   /* 10th addl note
+                        AND (NOTES (#A-X) NE ' ')
+                        AND (NOTES (#A-X) NE MASK ('*'...'-'))
+                      ADD 1 TO #I4
+                      MOVE NOTES (#A-X) TO #HOLD-MULT-LINES (#I4)
+                      SUBTRACT 1 FROM #A-X
+                    END-IF
+                  END-IF
+                END-IF
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #A-X = 0  /* build AN note date
+    RESET #YYYYMMDD
+  ELSE
+    COMPRESS NOTES-YYYY (#A-X) NOTES-MM (#A-X) NOTES-DD (#A-X)
+      INTO #YYYYMMDD-A LEAVING NO
+  END-IF
+*
+  IF  (#S-X LE 0)   /* build STATus note date
+    RESET #ST-NOTE-DATE
+  ELSE
+    MOVE ST-NOTE-DATE (#S-X) TO #ST-NOTE-DATE
+  END-IF
+*
+  IF #YYYYMMDD NE MASK (YYYYMMDD)                          /* DW3
+    RESET #YYYYMMDD
+  END-IF
+*
+  IF #YYYYMMDD GT #ST-NOTE-DATE /* AN note after STAT note
+    IF   (NOT #CAN-SEE-UNDERWRITING)
+        AND (NOTES-USER (#A-X)   = 'OLM') /*underwriting notes vt removed 'LCC'
+      COMPRESS NOTES-DATE (#A-X) NOTES-USER (#A-X)
+        '*Non-Displayable Underwriting Note*' INTO #SCR-ST-NOTES (#I3)
+*     MOVE '*Non-Displayable Underwriting Note*' TO #SCR-ST-NOTES (#I3)
+      MOVE TRUE TO #NON-DISPLAY
+    ELSE
+      IF NOTES (#A-X) = MASK ('*'...'-'MM'/'DD'/'YYYY)
+        COMPRESS NOTES-DATE (#A-X) NOTES-USER (#A-X) NOTES-REST (#A-X)
+          INTO #SCR-ST-NOTES (#I3)
+      ELSE
+        MOVE NOTES (#A-X) TO #SCR-ST-NOTES (#I3)
+      END-IF
+    END-IF
+*
+    FOR #I4 10 TO 1 STEP -1   /* 10 line notes
+      IF   (#HOLD-MULT-LINES (#I4) NE ' ')
+          AND (#I3 LT 20)
+        ADD 1 TO #I3
+        RESET #SCR-ST-NOTES-C (#I3)
+        IF #NON-DISPLAY
+          MOVE '*Non-Displayable Underwriting Note*'
+            TO #SCR-ST-NOTES (#I3)
+        ELSE
+          MOVE #HOLD-MULT-LINES (#I4) TO #SCR-ST-NOTES (#I3)
+        END-IF
+      END-IF
+    END-FOR
+    RESET #HOLD-MULT-LINES (*) #I4
+*
+    SUBTRACT 1 FROM #A-X
+    ESCAPE TOP
+  ELSE
+    IF #S-X LE 0
+      MOVE 'bad index' TO #SCR-ST-NOTES (#I3)
+    ELSE
+      CALLNAT 'GATSTSXX'   /* AT Status (old Action Flag) Descriptions
+        ST-NOTE-STATUS (#S-X)
+        #ST-DESC
+        #INVALID
+        #ERR-MSG
+*
+      RESET #SCR-ST-NOTES (#I3)
+      MOVE ST-NOTE-DATE (#S-X) TO #YYYYMMDD
+      COMPRESS #MM '/' #DD '/' #YYYY
+        INTO #SCR-ST-NOTES-DATE (#I3) LEAVING NO
+      MOVE ST-NOTE-USER (#S-X) TO #SCR-ST-NOTES-USER (#I3)
+      MOVE '|'                 TO #SCR-ST-NOTES-BAR1 (#I3)
+      MOVE ST-NOTE-STATUS (#S-X) TO #SCR-ST-NOTES-STATUS (#I3)
+      MOVE '|'                 TO #SCR-ST-NOTES-BAR2 (#I3)
+      IF AT-STATUS = 'U3'                                              /* bz
+         COMPRESS #ST-DESC PM-STATUS INTO #SCR-ST-NOTES-DESC (#I3)     /* bz
+      ELSE                                                             /* bz
+         MOVE #ST-DESC            TO #SCR-ST-NOTES-DESC (#I3)
+      END-IF                                                           /* bz 
+    END-IF
+    SUBTRACT 1 FROM #S-X
+  END-IF
+END-FOR
+*
+* CALLNAT 'GKATRSXX' #ZIP-CODE #KATRINA-ZIP   /* DW2                         /* vt1 \/
+* IF #KATRINA-ZIP
+*   COMPRESS '*Resides in Katrina disaster area*' #TEXT INTO #TEXT
+* END-IF                                                                     /* vt1 /\   
+*
+IF #I3 NE 0
+  MOVE '*' TO #CGA-SCR-COMMAND
+  INPUT TEXT #TEXT MARK *#CHG-NOTES USING MAP 'C1055MAN'
+*
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+END

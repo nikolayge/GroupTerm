@@ -1,0 +1,188 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: G1099SXC * Create 1099C records *
+************************************************************************
+*            MODIFICATION LOG                                          *
+* USER DATE     TAG  REASON                                            *
+* PAM  12262006 None Program Written.                                  *
+* DRW 05/08/2008 DW1 Add INT-TYPE "W"                                  *
+* NGG 20131001   NG1 Address normalization                             *
+* vxt 10/19/2016 vt1 /Ticket 4335/                                     *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING G1099PXC
+LOCAL USING G1099LXX
+LOCAL USING BMASTABA
+LOCAL USING GBANKLXX
+LOCAL USING ADDA0001          /* NG1
+LOCAL
+*
+1 #YEAR-TYPE-1099-ID-KEY     (A17)
+1 REDEFINE #YEAR-TYPE-1099-ID-KEY
+  2 #KEY-YEAR                 (A4)
+  2 #KEY-TYPE-1099            (A4)
+  2 #KEY-ID                   (A9)
+*
+1 #DATE                      (N8)
+1 REDEFINE #DATE
+  2 #DATE-YYYY                (A4)
+  2 REDEFINE #DATE-YYYY
+    3 #DATE-YYYY-N             (N4)
+  2 #DATE-MM                  (A2)
+  2 #DATE-DD                  (A2)
+*
+1 #I1                        (I2)
+1 #ADD-OR-CREATE             (A1)
+1 #TEXT                      (A60)
+1 #OWNER-AREA                (A6) 1 REDEFINE #OWNER-AREA
+  2 #OWNER                   (N6)
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 SSN
+*
+1 #SSN              (N9)
+1 BENE-F-V VIEW OF A-BENE-FINAL
+  2 NOTE-TEXT          (A60/60)
+  2 REDEFINE NOTE-TEXT
+    3 BENE-TEXTS-6-POLS (6)
+      4 BENE-TEXT-PRIM-SEC (2)
+        5 BENE-TEXT-OCC    (5)
+          6 BENE-TEXT        (A60)   /* (D, P/A, text-line)
+          6 REDEFINE BENE-TEXT
+            7 BENE-1ST-25    (A25)
+            7 BENE-OWNER-AREA   (A35) /* can hold 5 owners
+            7 REDEFINE BENE-OWNER-AREA
+              8 BENE-OWNER-CN-A  (A6)   /* 1st owner
+END-DEFINE
+*
+RESET #OWNER-AREA
+FIND BENE-F-V WITH ID-NUMBER = #RELATED-ID-NUMBER
+  IF BENE-F-V.BENE-OWNER-CN-A  (1, 2, 5) = MASK (NNNNNN)
+    MOVE BENE-F-V.BENE-OWNER-AREA (1, 2, 5) TO #OWNER-AREA
+    MOVE RIGHT JUSTIFIED #OWNER-AREA TO #OWNER-AREA
+  END-IF
+END-FIND
+IF #OWNER-AREA = ' '
+  #OWNER := #RELATED-ID-NUMBER
+END-IF
+FIND (1) CNT-V WITH ID-NUMBER = #OWNER
+  #SSN := CNT-V.SSN
+  #owner-contact-id := cnt-v.contact-id                              /* vt1  
+  #owner-ssn        := cnt-v.ssn                                     /* vt1  
+END-FIND
+*
+IF #SSN = 0
+  WRITE 'Owner SSN is 0 - please create a manual 1099 entry'
+  ESCAPE ROUTINE
+END-IF
+*
+#DATE          := *DATN
+#KEY-YEAR      := #DATE-YYYY
+#KEY-TYPE-1099 := #TYPE-1099
+#KEY-ID        := #SSN
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #TYPE-1099 = 'C'
+    PERFORM TYPE-C
+  WHEN NONE
+    WRITE '1099 processing ended in error.'
+    WRITE 'No process exists for type ' #TYPE-1099
+    ESCAPE ROUTINE
+END-DECIDE
+*
+************************************************************************
+DEFINE SUBROUTINE TYPE-C
+************************************************************************
+*
+#BANK-ID-NUMBER := #RELATED-ID-NUMBER
+CALLNAT 'GBANKSXX'
+  #PDA-BANK
+*
+FIND (1) TAX-V WITH YEAR-TYPE-1099-ID-KEY = #YEAR-TYPE-1099-ID-KEY
+  IF NO RECORD FOUND
+    PERFORM CREATE-NEW-1099-C-RECORD
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  if tax-v.policy-number = #policy-number                      /* vt1  
+    RESET #ADD-OR-CREATE
+    IF *DEVICE = 'BATCH'
+      #ADD-OR-CREATE := 'Y'
+    ELSE
+      RESET #PDA-ADDRESS
+      #ADD-CONTACT-ID := TAX-V.CONTACT-ID
+      #ADD-TYPE := 'P'
+      CALLNAT 'ADDN0001' #PDA-ADDRESS
+      INPUT MARK *#ADD-OR-CREATE USING MAP 'G1099MXC'
+      IF NOT #ADD-OR-CREATE = 'Y' OR = 'N'
+        MOVE 'Please enter "Y" or "N" ' TO #TEXT
+        REINPUT #TEXT MARK *#ADD-OR-CREATE
+      END-IF
+    END-IF
+*
+    IF #ADD-OR-CREATE = 'Y'
+      ADD  #AMOUNT       TO TAX-V.AMOUNT
+      ADD  #GROSS-AMOUNT TO TAX-V.GROSS-AMT
+      UPDATE (0106)
+    ELSE
+      PERFORM CREATE-NEW-1099-C-RECORD
+    END-IF
+  else                                                   /* vt1  \/
+     perform  create-new-1099-c-record
+  end-if                                                 /* vt1  /\
+END-FIND
+*
+* end transaction         /* <<<<<<<<<<<<<<<<<<<<<<< DW99
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-NEW-1099-C-RECORD
+************************************************************************
+*
+TAX-V.SSN               :=  #SSN
+TAX-V.YEAR              :=  #DATE-YYYY-N
+TAX-V.TYPE-1099         :=  #TYPE-1099
+TAX-V.SSN-TAX-ID-IND    := 'S'
+TAX-V.INT-TYPE          := 'W'                       /* DW1
+TAX-V.CONTACT-ID        := CNT-V.CONTACT-ID          /* NG1
+TAX-V.POLICY-NUMBER     := #POLICY-NUMBER                             /* VT1  
+TAX-V.CLAIMANT-ID       := #OWNER-CONTACT-ID                          /* VT1  
+tax-v.date-entered      := *datx                                      /* vt1  
+tax-v.owner-ssn         := #owner-ssn                                 /* vt1    
+*
+* TAX-V.NAME              :=  #NAME
+* DECIDE FOR FIRST CONDITION
+*   WHEN #ADDR-3 NE ' '
+*     TAX-V.ADDR-2        := #ADDR-3
+*     TAX-V.ADDR-1-A      := #ADDR-2
+*     TAX-V.ADDR-1        := #FIRST-ADDRESS
+*   WHEN #ADDR-2 NE ' '
+*     TAX-V.ADDR-2        := #ADDR-2
+*     TAX-V.ADDR-1        := #FIRST-ADDRESS
+*     RESET TAX-V.ADDR-1-A
+*   WHEN NONE
+*     TAX-V.ADDR-2        := #FIRST-ADDRESS
+*     RESET  TAX-V.ADDR-1 TAX-V.ADDR-1-A
+* END-DECIDE
+*
+* TAX-V.ZIP-CODE          := #ZIP-CODE
+TAX-V.DATE-ENTERED      := *DATN
+TAX-V.AMOUNT            := #AMOUNT
+TAX-V.GROSS-AMT         := #GROSS-AMOUNT
+TAX-V.RELATED-ID-NUMBER := #RELATED-ID-NUMBER
+TAX-V.BANKRUPTCY-IND    := #BANKRUPT
+*
+STORE TAX-V
+* write 'store 1099 line 1439 with key=' #YEAR-TYPE-1099-ID-KEY
+* write tax-v.ID-NUMBER 'year' Year 'amount' amount 'int-type' int-type
+*    'type-1099' type-1099 'date-entered' date-entered
+* write 'ssn-tax-id-ind' ssn-tax-id-ind 'gross-amt=' gross-amt
+END-SUBROUTINE
+*
+END

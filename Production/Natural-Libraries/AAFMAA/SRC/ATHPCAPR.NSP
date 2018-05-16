@@ -1,0 +1,122 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+****************************************************************************************************************************
+*                                                                                                                          *
+*  PROGRAM  : ATHPCAPR                                                                                                     *
+*                                                                                                                          *
+*  FUNCTION : Create a list of CNs that have a CAP loan and at least one  of the  BADJ /DBCR or TERM amounts are not zero. *
+*                                                                                                                          *
+* 02/02/2017 vxt Initial creation                                                                                          *
+****************************************************************************************************************************
+*
+DEFINE DATA LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+  2 id-number
+  2 name
+  2 debit-credit-amt
+  2 c*active-segments
+  2 active-segments
+    3 mode                    (9)
+    3 paid-to-date            (9)
+    3 x-bill-adjust           (9)
+    3 conv-duration           (9)
+    3 x-loan-amount           (9)
+      3x-loan-date             (9)
+  2 c*out-term-ref-group    (n2)
+  2 out-term-ref-group
+    3 out-term-ref-amount     (99)
+    3 out-term-ref-year       (99)
+    3 out-term-ref-entry-date (99)
+    3 NEW-POL-ISS-DATE        (99)
+    3 NEW-TERM-POL-NBR        (99)
+*
+local
+1 #i    (i2)
+1 #k    (i2)
+1 #cnt  (n7)
+1 #tot-trmf   (n7.2)
+1 #tab  (a1) init <H'09'>
+1 #out-file  (a100)
+1 #work-date  (n8)
+1 redefine #work-date
+  2 #work-date-yyyy (a4)
+  2 #work-date-mm   (a2)
+  2 #work-date-dd   (a2)
+1 #paid-to-date   (a10)
+1 #loan-date      (a10)
+1 #loan-amt       (a13)
+1 #badj-amt       (a13)
+1 #dbcr-amt       (a13)
+1 #trmf-amt-a     (a13)
+END-DEFINE
+*
+***** define work file 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/CAP-DEBIT.TXT' type 'ASCII'
+*
+compress 'CN'    #tab
+  'NAME'         #tab
+  'MODE'         #tab
+  'Paid to date' #tab
+  'Loan Date'    #tab
+  'Loan amount'  #tab
+  'BADJ'         #tab
+  'DBCR'         #tab
+  'TERM'         #tab
+  into #out-file leaving no
+write work 1 #out-file
+*
+read st-v by id-number starting from 1900
+*
+  for #i 1 c*active-segments
+    if conv-duration(#i) = 999   and x-loan-amount(#i) ne 0
+      for #k 1 c*out-term-ref-group
+        if out-term-ref-amount(#k) ne 0
+          add out-term-ref-amount(#k) to #tot-trmf
+        end-if
+      end-for
+      if #tot-trmf ne 0
+        move edited #tot-trmf(em=sz,zzz,zz9.99) to #trmf-amt-a
+      end-if
+*
+      if x-bill-adjust(#i) ne 0 or #tot-trmf ne 0 or st-v.debit-credit-amt ne 0
+        move st-v.paid-to-date(#i) to #work-date
+        compress #work-date-mm '/' #work-date-dd '/' #work-date-yyyy into #paid-to-date leaving no
+        move X-LOAN-DATE(#i) to #work-date
+        compress #work-date-mm '/' #work-date-dd '/' #work-date-yyyy into #loan-date leaving no
+        if st-v.x-loan-amount(#i) ne 0
+          move edited st-v.x-loan-amount(#i)(em=sz,zzz,zz9.99) to #loan-amt
+        end-if
+        if st-v.x-bill-adjust(#i) ne 0
+          move edited st-v.x-bill-adjust(#i)(em=sz,zzz,zz9.99) to #badj-amt
+        end-if
+        if st-v.debit-credit-amt ne 0
+          move edited st-v.debit-credit-amt (em=sz,zzz,zz9.99) to #dbcr-amt
+        end-if
+        compress st-v.id-number   #tab
+          st-v.name               #tab
+          st-v.mode(#i)           #tab
+          #paid-to-date           #tab
+          #loan-date              #tab
+          #loan-amt               #tab
+          #badj-amt               #tab
+          #dbcr-amt               #tab
+          #trmf-amt-a             #tab
+          into #out-file leaving no
+        write work 1 #out-file
+        add 1 to #cnt
+        reset #tot-trmf #trmf-amt-a  #loan-amt #badj-amt #dbcr-amt
+        escape bottom
+      end-if
+    end-if
+  end-for
+*
+  at end of data
+    write  'total records ' #cnt
+  end-enddata
+end-read
+
+end
+

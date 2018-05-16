@@ -1,0 +1,666 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHP05PC    - MONTHLY STATUS REPORT AND 'M12' STATISTICS
+*
+*  THIS PROGRAM RUNS IN BATCH MODE ONLY
+*  THIS PROGRAM CALLS COBOL PROGRAM ATHPM120
+*  IT PRINTS THE NEW STATISTICS SUMMARY REPORT
+*************************************************************************************
+*                       MODIFICATION LOG
+* USER DATE      TAG  REASON
+* DRW  02222005  DW1  Add AL (Annuiuty Life) Processing
+* DRW  03132006  DW2  Add Qualifier to widow read & bypas SPS/GEN
+* DRW  10272006  DW3  Max #GET-CNT is 99999
+* SAG  11022005  RH1  AB - Replace CALL to Cobol with CALLNAT to Natural
+* SAG  11282005  RH1  SS - Modified the custom coded ON ERROR stmt &
+*                     replaced it with copycode GABNDCX1
+* SAG  02072006  RHC  AB changed Callnat to Fetch Return for ATHPM120
+* DRW 08/21/2008 DW4  Gen Plus Statistics
+* RSE 09/18/2009 RE1  Change PROCESS-IND logic for Unification/ Number-memberships
+* YAK 10/09/2012 YK1  Use function to identify Level Term II plans
+* YAK 12/15/2012 YK2  Add EZ Term plan
+* JNT 09/12/2013 JT1  Address normalization
+* YAK 12/15/2012 YK3  Add GP2 plan
+* NGG 06/23/2014 NG1  CONTACT NORMALIZATION
+* NGG 20141023   NG2  Annuity life products    
+************************************************************************************
+*
+DEFINE DATA
+GLOBAL USING ATHG05P0
+LOCAL USING GONERLXX                        /* SAG RH1 11282005 SS
+* LOCAL  USING ATHL05PC                     /* JT1 start
+LOCAL USING ADDA0001
+LOCAL USING CONTPDA1            /* TT1
+LOCAL
+1 OBSOLETE-STATUS-FIELDS                         /* NG1  \/
+  2 SEX               (A1)
+  2 DATE-OF-BIRTH     (N8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DOB-YYYY (N4.0)
+    3 REDEFINE DOB-YYYY
+      4 DOB-CENT (N2.0)
+      4 DOB-YY (N2.0)
+    3 DOB-MMDD (N4.0)
+    3 REDEFINE DOB-MMDD
+      4 DOB-MM (N2.0)
+      4 DOB-DD (N2.0)
+  2 DATE-OF-BIRTH-SP (N8)
+1 WID-OBSOLETE
+  2 SEX             (A1)
+  2 DATE-OF-BIRTH   (N8)
+  2 DATE-OF-BIRTH-SP (N8)
+  2 SPOUSE-SEX      (A1)
+*                                                     NG1  /\
+1 WID-V VIEW OF A-STATUS
+  2 ID-NUMBER (N6.0)
+  2 PROCESS-IND (A1)
+  2 INTRO-FLAG (A1)
+  2 MEMBER-CONTACT-ID
+  2 STATUS-CODE-SP (A1)
+*    2 DATE-OF-BIRTH-SP (N8.0)
+*    2 REDEFINE DATE-OF-BIRTH-SP
+*      3 DOB-SP-YYYY (N4)
+*      3 DOB-SP-MMDD (N4)
+*
+1 INTRO-MBR-V VIEW OF A-INTRO-MEMBER
+  2 ID-NUMBER (N6.0)
+  2 NAME (A25)
+  2 SEX (A1)
+  2 MIL-SERVICE (A3)
+  2 PAID-THRU-DATE (N8.0)
+  2 REDEFINE PAID-THRU-DATE
+    3 PAID-THRU-DATE-YYYY (N4)
+    3 PAID-THRU-DATE-MMDD (N4)             /* JT1 end
+*
+1 #TOT-UNITS       (P2)
+1 #UNITS           (P3)
+1 #TOT-FACE        (P7.2)
+1 #TOT-FACE-PP     (P7.2)
+1 #TOT-FACE-PDUP   (P7.2)
+1 #TOT-FACE-ETI    (P7.2)
+1 #FACE-X          (I2)
+*
+1 #I1              (I2)
+1 #I2              (I2)
+1 #I3              (I2)    /* TOTAL PP INDEX
+1 #I4              (I2)    /* TOTAL PDUP INDEX
+1 #I5              (I2)    /* TOTAL ETI INDEX
+1 #ITYP            (I2)    /* TYPE OF TOTAL
+1 #IUNITS          (I2)    /* NUM UNITS
+1 #ISTAT           (I2)    /* MIL-STATUS
+1 #ISERV           (I2)    /* MIL-SERVICE
+1 #IPLAN           (I2)    /* PLAN (OL/20/30)
+1 #PAY-STAT        (A4)
+1 #EFFECT-DATE     (N8)
+1 #PLAN            (A3)
+1 REDEFINE #PLAN
+  2 #PLAN-A1        (A1)
+  2 #PLAN-N2        (N2)
+*
+1 #MBR-UNITS-TBL    (3)
+  2 #HAS-A-UNITS-POL (L/10)     /* IF CATEGORY HAS AT LEAST 1 POL
+*
+1 #MBR-PLANS-TBL    (3)
+  2 #HAS-A-PLANS-POL (L/7)     /* IF CATEGORY HAS AT LEAST 1 POL
+*
+1 #ABEND-CODE       (I4)
+1 #FACE-AMT (P7.2/9)
+1 #DEATH-BN (P7.2/9)
+*
+1 #ADD-LINE1   (A25)                                          /* JT1
+1 #ADD-LINE2   (A25)                                          /* JT1
+1 #ADD-LINE3   (A25)                                          /* JT1
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+ON ERROR
+*    WRITE    / '*P R O G R A M - N M ' *PROGRAM              /* SAG RH1 11282005 SS - BEGIN
+*             / '*E R R O R - N U M   ' *ERROR-NR
+*             / '*E R R O R - L I N E ' *ERROR-LINE
+*             / ' ID-NUMBER           ' STATUS-VIEW.ID-NUMBER
+*     WRITE   / ' FILLER'
+*     WRITE   / ' FILLER'
+*     MOVE +4095 TO #ABEND-CODE
+*     CALL 'ABEND' USING #ABEND-CODE  /* USER 4095
+  #BATCH-LITERAL-1 := STATUS-VIEW.ID-NUMBER
+  INCLUDE GABNDCX1                                              /* SAG RH1 11282005 SS - END
+END-ERROR
+*
+FORMAT PS=72
+WRITE TITLE LEFT 'PROGRAM: ATHP05P0'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+*
+IF PROCESS-SWITCH = 'I'               /* INITIALIZE MODE
+*
+** CALL 'ATHPM120' #PROCESS-SWITCH                /* SAG 11022005 RH1
+**                 #C-RUN-DT-YYYYMMDD             /* SAG 11022005 RH1
+**                 #GET-CNT STATUS-VIEW.ID-NUMBER /* SAG 11022005 RH1
+** CALLNAT 'ATHPM120' #PROCESS-SWITCH             /* SAG 11022005 RH1
+**                    #C-RUN-DT-YYYYMMDD          /* SAG 11022005 RH1
+**                    LINK-TALLYS                 /* SAG 11022005 RH1
+**                    STATUS-VIEW                 /* SAG 11022005 RH1
+** FETCH RETURN 'ATHPM120'                        /* EDS-PM 20060913
+  ESCAPE ROUTINE
+END-IF
+*                                    NG1 \/
+RESET PDA-CONTACT
+P-CONTACT-ID := STATUS-VIEW.MEMBER-CONTACT-ID
+CALLNAT 'CONTS001'  PDA-CONTACT
+OBSOLETE-STATUS-FIELDS.SEX                := P-GENDER
+OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH      := P-DATE-OF-BIRTH
+*  OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH-SP
+*                                    NG1 /\
+IF PROCESS-SWITCH = 'P'                 /* PROCESSING MODE
+*  IF STATUS-VIEW.PROCESS-IND = 'S' OR = 'C'                                          /* RE1
+  IF STATUS-VIEW.PROCESS-IND = 'C' OR AFFL-ONLY-CLIENT(<STATUS-VIEW.ID-NUMBER>)       /* RE1
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF STATUS-VIEW.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #GET-CNT LT 99999   /* DW3
+    ADD +1 TO #GET-CNT
+  END-IF
+** CALL 'ATHPM120' #PROCESS-SWITCH                /* SAG 11022005 RH1
+**                 #C-RUN-DT-YYYYMMDD             /* SAG 11022005 RH1
+**                 #GET-CNT STATUS-VIEW.ID-NUMBER /* SAG 11022005 RH1
+** CALLNAT 'ATHPM120' #PROCESS-SWITCH             /* SAG 11022005 RH1
+**                    #C-RUN-DT-YYYYMMDD          /* SAG 11022005 RH1
+**                    LINK-TALLYS                 /* SAG 11022005 RH1
+**                    STATUS-VIEW                 /* SAG 11022005 RH1
+** FETCH RETURN 'ATHPM120'                        /* EDS-PM 20060913
+  PERFORM ACCUM-STATISTICS
+  ESCAPE ROUTINE
+END-IF
+*
+IF PROCESS-SWITCH = 'F'                   /* FINALIZE MODE
+*
+  IF #GET-CNT NE 0     /* ONLY IF STATUS RPT WAS SELECTED (#PC = C)
+    PERFORM ACCUM-TOTALS
+    PERFORM COUNT-WIDOWS-AND-INTROS
+  END-IF
+*
+** CALL 'ATHPM120' #PROCESS-SWITCH                /* SAG 11022005 RH1
+**                 #C-RUN-DT-YYYYMMDD             /* SAG 11022005 RH1
+**                 #GET-CNT STATUS-VIEW.ID-NUMBER /* SAG 11022005 RH1
+** CALLNAT 'ATHPM120' #PROCESS-SWITCH             /* SAG 11022005 RH1
+**                    #C-RUN-DT-YYYYMMDD          /* SAG 11022005 RH1
+**                    LINK-TALLYS                 /* SAG 11022005 RH1
+**                    STATUS-VIEW                 /* SAG 11022005 RH1
+** FETCH RETURN 'ATHPM120'                        /* EDS-PM 20060913
+*
+  ESCAPE ROUTINE
+END-IF
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCUM-STATISTICS
+* * * * * * * * * * * * * * * * *
+*
+IF STATUS-VIEW.NUMBER-MEMBERSHIPS = 0             /* OK DW   RE1
+  IF STATUS-VIEW.DATE-OF-DEATH > 0       /* EDS-PM 20060913
+    ADD +1 TO #MBC-DEAD                  /* EDS-PM 20060913
+  ELSE                                   /* EDS-PM 20060913
+    ADD +1 TO #MBC-INACTIVE              /* EDS-PM 20060913
+  END-IF                                 /* EDS-PM 20060913
+*
+  ESCAPE ROUTINE
+END-IF
+*
+ADD +1 TO #MBC-ACTIVE                     /* EDS-PM 20060913
+*
+IF STATUS-VIEW.INTRO-FLAG = 'I'           /* EDS-PM 20060913
+    OR STATUS-VIEW.INTRO-FLAG = 'B'          /* EDS-PM 20060913
+  ADD 1 TO #MBC-MEMBER-INTR               /* EDS-PM 20060913
+END-IF                                    /* EDS-PM 20060913
+*
+IF STATUS-VIEW.MILITARY-STATUS = 'A'
+  ADD 1 TO #MBC-STAT-ACTIVE
+  MOVE 1 TO #ISTAT
+ELSE
+  IF STATUS-VIEW.MILITARY-STATUS = 'R'
+    ADD 1 TO #MBC-STAT-RETIRED
+    MOVE 2 TO #ISTAT
+  ELSE
+    IF STATUS-VIEW.MILITARY-STATUS = 'C'
+      ADD 1 TO #MBC-STAT-CIVILIAN
+      MOVE 3 TO #ISTAT
+    ELSE
+      WRITE 'BAD MIL-STATUS FROM ATHP05PC - CN = '
+        STATUS-VIEW.ID-NUMBER
+      MOVE 3 TO #ISTAT      /*<<<<<<<<<<<<<<<<<<<<<<
+    END-IF
+  END-IF
+END-IF
+*
+IF STATUS-VIEW.MILITARY-SERVICE = 'NOA' OR = 'PHS'
+  ADD 1 TO #MBC-OTHERS-MEMBERS
+  MOVE 5 TO #ISERV
+ELSE
+  IF STATUS-VIEW.MILITARY-SERVICE = MASK ('A')
+    ADD 1 TO #MBC-ARMY-MEMBERS
+    MOVE 1 TO #ISERV
+  ELSE
+    IF STATUS-VIEW.MILITARY-SERVICE = MASK ('F')
+      ADD 1 TO #MBC-AIRF-MEMBERS
+      MOVE 2 TO #ISERV
+    ELSE
+      ADD 1 TO #MBC-OTHERS-MEMBERS
+      IF STATUS-VIEW.MILITARY-SERVICE = MASK ('N')
+        MOVE 3 TO #ISERV
+      ELSE
+        IF STATUS-VIEW.MILITARY-SERVICE = MASK ('M')
+          MOVE 4 TO #ISERV
+        ELSE
+          IF  (STATUS-VIEW.MILITARY-SERVICE = MASK ('CG'))
+              OR (STATUS-VIEW.MILITARY-SERVICE = 'EMP')
+            MOVE 5 TO #ISERV
+          ELSE
+            MOVE 5 TO #ISERV           /* <********************
+            WRITE 'BAD MIL-SERVICE FROM ATHP05PC - CN = '
+              STATUS-VIEW.ID-NUMBER
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+ADD 1 TO #MBC-SERVICE-COUNT (#ISTAT, #ISERV)
+*
+* * * * * * ACCUM STATS BY UNIT * * * * * * *
+*
+RESET #TOT-FACE
+RESET #FACE-AMT (*) #DEATH-BN (*)
+*
+FOR #I1 1 TO 9
+  MOVE FACE-AMOUNT (#I1) TO #FACE-AMT (#I1)
+  MOVE DEATH-BENEFIT (#I1) TO #DEATH-BN (#I1)
+*
+  MOVE PLAN (#I1) TO #PLAN
+  MOVE #C-RUN-DT-YYYYMMDD TO #EFFECT-DATE
+  IF   ((PLAN (#I1) = 'LT')
+      AND (OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH LE (#EFFECT-DATE - 400000)))
+      OR  ((PLAN (#I1) = 'RT')
+      AND (ISSUE-AGE (#I1) GT '65'))
+      OR  ((PLAN (#I1) = 'EZ')                                 /* YK2
+      AND ((PAID-UP-DATE(#I1) LE #EFFECT-DATE)))               /* YK2
+      OR  (F-LT2-TRUE(<PLAN(#I1)>)                             /* YK1
+      AND ((ISSUE-DATE(#I1) + 40000) LE #EFFECT-DATE))
+*     OR (PLAN (#I1) = 'AL')   /* DW1
+      OR IS-ANNUITY-LIFE (< PLAN (#I1) >)  /* NG2
+*
+    CALLNAT 'GDROPSTM' USING
+      PLAN          (#I1)
+      SMOKER-FLAG   (#I1)
+      OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH
+      ISSUE-DATE    (#I1)
+      PAID-UP-DATE  (#I1)
+      #EFFECT-DATE
+      ISSUE-AGE     (#I1)
+      #PAY-STAT
+      #FACE-AMT     (#I1)
+      #DEATH-BN     (#I1)
+      CASH-VALUE    (#I1)
+      BEG-CASH-VALUE(#I1)
+  END-IF
+*
+  IF STATUS-VIEW.STATUS (#I1) = 'D'
+    ADD #FACE-AMT (#I1) TO #TOT-FACE
+  END-IF
+END-FOR
+*
+PERFORM CALC-FACE-X
+*
+MOVE #FACE-X TO #I3
+*
+ADD 1 TO #MBC-MBRS-BY-UNITS (#I3)          /* MEMBERS BY TOTAL face
+*
+RESET #I3 #I4 #I5
+RESET #TOT-FACE-PP #TOT-FACE-PDUP #TOT-FACE-ETI
+FOR #I1 1 TO 9
+  IF STATUS-VIEW.STATUS (#I1) NE 'D'
+    ESCAPE TOP
+  END-IF
+*
+  IF STATUS-VIEW.PAY-STATUS (#I1) = '44'
+    ADD #FACE-AMT (#I1) TO #TOT-FACE-ETI
+  ELSE
+    IF STATUS-VIEW.PAY-STATUS (#I1) GT '40'
+      ADD #FACE-AMT (#I1) TO #TOT-FACE-PDUP
+    ELSE
+      ADD #FACE-AMT (#I1) TO #TOT-FACE-PP
+    END-IF
+  END-IF
+END-FOR
+*
+MOVE #TOT-FACE-PP TO #TOT-FACE
+PERFORM CALC-FACE-X
+MOVE #FACE-X TO #I3
+*
+MOVE #TOT-FACE-PDUP TO #TOT-FACE
+PERFORM CALC-FACE-X
+MOVE #FACE-X TO #I4
+*
+MOVE #TOT-FACE-ETI TO #TOT-FACE
+PERFORM CALC-FACE-X
+MOVE #FACE-X TO #I5
+*
+RESET #HAS-A-UNITS-POL (*, *)
+RESET #HAS-A-PLANS-POL (*, *)
+*
+FOR #I1 1 TO 9
+  IF STATUS-VIEW.STATUS (#I1) NE 'D'
+    ESCAPE TOP
+  END-IF
+*
+  ADD #FACE-AMT (#I1) TO #MBC-TOT-FACE-AMOUNT
+*
+  IF STATUS-VIEW.SMOKER-FLAG (#I1) = 'S'
+    ADD 1 TO #MBC-SMOKERS
+  ELSE
+    IF STATUS-VIEW.SMOKER-FLAG (#I1) = 'N'
+      ADD 1 TO #MBC-NON-SMOKERS
+    ELSE
+      IF STATUS-VIEW.SMOKER-FLAG (#I1) = 'C'
+        ADD 1 TO #MBC-CONVERTED
+      ELSE
+        ADD 1 TO #MBC-UNCV-ETI
+      END-IF
+    END-IF
+  END-IF
+*
+  IF STATUS-VIEW.RESTRICT-MBR-SW = 'Y'
+    IF STATUS-VIEW.MILITARY-SERVICE = MASK ('A')
+      ADD 1 TO #MBC-RESTRICTED-ARMY
+    ELSE
+      IF STATUS-VIEW.MILITARY-SERVICE = MASK ('F')
+        ADD 1 TO #MBC-RESTRICTED-AIRF
+      END-IF
+    END-IF
+  END-IF
+*
+  IF STATUS-VIEW.PLAN (#I1) = 'OL'
+    MOVE 1 TO #IPLAN
+  ELSE
+    IF STATUS-VIEW.PLAN (#I1) = '20P'
+      MOVE 2 TO #IPLAN
+    ELSE
+      IF STATUS-VIEW.PLAN (#I1) = '30P'
+        MOVE 3 TO #IPLAN
+      ELSE
+        IF STATUS-VIEW.PLAN (#I1) = '7P'
+          MOVE 4 TO #IPLAN
+        ELSE
+          IF STATUS-VIEW.PLAN (#I1) = 'RT'
+            MOVE 5 TO #IPLAN
+          ELSE
+            IF STATUS-VIEW.PLAN (#I1) = 'LT'
+              MOVE 6 TO #IPLAN
+            ELSE
+              MOVE 7 TO #IPLAN    /* MUST BE SO/FSO OR FLEX OR VAR-TERM
+*                                 /* or plan AL or GPL or GP2         DW1 DW4 YK3
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+* * * * * * ACCUM STATS BY lines WITHIN TYPE * * * * * * *
+*   most of below is never used
+  IF STATUS-VIEW.PAY-STATUS (#I1) = '44'           /* ETI
+    MOVE 1 TO #I2
+    MOVE TRUE TO #HAS-A-UNITS-POL (3, #I5)
+    MOVE TRUE TO #HAS-A-PLANS-POL (3, #IPLAN)
+    ADD 1   TO #MBC-UNITS-LINES (3, #I5)
+    ADD 1   TO #MBC-PLANS-LINES (3, #IPLAN)
+    ADD #DEATH-BN (#I1) TO #MBC-UNITS-DB (3, #I5)
+    ADD #DEATH-BN (#I1) TO #MBC-PLANS-DB (3, #IPLAN)
+  ELSE
+    IF STATUS-VIEW.PAY-STATUS (#I1) GT '40'        /* PU
+      MOVE 1 TO #I2
+      MOVE TRUE TO #HAS-A-UNITS-POL (2, #I4)
+      MOVE TRUE TO #HAS-A-PLANS-POL (2, #IPLAN)
+      ADD 1 TO #MBC-UNITS-LINES (2, #I4)
+      ADD 1 TO #MBC-PLANS-LINES (2, #IPLAN)
+      ADD #DEATH-BN (#I1) TO #MBC-UNITS-DB (2, #I4)
+      ADD #DEATH-BN (#I1) TO #MBC-PLANS-DB (2, #IPLAN)
+    ELSE
+      MOVE TRUE TO #HAS-A-UNITS-POL (1, #I3)
+      MOVE TRUE TO #HAS-A-PLANS-POL (1, #IPLAN)
+      ADD 1 TO #MBC-UNITS-LINES (1, #I3)
+      ADD 1 TO #MBC-PLANS-LINES (1, #IPLAN)
+      ADD #DEATH-BN (#I1) TO #MBC-UNITS-DB (1, #I3)
+      ADD #DEATH-BN (#I1) TO #MBC-PLANS-DB (1, #IPLAN)
+    END-IF
+  END-IF
+*
+* * * * * * ACCUM HIGH DEATH BENEFIT REPORT * * * * * * *
+*
+  IF STATUS-VIEW.PAY-STATUS (#I1) = '44'             /* ETI
+    MOVE 6 TO #ITYP
+  ELSE
+    IF STATUS-VIEW.PAY-STATUS (#I1) = '45'           /* RPU
+      MOVE 5 TO #ITYP
+    ELSE
+      IF STATUS-VIEW.PAY-STATUS (#I1) GT '44'        /* PU
+        MOVE 4 TO #ITYP
+      ELSE
+        IF STATUS-VIEW.PLAN (#I1) = '30P'            /* 30P
+          MOVE 3 TO #ITYP
+        ELSE
+          IF STATUS-VIEW.PLAN (#I1) = '20P'          /* 20P
+            MOVE 2 TO #ITYP
+          ELSE
+            IF STATUS-VIEW.PLAN (#I1) = 'OL'         /* OL
+              MOVE 1 TO #ITYP
+            ELSE
+              MOVE 7 TO #ITYP  /* 7P/FSO/SO/FLEX/V-TERM/AL DW1
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  COMPUTE #UNITS = #FACE-AMT (#I1) / 5000
+  MOVE #UNITS TO #IUNITS
+*
+  IF #IUNITS LT 1
+    MOVE 1 TO #IUNITS
+  END-IF
+*
+  IF #IUNITS GT 10
+    MOVE 10 TO #IUNITS
+  END-IF
+*
+  ADD #DEATH-BN (#I1) TO #HIGH-DB-TOTAL
+  ADD +1                              TO #HIGH-DB-NUM-POLS
+*
+  IF #DEATH-BN (#I1) GT #HIGH-DB (#ITYP, #IUNITS)
+    MOVE #DEATH-BN (#I1) TO #HIGH-DB   (#ITYP, #IUNITS)
+    MOVE STATUS-VIEW.ID-NUMBER TO #HIGH-DB-ID(#ITYP, #IUNITS)
+  END-IF
+END-FOR
+*
+FOR #I1 1 TO 3
+  FOR #I2 1 TO 10
+    IF #HAS-A-UNITS-POL (#I1, #I2)
+      ADD 1 TO #MBC-UNITS-MBRS (#I1, #I2)
+    END-IF
+  END-FOR
+END-FOR
+*
+FOR #I1 1 TO 3
+  FOR #I2 1 TO 7
+    IF #HAS-A-PLANS-POL (#I1, #I2)
+      ADD 1 TO #MBC-PLANS-MBRS (#I1, #I2)
+    END-IF
+  END-FOR
+END-FOR
+*
+END-SUBROUTINE /* (0201)
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCUM-TOTALS
+* * * * * * * * * * * * * * * *
+*
+COMPUTE ROUNDED #HIGH-DB-AVG-DB = #HIGH-DB-TOTAL / #HIGH-DB-NUM-POLS
+*
+ADD #MBC-MBRS-BY-UNITS (*) TO #MBC-TOT-MBRS-BY-UNITS
+*
+FOR #I1 1 TO 3
+  MOVE ROUNDED #MBC-UNITS-DB (#I1, *) TO #MBC-UNITS-DB-DOL (#I1, *)
+  MOVE ROUNDED #MBC-PLANS-DB (#I1, *) TO #MBC-PLANS-DB-DOL (#I1, *)
+*
+  ADD #MBC-UNITS-LINES (#I1, *) TO #MBC-SUBTOT-UNITS-LINES (#I1)
+  ADD #MBC-UNITS-MBRS  (#I1, *) TO #MBC-SUBTOT-UNITS-MBRS  (#I1)
+  ADD #MBC-UNITS-DB-DOL(#I1, *) TO #MBC-SUBTOT-UNITS-DB    (#I1)
+*
+  ADD #MBC-SUBTOT-UNITS-LINES (#I1) TO #MBC-TOT-UNITS-LINES
+  ADD #MBC-SUBTOT-UNITS-MBRS  (#I1) TO #MBC-TOT-UNITS-MBRS
+* ADD #MBC-SUBTOT-UNITS-DB    (#I1) TO #MBC-TOT-UNITS-DB
+  MOVE ROUNDED #ME-INS-IN-FORCE  TO #MBC-TOT-UNITS-DB /* SO "MS" = M12
+*
+  ADD #MBC-PLANS-LINES (#I1, *) TO #MBC-SUBTOT-PLANS-LINES (#I1)
+  ADD #MBC-PLANS-MBRS  (#I1, *) TO #MBC-SUBTOT-PLANS-MBRS  (#I1)
+  ADD #MBC-PLANS-DB-DOL(#I1, *) TO #MBC-SUBTOT-PLANS-DB    (#I1)
+END-FOR
+*
+END-SUBROUTINE /* (0510)
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE COUNT-WIDOWS-AND-INTROS
+* * * * * * * * * * * * * * * * * * * * *
+*
+RESET  #HOLD-WIDOW-YEARS
+READ WID-V LOGICAL BY WIDOW-KEY
+  IF  (WID-V.ID-NUMBER LT 1900)   /* DW2
+      OR WID-V.PROCESS-IND = 'C' OR AFFL-ONLY-CLIENT(<WID-V.ID-NUMBER>)   /* DW2   RE1
+      OR (WID-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G')   /* DW2
+    ESCAPE TOP
+  END-IF
+*
+  IF #GET-CNT LT 99999   /* DW3
+    ADD +1 TO #GET-CNT
+  END-IF
+*
+  ADD +1 TO #MBC-WIDOW
+*
+  RESET #PDA-ADDRESS #ADD-LINE1 #ADD-LINE2 #ADD-LINE3          /* JT1 start
+  MOVE 'P' TO #ADD-TYPE
+  #ADD-CONTACT-ID := WID-V.MEMBER-CONTACT-ID
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+*
+  MOVE #ADD-LINE-1 TO #ADD-LINE1
+  MOVE #ADD-LINE-2 TO #ADD-LINE2
+  MOVE #ADD-LINE-3 TO #ADD-LINE3
+*
+  IF  (WID-V.STATUS-CODE-SP NE 'D')  /* DW2
+      AND (#ADD-LINE1 = ' ')
+      AND (#ADD-LINE2 = ' ')
+      AND (#ADD-LINE3 = ' ')
+    ADD +1 TO #WIDOW-BPA-ACC
+  END-IF
+*                                                            /* JT1 end
+*                                         NG1 \/
+  RESET PDA-CONTACT
+  P-CONTACT-ID := WID-V.MEMBER-CONTACT-ID
+  CALLNAT 'CONTS001' PDA-CONTACT WID-OBSOLETE.DATE-OF-BIRTH-SP SPOUSE-SEX
+  WID-OBSOLETE.SEX            := P-GENDER
+  WID-OBSOLETE.DATE-OF-BIRTH  := P-DATE-OF-BIRTH
+*                                        NG1 /\
+  IF  (WID-OBSOLETE.DATE-OF-BIRTH-SP = 0)  /* DW2
+      OR (WID-V.STATUS-CODE-SP = 'D')
+    ESCAPE TOP
+  END-IF
+*
+* below removed 8/1999 as per bjs to replace with avg age of non-cap
+* done in athpm120
+* IF DOB-SP-MMDD LT #C-RUN-DT-MMDD
+*   COMPUTE #HOLD-WIDOW-YEARS = #HOLD-WIDOW-YEARS +
+*                               (#C-RUN-DT-YYYY - (DOB-SP-YYYY - 1))
+* ELSE
+*   COMPUTE #HOLD-WIDOW-YEARS = #HOLD-WIDOW-YEARS +
+*                               (#C-RUN-DT-YYYY - DOB-SP-YYYY)
+* END-IF
+*
+* ADD +1 TO #WIDOW-AGE-COUNT
+*
+END-READ  /* (0535)
+*
+* - - - - - - - - - - - - - - -  E N D   O F   F I L E   - - - - - - -
+*
+READ INTRO-MBR-V LOGICAL BY NAME
+  IF #GET-CNT LT 99999   /* DW3
+    ADD +1 TO #GET-CNT
+  END-IF
+*
+  IF   (PAID-THRU-DATE-YYYY LT #C-RUN-DT-YYYY)
+      OR ((PAID-THRU-DATE-YYYY = #C-RUN-DT-YYYY) AND (#C-RUN-DT-MM LT 9))
+    ESCAPE TOP
+  END-IF
+*
+  IF MIL-SERVICE = 'A  '
+    IF OBSOLETE-STATUS-FIELDS.SEX = 'M'
+      ADD +1 TO #MBC-INTR-CADETS-A-MALE
+    ELSE
+      ADD +1 TO #MBC-INTR-CADETS-A-FEMALE
+    END-IF
+  ELSE
+    IF MIL-SERVICE = 'F  '
+      IF OBSOLETE-STATUS-FIELDS.SEX = 'M'
+        ADD +1 TO #MBC-INTR-CADETS-F-MALE
+      ELSE
+        ADD +1 TO #MBC-INTR-CADETS-F-FEMALE
+      END-IF
+    ELSE
+      IF MIL-SERVICE = 'ACR'
+        IF OBSOLETE-STATUS-FIELDS.SEX = 'M'
+          ADD +1 TO #MBC-INTR-CADETS-ACR-MALE
+        ELSE
+          ADD +1 TO #MBC-INTR-CADETS-ACR-FEMALE
+        END-IF
+      ELSE
+        IF MIL-SERVICE = 'FCR'
+          IF OBSOLETE-STATUS-FIELDS.SEX = 'M'
+            ADD +1 TO #MBC-INTR-CADETS-FCR-MALE
+          ELSE
+            ADD +1 TO #MBC-INTR-CADETS-FCR-FEMALE
+          END-IF
+        ELSE
+          ADD +1 TO #MBC-INTR-CADETS-OTHER
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-READ  /* (0599)
+*
+* - - - - - - - - - - - - - - -  E N D   O F   F I L E   - - - - - - -
+*
+END-SUBROUTINE /* (0201)
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-FACE-X
+* * * * * * * * * * * * * * *
+*
+IF #TOT-FACE LE  25000 MOVE 1  TO #FACE-X ELSE
+  IF #TOT-FACE LE  50000 MOVE 2  TO #FACE-X ELSE
+    IF #TOT-FACE LE  75000 MOVE 3  TO #FACE-X ELSE
+      IF #TOT-FACE LE 100000 MOVE 4  TO #FACE-X ELSE
+        IF #TOT-FACE LE 125000 MOVE 5  TO #FACE-X ELSE
+          IF #TOT-FACE LE 150000 MOVE 6  TO #FACE-X ELSE
+            IF #TOT-FACE LE 175000 MOVE 7  TO #FACE-X ELSE
+              IF #TOT-FACE LE 200000 MOVE 8  TO #FACE-X ELSE
+                IF #TOT-FACE LE 225000 MOVE 9  TO #FACE-X ELSE
+                  MOVE 10 TO #FACE-X
+                END-IF END-IF END-IF END-IF END-IF END-IF END-IF END-IF END-IF
+*
+END-SUBROUTINE
+*
+END

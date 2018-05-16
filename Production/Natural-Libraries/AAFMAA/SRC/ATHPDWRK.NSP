@@ -1,0 +1,265 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : ATHPDWRK                                              *
+*                                                                      *
+* FUNCTION     : Read Accounting register File for a specific date of  *
+*                collections and create work file for certified        *
+*                printing purposes                                     *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE        TAG     REASON                                    *
+* VXT    02/07/2012  None    Program Written                           *
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital  
+************************************************************************
+*
+DEFINE DATA
+local using ADDA0001
+LOCAL
+1 PROC-REQ-V VIEW OF A-PROCESS-REQUEST
+  2 LAST-UPD-USER
+  2 LAST-UPD-DATE
+  2 LAST-UPD-TIME
+  2 PROCESS-DESCRIPTION (A250/1:9)
+  2 PROCESS-STATUS (A1/1:9)
+  2 PROCESS-STATUS-DATE (N8/1:9)
+  2 PROCESS-MESSAGE (A250/1:9)
+  2 ID-NUMBER
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 MILITARY-STATUS
+  2 MILITARY-SERVICE
+*
+1 ACC-REG VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 TXN-CODE
+  2 ACCT-DATE
+  2 DATE-LAST-ACCT-UPDATE
+  2 DEBIT-AMOUNT
+  2 CREDIT-AMOUNT
+  2 DESCRIPTION
+  2 CLERK-ID
+  2 CASH-CODE
+*
+1 #cnt                 (p7)
+1 #cnt-upd             (p7)
+1 #CNT-EXTRACT         (P7)
+1 #datn                (n8)
+1 redefine #datn
+  2 #datn-yyyy         (a4)
+  2 #datn-mm           (a2)
+  2 #datn-dd           (a2)
+1 #isn-proc            (p10)
+1 #curr-date           (n8)
+1 #ACCUM-INT           (N7.2)
+1 #LOAN-PRIN           (n7.2)
+1 #total-amt           (n7.2)
+1 #ACCUM-INT-a           (A14)
+1 #LOAN-PRIN-a           (a14)
+1 #total-amt-a           (a14)
+1 #ACCUM-INT-a-o           (A14)
+1 #LOAN-PRIN-a-o           (a14)
+1 #total-amt-a-o           (a14)
+1 #user-name           (a70)
+1 #user-name-o           (a70)
+1 #id-number           (n6)
+1 #formatted-name      (a70)
+1 #First-address       (a70)
+1 #Second-address      (a70)
+1 #third-address       (a70)
+1 #id-number-o           (n6)
+1 #formatted-name-o      (a70)
+1 #First-address-o       (a70)
+1 #Second-address-o      (a70)
+1 #third-address-o       (a70)
+1 #contact-id          (n8)
+1 #letter-env          (a) dynamic
+1 #mil-status          (a1)
+1 #mil-service         (a3)
+1 #process-date        (a10)
+1 #mil-status-o          (a1)
+1 #mil-service-o         (a3)
+1 #process-date-o        (a10)
+1 #TAb                 (a1) init<H'09'>
+1 #out-file            (a500)
+1 #CLERK-ABB-PASS      (A3)
+1 #CLERK-ABB-NAME-PASS (A20)
+1 #INVALID-L           (L)
+end-define
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/CERTIF_LETTERS.2.TXT' TYPE 'ASCII'
+*
+format (1) ls=80 ps=30
+*
+#curr-date := *datn
+#datn   := *datn
+*  #datn   := 20130819
+*  #curr-date := 20130819
+compress #datn-mm '/' #datn-dd '/' #datn-yyyy into #process-date leaving no
+*
+compress 'ProcessDate' #tab
+  'CN'                 #tab
+  'Mil.Status'         #tab
+  'Mil. Service'       #tab
+  'Name'               #tab
+  'Address1 '          #tab
+  'Address2'           #tab
+  'Address3 '          #tab
+  'Unpaid Prin'        #tab
+  'Unpaid Int'         #tab
+  'Total Due'          #tab
+  'User Name'          #tab
+  into #out-file leaving no
+write work 1 #out-file
+*
+reset #accum-int #loan-prin #total-amt
+f1.
+find acc-reg with acc-reg.TRANSACTION-DATN = #datn
+  if  acc-reg.txn-code eq 'FLNF'  or  = 'LWOF'
+    escape top 
+  end-if
+   
+  if acc-reg.cash-code = 'T'
+    add 1 to #cnt
+    
+    #id-number := acc-reg.id-number
+    
+    if acc-reg.TXN-CODE = 'AIAF'
+      #ACCUM-INT := acc-reg.credit-amount
+       
+    else
+      if acc-reg.TXN-CODE = 'PADF'
+        #LOAN-PRIN := acc-reg.credit-amount
+         
+      end-if
+    end-if
+    compute #total-amt = #loan-prin + #accum-int
+     
+*
+    move edited #accum-int(em=z,zzz,zz9.99) to #accum-int-a
+*   compress '$' #accum-int-a into #accum-int-a
+*      compress '$' *TRIM(#accum-int-a) into #accum-int-a leaving no
+     
+*
+    move edited #loan-prin(em=z,zzz,zz9.99) to #loan-prin-a
+*    compress '$'  #loan-prin-a  into #loan-prin-a  
+*     compress '$' *TRIM(#loan-prin-a) into #loan-prin-a leaving no
+*
+    move edited #total-amt(em=z,zzz,zz9.99) to #total-amt-a
+*    compress '$'  #total-amt-a  into #total-amt-a
+*      compress '$' *TRIM(#total-amt-a) into #total-amt-a leaving no
+*
+ 
+/* get user-name
+    move 'KHB' to #clerk-abb-pass
+*    move acc-reg.clerk-id to #clerk-abb-pass
+    move ' ' to #clerk-abb-name-pass
+    CALLNAT 'GCKNMSXX' #CLERK-ABB-PASS
+      #INVALID-L
+      #CLERK-ABB-NAME-PASS
+    #user-name := #CLERK-ABB-NAME-PASS
+*
+    f2.
+    find st-v with st-v.id-number = acc-reg.id-number
+      if no
+        escape bottom (f2.)
+      end-norec
+
+/* get the address
+      reset #pda-address
+      move st-v.member-contact-id to #add-contact-id #contact-id
+      move 'P' to #add-type
+      callnat 'ADDN0001' #pda-address
+      #first-address  := #add-line-1
+      #second-address := #add-line-2
+      #third-address  := #add-line-3
+*
+/* get  formateted name for letter
+      #LETTER-ENV := '!LETTER'
+      CALLNAT 'GPRS0CNT' #CONTACT-ID #LETTER-ENV          /* bz-Name-C
+      move #letter-env to #formatted-name
+*
+      #mil-status  := st-v.military-status
+      #mil-service := st-v.military-service
+*
+      at break of #id-number
+/* create the work file for Certified processing
+        move old(#process-date)   to  #process-date-o
+        move old(#id-number)      to  #id-number-o
+        move old(#mil-status)     to  #mil-status-o
+        move old(#mil-service)    to  #mil-service-o
+        move old(#formatted-name) to  #formatted-name-o
+        move old(#first-address)  to  #first-address-o
+        move old(#second-address) to  #second-address-o
+        move old(#third-address)  to  #third-address-o
+        move old(#loan-prin-a)    to  #loan-prin-a-o
+        move old(#accum-int-a)    to  #accum-int-a-o
+        move old(#total-amt-a)    to  #total-amt-a-o
+        move old(#user-name)      to  #user-name-o
+        
+        compress #process-date-o #tab
+          #id-number-o      #tab
+          #mil-status-o     #tab
+          #mil-service-o    #tab
+          #formatted-name-o #tab
+          #first-address-o  #tab
+          #second-address-o #tab
+          #third-address-o  #tab
+          #loan-prin-a-o    #tab
+          #accum-int-a-o    #tab
+          #total-amt-a-o    #tab
+          #user-name-o      #tab
+          into #out-file leaving no space
+        write work 1 #out-file
+        add 1 to #CNT-extract
+*
+        f3.
+        find proc-req-V with PROC-REQ-V.id-number = #id-number-o
+          if no
+            escape bottom (f3.)
+          end-norec
+          move *isn to #isn-proc
+          perform update-process-status
+        end-find
+*        reset #accum-int #loan-prin #total-amt
+      end-break
+    end-find
+  END-IF
+*
+  at end of data
+    write
+      'number of records selected for processing        ' #cnt /
+      'number of records extarcted                      ' #cnt-extract /
+      'number of records updated on process-status file ' #cnt-upd /
+  end-enddata
+*
+end-find
+*
+*****************
+DEFINE SUBROUTINE update-process-status
+*****************
+*
+GET1.
+get proc-req-V #ISn-proc
+proc-req-V.LAST-UPD-USER           := 'ATHPCOLL'
+proc-req-V.LAST-UPD-DATE           := #curr-date
+proc-req-V.LAST-UPD-TIME           := *timn
+proc-req-V.PROCESS-STATUS-DATE (3) := #curr-date
+proc-req-V.PROCESS-MESSAGE (3)     := 'Certified file created '
+proc-req-v.process-status (3)      := 'C'
+update (get1.)
+add 1 to #cnt-upd
+*
+end-subroutine
+*
+
+*
+end

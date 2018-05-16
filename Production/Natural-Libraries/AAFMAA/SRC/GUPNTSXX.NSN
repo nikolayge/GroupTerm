@@ -1,0 +1,436 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram GUPNTSXX.
+/**
+/** :author nguentchev
+/* TODO: Enter your code here
+
+define data
+parameter
+1 #Contact-ID     (N8)
+1 #Update         (L)
+LOCAL
+1 #18                (I2) CONST <18>
+1 #PAGE-NBR          (I4)
+1 #PAGE-DATA
+  2 #PAGE            (N2)
+  2 #TOT-PAGES       (N2)
+  2 #NOTE-TEXT       (A60/#18)
+  2 #NOTE-DATES      (A10/#18)
+  2 #NOTE-CO         (A1/#18)
+  2 #NOTE-CLERK      (A3/#18)
+1 #ISN-LIST
+  2 #ISN-NBR         (I4)
+  2 #NOTE-ISN        (P8/99)
+  2 #NOTE-PAGE       (I2/99)
+  2 #NOTE-PAGE-OVL   (I2/99)
+  2 #NOTE-LINE       (I2/99)
+
+1 #UPD-ISN         (P8)
+1 #UPD-PAGE-DATA
+  2 #UN-ISN        (P8/#18)
+1 #UPD-DEL-REQ     (A1/#18)
+1 #NEW-N-CLERK     (A3)
+1 #NEW-N-DATE      (A10)
+1 #CUR-ISN         (P8)
+
+1 #NEW-NOTE-REQ    (A1)
+1 #DEL-NOTE-REQ    (A1)
+1 #USER-COMPANY    (A1)
+1 #CLERK           (A20)
+1 #CN              (A10)
+1 #DOD             (A14)
+1 #MAIN-NAME       (A25)
+1 #Company         (A10)
+
+1 BLANK            (A1) CONST <' '>
+1 #UPD-REQUEST     (A1) CONST <'U'>
+1 #DEL-REQUEST     (A1) CONST <'D'>
+1 #CO-TTL          (A3) CONST <'CO:'>
+1 #CI-TTL          (A3) CONST <'CI:'>
+1 #CN-TTL          (A3) CONST <'CN:'>
+1 #UPD-TTL         (A7) CONST <'LST UPD'>
+1 #USR-TTL         (A7) CONST <'LST USR'>
+1 #DOD-TTL         (A5) CONST <'(DOD:'>
+
+1 #Browse          (I4)   /* Last ISN on the screen
+1 #LINE-NBR        (I4)   /* Last line on the screen
+1 #UPDATED         (L)    /* Set to true if database is updated
+1 #J               (I4)
+1 #L               (I4)
+1 #NOTE-TIME       (A7) 1 REDEFINE #NOTE-TIME
+  2 #NOTE-TIME-N   (N7)
+1 #NOTE-DATE       (A8) 1 REDEFINE #NOTE-DATE
+  2 #NOTE-DATE-N   (N8)
+1 #NOTE-UPD-DATE   (A8) 1 REDEFINE #NOTE-UPD-DATE
+  2 #NOTE-UPD-DATE-N   (N8)
+1 #Sample-note     (A78) CONST
+  <' '>
+1 #Updated-message (A40) CONST <'Transaction complete.'>
+1 #Added-message   (A40) CONST <'Transaction complete. Note is added.'>
+1 #Delete-message  (A40) CONST <'Transaction complete. Note is deleted.'>
+1 #Error-message1  (A40) CONST <'U or D only on the first line of note'>
+1 #Error-message2  (A40) CONST <'Only U or D can be requested'>
+1 #Message         (A40)
+
+1 CountNotes view of A-CONTACT-NOTES
+  2 C*NOTE-TEXT
+
+1 BrowseNotes view of A-CONTACT-NOTES
+  2 USER-COMPANY   (A1)
+  2 USER-ID        (A3)
+  2 CONTACT-ID     (N8) /* D
+  2 NOTE-TIME      (N7)
+  2 NOTE-DATE      (N8)
+  2 C*NOTE-TEXT
+  2 NOTE-TEXT      (A78/99)
+
+1 UpdateNotes view of A-CONTACT-NOTES
+  2 USER-COMPANY   (A1)
+  2 USER-ID        (A3)
+  2 CONTACT-ID     (N8) /* D
+  2 NOTE-TIME      (N7)
+  2 NOTE-DATE      (N8)
+  2 C*NOTE-TEXT
+  2 NOTE-TEXT      (A78/99)
+  2 LAST-UPD-USER  (A8)
+  2 LAST-UPD-DATE  (N8)
+  2 LAST-UPD-TIME  (N7)
+1 #UPDATE-USR      (A8)
+1 CONTACT VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 ID-NUMBER
+  2 FIRST-NAME
+  2 MIDDLE-NAME
+  2 LAST-NAME
+  2 SUFFIX
+  2 DATE-OF-DEATH
+
+1 TERM VIEW OF A-TERMINALS
+  2 CLERK-ID
+  2 COMMENTS
+  2 SECURITY-CODE     (N2)
+  2 USER-COMPANY      (A1)
+
+end-define
+
+
+SET KEY PF3 NAMED 'Exit'
+SET KEY PF4 NAMED 'UpAdd'
+SET KEY PF7 NAMED 'PgUp'
+SET KEY PF8 NAMED 'PgDn'
+SET KEY PF11 NAMED 'Del'
+SET KEY PF12 NAMED 'Reln'
+
+PERFORM INIT-LOCALS
+F-NBR.
+FIND NUMBER CountNotes WITH CONTACT-ID = #Contact-ID
+
+IF *NUMBER ( F-NBR.) = 0
+  IF NOT #Update
+    escape ROUTINE
+  END-IF
+  PERFORM NEW-NOTE
+  IF #UPDATED
+    ASSIGN #Message = #Added-message
+    END TRANSACTION
+  ELSE
+    BACKOUT TRANSACTION
+  END-IF
+END-IF
+
+RESET #PAGE-NBR
+CALLNAT 'NOTE1SXX'
+  #CONTACT-ID
+  #PAGE-NBR
+  #PAGE-DATA
+  #ISN-LIST
+IF #ISN-NBR = 0
+  ESCAPE ROUTINE
+END-IF
+IF NOT #Update
+  PERFORM BROWSE-NOTES
+ELSE
+  PERFORM UPDATE-NOTES
+END-IF
+
+DEFINE BROWSE-NOTES
+/*     ============
+INPUT USING MAP 'NOTE1MXX'
+REPEAT UNTIL *PF-KEY = 'PF3'
+  DECIDE FOR FIRST CONDITION
+    WHEN *PF-KEY = 'PF8'
+      ADD 1 TO #PAGE-NBR
+      CALLNAT 'NOTE1SXX'
+        #CONTACT-ID
+        #PAGE-NBR
+        #PAGE-DATA
+        #ISN-LIST
+    WHEN *PF-KEY = 'PF7'
+      IF #PAGE-NBR > 1
+        SUBTRACT 1 FROM #PAGE-NBR
+        CALLNAT 'NOTE1SXX'
+          #CONTACT-ID
+          #PAGE-NBR
+          #PAGE-DATA
+          #ISN-LIST
+      END-IF
+    WHEN NONE IGNORE
+  END-DECIDE
+  INPUT USING MAP 'NOTE1MXX'
+END-REPEAT
+END-SUBROUTINE
+
+DEFINE UPDATE-NOTES
+/*     ============
+INPUT WITH TEXT #Message USING MAP 'NOTE2MXX'
+REPEAT UNTIL *PF-KEY = 'PF3' OR #ISN-NBR = 0
+  DECIDE FOR FIRST CONDITION
+    WHEN *PF-KEY = 'PF8'
+      reset #UPD-DEL-REQ (*)
+      ADD 1 TO #PAGE-NBR
+      CALLNAT 'NOTE1SXX'
+        #CONTACT-ID
+        #PAGE-NBR
+        #PAGE-DATA
+        #ISN-LIST
+    WHEN *PF-KEY = 'PF7'
+      reset #UPD-DEL-REQ (*)
+      IF #PAGE-NBR > 1
+        SUBTRACT 1 FROM #PAGE-NBR
+        CALLNAT 'NOTE1SXX'
+          #CONTACT-ID
+          #PAGE-NBR
+          #PAGE-DATA
+          #ISN-LIST
+      END-IF
+    WHEN *PF-KEY = 'PF4' OR= 'PF11' OR= 'ENTR'
+      FOR #J 1 TO 18
+        IF #UPD-DEL-REQ (#J) = #UPD-REQUEST OR= #DEL-REQUEST OR= BLANK
+          IF #NOTE-CLERK ( #J ) EQ BLANK AND #UPD-DEL-REQ (#J) NE BLANK
+            #Message := #Error-message1
+          END-IF
+        ELSE
+          #Message := #Error-message2
+        END-IF
+      END-FOR
+      IF #Message EQ BLANK
+        PERFORM UPDATE-NOTE
+        RESET #PAGE-NBR
+        CALLNAT 'NOTE1SXX'
+          #CONTACT-ID
+          #PAGE-NBR
+          #PAGE-DATA
+          #ISN-LIST
+      END-IF
+    WHEN *PF-KEY = 'PF12'
+      CALLNAT 'GPF12SXX' #Contact-ID
+    WHEN NONE IGNORE
+  END-DECIDE
+  INPUT WITH TEXT #Message USING MAP 'NOTE2MXX'
+  RESET #Message
+END-REPEAT
+END-SUBROUTINE
+
+DEFINE UPDATE-NOTE
+/*     ===========
+reset #Browse #Message #UPDATED
+for #j 1 to 99
+  if #NOTE-PAGE-OVL  ( #J ) = #PAGE-NBR
+      or #NOTE-PAGE  ( #J ) = #PAGE-NBR
+    #Browse := #J
+    escape BOTTOM
+  end-if
+end-for
+ASSIGN #UPD-ISN       = #NOTE-ISN ( #Browse )
+ASSIGN #UN-ISN (1) = #NOTE-ISN ( #Browse )
+* write notitle #UN-ISN ( 1 ) #Browse
+For #j 2 to #18
+  if #NOTE-CLERK ( #J ) NE BLANK
+    add 1 to #Browse
+  end-if
+  ASSIGN #UN-ISN ( #J ) = #NOTE-ISN ( #Browse )
+*  write notitle #UN-ISN ( #J ) #Browse
+end-for
+
+MOVE EDITED *DATX (EM=MM/DD/YYYY) TO #NEW-N-DATE
+FIND (1) TERM WITH CLERK-ID = UpdateNotes.USER-ID
+  MOVE COMMENTS TO #CLERK
+END-FIND
+IF *PF-KEY = 'ENTR'
+  PERFORM LINE-REQUEST
+ELSE
+  PERFORM PF-REQUEST
+END-IF
+
+IF #UPDATED
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+
+END-SUBROUTINE
+
+DEFINE PF-REQUEST
+/*     ==========
+*  WRITE *CURS-LINE
+*  Any change on map NOTE2MXX may require logic change for cursor position
+*  #CUR-ISN := #UN-ISN (#J) ?
+IF *PF-KEY = 'PF4' OR= 'PF11'
+  IGNORE
+ELSE
+  ESCAPE ROUTINE
+END-IF
+
+RESET #CUR-ISN
+#LINE-NBR := *CURS-LINE - 3
+REPEAT UNTIL #LINE-NBR <= 0
+  IF #UN-ISN ( #LINE-NBR ) > 0
+    ASSIGN #CUR-ISN = #UN-ISN ( #LINE-NBR )
+    ESCAPE BOTTOM
+  END-IF
+  SUBTRACT 1 FROM #LINE-NBR
+END-REPEAT
+
+* WRITE NOTITLE #CUR-ISN #LINE-NBR
+
+IF *PF-KEY = 'PF4'
+  IF #CUR-ISN = 0
+    PERFORM NEW-NOTE
+    IF #UPDATED
+      ASSIGN #Message = #Added-message
+    END-IF
+  ELSE
+    CALLNAT 'NOTE4SXX'
+      #MAIN-NAME
+      #CUR-ISN
+      #UPDATED
+    IF #UPDATED
+      ASSIGN #Message = #Updated-message
+    END-IF
+  END-IF
+ELSE  /* Delete
+  IF #CUR-ISN > 0
+    CALLNAT 'NOTE3SXX'
+      #MAIN-NAME
+      #CUR-ISN
+      #UPDATED
+    IF #UPDATED
+      ASSIGN #Message = #Delete-message
+    END-IF
+  END-IF
+END-IF
+
+END-SUBROUTINE
+
+
+DEFINE LINE-REQUEST
+/*     ============
+IF #UPD-DEL-REQ (*) NE BLANK
+  FOR #J 1 TO #18
+    IF #UN-ISN (#J) > 0 and #NOTE-CLERK ( #J ) NE BLANK
+      DECIDE ON FIRST VALUE OF #UPD-DEL-REQ (#J)
+        VALUE #UPD-REQUEST
+          #CUR-ISN := #UN-ISN (#J)
+          UpdateLabel.
+          GET UpdateNotes #UN-ISN (#J)
+          RESET UpdateNotes.NOTE-TEXT (*)
+          #L := #J
+          #LINE-NBR := 1
+          ASSIGN UpdateNotes.NOTE-TEXT ( #LINE-NBR ) = #NOTE-TEXT ( #L )
+          ADD 1 TO #L
+          REPEAT UNTIL #L > #18
+            IF #NOTE-TEXT ( #L ) NE BLANK
+                AND #UN-ISN (#L) = 0 OR #UN-ISN (#L) = #CUR-ISN
+              ADD 1 TO #LINE-NBR
+              ASSIGN UpdateNotes.NOTE-TEXT ( #LINE-NBR ) = #NOTE-TEXT ( #L )
+            END-IF
+            ADD 1 TO #L
+          END-REPEAT
+          MOVE EDITED *DATX (EM=YYYYMMDD) TO #NOTE-DATE
+          MOVE EDITED *TIMX (EM=HHIISST)  TO #NOTE-TIME
+          ASSIGN UpdateNotes.LAST-UPD-USER = *USER
+          ASSIGN UpdateNotes.LAST-UPD-DATE = #NOTE-DATE-N
+          ASSIGN UpdateNotes.LAST-UPD-TIME = #NOTE-TIME-N
+*          write notitle #CUR-ISN
+*            / UpdateNotes.NOTE-TEXT (1:3)
+          UPDATE (UpdateLabel.)
+          ASSIGN #Message = #Updated-message
+          ASSIGN #UPDATED = TRUE
+        VALUE #DEL-REQUEST
+          #CUR-ISN := #UN-ISN (#J)
+          CALLNAT 'NOTE3SXX'
+            #MAIN-NAME
+            #CUR-ISN
+            #UPDATED
+          IF #UPDATED
+            ASSIGN #Message = #Delete-message
+          END-IF
+        NONE VALUE IGNORE
+      END-DECIDE
+    END-IF
+  END-FOR
+  RESET #UPD-DEL-REQ (*)
+END-IF
+END-SUBROUTINE
+
+DEFINE NEW-NOTE
+/*     =========
+IF NOT #Update
+  RESET #UPDATED
+  escape routine
+end-if
+
+RESET UpdateNotes
+MOVE EDITED *TIMX (EM=HHIISST)  TO #NOTE-TIME
+MOVE EDITED *DATX (EM=YYYYMMDD) TO #NOTE-DATE
+assign UpdateNotes.USER-COMPANY  = 'S'
+assign UpdateNotes.CONTACT-ID    = #Contact-ID
+assign UpdateNotes.NOTE-TIME     = #NOTE-TIME-N
+assign UpdateNotes.NOTE-DATE     = #NOTE-DATE-N
+ASSIGN UpdateNotes.LAST-UPD-USER = *INIT-USER
+* ASSIGN UpdateNotes.LAST-UPD-DATE = #NOTE-DATE-N
+* ASSIGN UpdateNotes.LAST-UPD-TIME = #NOTE-TIME-N
+
+FIND (1) TERM WITH TERMINAL-ID = UpdateNotes.LAST-UPD-USER
+  MOVE TERM.CLERK-ID TO UpdateNotes.USER-ID
+  MOVE TERM.USER-COMPANY TO UpdateNotes.USER-COMPANY
+END-FIND
+
+RESET UpdateNotes.LAST-UPD-USER
+ST-LBL.
+STORE UpdateNotes
+
+#CUR-ISN := *ISN (ST-LBL.)
+CALLNAT 'NOTE4SXX'
+  #MAIN-NAME
+  #CUR-ISN
+  #UPDATED
+END-SUBROUTINE
+
+DEFINE INIT-LOCALS
+/*     ===========
+FIND CONTACT WITH CONTACT-ID = #Contact-ID
+  #MAIN-NAME := FUNCTION-DISP-CT-NAME (<FIRST-NAME,MIDDLE-NAME,LAST-NAME,SUFFIX>)
+  IF ID-NUMBER > 0
+    COMPRESS #CN-TTL ID-NUMBER INTO #CN LEAVING NO
+  END-IF
+  IF DATE-OF-DEATH > 0
+    COMPRESS #DOD-TTL DATE-OF-DEATH ')' INTO #DOD LEAVING NO
+  END-IF
+END-FIND
+ASSIGN UpdateNotes.LAST-UPD-USER = *INIT-USER
+FIND (1) TERM WITH TERMINAL-ID = UpdateNotes.LAST-UPD-USER
+  MOVE TERM.CLERK-ID TO #NEW-N-CLERK
+  IF TERM.SECURITY-CODE = 97
+    #COMPANY := 'AFA Notes'
+  ELSE
+    #COMPANY := 'AAFM Notes'
+  END-IF
+END-FIND
+END-SUBROUTINE
+
+END

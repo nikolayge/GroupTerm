@@ -1,0 +1,286 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* SUBPROGRAM-ID: PMBN01WS - Subprogram to populate the EMSI REQUEST 
+* Skip the second Phone of the same type OI-3416
+* Change account for Portamedic OI-3583
+* --------------------------------------------------------------------------------------------------------------------------
+
+DEFINE DATA 
+PARAMETER 
+1 p_AT-NUMBER (N6)
+1 XML         (A) DYNAMIC
+1 #ERROR      (A) DYNAMIC
+
+LOCAL USING OBJLAPTR          /* Application Tracking file fields
+LOCAL USING PMDL0001          /* Portamedic Property File 
+LOCAL USING ADDA0001          /* Address subroutine            
+LOCAL USING OBJLCONT          /* Contact data                   
+LOCAL USING OBJLCOPH          /* Phone data                     
+LOCAL 
+*
+1 v_REQ (A/8) DYNAMIC INIT <
+ "  <RequirementInfo AppliesToParticipantID='Party1_2' AppliesToPartyID='Party1_2' FulfillerPartyID='Party7_2' id='@@ReqID'>",
+ "   <ReqCode tc='@@TC-ReqCode'>@@ReqCode</ReqCode>",
+ "   <RequirementInfoUniqueID>@@ReqInfoUniqueID</RequirementInfoUniqueID>",
+ "   <ReqStatus tc='4'>Outstanding</ReqStatus>",
+ "   <RequestedDate>@@RequestedDate</RequestedDate>",
+ "   <ReleasePartyOrgCode>@@ReleasePartyOrgCode</ReleasePartyOrgCode>",
+ "   <RequirementAcctNum>@@ReqAcctNum</RequirementAcctNum>",
+ "  </RequirementInfo>">
+*
+1 v_PH (A/6) DYNAMIC INIT <
+ "  <Phone>",
+ "    <PhoneTypeCode tc='@@TC-PhoneTypeCode'>@@PhoneTypeCode</PhoneTypeCode>",
+ "    <AreaCode>@@AreaCode</AreaCode>",
+ "    <DialNumber>@@DialNumber</DialNumber>",
+ "    <PrefPhone tc='@@PrefPhone'></PrefPhone>",
+ "  </Phone>">
+
+1 #ID-NUMBER  (N6) 
+1 #SMOKER-FLAG (A1) 
+1 #BIRTH-DATE  (N8) 
+1 REDEFINE #BIRTH-DATE 
+  2 #B-YYYY  (A4) 
+  2 #B-MM    (A2) 
+  2 #B-DD    (A2) 
+1 #ZIP-CODE  (N9) 
+1 REDEFINE #ZIP-CODE 
+  2 #ZIP-5   (A5) 
+1 #i          (I2) 
+1 #p          (I2) 
+1 #N          (N2) 
+1 #NN         (N2) 
+1 c_Req       (I2)
+1 #WORK-FIELD (A) DYNAMIC 
+1 #PRIMARY    (A1) CONST <'P'> 
+1 #CONTACT-ID (N8) 
+* 
+1 #PM-ACORD-DESCRIPTION      (A)   DYNAMIC 
+1 v_PM_DSCR                  (A/5) DYNAMIC        
+1 #PM-REQUEST                (A78) 
+1 REDEFINE #PM-REQUEST 
+  2 #PM-REQUEST-CODE         (A4) 
+  2 #SPACE                   (A1) 
+  2 #PM-REQUEST-DESCRIPTION  (A73) 
+* 
+1 v_Codes (A4/12)
+1 #x             (I2)
+1 v_A            (A) DYNAMIC 
+1 v_AA           (A) DYNAMIC 
+1 v_ATC          (A) DYNAMIC 
+1 v_DESCRIPTION  (A) DYNAMIC 
+1 v_OrgCode      (A4)      INIT <'AAFM'>
+1 v_ReqAcctNum   (A) DYNAMIC 
+1 got_C          (L)        /*  OI-3416
+1 got_B          (L)        /*  OI-3416
+1 got_H          (L)        /*  OI-3416
+END-DEFINE 
+
+* 
+* ON ERROR
+*   PRINT  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /
+*          #PM-ACORD-DESCRIPTION
+*   COMPRESS 'OnError in:' *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR INTO #ERROR
+* END-ERROR
+* 
+
+COMPRESS 'AT' p_AT-NUMBER '-' *DATN '-' *TIMN INTO v_A LEAVING NO SPACE  /*
+EXAMINE XML FOR '@@TransRefGUID' REPLACE v_A
+v_A := *DAT4I
+EXAMINE XML FOR '@@CreationDate' REPLACE v_A
+EXAMINE XML FOR '@@DATE' REPLACE v_A
+v_A := *TIME 
+EXAMINE XML FOR '@@CreationTime' REPLACE v_A
+EXAMINE XML FOR '@@TIME' REPLACE v_A
+* 
+COMPRESS 'AT' p_AT-NUMBER INTO v_A LEAVING NO SPACE
+EXAMINE XML FOR '@@PolNumber' REPLACE v_A
+ 
+* IF PM-VENDOR = 'Portamedic'    /* Allow reuse of AR             /*  --db  
+* COMPRESS 'AT' p_AT-NUMBER '-' *TIMN INTO v_A LEAVING NO SPACE   /*  --db
+* END-IF                                                          /*  --db 
+EXAMINE XML FOR '@@TrackingID' REPLACE  v_A
+* PRINT *PROGRAM *LINE 'TrackingID :'  '[' v_A ']'    /* --db
+FIND(1) AT-V WITH ID-NUMBER = p_AT-NUMBER
+  IF NO RECORDS FOUND 
+     #ERROR := 'No records found for AT '
+     ESCAPE MODULE
+  END-NOREC 
+  
+  DECIDE ON FIRST VALUE PM-VENDOR
+    VALUE 'Portamedic'
+     v_ReqAcctNum := '4003'                                /* bz OI-3583   
+    VALUE 'EMSI'
+     v_ReqAcctNum := '908640000'
+    NONE IGNORE 
+  END-DECIDE   
+
+  IF C*PORTAMEDIC-REQUEST = 0 
+*     PRINT 'No Services Codes requested for AT ' #ID-NUMBER              /* Err 3
+     COMPRESS 'No Services Codes requested for AT ' #ID-NUMBER INTO #ERROR
+     ESCAPE MODULE
+  END-IF 
+  v_A := FACE-AMT-UNITS * 1000 + FACE-AMT-DOLS
+  EXAMINE XML FOR '@@FaceAmt'    REPLACE v_A
+  EXAMINE XML FOR '@@CurrentAmt' REPLACE v_A  
+
+  DECIDE ON FIRST VALUE OF SMOKER-FLAG 
+    VALUE 'Y'  v_A := 'Using tobacco'                   v_ATC := 2
+    VALUE 'N'  v_A := 'Never used tobacco in any form.' v_ATC := 1 
+    VALUE ' '  v_A := 'Unknown'                         v_ATC := 0 
+    NONE 
+     IGNORE 
+  END-DECIDE   
+  EXAMINE XML FOR '@@SmokerStat' REPLACE v_A
+  EXAMINE XML FOR '@@TC-SmokerStat' REPLACE v_ATC
+* --------------------------------- REQ --------------------------------------------
+RESET #N v_A v_AA
+ FOR #NN = 1 TO C*PORTAMEDIC-REQUEST 
+   #PM-ACORD-DESCRIPTION := FUNCTION-PM-ACORD(<PM-CODE(#NN)>) 
+   IF #PM-ACORD-DESCRIPTION = ' ' 
+      COMPRESS 'Invalid Service Code' PM-CODE(#NN) INTO #ERROR 
+      ESCAPE ROUTINE
+   END-IF 
+   SEPARATE #PM-ACORD-DESCRIPTION INTO v_PM_DSCR(*) IGNORE  WITH DELIMITER ';' NUMBER IN #p
+   #p := #p - 1
+   FOR #N = 1 TO #p
+       #PM-REQUEST := *TRIM(v_PM_DSCR(#N))
+       EXAMINE  v_Codes(*) FOR  #PM-REQUEST-CODE  NUMBER #x  
+       IF #x > 0                                                      
+          ESCAPE TOP
+       END-IF
+       c_Req           := c_Req  + 1           
+       v_Codes (c_Req) := #PM-REQUEST-CODE                        
+       v_AA := " " 
+       FOR #i = 1 TO 8 COMPRESS v_AA v_REQ(#i) H'0A' INTO v_AA  LEAVING NO SPACE END-FOR
+       EXAMINE v_AA FOR '@@TC-ReqCode' REPLACE  #PM-REQUEST-CODE 
+       v_ATC := *TRIM(#PM-REQUEST-DESCRIPTION)
+       EXAMINE v_AA FOR '@@ReqCode' REPLACE v_ATC
+
+       COMPRESS v_ReqAcctNum '-' *DATN '-' 'AT' p_AT-NUMBER '-' #NN '-' #N INTO v_ATC LEAVING NO SPACE
+       EXAMINE v_AA FOR '@@ReqInfoUniqueID' REPLACE v_ATC
+       EXAMINE v_AA FOR '@@ReqAcctNum'  REPLACE v_ReqAcctNum
+     
+       COMPRESS 'Req' #NN '_' #N INTO v_ATC LEAVING NO 
+       EXAMINE v_AA FOR '@@ReqID' REPLACE v_ATC
+       v_ATC := *DAT4I 
+       EXAMINE v_AA FOR '@@RequestedDate' REPLACE v_ATC
+       EXAMINE v_AA FOR '@@ReleasePartyOrgCode' REPLACE v_OrgCode
+       COMPRESS v_A v_AA INTO v_A LEAVING NO SPACE
+   END-FOR
+      IF PM-REMARK(#NN) <> ' ' 
+         COMPRESS v_DESCRIPTION #NN PM-REMARK(#NN) INTO v_DESCRIPTION 
+       END-IF  
+ END-FOR 
+
+ IF c_Req = 0 
+  #ERROR := 'No valid Service Codes requested for AT'
+  ESCAPE ROUTINE
+ ELSE
+       EXAMINE XML FOR '<@@RequirementInfo/>'  REPLACE v_A
+       IF v_DESCRIPTION = " " v_DESCRIPTION := 'NoComments' END-IF
+       EXAMINE XML FOR '@@Description'  REPLACE v_DESCRIPTION
+ END-IF 
+* --------------------------------- REQ ----------------------------------------- end
+ #CONTACT-ID := AT-V.CONTACT-ID 
+ FIND(1) CT-V WITH CONTACT-ID = #CONTACT-ID 
+  EXAMINE XML FOR '@@FirstName'  REPLACE CT-V.FIRST-NAME
+  EXAMINE XML FOR '@@MiddleName' REPLACE CT-V.MIDDLE-NAME
+  EXAMINE XML FOR '@@LastName'   REPLACE CT-V.LAST-NAME    
+  EXAMINE XML FOR '@@Gender'     REPLACE CT-V.GENDER-CD
+  IF CT-V.GENDER-CD = 'M' 
+   EXAMINE XML FOR '@@TC-Gender'   REPLACE '1'       /* 1 - 'M'; 2 - 'F' 
+  ELSE 
+   EXAMINE XML FOR '@@TC-Gender'   REPLACE '2'  
+  END-IF 
+  #BIRTH-DATE     := CT-V.DATE-OF-BIRTH 
+  COMPRESS #B-YYYY #B-MM #B-DD TO v_A  WITH DELIMITER '-' 
+  EXAMINE XML FOR '@@BirthDate'   REPLACE v_A  
+  v_A :=  SSN                                  
+  EXAMINE XML FOR '@@GovtID'   REPLACE v_A  
+ END-FIND 
+ #ADD-CONTACT-ID := #CONTACT-ID 
+ #ADD-TYPE       := #PRIMARY 
+ CALLNAT 'ADDN0001' #PDA-ADDRESS 
+ COMPRESS #ADD-STREET #ADD-UNIT INTO v_A 
+ EXAMINE XML FOR '@@Line1'  REPLACE v_A
+ EXAMINE XML FOR '@@City'   REPLACE #ADD-CITY
+ MOVE EDITED #ADD-ZIP-CODE (EM=999999999) TO v_A  
+ EXAMINE XML FOR '@@Zip'   REPLACE v_A
+ EXAMINE XML FOR '@@AddressState'   REPLACE #ADD-STATE
+ v_A := #ADD-STATE
+ v_A := FUNCTION-STATE-CODE(<v_A,'N'>)
+ EXAMINE XML FOR '@@TC-AddressState' REPLACE v_A
+ v_A := F-PREF-EMAIL(<#CONTACT-ID>) 
+ EXAMINE XML FOR '@@PrefEMailAddr'   REPLACE v_A
+ PERFORM sbr_Phones  /* OI-3416 /* array of phones ------------
+END-FIND
+* ------------------------------------------- array of phones ------------ End
+DEFINE sbr_Phones
+  RESET v_A 
+  got_C := FALSE got_B := FALSE got_H := FALSE        /* OI-3416
+  FIND CNT-PHONE-V WITH CONTACT-ID = #CONTACT-ID 
+*   WRITE *COUNTER(EM=9')') CNT-PHONE-V.DIAL-NUMBER 't:'CNT-PHONE-V.TYPE 'Tc:'PHONE-TYPE-CODE 'pr:' PREFERRED-PHONE-IND  
+   IF CNT-PHONE-V.DIAL-NUMBER = 0 AND CNT-PHONE-V.INTL-DIAL-NUMBER = 0 ESCAPE TOP END-IF
+    END-ALL 
+    SORT BY  CNT-PHONE-V.LAST-DATE-UPD DESCENDING 
+       USING CNT-PHONE-V.DIAL-NUMBER CNT-PHONE-V.INTL-DIAL-NUMBER
+             CNT-PHONE-V.AREA-CODE CNT-PHONE-V.INTL-ACCESS-CODE
+             CNT-PHONE-V.TYPE PHONE-TYPE-CODE PREFERRED-PHONE-IND   
+*    WRITE *COUNTER(EM=9')') CNT-PHONE-V.DIAL-NUMBER 't:'CNT-PHONE-V.TYPE 'Tc:'PHONE-TYPE-CODE 'pr:' PREFERRED-PHONE-IND
+    DECIDE FOR EVERY CONDITION 
+      WHEN PHONE-TYPE-CODE = 'C' AND NOT got_C  /* OI-3416
+          got_C := TRUE                         /* OI-3416
+          v_AA := ' '
+          FOR #i = 1 TO 6 COMPRESS v_AA v_PH(#i) H'0A' INTO v_AA  LEAVING NO SPACE END-FOR
+          EXAMINE v_AA FOR '@@PhoneTypeCode' REPLACE 'Mobile'
+          EXAMINE v_AA FOR '@@TC-PhoneTypeCode' REPLACE '12'
+          PERFORM  sbr_Form_PH                  /* OI-3416
+      WHEN PHONE-TYPE-CODE = 'B' AND NOT got_B  /* OI-3416
+          got_B := TRUE                         /* OI-3416
+          v_AA:= ' '
+          FOR #i = 1 TO 6 COMPRESS v_AA v_PH(#i) H'0A' INTO v_AA  LEAVING NO SPACE END-FOR
+          EXAMINE v_AA FOR '@@PhoneTypeCode' REPLACE 'Business'  
+          EXAMINE v_AA FOR '@@TC-PhoneTypeCode' REPLACE '2'
+          PERFORM  sbr_Form_PH                   /* OI-3416
+      WHEN PHONE-TYPE-CODE = 'H' AND NOT got_H   /* OI-3416
+          got_H := TRUE                          /* OI-3416   
+          v_AA := ' '
+          FOR #i = 1 TO 6 COMPRESS v_AA v_PH(#i) H'0A' INTO v_AA  LEAVING NO SPACE END-FOR
+          EXAMINE v_AA FOR '@@PhoneTypeCode' REPLACE 'Residential'
+          EXAMINE v_AA FOR '@@TC-PhoneTypeCode' REPLACE '1'
+          PERFORM  sbr_Form_PH                   /* OI-3416
+      WHEN NONE IGNORE 
+    END-DECIDE
+  END-SORT 
+  IF v_A <> ' ' 
+       EXAMINE XML FOR '<@@Phone/>'   REPLACE v_A
+      ELSE 
+       EXAMINE XML FOR '<@@Phone/>'   DELETE
+   END-IF 
+END-SUBROUTINE
+* -----------------------------------------------------
+DEFINE sbr_Form_PH
+            IF CNT-PHONE-V.TYPE = 'I'
+            v_ATC := CNT-PHONE-V.INTL-ACCESS-CODE
+          ELSE
+            v_ATC := CNT-PHONE-V.AREA-CODE          
+          END-IF
+          EXAMINE v_AA FOR '@@AreaCode' REPLACE v_ATC
+          IF CNT-PHONE-V.TYPE = 'I'
+            v_ATC := CNT-PHONE-V.INTL-DIAL-NUMBER
+          ELSE
+            v_ATC := CNT-PHONE-V.DIAL-NUMBER          
+          END-IF  
+          EXAMINE v_AA FOR '@@DialNumber' REPLACE v_ATC
+          IF PREFERRED-PHONE-IND = 'Y'
+             EXAMINE v_AA FOR '@@PrefPhone' REPLACE '1'
+          ELSE 
+             EXAMINE v_AA FOR '@@PrefPhone' REPLACE '0'
+          END-IF
+          COMPRESS v_A v_AA INTO v_A LEAVING NO SPACE
+END-SUBROUTINE
+END

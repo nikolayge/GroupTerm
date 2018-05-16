@@ -1,0 +1,161 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+DEFINE DATA
+
+PARAMETER USING AUCALL01
+PARAMETER
+1 #INSURED-CI (N8)
+1 J (I2) /* Policy Segment of Policy from Status File
+* LOCAL USING MBCANL00
+1 #CVALUSXX-PARMS
+  2 #SUFFIX                    (A3)
+  2 #AS-OF-YYYYMMDD            (N8)
+  2 #LOAN-BAL                  (N7.2/9)
+  2 #LOAN-BAL-2                (N7.2/9)
+  2 #ACC-INT                   (N7.2/9)
+  2 #ACC-INT-2                 (N7.2/9)
+  2 #CSV                       (N7.2/9)
+  2 #CVALUE                    (N7.2/9)
+  2 #LVALUE                    (N7.2/9)
+  2 #MCSV                      (N7.2/9)
+  2 #DB                        (N7.2/9)
+  2 #ANN-PREM                  (N7.2/9)
+  2 #FACE-AMT                  (N7.2/9)
+  2 #TPP                       (N7.2/9)
+1 #INSURED-ISN                 (P10)
+LOCAL
+1 #ErrorCode     (A3)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2  X-LOAN-INFO  (1:9)
+    3 X-LOAN-AMOUNT /* loan Amount
+    3 X-LOAN-AMOUNT-2
+    3 X-INTEREST-RATE        /* INterest Rate
+    3 X-LOAN-DATE            /* Loan Issue Date
+    3 X-LOAN-DATE-2
+    3 X-ALT-LP-DATE          /* AIL/EIL Date
+    3 X-BILL-INTEREST-AMT   /* Billed Interest? Maybe. Need to test
+    3 X-BILL-INTEREST-AMT-2
+    3 X-CAP-AMT                 /* capitalized Interest Maybe.  Need to test
+    3 X-CAP-AMT-2
+    3 X-INTEREST-RECEIVED /* interest Received
+    3 X-INTEREST-RECEIVED-2
+    3 X-ALT-LP-AMT  /* On St Screen.  Not sure which XML field this would be
+    3 X-ALT-LP-AMT-2
+    3 X-ALT-LP-IND
+    3 X-ALT-LP-IND-2
+    3 CONV-DURATION
+*
+1 I  (I4)
+1 #FIXED-LOAN    (A) DYNAMIC CONSTANT <'Fixed'>
+1 #CAP-LOAN      (A) DYNAMIC CONSTANT <'CAP'>
+1 #VARIABLE-LOAN (A) DYNAMIC CONSTANT <'Variable'>
+1 #AUTO-INDICATOR  (A) DYNAMIC
+1 #LOAN          (P7.2)
+1 #INTEREST-RATE      (P2.3)
+1 #HOLD-ACCRUED  (P5.2)
+1 #PAYMENT-METHOD   (A1)
+END-DEFINE
+*
+GET ST-V  #INSURED-ISN
+
+* Fixed Loan
+IF X-LOAN-AMOUNT(J) > 0
+  ADD 1 TO I
+  EXPAND ARRAY LOAN TO (1:I)
+
+*  CONV-DURATION = 999 means the loan is a CAP loan.
+  IF CONV-DURATION(J) = 999
+    LoanType(I) := #CAP-LOAN
+  ELSE
+    LoanType(I) := #FIXED-LOAN
+  END-IF
+*   PERFORM DETERMINE-FIXED-MODE
+  RESET PaymentMethod (I)
+  PaymentMethod         (I) := GET-AUTO-LOAN-TYPE (<X-ALT-LP-IND(J)>)
+  LinkedLoans.IssueDate (I) := X-LOAN-DATE         (J)
+  AILEILDate            (I) := X-ALT-LP-DATE       (J)
+  InterestRate          (I) := X-INTEREST-RATE     (J)
+  PaymentAmount         (I) := X-ALT-LP-AMT        (J)
+  AvailableAmont        (I) := 0 /* Available Loans require CASH Value which is only for OL policies
+  DailyInterest         (I) := X-LOAN-AMOUNT(J) * (X-INTEREST-RATE(J) / 365) / 100
+  ReceivedInterest      (I) := X-INTEREST-RECEIVED (J)
+  BilledInterest        (I) := X-BILL-INTEREST-AMT (J)
+  Principal             (I) := X-LOAN-AMOUNT       (J)
+  AccruedInterest       (I) := #ACC-INT(J)
+  RemainingBalance      (I) := X-LOAN-AMOUNT(J) + AccruedInterest(I)
+  AutoIndicator         (I) := #AUTO-INDICATOR
+  C@Loan := I
+  AvailableAmont(I)  := #LVALUE(J) - X-LOAN-AMOUNT(J) - X-LOAN-AMOUNT-2(J) - AccruedInterest(I)
+END-IF
+
+* Variable Loan
+IF X-LOAN-AMOUNT-2(J) > 0
+  ADD 1 TO I
+  EXPAND ARRAY LOAN TO (1:I)
+*   PERFORM DETERMINE-VARIABLE-MODE
+  RESET PaymentMethod(I)
+  PaymentMethod       (I) := GET-AUTO-LOAN-TYPE (<X-ALT-LP-IND-2(J)>)
+  IF PaymentMethod       (I) = ' ' PaymentMethod       (I) := 'N/A' END-IF
+  LoanType            (I) := 'Variable'
+  IssueDate           (I) := X-LOAN-DATE-2         (J)
+  InterestRate        (I) :=  FUNCTION-INT-RATE(<'RATE5AB'>) /* Current Interest Rate
+  AccruedInterest     (I) := #ACC-INT-2(J)
+  DailyInterest       (I) := X-LOAN-AMOUNT-2(J) * (InterestRate(I) / 365) / 100
+  AvailableAmont      (I) := #LVALUE(J) - X-LOAN-AMOUNT(J) - X-LOAN-AMOUNT-2(J) - AccruedInterest(I) /* - ST-V.X-INTEREST-RATE-2(J)
+  IF AvailableAmont(I) < 0 
+  AvailableAmont(I) := 0 
+  END-IF
+  PaymentAmount         (I) := X-ALT-LP-AMT-2        (J)
+  ReceivedInterest    (I) := X-INTEREST-RECEIVED-2 (J)
+  RemainingBalance    (I) := X-LOAN-AMOUNT-2(J) + AccruedInterest(i) /* changed j to i here
+  BilledInterest      (I) := X-BILL-INTEREST-AMT-2 (J)
+  Principal           (I) := X-LOAN-AMOUNT-2       (J)
+  C@Loan := I
+END-IF
+
+* * /* SHOULD TURN THE FOLLOWING INTO A FUNCTION ONCE WE GATHER REQUIREMENTS
+* DEFINE SUBROUTINE DETERMINE-FIXED-MODE
+* * ------------------------------------
+* DECIDE ON FIRST VALUE X-ALT-LP-IND   (J)
+*   VALUE '1' MOVE 'ALP' TO PaymentMethod(I)
+*   VALUE '2' MOVE 'AIP' TO PaymentMethod(I)
+*   VALUE '3' MOVE 'ELP' TO PaymentMethod(I)
+*   VALUE '4' MOVE 'EIP' TO PaymentMethod(I)
+*   VALUE '6' MOVE 'MIP' TO PaymentMethod(I)
+*   VALUE '8' MOVE 'CIP' TO PaymentMethod(I)
+*   VALUE '9' MOVE 'AIW' TO PaymentMethod(I)
+*   VALUE 'L' MOVE 'AIL' TO PaymentMethod(I)
+*   VALUE '*' MOVE 'AI*' TO PaymentMethod(I)
+*   VALUE 'E' MOVE 'EIL' TO PaymentMethod(I)
+*   VALUE 'C' MOVE 'CIL' TO PaymentMethod(I)
+*   VALUE '!' MOVE 'CI*' TO PaymentMethod(I)
+*   NONE IGNORE
+* END-DECIDE
+* END-SUBROUTINE
+* * ------------
+* *
+* *
+* /* SHOULD TURN THE FOLLOWING INTO A FUNCTION ONCE WE GATHER REQUIREMENTS
+* DEFINE SUBROUTINE DETERMINE-VARIABLE-MODE
+* * ---------------------------------------
+* DECIDE ON FIRST VALUE X-ALT-LP-IND-2(J)
+*   VALUE '1' MOVE 'ALP' TO PaymentMethod(I)
+*   VALUE '2' MOVE 'AIP' TO PaymentMethod(I)
+*   VALUE '3' MOVE 'ELP' TO PaymentMethod(I)
+*   VALUE '4' MOVE 'EIP' TO PaymentMethod(I)
+*   VALUE '6' MOVE 'MIP' TO PaymentMethod(I)
+*   VALUE '8' MOVE 'CIP' TO PaymentMethod(I)
+*   VALUE '9' MOVE 'AIW' TO PaymentMethod(I)
+*   NONE IGNORE
+* END-DECIDE
+* END-SUBROUTINE
+* * * ------------
+*
+
+END

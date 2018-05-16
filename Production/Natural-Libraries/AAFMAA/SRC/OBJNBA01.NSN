@@ -1,0 +1,330 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* A-BANK-ACCOUNT-INFO - Object Module
+****************************************
+* MODIFICATION LOG
+****************************************
+* USER   DATE      TAG  REASON
+* YAK    05122009  YAK  Initial Creation
+* YAK    09082014       Re-written to use new Bank Account Info file
+*                       Status file still being used for EZ-Pay info
+* YAK    02012015  YK1  Re-written for MC2:
+*                       use new PDA, add new methods
+* YAK    02012015  YK2  Check PAD-CODE when return EZPay accounts info
+* YAK    06252015  YK3  Get BA account regardless of PAD-CODE for AT process
+* YAK    11022016  YK4  Add EZ-Pay update (EB&P III)
+* YAK    05082017  YK5  Add last update information for EZ-Pay update (EB&P III)
+* YAK    06202017  YK6  Add method MOVE-EZPAY-ACCOUNT
+* YAK    08282017  YK7  Add PAD-CODE = 'S' to display all bank accounts on the system
+* YAK    06202017  YK8  Correct PAD-CODE for method MOVE-EZPAY-ACCOUNT
+****************************************
+*
+DEFINE DATA
+PARAMETER USING OBJABA01                        /* YK1
+PARAMETER 1 #ACCOUNT-ARRAY (P9/*) OPTIONAL      /* YK1
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER (N6.0)
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A (A6)
+  2 MEMBER-CONTACT-ID (N8)
+  2 DATE-ACCT-UPDATE
+  2 DATE-OTHER-UPDATE
+  2 C*ACTIVE-SEGMENTS
+  2 MODE (9)
+  2 OWNERSHIP-FLAG (9)
+  2 PAD-ABA-NBR (A9)
+  2 PAD-ACCT-NUM (A17)
+  2 PAD-CODE (A1)                              /* YK2
+  2 PAD-LAST-MON-AMT (P5.2)
+  2 PAD-CHECK-SAV (A1)
+
+LOCAL USING OBJLCONT
+LOCAL USING OBJLADDR
+LOCAL USING OBJLADRL
+LOCAL USING OBJLBA01
+LOCAL
+1 #MEMBER-CONTACT-ID (N8)
+1 #PRIMARY (A) DYNAMIC CONST <'P'>
+1 #SAVING  (A) DYNAMIC CONST <'S'>
+1 BA-HIST VIEW OF A-BANK-ACC-INFO
+  2 ID-NUMBER
+1 #I        (I2)                               /* YK2
+1 #CHECK-ID (N2/20)                            /* YK2
+1 #PAD-CODE (A1/5) CONST <'E','D','L','P','S'>     /* YK7
+1 #EZ-PAY-CHANGE (A) DYNAMIC CONST <'CA'>      /* YK5
+1 #DATN     (N8)
+1 #EZPay    (A1) CONST <'E'>                   /* YK5
+1 #N        (N2)                               /* YK8
+END-DEFINE
+*
+#DATN := *DATN
+* Main processing
+*
+DECIDE ON FIRST VALUE #ACTION
+  VALUE 'ADD'
+    PERFORM ADD-RECORD
+  VALUE 'FIND'                                 /* YK1
+    PERFORM FIND-RECORD                        /* YK1
+  VALUE 'UPDATE'
+    PERFORM UPDATE-RECORD
+  VALUE 'DELETE'
+    PERFORM DELETE-RECORD
+  VALUE 'DELETE-EZPAY'
+    PERFORM DELETE-EZPAY
+  VALUE 'GET'
+    PERFORM GET-RECORD
+  VALUE 'GET-BY-ISN'                           /* YK1
+    PERFORM GET-BY-ISN                         /* YK1
+  VALUE 'GET-ST','GET-ST-AT','GET-EZPAY'       /* YK3
+    PERFORM GET-EZPAY-DATA
+  VALUE 'UPDATE-EZPAY','ADD-EZPAY'             /* YK4
+    PERFORM UPDATE-EZPAY-DATA
+  VALUE 'CHECK'                                /* YK1
+    PERFORM CHECK-EXIST
+  VALUE 'NAME-ADDRESS'
+    PERFORM POPULATE-ACCOUNT-FIELDS
+  VALUE 'GET-ALL'                              /* YK1
+    PERFORM GET-ALL                            /* YK1
+  VALUE 'MOVE-EZPAY-ACCOUNT'                   /* YK6
+    PERFORM MOVE-EZPAY-ACCOUNT                 /* YK6
+  NONE
+    IGNORE
+END-DECIDE
+*
+****************************
+DEFINE SUBROUTINE ADD-RECORD
+****************************
+*
+MOVE BY NAME PARM-BA-INFO TO BA-INFO-V
+STORE BA-INFO-V
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE FIND-RECORD   /* YK1
+*****************************
+*
+IF PARM-BA-INFO.CHECK-ID <> 0
+  F3.
+  FIND BA-INFO-V WITH ID-NUMBER = #PARM-ID-NUMBER
+    ACCEPT IF BA-INFO-V.CHECK-ID = PARM-BA-INFO.CHECK-ID
+    #ISN := *ISN (F3.)
+    ESCAPE ROUTINE
+  END-FIND
+END-IF
+*
+F4.
+FIND BA-INFO-V WITH ID-NUMBER = #PARM-ID-NUMBER
+  IF PARM-BA-INFO.ROUTING-NUMBER = BA-INFO-V.ROUTING-NUMBER AND
+      PARM-BA-INFO.ACCOUNT-NUMBER = BA-INFO-V.ACCOUNT-NUMBER
+    PARM-BA-INFO.CHECK-ID := BA-INFO-V.CHECK-ID
+    #ISN := *ISN (F4.)
+    ESCAPE ROUTINE
+  END-IF
+END-FIND
+* Find next check-id to use - assign to #NUMBER-OF-RECORDS to pass to the calling program
+FIND BA-INFO-V WITH ID-NUMBER = #PARM-ID-NUMBER
+  #I := #I + 1
+  #CHECK-ID(#I) := BA-INFO-V.CHECK-ID
+END-FIND
+#NUMBER-OF-RECORDS := *MAXVAL(#CHECK-ID(*)) + 1
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE UPDATE-RECORD
+*******************************
+*
+GT1.
+GET BA-INFO-V #ISN
+MOVE BY NAME PARM-BA-INFO TO BA-INFO-V
+UPDATE (GT1.)
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE GET-RECORD
+****************************
+*
+FIND(1) BA-INFO-V WITH ID-NUMBER = #PARM-ID-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  #ISN := *ISN
+  MOVE BY NAME BA-INFO-V TO PARM-BA-INFO
+END-FIND
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE GET-BY-ISN      /* YK1
+****************************
+*
+GET BA-INFO-V #ISN
+MOVE BY NAME BA-INFO-V TO PARM-BA-INFO
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-EZPAY-DATA
+********************************
+*
+FIND(1) ST-V WITH ID-NUMBER = #PARM-ID-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE MODULE
+  END-NOREC
+  ACCEPT IF #ACTION = 'GET-ST-AT' OR (#ACTION = 'GET-ST' AND ST-V.PAD-CODE = #PAD-CODE(*)) OR     /* YK2   /* YK3
+    #ACTION = 'GET-EZPAY'
+  IF (ST-V.PAD-ABA-NBR <> ' ' AND ST-V.PAD-ACCT-NUM <> ' ') OR #ACTION = 'GET-EZPAY'
+    #ISN := *ISN
+    PARM-BA-INFO.ID-NUMBER       := ST-V.ID-NUMBER
+    PARM-BA-INFO.ROUTING-NUMBER  := ST-V.PAD-ABA-NBR
+    PARM-BA-INFO.ACCOUNT-NUMBER  := ST-V.PAD-ACCT-NUM
+    IF ST-V.PAD-CHECK-SAV = #SAVING
+      PARM-BA-INFO.ACCOUNT-TYPE  := 'SAV'
+    ELSE
+      PARM-BA-INFO.ACCOUNT-TYPE  := 'DDA'
+    END-IF
+    #MEMBER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+    PARM-BA-INFO.LAST-UPDATE-DATE := ST-V.DATE-ACCT-UPDATE
+* YK5 >
+    IF PARM-BA-INFO.LAST-UPDATE-DATE = #DATN
+        F-TIMESTAMP(<PARM-BA-INFO.ID-NUMBER, #EZ-PAY-CHANGE, PARM-BA-INFO.LAST-UPDATE-DATE,#DATN,PARM-BA-INFO.LAST-UPDATE-TIME>)
+    END-IF
+  END-IF
+* < YK5
+END-FIND
+IF #MEMBER-CONTACT-ID <> 0
+  PERFORM POPULATE-NAME-ADDRESS
+END-IF
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-NAME-ADDRESS
+***************************************
+*
+FIND(1) CT-V WITH CONTACT-ID = #MEMBER-CONTACT-ID
+  PARM-BA-INFO.ACCOUNT-HOLDER-FIRST-NAME := CT-V.FIRST-NAME
+  PARM-BA-INFO.ACCOUNT-HOLDER-LAST-NAME  := CT-V.LAST-NAME
+END-FIND
+*
+FIND ADDR-REL-V WITH CONTACT-ID = #MEMBER-CONTACT-ID
+  ACCEPT IF ADDR-REL-V.ADDR-TYPE-CD = #PRIMARY
+  FIND(1) ADDR-POOL-V WITH ADDRESS-POOL-ID = ADDR-REL-V.ADDRESS-POOL-ID
+    PARM-BA-INFO.ACCOUNT-STREET   := ADDR-POOL-V.STREET
+    PARM-BA-INFO.ACCOUNT-CITY     := ADDR-POOL-V.CITY
+    PARM-BA-INFO.ACCOUNT-STATE    := ADDR-POOL-V.STATE-CODE
+    PARM-BA-INFO.ACCOUNT-ZIP-CODE := ADDR-POOL-V.ZIP-CODE
+  END-FIND
+END-FIND
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE UPDATE-EZPAY-DATA    /* YK4
+***********************************
+*
+GT3.
+GET ST-V #ISN
+ST-V.PAD-ABA-NBR  := PARM-BA-INFO.ROUTING-NUMBER
+ST-V.PAD-ACCT-NUM := PARM-BA-INFO.ACCOUNT-NUMBER
+ST-V.DATE-ACCT-UPDATE := PARM-BA-INFO.LAST-UPDATE-DATE
+IF PARM-BA-INFO.ACCOUNT-TYPE  = 'SAV'
+  ST-V.PAD-CHECK-SAV := #SAVING
+ELSE
+  RESET ST-V.PAD-CHECK-SAV
+END-IF
+IF ST-V.PAD-CODE = 'D' OR ST-V.PAD-CODE = 'P' OR ST-V.PAD-CODE = 'L'
+  IGNORE
+ELSE
+  ST-V.PAD-CODE := 'E'
+END-IF
+UPDATE (GT3.)
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE DELETE-RECORD
+*******************************
+*
+GT2.
+GET BA-INFO-V #ISN
+DELETE (GT2.)
+END-SUBROUTINE
+
+******************************
+DEFINE SUBROUTINE DELETE-EZPAY
+******************************
+*
+GT4.
+GET ST-V #ISN
+RESET ST-V.PAD-ABA-NBR ST-V.PAD-ACCT-NUM ST-V.PAD-CHECK-SAV ST-V.PAD-CODE
+ST-V.DATE-ACCT-UPDATE := #DATN
+UPDATE (GT4.)
+END-SUBROUTINE
+
+************************************
+DEFINE SUBROUTINE MOVE-EZPAY-ACCOUNT   /* YK6
+************************************
+* Used only when Insured is not a payer for any other policies (logic corrected)
+* Moving EZ info to the new Payer
+* #NUMBER-OF-RECORDS - holds index of the policy that required payment information assignment
+*
+F5.
+FIND(1) ST-V WITH ID-NUMBER = PARM-BA-DATA.#PARM-ID-NUMBER           /* Insured CN
+  PARM-BA-INFO.LAST-UPDATE-DATE := ST-V.DATE-ACCT-UPDATE
+  PARM-BA-INFO.ROUTING-NUMBER := ST-V.PAD-ABA-NBR
+  PARM-BA-INFO.ACCOUNT-NUMBER := ST-V.PAD-ACCT-NUM
+  PARM-BA-INFO.ACCOUNT-TYPE   := ST-V.PAD-CHECK-SAV
+* YK8 >
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+    IF (ST-V.MODE(#I) = 'Q' AND ST-V.PAD-CODE = 'P') OR (ST-V.MODE(#I) = 'Q' AND ST-V.PAD-CODE = 'D' AND ST-V.OWNERSHIP-FLAG(#I) = 'D')
+      ST-V.MODE(#I) := 'E'
+      IF ST-V.OWNERSHIP-FLAG(#I) = 'D'
+        RESET ST-V.OWNERSHIP-FLAG(#I)
+      END-IF
+    END-IF
+  END-FOR
+  ST-V.PAD-CODE := 'E'                                        /* YK8
+* < YK8
+  ST-V.DATE-ACCT-UPDATE := #DATN
+  UPDATE (F5.)
+END-FIND
+*
+F6.
+FIND(1) ST-V WITH ID-NUMBER = PARM-BA-INFO.ID-NUMBER                /* Payer CN
+  ST-V.PAD-ABA-NBR   := PARM-BA-INFO.ROUTING-NUMBER
+  ST-V.PAD-ACCT-NUM  := PARM-BA-INFO.ACCOUNT-NUMBER
+  ST-V.PAD-CHECK-SAV := PARM-BA-INFO.ACCOUNT-TYPE
+  ST-V.PAD-CODE      := 'E'
+  ST-V.DATE-ACCT-UPDATE := #DATN
+  UPDATE (F6.)
+END-FIND
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE CHECK-EXIST
+*****************************
+F1.
+FIND NUMBER BA-INFO-V WITH ID-NUMBER = #PARM-ID-NUMBER
+IF *NUMBER(F1.) <> 0
+  #NUMBER-OF-RECORDS := *NUMBER(F1.)                        /* YK1
+END-IF
+END-SUBROUTINE
+
+*************************
+DEFINE SUBROUTINE GET-ALL    /* YK1
+*************************
+*
+F2.
+FIND BA-INFO-V WITH ID-NUMBER = #PARM-ID-NUMBER
+  #I := #I + 1
+  EXPAND ARRAY #ACCOUNT-ARRAY TO (*:#I)
+  #ACCOUNT-ARRAY(#I) := *ISN (F2.)
+END-FIND
+#NUMBER-OF-RECORDS := *NUMBER(F2.)
+END-SUBROUTINE
+*
+END

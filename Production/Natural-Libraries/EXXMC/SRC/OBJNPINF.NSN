@@ -1,0 +1,368 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Access A-STATUS
+* OBJNPINF - Subprogram to update policy
+* information
+***********************************************
+* MODIFICATION LOG
+***********************************************
+* USER   DATE      TAG  REASON
+* YAK    11052010  YAK  Initial Creation
+* YAK    01152013  YK1  Add Birth Date for LTII+
+* YAK    08012014  YK2  Contact Normalization
+* YAK    12012016  YK3  New methods and rules for EB&P II
+* YAK    05102017  YK4  Fix Loan Description for GetLoanDetails
+*                       Fix Index for Update Mode function
+* YAK    07312017  YK5  Assign PAD-CODE = E when policy mode changed to EZ-Pay
+*                       to avoid errors in Month End program (ATHP05P4)
+*                       RESET PAD-CODE if there are no EZ-Pay policies left
+* YAK    09012017  YK6  Add BILL-CYCLE changes
+* YAK    10012017  YK7  Correct PAD-CODE assignment for Loan Only changes to/from EZ-Pay
+* YAK    01182018  YK8  Check Services before reset PAD-CODE to "S"
+***********************************************
+*
+DEFINE DATA
+PARAMETER USING OBJAPINF
+*
+LOCAL USING OBJLPINF
+LOCAL USING ERROR_LN
+LOCAL
+1 #I (I2)
+1 #EZ-Pay (A) DYNAMIC CONST <'E'>
+* YK5 >
+1 #QuarterlyDirectBill (A) DYNAMIC CONST <'Q'>
+1 EZPay_Loan (A1/2) CONST <'3','4'>              /* YK7
+1 #EZ-N   (N1)
+1 #IQ     (N1)
+* < YK5
+1 #DATE   (N8)
+1 REDEFINE #DATE
+  2 #DATE-YYYY (N4)
+  2 #DATE-MM   (N2)
+  2 #DATE-DD   (N2)
+1 #MODE        (A1)       /* YK8
+1 #STATUS      (A1)       /* YK8
+1 #USER      (A) DYNAMIC  /* YK8
+1 #GET       (A) DYNAMIC CONST <'GET'>    /* YK8
+1 #UPDATE    (A) DYNAMIC CONST <'UPDATE'> /* YK8
+END-DEFINE
+*
+* Main processing
+*
+DECIDE ON FIRST VALUE #ACTION
+  VALUE 'UPDATE'
+    IF ISN = 0
+      PERFORM UPDATE-RECORD-BY-KEY
+    ELSE
+      PERFORM UPDATE-RECORD-BY-ISN
+    END-IF
+  VALUE 'UPDATE-MODE'         /* YK3
+    PERFORM UPDATE-MODE
+  VALUE 'GET'
+    PERFORM GET-RECORD
+  VALUE 'GetPolicy'
+    PERFORM GET-POLICY
+  VALUE 'GetLoan'
+    PERFORM GET-LOAN
+  NONE
+    IGNORE
+END-DECIDE
+*
+**************************************
+DEFINE SUBROUTINE UPDATE-RECORD-BY-ISN
+**************************************
+*
+GT-U. GET POL-INFO-V ISN
+FOR #I = 1 TO C@LINKED_CN
+  POL-INFO-V.LINKED-CN(#I) := PARM-POL-INFO.LINKED-CN(#I)
+END-FOR
+FOR #I = 1 TO C@POLICY_SEGMENT
+  MOVE BY NAME PARM-POL-INFO.POLICY-SEGMENT(#I) TO POL-INFO-V.ACTIVE-SEGMENTS(#I)
+  MOVE BY NAME PARM-POL-INFO.POLICY-SEGMENT(#I) TO POL-INFO-V.X-LOAN-INFO(#I)
+END-FOR
+UPDATE (GT-U.)
+WRITE WORK FILE 1 VARIABLE 'UPDATE POL-INFO ID = ' POL-INFO-V.ID-NUMBER
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE UPDATE-RECORD-BY-KEY
+**************************************
+*
+FIND-U.
+FIND(1) POL-INFO-V WITH ID-NUMBER = PARM-POL-INFO.ID-NUMBER
+  FOR #I = 1 TO C@LINKED_CN
+    POL-INFO-V.LINKED-CN(#I) := PARM-POL-INFO.LINKED-CN(#I)
+  END-FOR
+  FOR #I = 1 TO C@POLICY_SEGMENT
+    MOVE BY NAME PARM-POL-INFO.POLICY-SEGMENT(#I) TO POL-INFO-V.ACTIVE-SEGMENTS(#I)
+    MOVE BY NAME PARM-POL-INFO.POLICY-SEGMENT(#I) TO POL-INFO-V.X-LOAN-INFO(#I)
+  END-FOR
+  UPDATE (FIND-U.)
+  WRITE WORK FILE 1 VARIABLE 'UPDATE POL-INFO ID = ' POL-INFO-V.ID-NUMBER
+END-FIND
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE GET-RECORD
+****************************
+*
+FIND(1) POL-INFO-V WITH ID-NUMBER = PARM-POL-INFO.ID-NUMBER
+  IF NO RECORDS FOUND
+    PARM-POL-INFO.#RETURN-CODE := #CN-DOES-NOT-EXIST
+  END-NOREC
+  ISN    := *ISN
+  PARM-POL-INFO.MEMBER-CONTACT-ID := POL-INFO-V.MEMBER-CONTACT-ID
+* PARM-POL-INFO.DATE-OF-BIRTH     := POL-INFO-V.DATE-OF-BIRTH            /* YK1
+  PARM-POL-INFO.DATE-OF-BIRTH     := GET-DATE-OF-BIRTH(<POL-INFO-V.MEMBER-CONTACT-ID>)   /* YK2
+  IF C*LINKED-CN > 0
+    EXPAND ARRAY PARM-POL-INFO.LINKED-CN TO (*:C*LINKED-CN)
+  END-IF
+  IF C*ACTIVE-SEGMENTS > 0
+    EXPAND ARRAY PARM-POL-INFO.POLICY-SEGMENT TO (*:C*ACTIVE-SEGMENTS)
+  END-IF
+  FOR #I = 1 TO C*LINKED-CN
+    PARM-POL-INFO.LINKED-CN(#I) := POL-INFO-V.LINKED-CN(#I)
+  END-FOR
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+    MOVE BY NAME POL-INFO-V.ACTIVE-SEGMENTS(#I) TO PARM-POL-INFO.POLICY-SEGMENT(#I)
+    MOVE BY NAME POL-INFO-V.X-LOAN-INFO(#I) TO PARM-POL-INFO.POLICY-SEGMENT(#I)
+    IF (POL-INFO-V.MODE(#I) = 'Q' AND POL-INFO-V.PAD-CODE = 'P') OR
+        (POL-INFO-V.MODE(#I) = 'Q' AND POL-INFO-V.PAD-CODE = 'D' AND POL-INFO-V.OWNERSHIP-FLAG(#I) = 'D')
+      PARM-POL-INFO.MODE(#I) := #EZ-Pay
+    END-IF
+    PERFORM GET-PAID-TO-DATE
+  END-FOR
+  C@POLICY_SEGMENT := C*ACTIVE-SEGMENTS
+END-FIND
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE GET-POLICY
+****************************
+*
+#I := C@POLICY_SEGMENT
+FIND(1) POL-INFO-V WITH ID-NUMBER = PARM-POL-INFO.ID-NUMBER
+  IF NO RECORDS FOUND
+    PARM-POL-INFO.#RETURN-CODE := #CN-DOES-NOT-EXIST
+  END-NOREC
+  ISN := *ISN
+  PARM-POL-INFO.MEMBER-CONTACT-ID := POL-INFO-V.MEMBER-CONTACT-ID
+  PARM-POL-INFO.DATE-OF-BIRTH     := GET-DATE-OF-BIRTH(<POL-INFO-V.MEMBER-CONTACT-ID>)
+  MOVE BY NAME POL-INFO-V.ACTIVE-SEGMENTS(#I) TO PARM-POL-INFO.POLICY-SEGMENT(1)
+  IF (POL-INFO-V.MODE(#I) = 'Q' AND POL-INFO-V.PAD-CODE = 'P') OR
+      (POL-INFO-V.MODE(#I) = 'Q' AND POL-INFO-V.PAD-CODE = 'D' AND POL-INFO-V.OWNERSHIP-FLAG(#I) = 'D')
+    PARM-POL-INFO.MODE(1) := #EZ-Pay
+  END-IF
+  #I := 1
+  PERFORM GET-PAID-TO-DATE
+END-FIND
+END-SUBROUTINE
+*
+**************************
+DEFINE SUBROUTINE GET-LOAN
+**************************
+*
+#I := C@POLICY_SEGMENT
+FIND(1) POL-INFO-V WITH ID-NUMBER = PARM-POL-INFO.ID-NUMBER
+  IF NO RECORDS FOUND
+    PARM-POL-INFO.#RETURN-CODE := #CN-DOES-NOT-EXIST
+  END-NOREC
+  ISN := *ISN
+  PARM-POL-INFO.MEMBER-CONTACT-ID := POL-INFO-V.MEMBER-CONTACT-ID
+  PARM-POL-INFO.POLICY-ID(1) := POL-INFO-V.POLICY-ID(#I)                  /* YK4
+  PARM-POL-INFO.PLAN(1) := POL-INFO-V.PLAN(#I)
+  PARM-POL-INFO.PAID-TO-DATE(1) := POL-INFO-V.PAID-TO-DATE(#I)
+  PARM-POL-INFO.MONTH-ALLOC-AMT(1) := POL-INFO-V.MONTH-ALLOC-AMT(#I)
+  PARM-POL-INFO.ISSUE-DATE(1) := POL-INFO-V.ISSUE-DATE(#I)
+  PARM-POL-INFO.CONV-DURATION(1) := POL-INFO-V.CONV-DURATION(#I)
+  MOVE BY NAME POL-INFO-V.X-LOAN-INFO(#I) TO PARM-POL-INFO.POLICY-SEGMENT(1)
+  #I := 1
+  PERFORM GET-PAID-TO-DATE
+END-FIND
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-PAID-TO-DATE
+**********************************
+*
+CALLNAT 'GPDTOSXX'
+  PARM-POL-INFO.ISSUE-DATE(#I)
+  PARM-POL-INFO.MONTH-ALLOC-AMT(#I)
+  PARM-POL-INFO.PAID-TO-DATE(#I)
+  PARM-POL-INFO.PAID-TO-DATE(#I)
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE UPDATE-MODE    /* YK3
+*****************************
+*
+F1.
+FIND(1) POL-INFO-V WITH ID-NUMBER = PARM-POL-INFO.ID-NUMBER
+  IF NO RECORDS FOUND
+    PARM-POL-INFO.#RETURN-CODE := #CN-DOES-NOT-EXIST
+  END-NOREC
+* YK5 >
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+    IF POL-INFO-V.STATUS(#I) = 'D' AND POL-INFO-V.PAY-STATUS(#I) <= '40' AND                               /* YK7
+        (POL-INFO-V.MODE(#I) = 'E' OR (POL-INFO-V.MODE(#I) = 'Q' AND POL-INFO-V.PAD-CODE = 'P') OR
+        (POL-INFO-V.MODE(#I) = 'Q' AND POL-INFO-V.PAD-CODE = 'D' AND POL-INFO-V.OWNERSHIP-FLAG(#I) = 'D'))
+      POL-INFO-V.MODE(#I) := #EZ-Pay
+      #EZ-N := #EZ-N + 1
+    END-IF
+* YK7 >
+    IF POL-INFO-V.STATUS(#I) = 'D' AND
+        (POL-INFO-V.X-ALT-LP-AMT(#I) <> 0 AND POL-INFO-V.X-ALT-LP-IND(#I) = EZPay_Loan(*) OR
+        POL-INFO-V.X-ALT-LP-AMT-2(#I) <> 0 AND POL-INFO-V.X-ALT-LP-IND-2(#I) = EZPay_Loan(*))
+      #EZ-N := #EZ-N + 1
+    END-IF
+* < YK7
+  END-FOR
+* YK8 >
+    F-SERVICE(<#GET,PARM-POL-INFO.ID-NUMBER,'PSM',#MODE,#STATUS,#USER>)
+  IF #MODE = 'E'
+    #EZ-N := #EZ-N + 1
+  END-IF
+* < YK8
+* < YK5
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+    IF POL-INFO-V.POLICY-ID(#I) = PARM-POL-INFO.POLICY-ID(1) AND POL-INFO-V.STATUS(#I) = 'D'
+      DECIDE FOR EVERY CONDITION              /* YK6
+        WHEN PARM-POL-INFO.X-ALT-LP-IND(1) <> ' ' AND (POL-INFO-V.X-ALT-LP-IND(#I) <> PARM-POL-INFO.X-ALT-LP-IND(1) OR
+            POL-INFO-V.X-ALT-LP-AMT(#I) <> PARM-POL-INFO.X-ALT-LP-AMT(1))
+          IF PARM-POL-INFO.X-ALT-LP-AMT(1) > POL-INFO-V.X-LOAN-AMOUNT(#I)
+            PARM-POL-INFO.#RETURN-CODE := #EXCEEDS-LOAN-AMOUNT
+            ESCAPE MODULE
+          END-IF
+* YK7 >
+* If change from EZ-Pay
+          IF NOT (PARM-POL-INFO.X-ALT-LP-IND(1) = EZPay_Loan(*)) AND POL-INFO-V.X-ALT-LP-IND(#I) = EZPay_Loan(*) AND #EZ-N = 1
+            POL-INFO-V.PAD-CODE := 'S'
+          END-IF
+* If change to EZ-Pay with no other EZ-Pay
+          IF PARM-POL-INFO.X-ALT-LP-IND(1) = EZPay_Loan(*) AND NOT (POL-INFO-V.X-ALT-LP-IND(#I) = EZPay_Loan(*)) AND #EZ-N = 0
+            POL-INFO-V.PAD-CODE := 'E'
+          END-IF
+* < YK7
+          POL-INFO-V.X-ALT-LP-IND(#I) := PARM-POL-INFO.X-ALT-LP-IND(1)
+          POL-INFO-V.X-ALT-LP-AMT(#I) := PARM-POL-INFO.X-ALT-LP-AMT(1)
+        WHEN PARM-POL-INFO.X-ALT-LP-IND-2(1) <> ' ' AND (POL-INFO-V.X-ALT-LP-IND-2(#I) <> PARM-POL-INFO.X-ALT-LP-IND-2(1) OR
+            POL-INFO-V.X-ALT-LP-AMT-2(#I) <> PARM-POL-INFO.X-ALT-LP-AMT-2(1))
+          IF PARM-POL-INFO.X-ALT-LP-AMT-2(1) > POL-INFO-V.X-LOAN-AMOUNT-2(#I)
+            PARM-POL-INFO.#RETURN-CODE := #EXCEEDS-LOAN-AMOUNT
+            ESCAPE MODULE
+          END-IF
+* YK7 >
+* If change from EZ-Pay
+          IF NOT (PARM-POL-INFO.X-ALT-LP-IND-2(1) = EZPay_Loan(*)) AND POL-INFO-V.X-ALT-LP-IND-2(#I) = EZPay_Loan(*) AND #EZ-N = 1
+            POL-INFO-V.PAD-CODE := 'S'
+          END-IF
+* If change to EZ-Pay with no other EZ-Pay
+          IF PARM-POL-INFO.X-ALT-LP-IND-2(1) = EZPay_Loan(*) AND NOT (POL-INFO-V.X-ALT-LP-IND-2(#I) = EZPay_Loan(*)) AND #EZ-N = 0
+            POL-INFO-V.PAD-CODE := 'E'
+          END-IF
+* < YK7
+          POL-INFO-V.X-ALT-LP-IND-2(#I) := PARM-POL-INFO.X-ALT-LP-IND-2(1)
+          POL-INFO-V.X-ALT-LP-AMT-2(#I) := PARM-POL-INFO.X-ALT-LP-AMT-2(1)
+        WHEN PARM-POL-INFO.MODE(1) <> ' ' AND POL-INFO-V.MODE(#I) <> PARM-POL-INFO.MODE(1)
+          IF PARM-POL-INFO.MODE(1) = #Ez-Pay OR POL-INFO-V.MODE(#I) = #Ez-Pay
+* YK5 >
+            DECIDE FOR FIRST CONDITION
+* Change to EZ-Pay with PAD-CODE <> 'E' or change to Direct Bill
+              WHEN (PARM-POL-INFO.MODE(1) = #Ez-Pay OR PARM-POL-INFO.MODE(1) = #QuarterlyDirectBill) AND
+                  (POL-INFO-V.PAD-CODE = 'P' OR POL-INFO-V.PAD-CODE = 'D')
+                IF #EZ-N = 1
+                  POL-INFO-V.PAD-CODE := 'S'
+                ELSE
+                  IF POL-INFO-V.PAD-CODE = 'D'
+                    EXAMINE POL-INFO-V.OWNERSHIP-FLAG(*) FOR 'D' INDEX #IQ
+                    RESET POL-INFO-V.OWNERSHIP-FLAG(#IQ)
+                  END-IF
+                END-IF
+                POL-INFO-V.PAD-CODE := 'E'
+                POL-INFO-V.MODE(#I) := PARM-POL-INFO.MODE(1)
+* Change from EZ-Pay with PAD-CODE <> 'E'
+              WHEN PARM-POL-INFO.MODE(1) <> #Ez-Pay AND POL-INFO-V.MODE(#I) = #Ez-Pay AND
+                  (POL-INFO-V.PAD-CODE = 'P' OR POL-INFO-V.PAD-CODE = 'D')
+                IF #EZ-N = 1
+                  POL-INFO-V.PAD-CODE := 'S'
+                ELSE
+                  IF POL-INFO-V.PAD-CODE = 'P'
+                    EXAMINE POL-INFO-V.MODE(*) FOR 'Q' REPLACE 'E'
+                  ELSE IF POL-INFO-V.PAD-CODE = 'D'
+                      EXAMINE POL-INFO-V.MODE(*) FOR 'Q' INDEX #IQ
+                      POL-INFO-V.MODE(#IQ) := 'E'
+                      RESET POL-INFO-V.OWNERSHIP-FLAG(#IQ)
+                    END-IF
+                  END-IF
+                END-IF
+                POL-INFO-V.PAD-CODE := 'E'
+                POL-INFO-V.MODE(#I) := PARM-POL-INFO.MODE(1)
+* Change from EZ-Pay
+              WHEN PARM-POL-INFO.MODE(1) <> #Ez-Pay AND POL-INFO-V.MODE(#I) = #Ez-Pay AND
+                  POL-INFO-V.PAD-CODE <> 'P' AND POL-INFO-V.PAD-CODE <> 'D'
+                POL-INFO-V.MODE(#I) := PARM-POL-INFO.MODE(1)
+                IF #EZ-N = 1
+                  POL-INFO-V.PAD-CODE := 'S'
+                END-IF
+* Change to EZ-Pay
+              WHEN PARM-POL-INFO.MODE(1) = #Ez-Pay AND POL-INFO-V.MODE(#I) <> #Ez-Pay AND
+                  POL-INFO-V.PAD-CODE <> 'P' AND POL-INFO-V.PAD-CODE <> 'D'
+                POL-INFO-V.MODE(#I) := PARM-POL-INFO.MODE(1)
+                POL-INFO-V.PAD-CODE := 'E'
+              WHEN NONE
+                IGNORE
+            END-DECIDE
+          ELSE
+            POL-INFO-V.MODE(#I) := PARM-POL-INFO.MODE(1)
+          END-IF
+* < YK5
+        WHEN PARM-POL-INFO.BILL-CYCLE(1) <> ' ' AND POL-INFO-V.BILL-CYCLE(#I) <> PARM-POL-INFO.BILL-CYCLE(1)    /* YK6
+          POL-INFO-V.BILL-CYCLE(#I) := PARM-POL-INFO.BILL-CYCLE(1)                                              /* YK6
+        WHEN NONE
+          IGNORE
+      END-DECIDE
+      ESCAPE BOTTOM
+    END-IF
+* Rules for CAP loans
+    IF (PARM-POL-INFO.POLICY-ID(1) = 'CAP Loan' AND POL-INFO-V.CONV-DURATION(#I) = 999 AND POL-INFO-V.X-LOAN-AMOUNT(#I) <> 0)
+      DECIDE FOR FIRST CONDITION
+        WHEN PARM-POL-INFO.X-ALT-LP-AMT(1) > POL-INFO-V.X-LOAN-AMOUNT(#I)
+          PARM-POL-INFO.#RETURN-CODE := #EXCEEDS-LOAN-AMOUNT-CAP
+          PARM-POL-INFO.X-LOAN-AMOUNT(1) := POL-INFO-V.X-LOAN-AMOUNT(#I)
+          ESCAPE MODULE
+        WHEN PARM-POL-INFO.X-ALT-LP-AMT(1) <> 0 AND PARM-POL-INFO.X-ALT-LP-AMT(1) < 85.80 AND
+            POL-INFO-V.X-LOAN-AMOUNT(#I) > PARM-POL-INFO.X-ALT-LP-AMT(1)
+          PARM-POL-INFO.#RETURN-CODE := #LOW-CAP-PAYMENT-AMOUNT
+          PARM-POL-INFO.X-LOAN-AMOUNT(1) := POL-INFO-V.X-LOAN-AMOUNT(#I)
+          ESCAPE MODULE
+        WHEN NONE
+* YK7 >
+* If change from EZ-Pay
+          IF NOT (PARM-POL-INFO.X-ALT-LP-IND(1) = EZPay_Loan(*)) AND POL-INFO-V.X-ALT-LP-IND(#I) = EZPay_Loan(*) AND #EZ-N = 1
+            POL-INFO-V.PAD-CODE := 'S'
+          END-IF
+* If change to EZ-Pay with no other EZ-Pay
+          IF PARM-POL-INFO.X-ALT-LP-IND(1) = EZPay_Loan(*) AND NOT (POL-INFO-V.X-ALT-LP-IND(#I) = EZPay_Loan(*)) AND #EZ-N = 0
+            POL-INFO-V.PAD-CODE := 'E'
+          END-IF
+* < YK7
+          POL-INFO-V.X-ALT-LP-IND(#I) := PARM-POL-INFO.X-ALT-LP-IND(1)
+          POL-INFO-V.X-ALT-LP-AMT(#I) := PARM-POL-INFO.X-ALT-LP-AMT(1)
+          IF PARM-POL-INFO.BILL-CYCLE(1) <> ' ' AND POL-INFO-V.BILL-CYCLE(#I) <> PARM-POL-INFO.BILL-CYCLE(1)    /* YK6
+            POL-INFO-V.BILL-CYCLE(#I) := PARM-POL-INFO.BILL-CYCLE(1)                                            /* YK6
+          END-IF
+      END-DECIDE
+    END-IF
+  END-FOR
+  PARM-POL-INFO.DATE-ACCT-UPDATE  := POL-INFO-V.DATE-ACCT-UPDATE
+  PARM-POL-INFO.MEMBER-CONTACT-ID := POL-INFO-V.MEMBER-CONTACT-ID
+  UPDATE (F1.)
+END-FIND
+END-SUBROUTINE
+*
+END

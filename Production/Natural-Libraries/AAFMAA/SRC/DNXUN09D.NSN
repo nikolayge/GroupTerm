@@ -1,0 +1,125 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************************
+* SUBPROGRAM-ID: DNXUN09D
+* DESCRIPTION:   DEATH MAINTENANCE  SELECT CONTACT FOR NOK
+**************************************************************************
+*        MODIFICATION LOG
+**************************************************************************
+* USER   DATE      TAG  REASON
+* NGG  12/09/2010  None Creation
+* TMT  10/07/2013  TT1  ADDRESS NORMALIZATION
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital  
+**************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #ISN                     (P8)
+1 #CLERK-ID                (A3)
+1 #MODE                    (A1)
+1 #MSG                     (A72)
+1 REDEFINE #MSG
+  2 #GLOBAL-USER-COMPANY     (A1)
+  2 #GLOBAL-SECURITY-CODE    (N2)
+LOCAL
+1 #CGA-USER-COMPANY        (A1)
+1 #CGA-SECURITY-CODE       (N2)
+1 STATUS VIEW OF A-STATUS
+  2 ID-NUMBER        (N6)
+  2 MEMBER-CONTACT-ID
+  2 NOK-CONTACT-ID
+  2 PROCESS-IND
+  2 DTS-DATN         (N9)
+1 #NOK-CONTACT-ID   (N8)
+1 TR-V VIEW OF A-TRANSACTION-REGISTER       /*TT1
+  2 ID-NUMBER (N6.0)                       
+  2 NAME (A25)                             
+  2 DATE-LAST-UPDATE                       
+  2 TERMINAL-ID (A8)                       
+  2 CLERK-ID (A3)                          
+  2 TRANSACTION-DATN (P9.0)                
+  2 TRANSACTION-TIMN (P7.0)                
+  2 OLD-DATA (A125/1)              
+  2 REDEFINE OLD-DATA
+    3 O-DESCR        (A10)                 
+    3 O-DATA          (A115)               
+  2 NEW-DATA          (A125/1)
+  2 REDEFINE NEW-DATA
+    3 N-DESCR        (A10)                 
+    3 N-DATA          (A115)               
+  2 PROCESS-IND         (A1)               
+  2 USER-COMPANY        (A1)              
+1  p_Name     (A)    DYNAMIC
+1 P_PARMS
+  2 P_ERROR_NUM (I4) /*ERROR NUMBER
+  2 P_ERROR_LINE (I4) /*ERROR LINE
+  2 P_ERROR_PROGRAM (A32)
+  2 P_ERROR_LIB (A32)
+  2 P_ERROR_DBID (I4)
+  2 P_ERROR_FNR (I4)
+  2 P_ERROR_TIME (T)
+  2 P_ERROR_PGM_TYPE (A1)
+  2 P_ERROR_PGM_TYPE_LONG (A11)
+  2 P_ERROR_LANG (I4)
+  2 P_ERROR_LEVEL (I4)
+  2 P_ERROR_CLASS (I1)
+  2 P_ERROR_TYPE (I1)
+*
+END-DEFINE
+
+GET STATUS #ISN
+RESET #NOK-CONTACT-ID
+CALLNAT 'DNXUN09A' MEMBER-CONTACT-ID #NOK-CONTACT-ID
+  #GLOBAL-USER-COMPANY
+  #CLERK-ID
+  #MSG
+IF #NOK-CONTACT-ID > 0
+  GET STATUS #ISN
+  p_Name := '!'                                                         /* bz1 /* bz-Name-C
+  CALLNAT 'GPRS0CNT' NOK-CONTACT-ID p_Name                              /* bz1
+  COMPRESS 'CID:' NOK-CONTACT-ID  INTO O-DATA LEAVING NO SPACE    /* bz1
+  COMPRESS p_Name ' ' O-DATA INTO O-DATA                                /* bz1
+  NOK-CONTACT-ID := #NOK-CONTACT-ID
+  UPDATE (0080)                             /*TT1 INCREASED FROM 720 TO 730
+  p_Name := '!'                                                          /* bz-Name-C 
+  CALLNAT 'GPRS0CNT' NOK-CONTACT-ID p_Name
+  COMPRESS 'CID:' NOK-CONTACT-ID  INTO N-DATA LEAVING NO SPACE
+  COMPRESS p_Name ' ' N-DATA INTO N-DATA
+  PERFORM DO-TRREG
+  END TRANSACTION
+END-IF
+
+ON ERROR
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  COMPRESS 'Application error' P_ERROR_NUM 'In program' P_ERROR_PROGRAM
+    'Error line' P_ERROR_LINE
+    INTO #MSG
+  INPUT //// #MSG (AD=IO)
+    / 'Please call production support'
+  #MSG := 'PF3'
+  ESCAPE ROUTINE
+END-ERROR
+
+DEFINE SUBROUTINE DO-TRREG                             /* bz1 start
+TR-V.ID-NUMBER            := STATUS.ID-NUMBER
+p_Name := '!'                                        /* bz-Name-C
+CALLNAT 'GPRS0CNT' STATUS.MEMBER-CONTACT-ID p_Name
+TR-V.NAME                 := p_Name
+TR-V.DATE-LAST-UPDATE     := DTS-DATN
+TR-V.CLERK-ID             := #CLERK-ID
+TR-V.TERMINAL-ID          := *INIT-ID
+TR-V.TRANSACTION-DATN     := *DATN
+TR-V.TRANSACTION-TIMN     := *TIMN
+TR-V.USER-COMPANY         := #CGA-USER-COMPANY
+TR-V.PROCESS-IND          := STATUS.PROCESS-IND
+O-DESCR                   := 'DN-NOK-CI'
+N-DESCR                   := 'DN-NOK-CI'
+
+*  N-DATA :=  NOK-CONTACT-ID
+STORE TR-V
+
+END-SUBROUTINE                                         /* bz1 ends
+END

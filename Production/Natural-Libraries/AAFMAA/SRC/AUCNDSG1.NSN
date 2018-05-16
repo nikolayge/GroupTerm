@@ -1,0 +1,255 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*
+*   'AUCNDSG1'
+*
+DEFINE DATA
+PARAMETER USING AUCADSG2
+LOCAL USING POSAGET
+LOCAL USING POSLROLE
+LOCAL
+1 DESIG VIEW OF A-DESIGNATION
+  2 STATUS-CODE (A1)
+  2 ALL-CHILDREN (A1)
+  2 DATE-SIGNED (N8)
+  2 COMMON-DISASTER (N3)
+  2 DESIGNATION-ID (N8)
+  2 PRIMARY-BD (A70/1:9)
+  2 SECONDARY-BD (A70/1:9)
+*
+1 CONT-REL-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER       (N6)
+  2 DATE-OF-BIRTH   (N8)
+  2 SSN             (N9)
+1 MEMBER VIEW OF A-STATUS
+  2 LINKED-CN      (N6/30)
+*
+1 #GET           (I2) CONSTANT <0>
+1 #UPDATE        (I2) CONSTANT <2>
+1 #DELETE        (I2) CONSTANT <50>
+1 #ADD           (I2) CONSTANT <51>
+* 1 ALLR           (N2) CONSTANT <0>
+* 1 BENE           (N2) CONST <5>
+* 1 CONTINGENT     (N2) CONST <7>
+* 1 INSURED        (N2) CONST <1>
+* 1 OWNER-ROLE     (N2) CONSTANT <2>
+1 BLANK          (A1) CONST <' '>
+1 OWNER-CI       (N8)
+1 OWNER-CN       (N6)
+1 INSURED-CN     (N6)
+1 #CN            (N6)
+1 #CI            (N8)
+1 #FOUND-BENE-ID (L)
+1 I              (I2)
+1 J              (I2)
+1 K              (I2)
+1 L              (I2)
+1 M              (I2)
+END-DEFINE
+* ---------------- MAIN --------------------
+DECIDE ON FIRST VALUE OF ActionType
+  VALUE #GET    PERFORM GET-RECORDS
+  VALUE #ADD    PERFORM ADD-RECORD
+  VALUE #UPDATE PERFORM UPDATE-RECORDS
+  VALUE #DELETE PERFORM DELETE-RECORD
+  NONE VALUE
+    IGNORE
+END-DECIDE
+* --------------- End Main --------------------
+*
+DEFINE SUBROUTINE GET-RECORDS
+* --------------------------
+RESET #NUMBER-OF-RELATIONS #MSG
+#RELATIONSHIP-TYPE := AllRoles
+CALLNAT 'POSNCNTS'
+  PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG = BLANK
+  FOR K 1 TO #NUMBER-OF-RELATIONS
+    IF #POLICY-RELATIONS.RELATION (K) = InsuredRole
+      InsuredContactID := #POLICY-RELATIONS.CONTACT-ID (K)
+    END-IF
+    IF #POLICY-RELATIONS.RELATION (K) = PrimaryOwner
+      OWNER-CI := #POLICY-RELATIONS.CONTACT-ID (K)
+      OWNER-CN := #POLICY-RELATIONS.REFERENCE-NUMBER (K)
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+  DesignationUpdate.DesignationStatus := 'Final'
+END-IF
+FIND (1) CNT-V WITH CONTACT-ID = InsuredContactID
+  INSURED-CN := CNT-V.ID-NUMBER
+END-FIND
+*
+*  Get primary beneficiaries
+*
+#RELATIONSHIP-TYPE := PrimaryBene
+CALLNAT 'POSNCNTS'
+  PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG = BLANK
+  IF #NUMBER-OF-RELATIONS > 0
+    EXPAND ARRAY DesignationContact TO (1:#NUMBER-OF-RELATIONS)
+    FIND(1) DESIG WITH DESIGNATION-ID = #POLICY-RELATIONS.DESIGNATION-ID(1)
+      DesignationID    := DESIG.DESIGNATION-ID
+      DateSigned       := DESIG.DATE-SIGNED
+      CommonDisaster   := DESIG.COMMON-DISASTER
+*         DesignationDetails.DateUpdated      := DESIG.LAST-UPD-DATE
+    END-FIND
+
+  END-IF
+  FOR K 1 TO #NUMBER-OF-RELATIONS
+    BeneficiaryContactID (K) := CONTACT-ID (K)
+    Share (K) := BENE-FRACTION (K)
+    EXAMINE  Share (K) FOR '%' DELETE
+    IF Share(K) = BLANK
+      Share(K) := '0'
+    END-IF
+
+    BeneficiaryType (K) := 'Primary'
+    SettlementCode (K) := SETTLEMENT-TYPE (K)
+*     RestrictedCode (K) := BENE-RESTRICTED (K)
+    IF BENE-RESTRICTED (K) = 'Y'
+      RestrictedCode (K) := TRUE
+    ELSE
+      RestrictedCode (K) := FALSE
+    END-IF
+    BeneficiaryName (K) := FUNCTION-CONTACT-NAME-2(<CONTACT-ID (K)>)
+    DesignationUpdate.ISN(K) := #ISNS(K)
+    FIND (1) CNT-V WITH CONTACT-ID = CONTACT-ID (K)
+      MOVE EDITED CNT-V.SSN (EM=999-99-9999) TO BeneficiarySSN (K)/* := CNT-V.SSN
+      BeneficiaryBirthDate (K) := CNT-V.DATE-OF-BIRTH
+      BeneficiaryCN (K) := CNT-V.ID-NUMBER
+    END-FIND
+    PERFORM GET-RELATION
+  END-FOR
+END-IF
+*
+*  Get contingent beneficiaries
+*
+#RELATIONSHIP-TYPE := ContingentBene
+C@DesignationContact := #NUMBER-OF-RELATIONS
+CALLNAT 'POSNCNTS'
+  PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG = BLANK
+  IF #NUMBER-OF-RELATIONS > 0
+    K := C@DesignationContact
+    ADD #NUMBER-OF-RELATIONS TO C@DesignationContact
+    EXPAND ARRAY DesignationContact TO (1:C@DesignationContact)
+  END-IF
+  FOR L 1 TO #NUMBER-OF-RELATIONS
+    ADD 1 TO K
+    BeneficiaryContactID (K) := CONTACT-ID (L)
+    Share (K) := BENE-FRACTION (L)
+    EXAMINE  Share (K) FOR '%' DELETE
+    BeneficiaryType (K) := 'Contingent'
+    SettlementCode (K) := SETTLEMENT-TYPE (L)
+    IF BENE-RESTRICTED (L) = 'Y'
+      RestrictedCode (K) := TRUE
+    ELSE
+      RestrictedCode (K) := FALSE
+    END-IF
+    BeneficiaryName (K) := FUNCTION-CONTACT-NAME-2(<CONTACT-ID (L)>)
+    DesignationUpdate.ISN(K) := #ISNS(L)
+    FIND (1) CNT-V WITH CONTACT-ID = CONTACT-ID (L)
+*       BeneficiarySSN (K) := CNT-V.SSN
+      MOVE EDITED CNT-V.SSN (EM=999-99-9999) TO BeneficiarySSN (K)
+      BeneficiaryBirthDate (K) := CNT-V.DATE-OF-BIRTH
+      BeneficiaryCN (K) := CNT-V.ID-NUMBER
+    END-FIND
+    PERFORM GET-RELATION
+  END-FOR
+END-IF
+*
+CALLNAT 'AUCNDSG2' INSURED-CN
+  PolicyNumber
+  PrimaryBD
+  ContingentBD
+  #MSG
+END-SUBROUTINE
+*
+DEFINE GET-RELATION
+/*     ------------
+IF OWNER-CI = BeneficiaryContactID (K)
+  #CI := InsuredContactID
+  #CN := INSURED-CN
+ELSE
+  #CI := OWNER-CI
+  #CN := OWNER-CN
+END-IF
+FIND CONT-REL-V WITH CONTACT-1-ID = #CI
+    AND CONTACT-2-ID = BeneficiaryContactID (K)
+  RelationToInsured (K) :=
+    FUNCTION-DISP-RL-DESC(<ROLE-2-CD>)
+END-FIND
+* IF RelationToOwner (K) = BLANK
+*   FIND CONT-REL-V WITH CONTACT-1-ID = DesignationCI (K)
+*       AND CONTACT-2-ID = #CI
+*     RelationToOwner (K) :=
+*       FUNCTION-DISP-RL-DESC(<ROLE-1-CD>)
+*   END-FIND
+* END-IF
+IF RelationToInsured (K) = BLANK
+  FIND (1) MEMBER WITH ID-NUMBER = #CN
+    FOR M 1 TO 30
+      IF MEMBER.LINKED-CN (M) = CNT-V.ID-NUMBER
+        RelationToInsured (K) := 'Linked to'
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+END-IF
+IF RelationToInsured (K) = BLANK
+  RelationToInsured (K) := 'No relation'
+*   FIND (1) MEMBER WITH ID-NUMBER = CNT-V.ID-NUMBER
+*     FOR M 1 TO 30
+*       IF MEMBER.LINKED-CN (M) = #CN
+*         RelationToOwner (K) := 'Linked from'
+*         ESCAPE BOTTOM
+*       END-IF
+*     END-FOR
+*   END-FIND
+END-IF
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE ADD-RECORD
+* --------------------------
+* fILLING out this later.
+ignore
+END-SUBROUTINE
+* ------------
+DEFINE SUBROUTINE UPDATE-RECORDS
+* --------------------------
+* fILLING out this later.
+ignore
+END-SUBROUTINE
+* ------------
+DEFINE SUBROUTINE DELETE-RECORD
+* --------------------------
+* fILLING out this later.
+ignore
+END-SUBROUTINE
+* ------------
+END

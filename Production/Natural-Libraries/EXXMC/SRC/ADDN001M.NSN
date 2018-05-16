@@ -1,0 +1,215 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* PROGRAM-ID: ADDN001M - Create formatted address by CONTACT-ID        *
+* Cloned from ADDN0001
+* Logic adjusted to be used for member Center
+************************************************************************
+DEFINE DATA
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM  08/16/2010  None    Program created                             *
+* PAM  10/15/2010  PM1     Reset Additional Fields                     *
+* YAK  04/26/2016  YK1     Change Address Layout for FIR               *
+* bz   04/09/2018  HD-8086 Capitalize quadrant in address              * 
+************************************************************************
+*
+PARAMETER USING ADDA0001
+LOCAL USING OBJLADDR            /* Address Pool
+LOCAL USING OBJLADRL            /* Address Relationship
+LOCAL USING OBJAGENT            /* PDA for General Table
+*
+LOCAL
+1 #DISP-ZIP                  (A10)
+1 #CSZ                       (A75)
+1 #COUNTRY                   (A50)
+1 #STATE                     (A50)
+1 #ORDER                     (A3)
+1 REDEFINE #ORDER
+  2 #C                        (A1)
+  2 #S                        (A1)
+  2 #Z                        (A1)
+1 #DynamicName                (A) DYNAMIC
+1 #ZIP-CODE                 (A9)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-5                  (A5)
+  2 #ZIP-4                  (A4)
+*
+END-DEFINE
+*
+IF #ADD-POOL-ID > 0
+  FIND ADDR-REL-V WITH ADDR-REL-V.CONTACT-ID = #ADD-CONTACT-ID
+      AND ADDR-REL-V.ADDRESS-POOL-ID = #ADD-POOL-ID
+    PERFORM LOAD-ADDRESS
+  END-FIND
+ELSE
+  FIND ADDR-REL-V WITH ADDR-REL-V.CONTACT-ID = #ADD-CONTACT-ID
+    ACCEPT IF ADDR-REL-V.ADDR-TYPE-CD = #ADD-TYPE
+    PERFORM LOAD-ADDRESS
+  END-FIND
+END-IF
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-ADDRESS
+************************************************************************
+*
+FIND (1) ADDR-POOL-V WITH ADDR-POOL-V.ADDRESS-POOL-ID = ADDR-REL-V.ADDRESS-POOL-ID
+  PARM-GEN-TABLE.#ACTION      := 'READ'
+  IF ADDR-POOL-V.STATE-CODE NE ' '
+    COMPRESS 'RG' ADDR-POOL-V.COUNTRY-CODE INTO PARM-GEN-TABLE.#KEY LEAVING NO
+    PARM-GEN-TABLE.#SUB-KEY     := ADDR-POOL-V.STATE-CODE
+    CALLNAT 'OBJNGENT'
+      PARM-GEN-TABLE
+    #STATE                      := PARM-GEN-TABLE.ADDL-INFO (1)
+  END-IF
+*
+  IF ADDR-POOL-V.COUNTRY-CODE NE ' '
+    PARM-GEN-TABLE.#KEY         := 'COUN'
+    PARM-GEN-TABLE.#SUB-KEY     := ADDR-POOL-V.COUNTRY-CODE
+    CALLNAT 'OBJNGENT'
+      PARM-GEN-TABLE
+    #COUNTRY                    := PARM-GEN-TABLE.GEN-DESCRIPTION (1)
+    #ORDER                      := PARM-GEN-TABLE.ADDL-INFO (1)
+    examine #country translate into upper case    /* vt1
+  END-IF
+* Format in Mixed Case
+  #DynamicName             := ADDR-POOL-V.URBANIZATION
+  ADDR-POOL-V.URBANIZATION := EDIT_NAME_LOWCASE (< #DynamicName >)
+  #DynamicName       := ADDR-POOL-V.STREET
+  ADDR-POOL-V.STREET := EDIT_NAME_LOWCASE (< #DynamicName >)
+  IF ADDR-POOL-V.STREET = MASK(*' Sw'/) OR =  MASK(*' Se'/) OR = MASK(*' Ne'/) OR = MASK(*' Nw'/)     /* HD-8086
+     ADDR-POOL-V.STREET := EDIT_ADDR_QUADR(<ADDR-POOL-V.STREET>)                                      /* HD-8086
+  END-IF                                                                                              /* HD-8086    
+  IF ADDR-POOL-V.CITY = 'APO' OR = 'FPO' OR = 'DPO'
+    IGNORE
+  ELSE
+    #DynamicName       := ADDR-POOL-V.CITY
+    ADDR-POOL-V.CITY   := EDIT_NAME_LOWCASE (< #DynamicName >)
+  END-IF
+  IF #COUNTRY <> ' '
+    #DynamicName       := #COUNTRY
+    #COUNTRY           := EDIT_NAME_LOWCASE (< #DynamicName >)
+  END-IF
+*
+  IF ADDR-POOL-V.COUNTRY-CODE = 'US'
+    PERFORM LOAD-DOMESTIC-ADDRESS
+  ELSE
+    PERFORM LOAD-INTERNATIONAL-ADDRESS
+  END-IF
+*
+  PERFORM LOAD-FIELDS
+*
+END-FIND
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-DOMESTIC-ADDRESS
+************************************************************************
+*
+IF ADDR-REL-V.ATTENTION-LINE NE ' '
+  #ADD-LINE-1       := ADDR-REL-V.ATTENTION-LINE
+END-IF
+IF ADDR-POOL-V.URBANIZATION NE ' '
+  IF #ADD-LINE-1 = ' '
+    #ADD-LINE-1     := ADDR-POOL-V.URBANIZATION
+  ELSE
+    COMPRESS #ADD-LINE-1 ',' INTO #ADD-LINE-1 LEAVING NO
+    COMPRESS #ADD-LINE-1 ADDR-POOL-V.URBANIZATION INTO #ADD-LINE-1
+  END-IF
+END-IF
+#ZIP-CODE := ADDR-POOL-V.ZIP-CODE
+IF #ZIP-4 <> ' ' AND #ZIP-4 <> '0000'
+  MOVE EDITED ADDR-POOL-V.ZIP-CODE (EM=99999-9999) TO #DISP-ZIP
+ELSE
+  #DISP-ZIP := #ZIP-5
+END-IF
+IF #ADD-LINE-1 = ' '
+  COMPRESS ADDR-POOL-V.STREET ADDR-POOL-V.UNIT INTO #ADD-LINE-1
+  COMPRESS ADDR-POOL-V.CITY ',' INTO #ADD-LINE-2-NO-ZIP LEAVING NO
+  COMPRESS #ADD-LINE-2-NO-ZIP #STATE INTO #ADD-LINE-2-NO-ZIP
+  COMPRESS #ADD-LINE-2-NO-ZIP #DISP-ZIP INTO #ADD-LINE-2             /* YK1
+*   #ADD-LINE-2 := ADDR-POOL-V.CITY
+*   COMPRESS #STATE #DISP-ZIP INTO #ADD-LINE-3
+ELSE
+  COMPRESS ADDR-POOL-V.STREET ADDR-POOL-V.UNIT INTO #ADD-LINE-2
+  COMPRESS ADDR-POOL-V.CITY ',' INTO #ADD-LINE-3-NO-ZIP LEAVING NO
+  COMPRESS #ADD-LINE-3-NO-ZIP #STATE INTO #ADD-LINE-3-NO-ZIP
+  COMPRESS #ADD-LINE-3-NO-ZIP #DISP-ZIP INTO #ADD-LINE-3
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-INTERNATIONAL-ADDRESS
+************************************************************************
+*
+IF ADDR-REL-V.ATTENTION-LINE NE ' '
+  #ADD-LINE-1       := ADDR-REL-V.ATTENTION-LINE
+END-IF
+IF ADDR-POOL-V.URBANIZATION NE ' '
+  IF #ADD-LINE-1 = ' '
+    #ADD-LINE-1     := ADDR-POOL-V.URBANIZATION
+  ELSE
+    COMPRESS #ADD-LINE-1 ',' INTO #ADD-LINE-1 LEAVING NO
+    COMPRESS #ADD-LINE-1 ADDR-POOL-V.URBANIZATION INTO #ADD-LINE-1
+  END-IF
+END-IF
+*
+IF #ADD-LINE-1 = ' '
+  COMPRESS ADDR-POOL-V.STREET ADDR-POOL-V.UNIT INTO #ADD-LINE-1
+ELSE
+  COMPRESS ADDR-POOL-V.STREET ADDR-POOL-V.UNIT INTO #ADD-LINE-2
+END-IF
+IF #STATE = ' '
+  #STATE := ADDR-POOL-V.INTL-REGION
+END-IF
+IF #Z = '1'
+  COMPRESS ADDR-POOL-V.POSTAL-CODE ADDR-POOL-V.CITY #STATE INTO #CSZ
+ELSE
+  COMPRESS ADDR-POOL-V.CITY #STATE ADDR-POOL-V.POSTAL-CODE INTO #CSZ
+END-IF
+*
+IF #ADD-LINE-2 NE ' '
+  COMPRESS #CSZ #COUNTRY INTO #ADD-LINE-3
+ELSE
+  #ADD-LINE-2       := #CSZ
+  #ADD-LINE-3       := #COUNTRY
+END-IF
+#ADD-LINE-2-NO-ZIP := #ADD-LINE-2
+#ADD-LINE-3-NO-ZIP := #ADD-LINE-3
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-FIELDS
+************************************************************************
+*
+#ADD-RETURNED-MAIL  := ADDR-REL-V.RETURNED-MAIL-IND
+#ADD-STREET         := ADDR-POOL-V.STREET
+#ADD-UNIT           := ADDR-POOL-V.UNIT
+#ADD-CITY           := ADDR-POOL-V.CITY
+#ADD-STATE          := #STATE
+#ADD-ZIP-CODE       := ADDR-POOL-V.ZIP-CODE
+#ADD-COUNTRY-CODE   := ADDR-POOL-V.COUNTRY-CODE
+#ADD-COUNTRY        := #COUNTRY
+#ADD-INTL-REGION    := ADDR-POOL-V.INTL-REGION
+#ADD-POSTAL-CODE    := ADDR-POOL-V.POSTAL-CODE
+#ADD-URBANIZATION   := ADDR-POOL-V.URBANIZATION
+#ADD-ATTENTION      := ADDR-REL-V.ATTENTION-LINE
+#ADD-LOCATION       := ADDR-REL-V.ADDR-LOCATION
+#ADD-RETURNED-MAIL  := ADDR-REL-V.RETURNED-MAIL-IND
+#ADD-PREVENT-OVER-IND  := ADDR-REL-V.PREVENT-OVER-IND
+#ADD-ADDRESS-SOURCE := ADDR-REL-V.ADDRESS-SOURCE
+#ADD-VALID-IND      := ADDR-POOL-V.ADDR-VALID-IND
+#ADD-FORMAT-TYPE-CD := ADDR-POOL-V.ADDR-FORMAT-TYPE-CD
+#ADD-LAST-DATE-UPD  := ADDR-POOL-V.LAST-DATE-UPD
+*
+END-SUBROUTINE
+*
+END

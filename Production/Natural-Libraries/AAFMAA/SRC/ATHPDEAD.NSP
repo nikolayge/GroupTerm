@@ -1,0 +1,104 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+********************************************************************************
+*   Program : ATHPDEAD                                                         *
+*                                                                              *
+* FUNCTION : Generates report for  policies where the owner is deceased in the *
+*            current week                                                      *
+*                  MODIFICATION LOG                                            *
+* USER   DATE        DESCRIPTION                                               *
+* VXT    05/09/2016  Initial creation                                          *
+********************************************************************************
+DEFINE DATA LOCAL
+
+*
+1 STATUS  VIEW OF A-STATUS
+  2 ID-NUMBER (N6)
+  2 ACTIVE-SEGMENTS (1:9)
+    3 STATUS
+    3 PLAN
+    3 ISSUE-DATE
+    3 redefine issue-date
+      4 issue-date-yyyy  (a4)
+      4 issue-date-mm    (a2)
+      4 issue-date-dd    (a2)
+    3 policy-id
+*
+1 contact view of a-contacts
+  2 id-number
+  2 date-of-death
+  2 redefine date-of-death
+    3 date-of-death-yyyy  (a4)
+    3 date-of-death-mm    (a2)
+    3 date-of-death-dd    (a2)
+*
+1 #i                          (i2)
+1 #TAB                        (A1)   INIT<H'09'>
+1 #issue-date-a               (a10)
+1 #cnt                        (n7)
+1 #owner-dead                 (a1)
+1 #owner-date-death           (a10)
+1 #owner-cn                   (n6)
+1 #out-file                   (a150)
+*
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/DEAD_OWNER.224.n.TXT' TYPE 'ASCII'
+*
+compress 'OWNER-CN'       #tab
+  'Policy Number ' #tab
+  'Issue-date'     #tab
+  'Plan'           #tab
+  'Owner Date of Death' #tab
+  into #out-file leaving no
+write work 1 #out-file
+*
+read  status by id-number starting from 1900
+  for1. for #i 1 9
+    if issue-date (#i) ne 0
+        and status (#i) eq 'D'                                        /* only active policies
+      #owner-cn := get-policy-owner (<status.policy-id(#i)>)
+      if #owner-CN ne 0 and ( status.id-number ne #owner-cn )         /* per latest Keith's requirement
+        reset #owner-dead
+        f2. find contact with contact.id-number = #owner-cn
+          if no
+            write 'no contact record for ' #owner-cn
+            escape bottom (f2.)
+          end-norec
+          if contact.date-of-death ne 0
+            move  'Y' to #owner-dead
+            compress date-of-death-mm '/' date-of-death-dd '/' date-of-death-yyyy into #owner-date-death leaving no
+          else
+            reset #owner-date-death #owner-dead
+          end-if
+        end-find
+      end-if
+*
+      if #owner-dead = 'Y'
+        compress issue-date-mm(#i)'/'  issue-date-dd(#i) '/'  issue-date-yyyy(#i) into #issue-date-a leaving no
+        compress #owner-cn              #tab
+          status.policy-id(#i)          #tab
+          #issue-date-a                 #tab
+          status.plan(#i)               #tab
+          #owner-date-death             #tab
+          into #out-file leaving no
+        write work 1 #out-file
+        add 1 to #cnt
+        reset #owner-dead
+      end-if
+    end-if
+  end-for
+*  
+  at end of data
+    if #cnt gt 0
+      write 'Total policies  for dead owners :' #cnt
+    else
+      write 'no policies for owners that are dead'
+    end-if
+  end-enddata
+*
+end-read
+end

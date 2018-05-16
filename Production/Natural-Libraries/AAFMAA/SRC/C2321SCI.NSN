@@ -1,0 +1,572 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2321SCI   ** INTEREST ON DEATH BENE CALCULATOR
+**********************************************************************
+*                       MODIFICATION LOG                             *
+* USER DATE     TAG  REASON                                          *
+* DRW  04302005 DW1  Chg Effective date logic as per MBW             *
+* DRW  06232005 DW2  Calc Intr using DOD Day & Today/Dt Settld Day   *
+* DRW  04112006 DW3  Add new Interest Rate for 5/1/2006              *
+* DRW  04172007 DW4  Add new Interest Rate for 5/1/2007              *
+* DRW 05/08/2009 DW5 Add new Interest rate for 5/1/2009              *
+* YAK 05/03/2010 YK1 Add new Interest rate for 5/1/2010              *
+* PAM 08/16/2010 PM6 Added date parameter for calculation            *
+* PAM 07/20/2011 PM7 Add new Interest rate for 05/1/2011             *
+* vxt 03/28/2012 vt1 Remove hardcoded rates with the values from     *
+*                    the table.                                      *
+* PAM 05/01.2012 PM8 Always use day 01 to determine death rates      *
+* VXT 04/22/2013 vt2 Add logic for deaths after 20130501.            *
+* vxt 03/19/2015 vt3 fix 1305 error in Production /Ticket 3418/
+* vxt 04/16/2015 vt4 /Ticket 3456/ -new death rate after 2015050     *
+**********************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CN               (A6)
+1 #SEG-I            (I2)
+1 #DATE-OF-DEATH    (N8)
+1 REDEFINE #DATE-OF-DEATH
+  2 #DATE-OF-DEATH-YYYYMM (N6)
+  2 REDEFINE #DATE-OF-DEATH-YYYYMM
+    3 #DATE-OF-DEATH-YYYY  (N4)
+    3 #DATE-OF-DEATH-MM    (N2)
+  2 #DATE-OF-DEATH-DD   (N2)
+1 #NET-PREM         (P5.2)
+1 #DB-CR            (P7.2)
+1 #LOAN-PRIN        (P7.2)                       /* vt3 was (P5.2)
+1 #ACC-INT          (P5.2)
+* output amts
+1 #DEATH-BENEFIT    (P9.2)
+1 #NET-DB           (P9.2)
+1 #EARNED-INT       (P9.2)
+1 #FINAL-DB         (P9.2)
+1 #DATE             (N8)       /* PM6
+*
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS        /* DW2
+  2 DATE-DEATH-NOTIFY
+*
+1 FR-V VIEW OF A-FIRS
+  2 POL-NAME      (9)
+  2 POL-AMT-PAID  (9)
+  2 POL-DATE-CLM-SETTLED   (9)  /* DW2
+*
+1 #I1                (I2)
+1 #EARNED-INT-OLD   (P9.2)
+1 #INT-DAYS     (N3)           /* DW2
+1 #DT-SETTLED    (N8)
+1 #TOT-INT-DAYS (N5)
+1 #CUR-DAYS   (N3)
+1 #DAYS-IN-MONTHS (N3)
+1 #REMAINDER        (I2)
+1 #UNIMPORTANT-NUM (I2)
+*
+1 #DOD        (N8)
+1 REDEFINE #DOD
+  2 #DOD-YYYYMM  (N6)
+  2 REDEFINE #DOD-YYYYMM
+    3 #DOD-YYYY   (N4)
+    3 #DOD-MM     (N2)
+  2 #DOD-DD      (N2)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM      (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY       (N4)
+    3 #MM         (N2)
+  2 #DD          (N2)
+*
+1 #SEC-KEY       (A7)            /* vt1 \/
+1 #DATE1          (N8)
+1 #RATE          (N2.4)          /* vt1 /\
+END-DEFINE
+**********************************************************************
+*
+* WRITE 'TOP OF C2321SCI CALC EARNED-INT FOR POL=' #SEG-I
+* WRITE 'DOD=' #DATE-OF-DEATH
+* WRITE 'DEATH-BENEFIT=' #DEATH-BENEFIT 'LOA-PRIN=' #LOAN-PRIN
+* WRITE 'PRESS ENTER TO CONTINUE EDS IS TESTING TEMPORARILY'
+RESET #DEATH-BENEFIT
+  #NET-DB
+  #EARNED-INT
+  #FINAL-DB
+*
+FIND (1) ST-V WITH WIDOW-KEY = #CN   /* get Date Notified DIVIDE
+END-FIND
+*
+FIND (1) FR-V WITH WIDOW-KEY = #CN   /* get V/A DB
+  IF NO RECORDS FOUND
+    WRITE 'No Deceased Mbr Record found - CALL EDS'
+  END-NOREC
+*
+  FOR #I1 1 TO 9
+    IF POL-NAME (#I1) = 'AAFMAA' OR = 'AMAA'
+        AND ((#SEG-I = 0) OR (#SEG-I = #I1))  /* only selected segment
+      ADD POL-AMT-PAID (#I1) TO #DEATH-BENEFIT
+      MOVE POL-DATE-CLM-SETTLED (#I1) TO #DT-SETTLED             /* DW2
+    END-IF
+  END-FOR
+END-FIND
+*
+COMPUTE #NET-DB = #DEATH-BENEFIT + #NET-PREM + #DB-CR
+  + #LOAN-PRIN     + #ACC-INT
+* WRITE #NET-DB #DEATH-BENEFIT #NET-PREM #DB-CR #LOAN-PRIN #ACC-INT
+* WRITE 'DATE-SETTLED=' #DT-SETTLED
+* DISPLAY #NET-DB #DEATH-BENEFIT #NET-PREM #DB-CR #LOAN-PRIN #ACC-INT
+*
+IF #DT-SETTLED NE 0                  /* DW2
+  MOVE #DT-SETTLED TO #YYYYMMDD  /* Use Settled Date as end of INT calc
+ELSE
+  IF #DATE = 0                       /* PM6
+    #YYYYMMDD := *DATN
+  ELSE                               /* PM6
+    #YYYYMMDD := #DATE               /* PM6
+  END-IF                             /* PM6
+END-IF
+MOVE #DATE-OF-DEATH TO #DOD
+MOVE 1 TO #DOD-DD                    /* PM8
+*
+SUBTRACT 1 FROM #DOD-MM
+IF #DOD-MM LT 1
+  MOVE 12 TO #DOD-MM
+  SUBTRACT 1 FROM #DOD-YYYY
+END-IF
+*
+REPEAT
+  ADD 1 TO #DOD-MM
+  IF #DOD-MM GT 12
+    MOVE 1 TO #DOD-MM
+    ADD 1 TO #DOD-YYYY
+  END-IF
+*  DISPLAY #YYYYMMDD #DOD #NET-DB
+*
+  IF #DOD-MM = 2                          /* DW2
+    MOVE 28 TO #CUR-DAYS
+    RESET #UNIMPORTANT-NUM #REMAINDER
+    DIVIDE 4 INTO #DOD-YYYY GIVING #UNIMPORTANT-NUM REMAINDER #REMAINDER        /* TT1
+    IF #REMAINDER <> 0
+      #CUR-DAYS := 29                     
+    END-IF                                
+  ELSE
+    IF #DOD-MM = 4 OR = 6 OR = 9 OR = 11
+      MOVE 30 TO #CUR-DAYS
+    ELSE
+      MOVE 31 TO #CUR-DAYS
+    END-IF
+  END-IF
+*  WRITE 'Curr Days=' #CUR-DAYS 'FOR' #DOD-MM
+*
+  IF   (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod in Curr Month /* DW2
+      AND (#DOD-YYYYMM = #YYYYMM)
+    COMPUTE #INT-DAYS = #DD - #DATE-OF-DEATH-DD
+*  WRITE 'CURR DOD DAYS=' #INT-DAYS 'FOR' #DOD-MM
+  ELSE
+    IF #DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM /* dod month calc    /* DW2
+      COMPUTE #INT-DAYS = #CUR-DAYS - #DATE-OF-DEATH-DD
+*     WRITE '1ST ACCUM-DAYS=' #INT-DAYS 'FOR' #DOD-MM
+    ELSE
+      IF #DOD-YYYYMM = #YYYYMM
+        MOVE #DD TO #INT-DAYS
+        ADD #DD TO #TOT-INT-DAYS
+*       WRITE 'LST ACCUM-DAYS=' #INT-DAYS #TOT-INT-DAYS 'FOR' #DOD-MM
+      ELSE
+        MOVE #CUR-DAYS TO #INT-DAYS
+        ADD #CUR-DAYS TO #TOT-INT-DAYS
+*    WRITE 'FULL MON ACCUM-DAYS=' #INT-DAYS #TOT-INT-DAYS 'FOR' #DOD-MM
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #DOD-YYYYMM GT #YYYYMM
+    ESCAPE BOTTOM
+  END-IF
+*
+  #SEC-KEY  := 'RATE1AG'                                                    /* vt1  \/
+  #DATE1    := #DOD
+  #RATE     := F-DEAD-INT-RATE(<#SEC-KEY,#DATE1>)                           /* vt1  /\
+*
+* write #rate #int-days
+*
+IF   (*DATN GE 20150501) /* eff 5/1/2015           /* 4.5  %          /* vt4 \/
+      AND #DOD-YYYYMM GE 201505
+*    write'1' '=' #EARNED-INT '=' #NET-DB '=' #rate #int-days
+    COMPUTE ROUNDED #EARNED-INT =
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+*    write '=' #EARNED-INT-OLD '=' #NET-DB '=' #rate
+    COMPUTE ROUNDED #EARNED-INT-OLD =
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)
+    ESCAPE TOP
+  END-IF                                                                /* vt4 /\
+*
+IF   (*DATN GE 20140501) /* eff 5/1/2014           /* 4.6  %          /* vt2N \/
+      AND #DOD-YYYYMM GE 201405
+*    write'1' '=' #EARNED-INT '=' #NET-DB '=' #rate #int-days
+    COMPUTE ROUNDED #EARNED-INT =
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+*    write '=' #EARNED-INT-OLD '=' #NET-DB '=' #rate
+    COMPUTE ROUNDED #EARNED-INT-OLD =
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)
+    ESCAPE TOP
+  END-IF                                                                /* vt2n /\
+*
+  IF   (*DATN GE 20130501) /* eff 5/1/2013           /* 4.8  %          /* vt2 \/
+      AND #DOD-YYYYMM GE 201305
+*    write'1' '=' #EARNED-INT '=' #NET-DB '=' #rate #int-days
+    COMPUTE ROUNDED #EARNED-INT =
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+*    write '=' #EARNED-INT-OLD '=' #NET-DB '=' #rate
+    COMPUTE ROUNDED #EARNED-INT-OLD =
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)
+    ESCAPE TOP
+  END-IF                                                                /* vt2 /\
+*
+  IF   (*DATN GE 20120501) /* eff 5/1/2012           /* 5.2  %               /* vt1 \/
+      AND #DOD-YYYYMM GE 201205
+*    write'1' '=' #EARNED-INT '=' #NET-DB '=' #rate #int-days
+    COMPUTE ROUNDED #EARNED-INT =
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+*    write '=' #EARNED-INT-OLD '=' #NET-DB '=' #rate
+    COMPUTE ROUNDED #EARNED-INT-OLD =
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)
+    ESCAPE TOP
+  END-IF                                                                /* vt1 /\
+* *
+  IF   (*DATN GE 20110501) /* eff 5/1/2011           /* 4.90 %   /* PM7
+      AND #DOD-YYYYMM GE 201105                                  /* PM7
+*    write'2' '=' #EARNED-INT '=' #NET-DB '=' #rate #int-days
+    COMPUTE ROUNDED #EARNED-INT =                                /* PM7
+*      #EARNED-INT + ((#NET-DB * .0490) / 365 * #INT-DAYS)       /* PM7
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)                  /* vt1
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)                    /* PM7
+        OR (#YYYYMM               = #DOD-YYYYMM)                 /* PM7
+      ESCAPE TOP                                                 /* PM7
+    END-IF                                                       /* PM7
+*                                                                /* PM7
+*    write '=' #EARNED-INT-OLD '=' #NET-DB '=' #rate
+    COMPUTE ROUNDED #EARNED-INT-OLD =                            /* PM7
+*       #EARNED-INT-OLD + ((#NET-DB * .0490) / 12)                /* PM7  /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                          /* vt1
+    ESCAPE TOP                                                   /* PM7
+  END-IF                                                         /* PM7
+*
+  IF   (*DATN GE 20100501) /* eff 5/1/2010           /* 4.60 %   /* YK1
+      AND #DOD-YYYYMM GE 201005
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0460) / 365 * #INT-DAYS)     /* YK1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)     /* vt1
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0460) / 12)       /* DW5            /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                          /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF   (*DATN GE 20090501) /* eff 5/1/2009           /* 5.20 %   /* DW5
+      AND #DOD-YYYYMM GE 200905
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0520) / 365 * #INT-DAYS)     /* DW5    /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)                /* vt1
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0520) / 12)       /* DW5           /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                         /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF   (*DATN GE 20070501) /* eff 5/1/2007           /* 5.40 %   /* DW4
+      AND #DOD-YYYYMM GE 200705
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0540) / 365 * #INT-DAYS)     /* DW4 /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)     /* vt1
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0540) / 12)       /* DW4           /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                         /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF   (*DATN GE 20060501) /* eff 5/1/2006           /* 6.40 %   /* DW3
+      AND #DOD-YYYYMM GE 200605
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0640) / 365 * #INT-DAYS)     /* DW3    /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)                /* vt1
+*   WRITE 'ACCUM INT=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM)
+        OR (#YYYYMM               = #DOD-YYYYMM)
+      ESCAPE TOP
+    END-IF
+*
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0640) / 12)       /* DW3          /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF   (*DATN GE 20050501) /* eff 5/1/2005                /* 6.30 %
+*     on 4/30/2005 mbw chged logic of effective date to be 05 not 01
+*  AND #DOD-YYYYMM GE 200501 /* ADDED 5/1/05 & effectiv 1/1/2005
+      AND #DOD-YYYYMM GE 200505 /* ADDED 5/1/05 & effectiv 5/1/2005 /* DW1
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0630) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)     /* vt1
+*   WRITE 'ACCUM INT=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+*
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0630) / 12)                       /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 200401 /* ADDED 8/19/04 & effective 5/1/2004 /*6.90%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0690) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)              /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0690) / 12)                       /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 200301   /* ADDED & effective 5/01/2003   /* 6.50%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0650) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)              /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0650) / 12)                       /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+*    rate did not change on 4/2002   still 6.16 %
+  IF #DOD-YYYYMM GE 200201   /* ADDED & effective 4/29/2001   /* 6.16%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0616) / 365 * #INT-DAYS)     /* DW2    /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)                /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*     #EARNED-INT-OLD + ((#NET-DB * .0616) / 12)                        /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 200001   /* ADDED 4/12/2000           /* 6.6 %
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0660) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)              /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0660) / 12)                       /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 199801   /* ADDED 5/11/98             /* 7.2%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0720) / 365 * #INT-DAYS)     /* DW2   /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)               /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0720) / 12)                        /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                         /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 199601                                /* 7.5%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0750) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)              /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0750) / 12)                      /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                       /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 199501                                /* 7.3%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0730) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)              /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0730) / 12)                      /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                       /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 199401                               /* 7.5%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0750) / 365 * #INT-DAYS)     /* DW2   /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)               /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0750) / 12)                      /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                       /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 199301                               /* 8.2%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0820) / 365 * #INT-DAYS)     /* DW2   /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)               /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0820) / 12)                      /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                       /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 199201                               /* 8.6%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0860) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)              /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0860) / 12)                       /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 199101                               /* 9.2%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0920) / 365 * #INT-DAYS)     /* DW2  /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)              /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0920) / 12)                        /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                         /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  IF #DOD-YYYYMM GE 198801                               /* 9.5%
+    COMPUTE ROUNDED #EARNED-INT =
+*      #EARNED-INT + ((#NET-DB * .0950) / 365 * #INT-DAYS)     /* DW2   /* vt1
+      #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)               /* vt1
+*   WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+    IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+        OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+      ESCAPE TOP
+    END-IF
+    COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*      #EARNED-INT-OLD + ((#NET-DB * .0950) / 12)                       /* vt1
+      #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                        /* vt1
+    ESCAPE TOP
+  END-IF
+*
+  COMPUTE ROUNDED #EARNED-INT =
+*   #EARNED-INT + ((#NET-DB * .0400) / 365 * #INT-DAYS)     /* DW2    /* vt1
+    #EARNED-INT + ((#NET-DB * #RATE) / 365 * #INT-DAYS)               /* vt1
+* WRITE 'accum int=' #EARNED-INT #INT-DAYS #DOD-YYYYMM
+  IF  (#DATE-OF-DEATH-YYYYMM = #DOD-YYYYMM) /* dod month calc /* DW2
+      OR (#YYYYMM               = #DOD-YYYYMM) /* Curr month calc
+    ESCAPE TOP
+  END-IF
+  COMPUTE ROUNDED #EARNED-INT-OLD =    /* Old method of calc
+*    #EARNED-INT-OLD + ((#NET-DB * .0400) / 12)                         /* vt1
+    #EARNED-INT-OLD + ((#NET-DB * #RATE) / 12)                          /* vt1
+*
+END-REPEAT
+*
+* WRITE // 'Press ENTER to Continue'
+* WRITE // '*** EARNED INTEREST CALCULATION INFORMATION  ***'
+* WRITE // 'DOD' #DATE-OF-DEATH 'End Date' #YYYYMMDD
+*     'Dt Settled' #DT-SETTLED 'Dt Notified' DATE-DEATH-NOTIFY
+* WRITE  / 'DB=' #NET-DB
+*        'Old INT Calc' #EARNED-INT-OLD 'New INT Calc' #EARNED-INT
+IF  ((#DT-SETTLED NE 0) AND (#DT-SETTLED LT 20050701))
+    OR (*DATN LT 20050701)
+* WRITE  / 'Used Old Interest Calc' #EARNED-INT-OLD'Based on Settled DT'
+  MOVE #EARNED-INT-OLD TO #EARNED-INT
+* ELSE
+*   WRITE  / 'Used NEW Interest Calc' #EARNED-INT
+END-IF
+COMPUTE #FINAL-DB = #NET-DB + #EARNED-INT
+* WRITE // 'Press ENTER to Continue'
+*
+END

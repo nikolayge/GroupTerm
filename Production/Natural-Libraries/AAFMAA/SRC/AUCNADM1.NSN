@@ -1,0 +1,225 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram AUCNADM1.
+/**
+/** :author nguentchev
+/*
+/** Modified by:
+/** NGG 07/19/2012 NG1 Address share rules change
+/*
+DEFINE DATA
+PARAMETER USING AUCAAD01
+LOCAL USING OBJLADDR
+LOCAL USING OBJADBTS
+LOCAL USING GOADA001
+LOCAL
+*
+1 #GET       (I4) CONST <0>
+1 #ADD       (I4) CONST <1>
+1 #UPDATE    (I4) CONST <2>
+1 #DELETE    (I4) CONST <3>
+1 #CHECKFORUPDATES (I4) CONST <4>
+1 BLANK      (A1) CONST <' '>
+1 #UPDATED   (L)
+*
+1 A-ADD-REL VIEW OF A-ADDRESS-RELATIONSHIP    /* NG1
+  2 STATUS       (A1)
+*
+1 #NOUPDATES      (A) DYNAMIC CONST <'NO UPDATES'>
+1 #NOTFOUND       (A) DYNAMIC CONST <'ADDRESS NOT FOUND'>
+1 #UNSUPPORTED    (A) DYNAMIC CONST <'UNSUPPORTED REQUEST'>
+1 #REQUIRED       (A) DYNAMIC CONST <'ADDRESS POOL ID IS REQUIRED'>
+1 #UPDATECONFLICT (A) DYNAMIC CONST <'UPDATE CONFLICT'>
+1 #NOTIMPLEMENTED (A) DYNAMIC CONST <'NOT IMPLEMENTED'>
+END-DEFINE
+*
+RESET Address.ErrorCode
+  Address.ErrorDescription
+#DB.#FILE-NAME := 'A-ADDRESS-POOL'
+*
+DECIDE FOR FIRST CONDITION
+  WHEN Address.AddressPoolID NE 0
+    FIND ADDR-POOL-V WITH ADDRESS-POOL-ID = Address.AddressPoolID
+      IF NO RECORDS FOUND
+        Address.ErrorCode := 1
+        Address.ErrorDescription := #NOTFOUND
+        escape ROUTINE
+      END-NOREC
+      MOVE *ISN TO #DB.#FILE-REC-ISN
+      #DB.#REQUEST   := #GET
+      CALLNAT 'OBJNDBTS' #DB
+    END-FIND
+  WHEN ActionType NE #ADD
+    IF ContactID = 0
+      ErrorCode := 2
+      ErrorDescription := #REQUIRED
+      escape ROUTINE
+    END-IF
+  WHEN NONE IGNORE
+END-DECIDE
+*
+DECIDE ON FIRST VALUE OF ActionType
+  VALUE #GET
+    PERFORM GET-RECORD
+  VALUE #ADD
+    PERFORM ADD-RECORD
+  VALUE #CHECKFORUPDATES
+    IF Address.Street          NE ADDR-POOL-V.STREET
+        OR Address.Unit        NE ADDR-POOL-V.UNIT
+        OR Address.City        NE ADDR-POOL-V.CITY
+        OR Address.StateCode   NE ADDR-POOL-V.STATE-CODE
+        OR Address.ZipCode     NE ADDR-POOL-V.ZIP-CODE
+        OR Address.CountryCode NE ADDR-POOL-V.COUNTRY-CODE
+        OR Address.IntlRegion  NE ADDR-POOL-V.INTL-REGION
+        OR Address.PostalCode  NE ADDR-POOL-V.POSTAL-CODE
+        OR Address.Urbanization NE ADDR-POOL-V.URBANIZATION
+*        OR Address.AddressFormatTypeCode NE ADDR-POOL-V.ADDR-FORMAT-TYPE-CD
+*        OR Address.AddressValidIndicator NE ADDR-POOL-V.ADDR-VALID-IND
+      RESET ErrorCode
+    ELSE
+      ErrorCode := 81
+      ErrorDescription := #NOUPDATES
+    END-IF
+  VALUE #UPDATE
+    IF Address.Street          NE ADDR-POOL-V.STREET
+        OR Address.Unit        NE ADDR-POOL-V.UNIT
+        OR Address.City        NE ADDR-POOL-V.CITY
+        OR Address.StateCode   NE ADDR-POOL-V.STATE-CODE
+        OR Address.ZipCode     NE ADDR-POOL-V.ZIP-CODE
+        OR Address.CountryCode NE ADDR-POOL-V.COUNTRY-CODE
+        OR Address.IntlRegion  NE ADDR-POOL-V.INTL-REGION
+        OR Address.PostalCode  NE ADDR-POOL-V.POSTAL-CODE
+        OR Address.Urbanization NE ADDR-POOL-V.URBANIZATION
+        OR Address.AddressFormatTypeCode NE ADDR-POOL-V.ADDR-FORMAT-TYPE-CD
+        OR Address.AddressValidIndicator NE ADDR-POOL-V.ADDR-VALID-IND
+      PERFORM UPDATE-RECORD
+    ELSE
+      ErrorCode := 81
+      ErrorDescription := #NOUPDATES
+    END-IF
+  VALUE #DELETE
+    PERFORM DELETE-RECORD
+  ANY VALUE
+    IF ErrorCode = 0
+      PERFORM SYNC-OPERATIONS
+    END-IF
+  NONE VALUE
+    ErrorCode := 3
+    ErrorDescription := #UNSUPPORTED
+END-DECIDE
+*
+DEFINE GET-RECORD
+/*     ==========
+GET ADDR-POOL-V #DB.#FILE-REC-ISN
+LastUpdatedDate       := #DB.LAST-DATE-UPD
+LastUpdatedTime       := #DB.LAST-TIME-UPD
+LastUpdatedUser       := #DB.LUU-NAME
+Address.Street        := ADDR-POOL-V.STREET
+Address.Unit          := ADDR-POOL-V.UNIT
+Address.City          := ADDR-POOL-V.CITY
+Address.CountryCode   := ADDR-POOL-V.COUNTRY-CODE
+Address.Urbanization  := ADDR-POOL-V.URBANIZATION
+AddressValidIndicator := ADDR-POOL-V.ADDR-VALID-IND
+AddressFormatTypeCode := ADDR-POOL-V.ADDR-FORMAT-TYPE-CD
+IF Address.CountryCode = 'US' OR= 'PR'
+  AddressFormatTypeCode := 'D'
+ELSE
+  AddressFormatTypeCode := 'I'
+END-IF
+IF AddressFormatTypeCode = 'D'
+  Address.StateCode   := ADDR-POOL-V.STATE-CODE
+  Address.ZipCode     := ADDR-POOL-V.ZIP-CODE
+ELSE
+  Address.IntlRegion  := ADDR-POOL-V.INTL-REGION
+  Address.PostalCode  := ADDR-POOL-V.POSTAL-CODE
+END-IF
+*  NG1 Start
+RESET Address.Share
+FIND A-ADD-REL WITH ADDRESS-POOL-ID = ADDR-POOL-V.ADDRESS-POOL-ID
+  IF A-ADD-REL.STATUS = 'D'
+    ESCAPE TOP
+  END-IF
+  IF Address.Share = BLANK
+    Address.Share := 'N'
+  ELSE
+    Address.Share := 'Y'
+  END-IF
+END-FIND
+*  NG1 End
+END-SUBROUTINE
+*
+DEFINE ADD-RECORD
+/*     ==========
+RESET ADDR-POOL-V
+PERFORM POPULATE-DB-FIELDS
+STORE-R.
+STORE ADDR-POOL-V
+MOVE *ISN (STORE-R.) TO #DB.#FILE-REC-ISN
+#DB.#REQUEST   := #UPDATE
+CALLNAT 'OBJNDBTS' #DB
+LastUpdatedDate := #DB.LAST-DATE-UPD
+LastUpdatedTime := #DB.LAST-TIME-UPD
+#UPDATED := TRUE
+END-SUBROUTINE
+*
+DEFINE UPDATE-RECORD
+/*     ==========
+IF #DB.LAST-DATE-UPD = LastUpdatedDate
+    AND #DB.LAST-TIME-UPD = LastUpdatedTime
+  UPDATE-R.
+  GET ADDR-POOL-V #DB.#FILE-REC-ISN
+  PERFORM POPULATE-DB-FIELDS
+  UPDATE (UPDATE-R.)
+  #DB.#REQUEST   := #UPDATE
+  CALLNAT 'OBJNDBTS' #DB
+  LastUpdatedDate := #DB.LAST-DATE-UPD
+  LastUpdatedTime := #DB.LAST-TIME-UPD
+  #UPDATED := TRUE
+ELSE
+  ErrorCode := 99
+  COMPRESS *PROGRAM #UPDATECONFLICT INTO ErrorDescription
+END-IF
+END-SUBROUTINE
+*
+DEFINE POPULATE-DB-FIELDS
+/*     ==================
+ADDR-POOL-V.ADDRESS-POOL-ID   := Address.AddressPoolID
+ADDR-POOL-V.STREET            := Address.Street
+ADDR-POOL-V.UNIT              := Address.Unit
+ADDR-POOL-V.CITY              := Address.City
+ADDR-POOL-V.COUNTRY-CODE      := Address.CountryCode
+ADDR-POOL-V.URBANIZATION      := Address.Urbanization
+ADDR-POOL-V.ADDR-VALID-IND    := Address.AddressValidIndicator
+IF Address.CountryCode = 'US' OR= 'PR'
+  ADDR-FORMAT-TYPE-CD := 'D'
+ELSE
+  ADDR-FORMAT-TYPE-CD := 'I'
+END-IF
+IF AddressFormatTypeCode = 'D'
+  ADDR-POOL-V.STATE-CODE := Address.StateCode
+  ADDR-POOL-V.ZIP-CODE   := Address.ZipCode
+ELSE
+  ADDR-POOL-V.INTL-REGION := Address.IntlRegion
+  ADDR-POOL-V.POSTAL-CODE := Address.PostalCode
+END-IF
+END-SUBROUTINE
+*
+DEFINE DELETE-RECORD
+/*     ==========
+ErrorCode := 99
+ErrorDescription := #NOTIMPLEMENTED
+END-SUBROUTINE
+*
+DEFINE SYNC-OPERATIONS
+/*     ===============
+IF #UPDATED
+  ErrorCode := 3
+  COMPRESS *PROGRAM 'SYNC-OPERATIONS are NOT IMPLEMENTED'
+    INTO ErrorDescription
+END-IF
+END-SUBROUTINE
+*
+END

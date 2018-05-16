@@ -1,0 +1,124 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+***************************************************************************************
+* Program : ATHPIMDC                                                                  *
+*                                                                                     *
+* Function: Generate report for all inactive CNs with outstanding Debit-credit amount.*
+*                                                                                     *
+* History : 08/07/2011 vxt Initial creation                                           *
+* vxt  05/07/2012 vt1  Add 2 columns - deliverable/undeliverable address and deceased *
+* JNT  09/17/2013 JT1  Address normalization                                          *
+***************************************************************************************
+*
+DEFINE DATA LOCAL
+*
+1 ST-v VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 number-memberships
+  2 debit-credit-amt
+  2 MEMBER-CONTACT-ID                                            /* JT1
+*  2 address-chg-code                                 /* vt1     /* JT1
+*
+1 cont view of a-contacts
+  2 id-number
+  2 contact-id
+  2 first-name
+  2 middle-name
+  2 last-name
+  2 date-of-death                                    /* vt1
+*
+local
+1 #tot-read           (n7)
+1 #rec-extracted      (n7)
+1 #out-file           (a250)
+1 #tab                (a1) init<H'09'>
+1 #i                  (i2)
+1 #totl-refund        (n9.2)
+1 #totl-refund-a      (a15)
+1 #e-mail             (a70)
+1 #contact-id         (n8)
+1 #tot-active         (p9)
+1 #tot-inactive       (p9)
+1 #parm               (a7)
+1 #comments           (a10)
+1 #name               (a70)
+1 #deliv             (a1)                                    /* vt1
+1 #cnt-undeliv       (p7)                                    /* vt1
+1 #deceased          (a8)                                    /* vt1
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/INACTIVE_CN_DB_KT.TXT'  /* vt1
+* TYPE 'ASCII'                                                                          /* vt1
+*
+compress 'CN # ' #tab
+  'NAme'  #tab
+  'Term-Debit-credit Amount ' #tab
+  'E-mail ' #tab
+  'Status' #tab
+  'Deliverable/Undeliverable Address'  #tab                  /* vt1
+  'Deceased or not?' #tab                                    /* vt1
+  into #out-file leaving no
+write work 1 #out-file
+*
+reAD st-v by id-number
+  add 1 to #tot-read
+*
+  if number-memberships = 0
+    move 'inactive' to #comments
+    add 1 to #tot-inactive
+*
+    move debit-credit-amt to #totl-refund
+    move edited #totl-refund (em=szzz,zzz,zz9.99) to #totl-refund-a
+*
+    #deliv := 'D'                                            /* vt1 \/
+*    if st-v.address-chg-code = 'U' or = 'V'                 /* JT1 
+    IF F-UNDEL-ADDRESS (< ST-V.MEMBER-CONTACT-ID >)          /* JT1
+      move 'U' to #deliv
+      add 1 to #cnt-undeliv
+    end-if                                                   /* vt1 /\
+*
+    if #totl-refund ne 0
+      reset #contact-id #e-mail #name
+      find cont with cont.id-number = st-v.id-number
+        if no
+          write 'no record on contact file for' st-v.id-number
+          escape bottom
+        end-norec
+        compress cont.first-name cont.middle-name cont.last-name into #name
+        if cont.date-of-death ne 0                            /* vt1 \/
+          move 'deceased' to #deceased
+        else
+          reset #deceased
+        end-if                                                /* vt1 /\
+        move cont.contact-id to #contact-id
+        callnat 'emailn01' #contact-id #e-mail
+      end-find
+      compress st-v.id-number  #tab
+        #name                  #tab
+        #TOTL-refund-a         #TAB
+        #e-mail                #TAb
+        #comments              #tab
+        #deliv                 #tab                           /* vt1
+        #deceased              #tab                           /* vt1
+        into #out-file leaving no
+      write work 1 #out-file
+      reset #totl-refund
+      add 1 to #rec-extracted
+    end-if
+  end-if
+*
+  at end of data
+    write 'records read          ' #tot-read /
+      'inactive records read ' #tot-inactive /
+      'undeliverable address:' #cnt-undeliv /                 /* vt1
+      'records extracted     ' #rec-extracted
+  end-enddata
+*
+end-read
+*
+END
+
+

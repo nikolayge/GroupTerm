@@ -1,0 +1,185 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID : CFPFCSAM
+*
+* UPDATER FOR AM FPFC TRAN (FST PLACEMENT FEE CORRECTION) - do not
+*                                                     adjust accounting
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    09022004  None    Program Written.                            *
+* PAM    10282004  PM1     Allow FPFC transactions to paid-up policies *
+* DRW 05/16/2008  DW2 Increase size of #OLD-FPFP                       *
+* YAK 10/15/2012  YK1 Use function to identify Level Term II plans     *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #ST-V-STATUS            (A1/9)
+1 #ST-V-PAY-STATUS        (A2/9)
+1 #ST-V-MODE              (A1/9)
+1 #ST-V-PLAN              (A3/9)
+1 REDEFINE #ST-V-PLAN
+ 2 #ST-V-PLAN-OCC  (9)
+  3 #ST-V-PLAN-A1    (A1)
+  3 #ST-V-PLAN-A2    (A2)
+*
+1 #ST-V-ISSUE-DATE        (N8/9)
+1 REDEFINE #ST-V-ISSUE-DATE
+ 2 #ST-V-ISSUE-DATE-GR    (9)
+  3 #ST-V-ISSUE-DATE-YYYY  (N4)
+  3 #ST-V-ISSUE-DATE-MM    (N2)
+  3 #ST-V-ISSUE-DATE-DD    (N2)
+*
+1 #ST-V-PAID-TO-DATE      (N8/9)
+1 REDEFINE #ST-V-PAID-TO-DATE
+ 2 #ST-V-PAID-TO-DATE-GR  (9)
+  3 #ST-V-PAID-TO-DATE-YYYY (N4)
+  3 #ST-V-PAID-TO-DATE-MM   (N2)
+  3 #ST-V-PAID-TO-DATE-DD   (N2)
+*
+1 #ST-V-PAID-UP-DATE      (N8/9)
+1 REDEFINE #ST-V-PAID-UP-DATE
+ 2 #ST-V-PAID-UP-DATE-GR  (9)
+  3 #ST-V-PAID-UP-DATE-YYYY (N4)
+  3 #ST-V-PAID-UP-DATE-MM   (N2)
+  3 #ST-V-PAID-UP-DATE-DD   (N2)
+*
+1 #ST-V-FIRST-PLACE-FEE   (P7.2/9)
+1 #OLD-FPFP               (P6.2)      /* DW2
+*
+1 #ILN1       (I2)
+1 #UPDATE-MODE (L)
+*
+LOCAL
+*
+1 #I1           (I2)
+1 #I2           (I2)
+1 #I3           (I2)
+1 #POLICY-FOUND (L)    /* TO INDICATE IF MATCHING POLICY WAS FOUND
+1 #DISP-MSG            (A75)    /* ERROR LINE MESSAGES
+1 #LAST-ID-READ        (P6)
+1 #POLI           (I2)
+1 #LAST-ISS-DT    (P8)
+*
+END-DEFINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+RESET #LAST-ISS-DT
+FOR #I1 1 TO 9
+  IF   (#ST-V-STATUS (#I1) = 'D')
+    IF   (#ST-V-ISSUE-DATE (#I1) = #LAST-ISS-DT)
+     AND (NOT #SCR-ALP-CODE (#ILN1) = 'W' OR = 'T' OR = 'N')
+      IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+        BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+      END-IF                           /* *********************
+*
+      REINPUT 'W/T in ALP-CODE must be used to ind Whole-life or Term'
+      MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF
+*
+    MOVE #ST-V-ISSUE-DATE (#I1) TO #LAST-ISS-DT
+  END-IF
+END-FOR
+*
+FOR #I1 1 TO 9
+  IF  (#ST-V-STATUS (#I1) = 'D')
+   AND (#ST-V-ISSUE-DATE-YYYY (#I1) = #SCR-ISS-DT-YYYY (#ILN1))
+   AND (#ST-V-ISSUE-DATE-MM   (#I1) = #SCR-ISS-DT-MM   (#ILN1))
+   AND (#ST-V-ISSUE-DATE-DD   (#I1) = #SCR-ISS-DT-DD   (#ILN1))
+    IF   (#SCR-ALP-CODE (#ILN1) = ' ')
+*
+     OR ((#SCR-ALP-CODE (#ILN1) = 'W' OR = 'N')
+      AND (NOT FUNCTION-TERM-POLICY(<#ST-V-PLAN(#I1)>))                 /* YK1
+*     AND (NOT #ST-V-PLAN (#I1) = 'RT' OR = 'LT')   /* WHOLE LIFE       /* YK1
+*     AND ((#ST-V-PLAN-A1(#I1) LT 'U') OR (#ST-V-PLAN-A1(#I1) GT 'Z'))) /* YK1
+*
+     OR ((#SCR-ALP-CODE (#ILN1) = 'T')
+      AND FUNCTION-TERM-POLICY(<#ST-V-PLAN(#I1)>)))                      /* YK1
+*     AND ((#ST-V-PLAN (#I1) = 'RT' OR = 'LT')       /* TERM INS         /* YK1
+*     OR ((#ST-V-PLAN-A1(#I1) GE 'U') AND (#ST-V-PLAN-A1(#I1) LE 'Z')))) /* YK1
+      MOVE #I1 TO #POLI
+      MOVE TRUE TO #POLICY-FOUND
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+END-FOR
+*
+IF NOT #POLICY-FOUND
+  IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+    BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+  END-IF                           /* *********************
+  COMPRESS 'Iss-Date not found' INTO #DISP-MSG
+  REINPUT #DISP-MSG
+  MARK *#SCR-ISS-DT (#ILN1)
+END-IF
+*
+IF #SCR-TRAN-AMT (#ILN1) LT 0
+  IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+    BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+  END-IF                           /* *********************
+  MOVE 'Transaction amount cannot be less than 0' TO #DISP-MSG
+  REINPUT #DISP-MSG
+  MARK *#SCR-TRAN-AMT (#ILN1)
+END-IF
+*
+* IF ((#ST-V-PAY-STATUS (#POLI) GE '40')                          /* PM1
+*  OR (#ST-V-PAID-TO-DATE-YYYY(#POLI) GT #ST-V-PAID-UP-DATE-YYYY(#POLI))
+* OR ((#ST-V-PAID-TO-DATE-YYYY(#POLI) EQ #ST-V-PAID-UP-DATE-YYYY(#POLI))
+*   AND (#ST-V-PAID-TO-DATE-MM(#POLI) GE #ST-V-PAID-UP-DATE-MM(#POLI))))
+*    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+*      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+*    END-IF                           /* *********************
+*    MOVE 'Policy is paid-up. FPFC transaction ineligible.' TO #DISP-MSG
+*    REINPUT #DISP-MSG
+*    MARK *#SCR-TRAN-AMT (#ILN1)
+* END-IF
+*
+IF #SCR-TRAN-AMT (#ILN1) = #ST-V-FIRST-PLACE-FEE (#POLI)
+  IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+    BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+  END-IF                           /* *********************
+  MOVE 'Transaction amount is equal to current FPF' TO #DISP-MSG
+  REINPUT #DISP-MSG
+  MARK *#SCR-TRAN-AMT (#ILN1)
+END-IF
+*
+IF #SCR-TRAN-AMT (#ILN1) GT 0
+ AND #ST-V-FIRST-PLACE-FEE (#POLI) = 0
+  IF #ST-V-PAY-STATUS (#POLI) = '22'        /* IF FPF PAID/PREM PAYING
+    MOVE '20' TO #ST-V-PAY-STATUS (#POLI)   /* MAKE FPF NOT PAID/PAYING
+  END-IF
+*
+  IF #ST-V-PAY-STATUS (#POLI) = '21'        /* IF FPF PAID/WAITING ALLOT
+    MOVE '12' TO #ST-V-PAY-STATUS (#POLI)   /* MAKE FPF NOT PAID/WAITING
+  END-IF
+END-IF
+*
+IF #SCR-TRAN-AMT (#ILN1) = 0
+ AND #ST-V-FIRST-PLACE-FEE (#POLI) GT 0
+  IF #ST-V-MODE (#POLI) = 'G'                 /* IF GOVT ALLOT
+    IF (#ST-V-PAY-STATUS (#POLI) = '12')      /* IF FPF NOT PD/NOT PP
+      MOVE '21' TO #ST-V-PAY-STATUS (#POLI)   /* MAKE FPF PAID/NOT PP
+    END-IF
+*
+    IF #ST-V-PAY-STATUS (#POLI) = '20'        /* IF FPF NOT PAID/PP
+      MOVE '22' TO #ST-V-PAY-STATUS (#POLI)   /* MAKE FPF PAID/PP
+    END-IF
+  ELSE
+    IF #ST-V-PAY-STATUS (#POLI) = '12' OR = '20'
+      MOVE '22' TO #ST-V-PAY-STATUS (#POLI)        /* MAKE PP
+    END-IF
+  END-IF
+END-IF
+*
+MOVE #ST-V-FIRST-PLACE-FEE (#POLI) TO #OLD-FPFP
+MOVE #SCR-TRAN-AMT (#ILN1) TO #ST-V-FIRST-PLACE-FEE (#POLI)
+*
+END

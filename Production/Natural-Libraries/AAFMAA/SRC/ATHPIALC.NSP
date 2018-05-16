@@ -1,0 +1,286 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPIALC - CREATE STARTS & STOPS FROM LAST & CURR FILES
+*                        for AAFMAA
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE     TAG  REASON                                            *
+* DRW  02012007 DW1 stop bypassing stops for 3 mbrs with good DFAS $ now
+************************************************************************
+DEFINE DATA
+LOCAL
+*
+1 STARTS-STOPS-REC  (A80)   /* output file
+1 REDEFINE STARTS-STOPS-REC
+ 2 AS-CN           (N6)
+ 2 AS-SERVICE      (A1)   /* A or F
+ 2 AS-SSN          (A9)
+ 2 AS-TYPE         (A1)   /* 1 = stop / 2 = start
+ 2 AS-REAS-CODE    (A2)
+ 2 AS-STATUS       (A1)   /* A or R
+ 2 AS-BLANKET-CODE (A3)
+ 2 AS-EFF-DATE     (A4)   /* YYMM
+ 2 AS-TERM-DATE    (A4)   /* YYMM
+ 2 AS-AMOUNT       (P9.2) /* takes 6 bytes
+ 2 AS-NAME         (A20)
+ 2 AS-FILL-1       (A14)
+*
+1 ALOT-REC-LAST (A45)   /* last mon file
+1 REDEFINE ALOT-REC-LAST
+ 2 ALL-SSN-A      (A09)
+ 2 ALL-SERV       (A01)
+ 2 ALL-STATUS     (A01)
+ 2 ALL-AMOUNT     (N4.2)
+ 2 ALL-NAME       (A22)
+ 2 ALL-EFF-YYYYMM (N06)
+*
+1 ALOT-REC-CURR (A45)
+1 REDEFINE ALOT-REC-CURR /* curr mon file
+ 2 ALC-SSN-A      (A09)
+ 2 ALC-SERV       (A01)
+ 2 ALC-STATUS     (A01)
+ 2 ALC-AMOUNT     (N4.2)
+ 2 ALC-NAME       (A22)
+ 2 ALC-EFF-YYYYMM (N06)
+*
+1 #COUNTERS
+ 2 #RECS-READ        (P5)
+ 2 #RECS-SELECTED    (P5)
+ 2 #CNT              (P5)
+ 2 #CNT-2            (P5)
+ 2 #CNT-3            (P5)
+ 2 #CNT-4            (P5)
+ 2 #CNT-5            (P5)
+ 2 #CNT-6            (P5)
+ 2 #CNT-7            (P5)
+ 2 #I1               (I2)
+ 2 #I2               (I2)
+ 2 #I3               (I2)
+*
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY          (N4)
+  2 #MM            (N2)
+  2 #DD            (N2)
+*
+1 #TOT-STOPS        (N5)
+1 #TOT-STARTS       (N5)
+1 #TOT-ST-SP-RECS   (N5)
+1 #AA-RECS      (N5)
+1 #FA-RECS      (N5)
+1 #XR-RECS      (N5)
+1 #DFAS-SSN     (N9)
+1 REDEFINE #DFAS-SSN
+ 2 #DFAS-SSN-A  (A9)
+1 #DFAS-IN      (P5)
+1 #AAFMAA-IN    (P5)
+1 #LK-ALOT-AMT  (P5.2)
+1 #MATCHED-LNK   (P5)
+*
+1 #CURR-MON-SSN  (A9)
+1 #LAST-MON-SSN  (A9)
+1 #CURR-MON-IN   (P5)
+1 #LAST-MON-IN   (P5)
+1 #STARTS        (P5)
+1 #STOPS         (P5)
+1 #ACT-TO-RET    (L)
+1 #ALOT-AMT-CHG  (L)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+FORMAT     LS=133 PS=76
+WRITE      TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'Exceptions'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'Create STOP Allotment'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'Create START Allotment'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (4) LS=133 PS=76
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'DFAS Allotment Ongoing Credits'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+PERFORM READ-ALLOT-LAST
+PERFORM READ-ALLOT-CURR
+*
+REPEAT UNTIL (#CURR-MON-SSN = '999999999')
+         AND (#LAST-MON-SSN = '999999999')
+  RESET #ACT-TO-RET #ALOT-AMT-CHG
+*
+  IF #LAST-MON-SSN LT #CURR-MON-SSN  /* alot last mon but not this mon
+    PERFORM CREATE-STOP
+    PERFORM READ-ALLOT-LAST
+    ESCAPE TOP
+  END-IF
+*
+  IF #LAST-MON-SSN GT #CURR-MON-SSN  /* alot this mon but not last mon
+    PERFORM CREATE-START
+    PERFORM READ-ALLOT-CURR
+    ESCAPE TOP
+  END-IF
+*
+  PERFORM FOUND-MATCH    /* alot both last mon and this mon
+  PERFORM READ-ALLOT-LAST
+  PERFORM READ-ALLOT-CURR
+END-REPEAT
+*
+WRITE #CURR-MON-IN  '= current months allotments'
+WRITE #LAST-MON-IN  '= last months allotments'
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CREATE-START
+* * * * * * * * * * * * * * *
+*
+* IF ALC-SSN-A = '204444871' OR = '282446325' OR = '285642152'   /* DW1
+*   WRITE (3) '** START Bypassed for SSN' ALC-SSN-A 'dupl DFAS rec'
+*   ESCAPE ROUTINE
+* END-IF
+*
+ADD 1 TO #CNT-3
+DISPLAY (3) #CNT-3 ALC-SSN-A   /* new this month
+                  ALC-AMOUNT ALC-SERV ALC-STATUS ALC-NAME
+*
+RESET STARTS-STOPS-REC
+RESET        AS-CN
+MOVE ALC-SERV     TO AS-SERVICE
+MOVE ALC-SSN-A    TO AS-SSN
+MOVE 2            TO AS-TYPE       /* 1 = stop / 2 = start
+MOVE ALC-STATUS   TO AS-STATUS    /* A or R
+MOVE ALC-AMOUNT   TO AS-AMOUNT
+MOVE ALC-NAME     TO AS-NAME
+*
+IF #ACT-TO-RET
+  WRITE (3) AS-SSN 'START - Active to Ret with same amount'
+  MOVE '**' TO AS-REAS-CODE
+ELSE
+  IF #ALOT-AMT-CHG
+    WRITE (3) AS-SSN 'START - Allotment amount changed'
+    MOVE '##' TO AS-REAS-CODE
+  END-IF
+END-IF
+*
+ADD 1 TO #STARTS
+WRITE WORK 4 STARTS-STOPS-REC
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CREATE-STOP
+* * * * * * * * * * * * * * *
+*
+* IF ALL-SSN-A = '204444871' OR = '282446325' OR = '285642152'  /* DW1
+*  WRITE (2) '** STOP Bypassed for SSN' ALL-SSN-A 'dupl DFAS rec'
+*   ESCAPE ROUTINE
+* END-IF
+*
+ADD 1 TO #CNT-2
+DISPLAY (2) #CNT-2 ALL-SSN-A   /* missing this month
+                  ALL-AMOUNT ALL-SERV ALL-STATUS ALL-NAME
+*
+RESET STARTS-STOPS-REC
+RESET                AS-CN
+MOVE ALL-SERV     TO AS-SERVICE
+MOVE ALL-SSN-A    TO AS-SSN
+MOVE 1            TO AS-TYPE       /* 1 = stop / 2 = start
+MOVE ALL-STATUS   TO AS-STATUS    /* A or R
+MOVE ALL-AMOUNT   TO AS-AMOUNT
+MOVE ALL-NAME     TO AS-NAME
+*
+IF #ACT-TO-RET
+  MOVE '**' TO AS-REAS-CODE
+  WRITE (2) AS-SSN 'STOP - Active to Ret with same amount'
+ELSE
+  IF #ALOT-AMT-CHG
+    MOVE '##' TO AS-REAS-CODE
+    WRITE (2) AS-SSN 'STOP - Allotment amount changed'
+  END-IF
+END-IF
+*
+ADD 1 TO #STOPS
+WRITE WORK 4 STARTS-STOPS-REC
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FOUND-MATCH
+* * * * * * * * * * * * * * *
+*
+IF   (ALL-AMOUNT = ALC-AMOUNT)   /* no amt change
+ AND (ALL-STATUS = ALC-STATUS)   /* no mil-status change
+  ESCAPE ROUTINE
+END-IF
+*
+IF ALL-STATUS NE ALC-STATUS
+  WRITE ALL-SSN-A 'Mil Status change (FROM/TO)' ALL-STATUS ALC-STATUS
+END-IF
+*
+IF ALL-AMOUNT NE ALC-AMOUNT
+  WRITE ALL-SSN-A 'Allot amt change (FROM/TO)' ALL-AMOUNT ALC-AMOUNT
+  MOVE TRUE TO #ALOT-AMT-CHG
+END-IF
+*
+IF   (ALL-AMOUNT =  ALC-AMOUNT)   /* no amt change
+ AND (ALL-STATUS NE ALC-STATUS)   /* active to retired
+  MOVE TRUE TO #ACT-TO-RET
+END-IF
+*
+PERFORM CREATE-STOP
+PERFORM CREATE-START
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE READ-ALLOT-LAST
+* * * * * * * * * * * * * * * * *
+*
+IF #LAST-MON-SSN = '999999999'
+  ESCAPE ROUTINE
+END-IF
+*
+READ WORK 2 ONCE RECORD ALOT-REC-LAST
+  AT END
+    MOVE '999999999' TO #LAST-MON-SSN
+    ESCAPE ROUTINE
+  END-ENDFILE
+*
+ADD 1 TO #LAST-MON-IN
+MOVE ALL-SSN-A TO #LAST-MON-SSN
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE READ-ALLOT-CURR
+* * * * * * * * * * * * * * * * *
+*
+IF #CURR-MON-SSN = '999999999'
+  ESCAPE ROUTINE
+END-IF
+*
+READ WORK 3 ONCE RECORD ALOT-REC-CURR
+  AT END
+    MOVE '999999999' TO #CURR-MON-SSN
+    ESCAPE ROUTINE
+  END-ENDFILE
+*
+ADD 1 TO #CURR-MON-IN
+MOVE ALC-SSN-A TO #CURR-MON-SSN
+*
+* do not print below unless necessary -it already printed in athpictx
+* ADD 1 TO #CNT-4
+* DISPLAY (4) #CNT-4 ALC-SSN-A ALC-SERV ALC-STATUS ALC-AMOUNT ALC-NAME
+*
+END-SUBROUTINE
+*
+END

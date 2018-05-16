@@ -1,0 +1,437 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* SUBPROGRAM-ID: ACHN0001 - Subprogram to populate
+* parameter data area with Billing Information to
+* create Billing Notice for ACH return
+*************************************************************
+*        MODIFICATION LOG
+*************************************************************
+* USER   DATE      TAG REASON
+* YAK    06232009      Initial Creation
+* YAK    06182010  YK  Use owner/member/insured email
+* YAK    08312011  YK1 Changes for new check scanning system
+* YAK    09262012  YK2 Use function to identify Level Term II plans
+* YAK    20131011  YK3 Add ADDRESS-2 line
+*                      Pool all address information from Contact address
+*                      file instead of Status file
+* vxt    02092015  vt1 /Ticket 3340/
+* YAK    20131011  YK4 Add Premier services returned checks
+* bz     20150828  bz1 remove comma for VAL function (over 1,000)
+* bz-Name 07/07/2017     Fine Names   
+*************************************************************
+DEFINE DATA
+PARAMETER USING ACHA0002     /* Input Data
+PARAMETER USING ACHA0001     /* Billing Notices/E-Mail Data
+*
+LOCAL USING OBJLSTAT          /* Status file strucuture
+LOCAL USING GPRA0003          /* Error Log file
+LOCAL USING INVA0001          /* Check scan file data              YK1
+LOCAL USING ADDA0001          /* YK3
+LOCAL
+1 #ID-NUMBER          (N6)
+1 #CONTACT-ID         (N8)
+1 #OWNER-CONTACT-ID   (N8)
+1 #PARAMETER-OWNER
+  2 #CN               (N6)
+  2 #NON-INS-OWNER    (L)
+  2 #MULTIPLE-OWNER   (L)
+  2 #OWNER-OCC-9 (9)
+    3 #OWNER-FLAG (A1)
+    3 #OWNER-CN   (N6/10)
+    3 #OWNER-CN-BY-POL (N6)
+    3 #OWNER-CN-SEG    (I2/9)
+    3 #POL-ISSUE-DATE  (N8/9)
+    3 #ISSUE-DATE-DISP (A10/9)
+    3 #BN-TYPE       (A1/2)
+    3 #BN-TEXT       (A60/10)
+*
+1 #OWNER-CN-N     (N6)
+1 REDEFINE #OWNER-CN-N
+  2 #CN-A         (A6)
+1 #SEQ-NUMBER     (A1)
+1 #ISSUE-DATE          (N8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-YYYY   (A4)
+  2 #ISSUE-DATE-MM     (A2)
+  2 #ISSUE-DATE-DD     (A2)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-A (A8)
+1 #DATN           (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY    (N4)
+  2 #DATN-MM      (N2)
+  2 #DATN-DD      (N2)
+1 #AMT-DUE        (N6.2)
+1 #TOT-DUE        (N6.2)
+1 #AMOUNT-DUE     (A8)
+1 #EMAIL          (A60)
+1 #OWNER-EMAIL    (A60)
+1 #SHORT-FORM (A1) INIT <'S'>
+1 #LAST-DAY   (A1) INIT <'B'>
+1 #MONTH-YEAR (A1) INIT <'C'>
+1 #BAR-CODE   (A2)
+1 #FLEX-PLAN  (A2)
+1 #FLEX-KEY   (A3)
+*
+1 #TAB            (A1) INIT <H'09'>
+1 #I              (I4)
+1 #I1             (I4)
+1 #I2             (I4)
+*
+1 #Dynamic_name   (A) DYNAMIC
+1 #PLAN-TYPE      (A3)
+*
+1 #E1-MESSAGE     (A120) INIT
+  <'AAFMAA will attempt to charge your account again in the next payment cycle for all current and past due amounts.'>
+1 #E2-MESSAGE   (A120) INIT
+  <'Your automatic withdrawal has been stopped. We have changed the payment schedule to quarterly.'>
+1 #E3-MESSAGE   (A120) INIT <' '>
+1 #CHECK-TEMPLATE          (A) DYNAMIC INIT <'CheckReturn'>
+1 #EZPAY-STOP-TEMPLATE     (A) DYNAMIC INIT <'EZPayReturnStop'>
+1 #EZPAY-REDRAFT-TEMPLATE  (A) DYNAMIC INIT <'EZPayReturnRedraft'>
+*
+1 #ACH-BILL-TYPE     (A2) CONST <'AC'>        /* YK1
+1 #ACH-CODE-11       (A4) CONST <'PREP'>      /* YK1
+1 #ACH-CODE-94       (A4) CONST <'CMB4'>      /* YK1
+1 #ACH-CODE-93       (A4) CONST <'CMB3'>      /* YK1
+1 #DETAIL-RECORD     (A1) CONST <'D'>         /* YK1
+1 #PRIMARY           (A1) CONST <'P'>
+1 #MODE              (A1)
+1 #ACH-CODE-55       (A4) CONST <'DUEP'>      /* YK4
+*
+1 #REJ-REASON                 (A) DYNAMIC
+1 #REJECT-CODE-KEY            (A4)CONST <'RJCD'>
+1 #LOOK-UP-KEY                (A7)
+1 REDEFINE #LOOK-UP-KEY
+  2 #GEN-KEY                  (A4)
+  2 #GEN-SUB-KEY              (A3)
+* < YK1
+* YK4 >
+1 #SERVICE (L)
+1 SERVICE-V VIEW OF A-SVC-MEMBER
+  2 SVC-CONTRACT-NUMBER
+  2 SVC-ID-NUMBER
+  2 SVC-ISSUE-DATE
+  2 SVC-MODE
+  2 SVC-PLAN
+* > YK4
+END-DEFINE
+*
+ON ERROR
+  PERFORM PROCESS-ERROR
+END-ERROR
+*
+PERFORM GET-POLICY-DATA
+IF #ERROR = 'Y'
+  ESCAPE ROUTINE IMMEDIATE
+END-IF
+PERFORM FORMAT-ADDRESS-NAME
+PERFORM FORMAT-BILLING-DATA
+*
+*********************************
+DEFINE SUBROUTINE GET-POLICY-DATA
+*********************************
+*
+BILLING-INFORMATION.POLICY-NUMBER := #POLICY-NUMBER
+#CN-NUMBER := *TRIM(#CN-NUMBER)
+IF #CN-NUMBER IS (N6)
+  #ID-NUMBER := VAL(#CN-NUMBER)
+  BILLING-INFORMATION.CN-NUMBER := BILLING-INFORMATION.OWNER-CN := #ID-NUMBER
+  #CN-A := #CN-NUMBER
+  #I := F_POLICY_SEGMENT(<#POLICY-NUMBER,#CN-A>)
+  IF #I = 0
+* Check if service
+    FIND SERVICE-V WITH SVC-CONTRACT-NUMBER = BILLING-INFORMATION.POLICY-NUMBER
+      IF SVC-ID-NUMBER = #ID-NUMBER
+*     COMPRESS BILLING-INFORMATION.POLICY-NUMBER '-S' INTO BILLING-INFORMATION.POLICY-NUMBER
+        #SERVICE := TRUE
+        BILLING-INFORMATION.POLICY-NUMBER := #ID-NUMBER
+        #ISSUE-DATE  := SERVICE-V.SVC-ISSUE-DATE     /* svc issue date
+        #MODE        := SERVICE-V.SVC-MODE
+        #PLAN-TYPE   := SERVICE-V.SVC-PLAN
+        #CONTACT-ID  := #OWNER-CONTACT-ID := F-GET-CONTACT-ID(<#ID-NUMBER>)
+        #OWNER-EMAIL := F-PREF-EMAIL(<#CONTACT-ID>)
+      END-IF
+    END-FIND
+    IF NOT #SERVICE
+      COMPRESS 'Policy Number is invalid ' INTO ERROR-MESSAGE
+      ERROR-PROGRAM := *PROGRAM
+      CALLNAT 'GPRN0003' ERROR-LOG
+      #ERROR := 'Y'
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+ELSE
+  COMPRESS 'CN Number is invalid ' INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+  #ERROR := 'Y'
+  ESCAPE ROUTINE
+END-IF
+*
+IF NOT #SERVICE
+  FIND(1) ST-V WITH ID-NUMBER = #ID-NUMBER
+    IF NO RECORDS FOUND
+      WRITE 'NO RECORDS'
+      ESCAPE ROUTINE IMMEDIATE
+    END-NOREC
+    #ISSUE-DATE  := ST-V.ISSUE-DATE(#I)     /* policy issue date
+    #MODE        := ST-V.MODE(#I)                              /* vt1
+    #PLAN-TYPE   := PLAN(#I)
+* Assuming insured is an owner - overwritten if owner is different
+    #CONTACT-ID  := #OWNER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+  END-FIND
+*
+  PERFORM GET-OWNER-INFORMATION
+  IF #OWNER-EMAIL = ' '
+* Try member email address if owner email is blank
+    #OWNER-EMAIL := FUNCTION-MEMBER-EMAIL(<BILLING-INFORMATION.CN-NUMBER>)
+    IF #OWNER-EMAIL = ' '
+* use insured e-mail
+      #OWNER-EMAIL := F-PREF-EMAIL(<#CONTACT-ID>)
+    END-IF
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE GET-OWNER-INFORMATION
+***************************************
+*
+#PARAMETER-OWNER.#CN := #ID-NUMBER
+CALLNAT 'GOWNRSXX' #PARAMETER-OWNER
+#OWNER-CN-N := #OWNER-CN(#I,1)
+IF #OWNER-CN-N <> #ID-NUMBER
+  BILLING-INFORMATION.OWNER-CN := #CN-A
+  FIND(1) ST-V WITH ID-NUMBER = #OWNER-CN-N
+    IF NO RECORDS FOUND
+      COMPRESS 'NO Owner with Requested CN ' #CN-A
+        INTO ERROR-MESSAGE
+      ERROR-PROGRAM := *PROGRAM
+      CALLNAT 'GPRN0003' ERROR-LOG
+      #ERROR := 'Y'
+      ESCAPE ROUTINE
+    END-NOREC
+    #OWNER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+    #OWNER-EMAIL := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)
+    IF #OWNER-EMAIL <> ' '
+      ESCAPE ROUTINE
+    END-IF
+  END-FIND
+  FOR #I2 = 2 TO 10
+    IF #OWNER-CN(#I,#I2) = 0
+      ESCAPE BOTTOM
+    END-IF
+    #OWNER-CN-N := #OWNER-CN(#I,#I2)
+    FIND(1) ST-V WITH ID-NUMBER = #OWNER-CN-N
+      #OWNER-EMAIL := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)
+    END-FIND
+    IF #OWNER-EMAIL <> ' '
+      ESCAPE ROUTINE
+    END-IF
+  END-FOR
+ELSE
+  #OWNER-EMAIL := F-PREF-EMAIL(<#OWNER-CONTACT-ID>)
+END-IF
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE FORMAT-BILLING-DATA
+*************************************
+*
+*   AMOUNT-DUE
+*   DUE-DATE
+*
+#DATN := *DATN
+BILLING-INFORMATION.PLAN-TYPE-DESCRIPTION := F-PLAN-DESCRIPTION(<#PLAN-TYPE>)(1)
+BILLING-INFORMATION.CURRENT-DATE := FUNCTION-CALENDAR(<#DATN,#SHORT-FORM>)      /* statement date
+BILLING-INFORMATION.ISSUE-DATE := FUNCTION-CALENDAR(<#ISSUE-DATE,#SHORT-FORM>)  /* policy issue date
+BILLING-INFORMATION.DUE-DATE := FUNCTION-CALENDAR(< #DATN,#LAST-DAY>)
+*
+DECIDE ON FIRST VALUE #BILL-TYPE
+  VALUE 'E1'
+    BILLING-INFORMATION.MESSAGE := #E1-MESSAGE
+    BILLING-INFORMATION.EMAIL-TEMPLATE := #EZPAY-REDRAFT-TEMPLATE
+    MOVE 'Monthly'   TO BILLING-FREQUENCY
+    MOVE 'EZ-Pay'    TO BILLING-METHOD
+    MOVE 'EZ-Pay'    TO BILLING-TYPE
+  VALUE 'E2'
+    BILLING-INFORMATION.MESSAGE := #E2-MESSAGE
+    BILLING-INFORMATION.EMAIL-TEMPLATE := #EZPAY-STOP-TEMPLATE
+    MOVE 'Monthly'   TO BILLING-FREQUENCY
+    MOVE 'EZ-Pay'    TO BILLING-METHOD
+    MOVE 'EZ-Pay'    TO BILLING-TYPE
+  VALUE 'E3'
+    BILLING-INFORMATION.MESSAGE := #E3-MESSAGE
+    BILLING-INFORMATION.EMAIL-TEMPLATE := #CHECK-TEMPLATE
+    BILLING-INFORMATION.BILLING-METHOD := FUNCTION-PAYMENT-MODE(<#MODE>)(3)
+    BILLING-INFORMATION.BILLING-FREQUENCY := FUNCTION-PAYMENT-MODE(<#MODE>)(4)
+    BILLING-INFORMATION.BILLING-TYPE := 'Check'
+  NONE VALUE
+    IGNORE
+END-DECIDE
+* YK1 >
+IF #REJ-CODE <> ' '
+  #GEN-KEY := #REJECT-CODE-KEY
+  #GEN-SUB-KEY := #REJ-CODE
+  #REJ-REASON := F-GET-GEN(<#LOOK-UP-KEY>)
+ELSE
+  RESET INITIAL #REJ-REASON
+END-IF
+* < YK1
+BILLING-INFORMATION.REJECT-REASON  := #REJ-REASON
+BILLING-INFORMATION.MONTH-OF-EZPAY := FUNCTION-CALENDAR(<#DATN,#MONTH-YEAR>)
+*
+DECIDE FOR EVERY CONDITION
+  WHEN #PREM-AMOUNT NE ' '
+*   #BAR-CODE := #PREM-CODE                                                  /* YK1
+    #I1 := #I1 + 1
+    TRAN-AMOUNT(#I1)      := #PREM-AMOUNT
+    TRAN-DESCRIPTION(#I1) := 'Premium Payment Amount'
+    EXAMINE #PREM-AMOUNT FOR '$' DELETE
+    EXAMINE #PREM-AMOUNT FOR ',' DELETE
+    #AMT-DUE := VAL(#PREM-AMOUNT)
+    MOVE EDITED #AMT-DUE (EM=99999.99) TO #INV-TRAN-AMOUNT (#I1)             /* YK1
+*   MOVE EDITED #AMT-DUE (EM=99999.99) TO #AMOUNT-DUE                        /* YK1
+*   COMPRESS #CN-NUMBER #BAR-CODE #AMOUNT-DUE #ISSUE-DATE-MM #ISSUE-DATE-DD  /* YK1
+*   #ISSUE-DATE-YYYY INTO BILLING-BAR-CODE1 LEAVING NO                       /* YK1
+    DECIDE ON FIRST VALUE #PREM-CODE                                         /* YK1 Start
+      VALUE '11'
+        #INV-TRAN-CODE(#I1)  := #ACH-CODE-11                                  /* YK1
+      VALUE '94'
+        #INV-TRAN-CODE(#I1)  := #ACH-CODE-94                                  /* YK1
+* YK4 <
+      VALUE '55'
+        #INV-TRAN-CODE(#I1)  := #ACH-CODE-55
+        TRAN-DESCRIPTION(#I1) := 'Dues Payment Amount'
+        IF #SERVICE
+          PAYMENT-DESCRIPTION := F-PLAN-DESCRIPTION(<#PLAN-TYPE>)(4)
+          COMPRESS PAYMENT-DESCRIPTION '-Dues Payment Amount'
+            INTO TRAN-DESCRIPTION(#I1) LEAVING NO
+        END-IF
+* < YK4
+      NONE VALUE
+        IGNORE
+    END-DECIDE                                                               /* YK1 End
+    #TOT-DUE := #TOT-DUE + #AMT-DUE
+  WHEN #LOAN-AMOUNT NE ' '
+*   #BAR-CODE := #LOAN-CODE                                                  /* YK1
+    #I1 := #I1 + 1
+    TRAN-AMOUNT(#I1)      := #LOAN-AMOUNT
+    TRAN-DESCRIPTION(#I1) := 'Loan Payment Amount'
+    EXAMINE #LOAN-AMOUNT FOR '$' DELETE
+    EXAMINE #LOAN-AMOUNT FOR ',' DELETE           /* bz1
+    #AMT-DUE := VAL(#LOAN-AMOUNT)
+    MOVE EDITED #AMT-DUE (EM=99999.99) TO #INV-TRAN-AMOUNT (#I1)             /* YK1
+*   MOVE EDITED #AMT-DUE (EM=99999.99) TO #AMOUNT-DUE                        /* YK1
+*   COMPRESS #CN-NUMBER #BAR-CODE #AMOUNT-DUE #ISSUE-DATE-MM #ISSUE-DATE-DD  /* YK1
+*   #ISSUE-DATE-YYYY INTO BILLING-BAR-CODE2 LEAVING NO                       /* YK1
+    #INV-TRAN-CODE(#I1)  := #ACH-CODE-93                                     /* YK1
+    #TOT-DUE := #TOT-DUE + #AMT-DUE
+  WHEN #CAP-LOAN-AMOUNT NE ' '
+    #I1 := #I1 + 1
+    TRAN-AMOUNT(#I1) := #CAP-LOAN-AMOUNT
+    TRAN-DESCRIPTION(#I1) := 'CAP Loan Payment Amount'
+    EXAMINE #CAP-LOAN-AMOUNT FOR '$' DELETE
+    #AMT-DUE := VAL(#CAP-LOAN-AMOUNT)
+    #TOT-DUE := #TOT-DUE + #AMT-DUE
+  WHEN #OTHER-AMOUNT NE ' '
+    #I1 := #I1 + 1
+    TRAN-AMOUNT(#I1) := #OTHER-AMOUNT
+    TRAN-DESCRIPTION(#I1) := 'Other Payment Amount'
+    EXAMINE #OTHER-AMOUNT FOR '$' DELETE
+    #AMT-DUE := VAL(#OTHER-AMOUNT)
+    #TOT-DUE := #TOT-DUE + #AMT-DUE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9.99) TO BILLING-INFORMATION.TOTAL-AMOUNT-DUE
+BILLING-INFORMATION.TOTAL-AMOUNT-DUE := *TRIM(BILLING-INFORMATION.TOTAL-AMOUNT-DUE)
+COMPRESS '$' TOTAL-AMOUNT-DUE INTO TOTAL-AMOUNT-DUE LEAVING NO
+*
+* Formatting Adjustment for the dita topic
+IF #I1 = 1
+  #I1 := 3
+END-IF
+C@TRANSACTION := #I1
+*
+* Write check scan file                                                            /* YK1 start
+MOVE EDITED #TOT-DUE (EM=ZZZZ9.99) TO #AMOUNT-DUE
+RESET #INV-INVOICE-LINE
+#INV-MEMBER-NUM        := BILLING-INFORMATION.CN-NUMBER
+#INV-POL-NUM           := BILLING-INFORMATION.POLICY-NUMBER
+#INV-LINE-TYPE         := #DETAIL-RECORD
+#INV-TYPE              := #ACH-BILL-TYPE
+#INV-DATE              := #DATN
+#INV-PAYOR-NAME        := BILLING-INFORMATION.OWNER-NAME
+#INV-AMOUNT            := #AMOUNT-DUE
+*   #INV-TRAN-CODE(1)      := #ACH-TRAN-CODE
+*   MOVE EDITED #TOT-DUE (EM=99999999.99) TO #INV-TRAN-AMOUNT (1)
+*
+CALLNAT 'INVN0001' #INVOICE-RECORD #INV-LINE-TYPE #INV-I #INV-INVOICE-LINE
+IF #SERVICE
+  #ISSUE-DATE := FUNCTION-DATE(<#ISSUE-DATE>)
+  EXAMINE #INV-SCAN-LINE FOR '00000000' REPLACE #ISSUE-DATE-A
+  EXAMINE #INVOICE-RECORD FOR '00000000' REPLACE #ISSUE-DATE-A  
+END-IF
+BILLING-INFORMATION.BILLING-BAR-CODE := #INV-SCAN-LINE
+WRITE WORK FILE 7 #INVOICE-RECORD
+*                                                                                   /* YK1 end
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE FORMAT-ADDRESS-NAME
+*************************************
+*
+BILLING-INFORMATION.OWNER-EMAIL := #OWNER-EMAIL
+#Dynamic_Name := '!L'                                     /*  bz-Name
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+BILLING-INFORMATION.OWNER-NAME := #Dynamic_Name
+*
+#Dynamic_Name := '!L'                                     /*  bz-Name
+CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name
+BILLING-INFORMATION.INSURED-NAME := #Dynamic_Name
+*
+#Dynamic_Name := 'S1'                                     /*  bz-Name 
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+* #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >)   /*  bz-Name
+BILLING-INFORMATION.OWNER-SALUTATION    := #Dynamic_Name
+*
+#ADD-CONTACT-ID := #OWNER-CONTACT-ID
+#ADD-TYPE       := #PRIMARY
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+BILLING-INFORMATION.ADDRESS-1  := #ADD-LINE-1
+BILLING-INFORMATION.ADDRESS-2  := #ADD-LINE-2
+BILLING-INFORMATION.ADDRESS-3  := #ADD-LINE-3
+*
+* populate indicator with 'N' for undeliverable addresses
+* leave blank if address is correct
+IF #ADD-RETURNED-MAIL = 'Y' THEN
+  BILLING-INFORMATION.DELIVERABLE-IND := 'N'
+END-IF
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE PROCESS-ERROR
+*******************************
+*
+IF *ERROR-NR = 1320
+  COMPRESS 'Policy Number field is not valid - '
+    BILLING-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+ELSE
+  COMPRESS 'Error in processing Policy Number -'
+    BILLING-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+END-IF
+ERROR-PROGRAM := *PROGRAM
+ERROR-NUMBER  := *ERROR-NR
+ERROR-LINE    := *ERROR-LINE
+CALLNAT 'GPRN0003' ERROR-LOG
+#ERROR := 'Y'
+ESCAPE ROUTINE IMMEDIATE
+END-SUBROUTINE
+*
+END

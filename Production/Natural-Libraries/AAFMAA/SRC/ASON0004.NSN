@@ -1,0 +1,167 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram ASON0004.
+/**
+/** :author nguentchev
+***********************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG  REASON
+* NGG 06/10/2013   NG1  Correct Annuity amount Ticket 2042 calling the right 
+*                       calculation program
+***********************************************************************
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-SUFFIX (A3)
+1 Annuity    (N7.2) /* Amt to annuitize
+1 GenderA    (A1)
+1 AgeA       (N4)
+1 CN         (N6)
+1 ISSUE-DATE (N8)
+1 Form-Line (A78/1:V) /* 1:12,...X:X+11
+LOCAL
+1 Annuity-amount     (N7.2)
+1 Tax-Monthly        (N7.2)
+1 CNT VIEW OF A-CONTACTS
+  2 CONTACT-ID       (N8)
+  2 GENDER-CD        (A1)
+  2 DATE-OF-BIRTH    (N8.0)
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID (N8)
+  2 ROLE-1-CD (A1)
+  2 CONTACT-2-ID (N8)
+  2 ROLE-2-CD (A1)
+*
+1 Gender             (A1/2)
+1 Age                (N4/2)
+1 Annuity-factor     (N4.5)
+1 Expctncy-amount-LS (N7.2)
+1 Tax-Procent-LS     (N2.7)
+1 Tax-Amount-LS      (N7.2)
+1 #Annuity-amount    (N7.2/5)
+1 #Expectancy-amount (N7.2/5)
+1 #Tax-Percent       (N2.7/5)
+1 #Tax-Monthly       (N7.2/5)
+1 #Tax-Amount        (N7.2/5)
+
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY    (N4)
+  2 #MM      (N2)
+  2 #DD      (N2)
+1 #AMT-12            (A12)
+1 #Issue-Date        (A10)
+1 #CGA-ORIG-COMMAND  (A2)
+1 #CGA-SCR-ID        (N9)
+1 #CGA-CLERK         (A3)
+1 #BOP-RESV-AMT-A    (N9.2)
+1 #BOP-RESV-AMT-B    (N9.2)
+*
+END-DEFINE
+*
+IF CN > 0  /* Joint and survivor option
+  Gender (1) := GenderA
+  Age    (1) := AgeA
+  RESET Gender (2) Age (2)
+  FIND (1) CNT WITH ID-NUMBER = CN
+    FIND CR-V WITH CONTACT-1-ID = CONTACT-ID
+      IF ROLE-1-CD = 'S'
+        FIND (1) CNT WITH CONTACT-ID = CONTACT-2-ID
+          Gender (2) := GENDER-CD
+          MOVE *DATN TO #YYYYMMDD
+          SUBTRACT DATE-OF-BIRTH FROM #YYYYMMDD
+          Age (2) := #YYYY
+        END-FIND
+        ESCAPE BOTTOM
+      END-IF
+    END-FIND
+  END-FIND
+*
+  IF Gender (2) NE ' '
+    CALLNAT 'ASONLS01'
+      Annuity
+      Gender           (*)
+      Age              (*)
+      Annuity-amount
+      Annuity-factor
+      Expctncy-amount-LS
+      Tax-Procent-LS
+      Tax-Monthly
+      Tax-Amount-LS
+*
+    Form-Line (4) := ' In accordance with your application, we have annuitized your ANNUITYLIFE'
+    Form-Line (5) := 'policy issued YYYY with election of Joint and Survivor Annuity option.'
+    Form-Line (6) := ' Beginning immediately, you shall receive a monthly check of $$$'
+    Form-Line (7) := 'of which $$$ is taxable.This amount shall continue until the last'
+    Form-Line (8) := 'surviving spouse dies,at which time the annuity shall be terminated.'
+    Form-Line (9) := ' Feel free to contact AAFMAA should you have questions or we could be of'
+    Form-Line (10) := 'further assistance. As always it is a pleasure to serve you.'
+  ELSE
+    PERFORM INDIVIDUAL-ANNU
+  END-IF
+ELSE
+  PERFORM INDIVIDUAL-ANNU
+END-IF
+*
+MOVE ISSUE-DATE TO #YYYYMMDD
+COMPRESS #MM #DD #YYYY INTO #Issue-Date WITH '/'
+EXAMINE Form-Line (5) FOR 'YYYY' REPLACE WITH #Issue-Date
+*
+MOVE EDITED Annuity-amount (EM=ZZZ,ZZZ.99) TO #AMT-12
+MOVE LEFT #AMT-12 TO #AMT-12
+COMPRESS '$' #AMT-12 INTO #AMT-12 LEAVING NO
+EXAMINE Form-Line (6) FOR '$$$' REPLACE WITH #AMT-12
+*
+MOVE EDITED Tax-Monthly (EM=ZZZ,ZZZ.99) TO #AMT-12
+MOVE LEFT #AMT-12 TO #AMT-12
+COMPRESS '$' #AMT-12 INTO #AMT-12 LEAVING NO
+EXAMINE Form-Line (7) FOR '$$$' REPLACE WITH #AMT-12
+*
+DEFINE INDIVIDUAL-ANNU
+/*     ===============
+*                                                      NG1  Start
+**CALLNAT 'ASON0001'
+*  Annuity
+*  GenderA
+*  AgeA
+*  #Annuity-amount (*)
+*  #Expectancy-amount (*)
+*  #Tax-Percent (*)
+*  #Tax-Monthly (*)
+*  #Tax-Amount  (*)
+*
+CALLNAT 'GANNUSXX'
+  #CGA-ORIG-COMMAND
+  #CGA-SCR-ID
+  #CGA-SCR-SUFFIX
+  #CGA-CLERK
+*
+  Annuity              /* #BOP-ANNUITIZE
+  GenderA              /* #BOP-SEX
+  AgeA                 /* #BOP-BENE-AGE
+  #Annuity-amount (1)  /* #BOP-BENE-A
+  #Annuity-amount (2)  /* #BOP-BENE-B
+  #Annuity-amount (3)  /* #BOP-BENE-C
+  #BOP-RESV-AMT-A
+  #BOP-RESV-AMT-B
+  #Tax-Percent (1)     /* #BOP-TAXBL-PCT-A
+  #Tax-Percent (2)     /* #BOP-TAXBL-PCT-B
+  #Tax-Amount  (1)     /* #BOP-TAXBL-AMT-A
+  #Tax-Amount  (2)     /* #BOP-TAXBL-AMT-B
+  #Tax-Monthly (1)     /* #BOP-TAXBL-MON-A
+  #Tax-Monthly (2)     /* #BOP-TAXBL-MON-B
+  ISSUE-DATE
+*                                                      NG1 End
+Form-Line (4) := ' In accordance with your application, we have annuitized your ANNUITYLIFE'
+Form-Line (5) := 'policy issued YYYY with election of Individual Annuity option.'
+Form-Line (6) := ' Beginning immediately, you shall receive a monthly check of $$$'
+Form-Line (7) := 'of which $$$ is taxable.'
+Form-Line (8) := ' Feel free to contact AAFMAA should you have questions or we could be of'
+Form-Line (9) := 'further assistance. As always it is a pleasure to serve you.'
+Annuity-amount := #Annuity-amount (1)
+Tax-Monthly    := #Tax-Monthly    (1)
+END-SUBROUTINE
+*
+END

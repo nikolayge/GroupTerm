@@ -1,0 +1,161 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GOCON001 - The contact update/add routine
+*
+* The rules are:
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* NGG    04/04/2011  None    Program written                           *
+* NGG    11/04/2011  NG1     BLANK PHONE FIX
+* NGG    11/04/2011  NG2     ACCEPT BLANK CONTACT ID
+************************************************************************
+DEFINE DATA
+PARAMETER USING GOPHA001
+PARAMETER
+1 #CLERK-ID  (A3)
+1 #MSG       (A) DYNAMIC
+1 #UPDATED   (L)
+LOCAL
+1 #L                                  (I4)
+1 #X                                  (I4)
+1 #PHONE-A     (A20) 1 REDEFINE #PHONE-A
+  2 #PHONE-N   (N20)
+1 REDEFINE #PHONE-A
+  2 P3         (A3)
+  2 N7         (A7)
+  2 EXT        (A10)
+1 #IN-PHONE     (A20) 1 REDEFINE #IN-PHONE
+  2 #IN-PHONE-N (N20)
+1 #DIGIT     (A1)
+*
+1 PHONE VIEW OF A-CONTACT-PHONE
+  2 PHONE-ID                          (N8.0)  /* D Phone ID
+  2 CONTACT-ID                        (N8.0)  /* D Contact ID
+  2 INTL-ACCESS-CODE                  (N3.0)  /*   International Access Code
+  2 INTL-DIAL-NUMBER                  (N20.0) /*   International Dial Number
+  2 AREA-CODE                         (N3.0)  /* D Area Code
+  2 DIAL-NUMBER                       (N7.0)  /*   Dial Number
+  2 EXT                               (N6.0)  /*   Extension
+  2 PREFERRED-PHONE-IND               (A1)    /*   Preferred Phone
+  2 BEST-TIME-TO-CALL                 (A1)    /*   Morn / After / Night
+  2 INVALID-IND                       (A1)    /*   Phone invalid
+  2 PHONE-TYPE-CODE                   (A1)    /*   Home/Work/Fax/etc
+  2 TYPE                              (A1)    /*   Domestic / International
+  2 REMARKS                           (A70/3)
+  2 START-DATE                        (N8.0)  /*   Phone start date
+  2 END-DATE                          (N8.0)  /*   Phone end date
+  2 LAST-DATE-UPD                     (N8.0)  /*   Last date update
+  2 REDEFINE LAST-DATE-UPD
+    3 LAST-DATE-UPD-A          (A8)
+  2 LAST-TIME-UPD                     (N7.0)  /*   Last time update
+  2 REDEFINE LAST-TIME-UPD
+    3 LAST-TIME-UPD-A          (A7)
+  2 LAST-USER-UPD                     (A8)    /*   Last update user
+1 BLANK        (A1) CONST <' '>
+END-DEFINE
+*
+IF #MSG = 'ZERO ACCEPTED'             /* NG2
+  RESET #MSG
+ELSE
+  IF #PHONE.CONTACT-ID = 0
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF #MSG = 'CREATE CLONE'
+  RESET #MSG
+ELSE
+  RESET #PHONE-A PHONE #L
+  #IN-PHONE := #PHONE.INTL-DIAL-NUMBER-A
+  FOR #X 1 TO 20
+    #DIGIT := SUBSTR(#IN-PHONE,#X,1)
+    IF #DIGIT = '+' OR= '-' OR= '.' OR= ' '
+      ESCAPE TOP
+    END-IF
+    IF #DIGIT IS (N1)
+      ADD 1 TO #L
+      COMPRESS #PHONE-A #DIGIT INTO #PHONE-A LEAVING NO
+    END-IF
+  END-FOR
+  IF #PHONE-A = BLANK     /* NG1
+    ESCAPE ROUTINE
+  END-IF
+  IF #PHONE.INTL-ACCESS-CODE > 0
+    IF P3 = '011'
+      RESET P3
+    END-IF
+    MOVE RIGHT JUSTIFIED #PHONE-A TO #PHONE-A
+    #PHONE.INTL-DIAL-NUMBER := #PHONE-N
+  ELSE
+    IF P3 = '011'
+      RESET P3
+      #PHONE.INTL-ACCESS-CODE := 11
+      MOVE RIGHT JUSTIFIED #PHONE-A TO #PHONE-A
+      #PHONE.INTL-DIAL-NUMBER := #PHONE-N
+    ELSE  /* DOMESTIC
+      #PHONE.AREA-CODE := VAL ( P3 )
+      RESET P3
+      #PHONE.DIAL-NUMBER := VAL (N7)
+      RESET N7
+      MOVE RIGHT JUSTIFIED #PHONE-A TO #PHONE-A
+      IF #PHONE.EXT = 0
+        #PHONE.EXT := #PHONE-N
+      END-IF
+      RESET #PHONE.INTL-DIAL-NUMBER #PHONE.INTL-ACCESS-CODE
+    END-IF
+  END-IF
+END-IF
+PERFORM PHONE-UPDATE
+*
+DEFINE PHONE-UPDATE
+/*     ============
+IF #PHONE.PHONE-ID > 0
+  FIND (1) PHONE WITH PHONE-ID = #PHONE.PHONE-ID
+    MOVE BY NAME #PHONE TO PHONE
+    IF #PHONE.INTL-ACCESS-CODE = 0
+      PHONE.TYPE := 'D'
+    ELSE
+      PHONE.TYPE := 'I'
+    END-IF
+    PHONE.LAST-DATE-UPD  := *DATN
+    PHONE.LAST-TIME-UPD  := *TIMN
+    IF #CLERK-ID = BLANK
+      PHONE.LAST-USER-UPD  := *USER
+    ELSE
+      PHONE.LAST-USER-UPD  := #CLERK-ID
+    END-IF
+    UPDATE
+  END-FIND
+ELSE
+  MOVE BY NAME #PHONE TO PHONE
+  IF #PHONE.INTL-ACCESS-CODE = 0
+    PHONE.TYPE := 'D'
+  ELSE
+    PHONE.TYPE := 'I'
+  END-IF
+  CALLNAT 'ADRNT003' PHONE.PHONE-ID
+  PHONE.LAST-DATE-UPD  := *DATN
+  PHONE.LAST-TIME-UPD  := *TIMN
+  IF #CLERK-ID = BLANK
+    PHONE.LAST-USER-UPD  := *USER
+  ELSE
+    PHONE.LAST-USER-UPD  := #CLERK-ID
+  END-IF
+  STORE PHONE
+  MOVE BY NAME PHONE TO #PHONE
+END-IF
+#UPDATED := TRUE
+END-SUBROUTINE
+*
+ON ERROR
+  COMPRESS 'Phone add:' *ERROR-NR *ERROR-LINE *PROGRAM *DATN *TIME INTO #MSG
+    WITH DELIMITER ':'
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

@@ -1,0 +1,325 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Family Information
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09012010       Initial Creation
+* YAK    06282012  YK1  Sync with CRM using ContactID
+* YAK    05012015  YK2  MC-II - Check Pending request
+* YAK    01072016  YK2  MC-II - FIR Add new fields
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING MBCA0006
+LOCAL USING OBJACTRL
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 FUNCTION_CODE     (A) DYNAMIC CONST <'FAMILY'>
+1 #GET-FAMILY       (A) DYNAMIC CONST <'GET-FAMILY'>
+1 #GET-CONTACT      (A) DYNAMIC CONST <'GET'>
+1 #FIR-REPORT       (A200)
+1 #TAB              (A1) INIT <H'09'>
+1 #value            (A) DYNAMIC
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #DATN             (N8)
+1 #VALIDATION-RESULT (A) DYNAMIC
+1 #ContactID         (N8)                          /* YK1
+1 #Get               (A) DYNAMIC CONST <'0'>
+1 #Add               (A) DYNAMIC CONST <'1'>
+1 #Update            (A) DYNAMIC CONST <'2'>
+1 #Delete            (A) DYNAMIC CONST <'3'>
+1 #UpdateFlag        (A) DYNAMIC CONST <'4'>
+1 #INIT-ACTION       (A) DYNAMIC
+1 #FamilyMembers     (*)
+  2 ContactId        (N8)
+  2 Relation         (A1)
+1 #CN                (N6)
+1 #I                 (I2)
+1 #XML              (A) DYNAMIC
+1 #SSN              (A) DYNAMIC
+1 #DEL              (A1) CONST <'-'>
+1 #TRUE             (A) DYNAMIC CONST <'true'>
+1 #FALSE            (A) DYNAMIC CONST <'false'>
+1 #YES              (A1) CONST <'Y'>
+1 #NO               (A1) CONST <'N'>
+1 #NoFamilyFlag     (A) DYNAMIC INIT <'false'>                /* YK2
+1 #F-FLAG           (A1)                                      /* YK2
+1 #ProcessName      (A) DYNAMIC CONST <'ManageFamilyInfo'>    /* YK2
+*
+END-DEFINE
+*
+#DATN := *DATN
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic
+*
+#INIT-ACTION := FamilyInformation.ActionType
+#CN := FamilyInformation.MemberCN
+#ContactId := F-GET-CONTACT-ID(<FamilyInformation.MemberCN>)
+*
+DECIDE ON FIRST VALUE FamilyInformation.ActionType
+  VALUE #Get
+      F-FAMILY-FLAG(<#CN,#F-FLAG>)
+    IF #F-FLAG = #YES
+      #NoFamilyFlag := #TRUE
+    ELSE
+      #NoFamilyFlag := #FALSE
+      PERFORM GET-FAMILY-INFO
+    END-IF
+  VALUE #Add, #Update, #Delete
+    IF #NoFamilyFlag = #TRUE
+      #F-FLAG := #YES
+        F-FAMILY-FLAG(<#CN,#F-FLAG>)
+    ELSE
+      #F-FLAG := #NO
+        F-FAMILY-FLAG(<#CN,#F-FLAG>)
+      PERFORM UPDATE-FAMILY-INFO
+    END-IF
+  NONE VALUE
+    #ErrorCode := #ACTION-INVALID
+END-DECIDE
+*
+PERFORM COMPOSE-XML
+*
+*********************************
+DEFINE SUBROUTINE GET-FAMILY-INFO
+*********************************
+* Call Get program
+RESET FamilyInformation
+RESET INITIAL #ErrorCode
+FamilyInformation.ContactID  := #ContactID
+FamilyInformation.ActionType := #GET-FAMILY
+EXPAND ARRAY #FamilyMembers TO (*:1)
+CALLNAT 'MBCN0061' FamilyInformation #ErrorCode #FamilyMembers(*)
+*
+FOR #I = 1 TO *OCCURRENCE(#FamilyMembers.ContactID)
+  RESET FamilyInformation
+  RESET INITIAL #ErrorCode
+  FamilyInformation.MemberCN   := #CN
+  FamilyInformation.ContactID  := #FamilyMembers.ContactID(#I)
+  FamilyInformation.RelationshipCode := #FamilyMembers.Relation(#I)
+  FamilyInformation.ActionType := #GET-CONTACT
+  CALLNAT 'MBCN0061' FamilyInformation #ErrorCode
+  IF #ErrorCode = '0'
+    PERFORM COMPOSE-XML-GET
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE UPDATE-FAMILY-INFO
+************************************
+* YK2 >
+IF F-PENDING-REQUEST(<FamilyInformation.MemberCN,#ProcessName>)
+  #ErrorCode := #PENDING-REQUEST
+  PERFORM COMPOSE-XML
+  ESCAPE MODULE
+END-IF
+* > YK2
+* Call Business Logic for Add/Update
+CALLNAT 'MBCN0062' FamilyInformation #ErrorCode #VALIDATION-RESULT
+IF #ErrorCode = '0'
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+END-SUBROUTINE
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'FamilyMembers/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      FamilyInformation.MemberCN := VAL(#value)
+    END-IF
+  VALUE 'FamilyMembers/UserID/$'
+    FamilyInformation.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/ActionType/$'
+    FamilyInformation.ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/NoFamily/$'
+    #NoFamilyFlag := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      FamilyInformation.IdNumber := VAL(#value)
+    END-IF
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/ContactID/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      FamilyInformation.ContactID := VAL(#value)
+    END-IF
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/Prefix/$'
+    FamilyInformation.Prefix := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/FirstName/$'
+    FamilyInformation.FirstName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/MiddleName/$'
+    FamilyInformation.MiddleName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/LastName/$'
+    FamilyInformation.LastName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/SSN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    EXAMINE #value for '-' DELETE
+    FamilyInformation.SSN := val(#value)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/Suffix/$'
+    FamilyInformation.Suffix := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/RelationshipCode/$'
+    FamilyInformation.RelationshipCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/NewRelationshipCode/$'
+    FamilyInformation.NewRelationshipCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/GenderCode/$'
+    FamilyInformation.GenderCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/DateOfBirth/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      FamilyInformation.DateOfBirth := VAL(#value)
+    END-IF    
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/CurrentSpouseDateOfMarriage/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      FamilyInformation.SpouseDateOfMarriage := VAL(#value)
+    END-IF
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/CurrentSpouseDateOfDivorce/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      FamilyInformation.SpouseDateOfDivorce := VAL(#value)
+    END-IF
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/FormerSpouseDateOfMarriage/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      FamilyInformation.FormerSpouseDateOfMarriage := VAL(#value)
+    END-IF
+  VALUE 'FamilyMembers/FamilyMemberList/FamilyMemberInfo/FormerSpouseDateOfDivorce/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      FamilyInformation.FormerSpouseDateOfDivorce := VAL(#value)
+    END-IF
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-XML-GET
+*********************************
+*
+* select A_CONTACTS.ID_Number, A_CONTACTS.CONTACT_ID, A_CONTACTS.ID_NUMBER,  " +
+* " A_CONTACTS.FIRST_NAME, A_CONTACTS.MIDDLE_NAME, A_CONTACTS.LAST_NAME,  " +
+* " A_CONTACTS.GENDER_CD, A_CONTACTS.DATE_OF_BIRTH, A_CONTACTS.SSN,  " +
+* " A_CONTACTS.SUFFIX, A_CONTACTS.PREFIX_TITLE, A_CONTACT_RELATIONSHIPS.ROLE_2_CD , " +
+* " A_Status.former_spouse_status,A_Status.Status_code_sp  "
+*
+MOVE EDITED FamilyInformation.SSN (EM=999-99-9999) TO #SSN
+COMPRESS #XML
+  '<FamilyMemberInfo>'
+  '<ContactID>' FamilyInformation.ContactId '</ContactID>'
+  '<CN>' FamilyInformation.IdNumber '</CN>'
+  '<RelationshipCode>' FamilyInformation.RelationshipCode '</RelationshipCode>'
+  '<Prefix>' FamilyInformation.Prefix '</Prefix>'
+  '<FirstName>' FamilyInformation.FirstName '</FirstName>'
+  '<LastName>' FamilyInformation.LastName  '</LastName>'
+  '<MiddleName>' FamilyInformation.MiddleName '</MiddleName>'
+  '<Suffix>' FamilyInformation.Suffix '</Suffix>'
+  '<FullName>' FamilyInformation.FullName '</FullName>'
+  '<DateOfBirth>' FamilyInformation.DateofBirth '</DateOfBirth>'
+  '<DateOfDeath>' FamilyInformation.DateofDeath '</DateOfDeath>'
+  '<GenderCode>' FamilyInformation.GenderCode '</GenderCode>'
+  '<SSN>' #SSN '</SSN>'
+  '<BirthCertificateInd>' FamilyInformation.BirthCertificateInd '</BirthCertificateInd>'
+  '<BirthCertCodeDescription>' FamilyInformation.BirthCertCodeDescription '</BirthCertCodeDescription>'
+  '<StatusCodeDescription>' FamilyInformation.StatusCodeDescription '</StatusCodeDescription>'
+  '<CurrentSpouseDateOfMarriage>' SpouseDateOfMarriage '</CurrentSpouseDateOfMarriage>'
+  '<CurrentSpouseDateOfDivorce>' SpouseDateOfDivorce '</CurrentSpouseDateOfDivorce>'
+  '<FormerSpouseDateOfMarriage>' FormerSpouseDateOfMarriage '</FormerSpouseDateOfMarriage>'
+  '<FormerSpouseDateOfDivorce>' FormerSpouseDateOfDivorce '</FormerSpouseDateOfDivorce>'
+  '</FamilyMemberInfo>' INTO #XML LEAVING NO
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+IF #ErrorCode <> '0'
+  IF #ErrorCode = '1'
+    #ErrorDescription := #VALIDATION-RESULT
+  ELSE
+    #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  END-IF
+END-IF
+*
+IF #ErrorCode = '0' AND #INIT-ACTION <> #Get
+  PERFORM LOG-REQUESTS
+END-IF
+*
+COMPRESS '<FamilyMembers>'
+  '<CN>' #CN '</CN>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '<NoFamily>' #NoFamilyFlag '</NoFamily>'
+  '<FamilyMemberList>'
+  #XML
+  '</FamilyMemberList>'
+  '</FamilyMembers>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE LOG-REQUESTS
+******************************
+* save FIR request
+WRITE WORK FILE 2 FamilyInformation.MemberCN
+CLOSE WORK FILE 2
+COMPRESS FULL #CN #TAB FUNCTION_CODE #TAB #DATN #TAB
+  FirstName #TAB MiddleName #TAB LastName #TAB
+  DateOfBirth #TAB RelationshipCode #TAB
+  ActionType TO #FIR-REPORT
+WRITE WORK FILE 3 #FIR-REPORT
+CLOSE WORK FILE 3
+* Update "Profile Update Date" on Web User File
+  F-PROFILE-UPDATE-DATE(<FamilyInformation.MemberCN>)
+* Log CRM request
+#ContactID := F-GET-CONTACT-ID(<FamilyInformation.MemberCN>)    /* YK1
+CALLNAT 'MBRCRC' #ContactID FUNCTION_CODE                       /* YK1
+END-SUBROUTINE
+*
+END

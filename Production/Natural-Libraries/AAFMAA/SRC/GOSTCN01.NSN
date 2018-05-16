@@ -1,0 +1,190 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  GOSTCN01 
+* 1. Populate Contact Info  in STATUS 
+* Prerequisites: Field MEMBER-CONTACT-ID must has correct value
+* Usage 
+* CALLNAT 'GOSTCN01' p_CN p_Err p_Err_Dscr p_Mod
+* Parameters: 
+*  p_CN       (N6)        
+*  p_Err      (N4)  
+*  p_Err_Dscr (A78)   
+*  p_Mod      (A1)  
+* bz created 05/15/2011
+* RE RE1 modified 04/24/2012 add DEATH-CERT-CODE
+* TMT TT1 06/23/2014  Contact Normalization - removed DOB and SEX from Status file
+DEFINE DATA 
+PARAMETER 
+1 p_CN       (N6)
+1 p_Err      (N4) 
+1 p_Err_Dscr (A78)
+1 p_Mod      (A1)  
+LOCAL
+1 ST-V VIEW OF A-STATUS
+   2 ID-NUMBER
+   2 MEMBER-CONTACT-ID
+   2 PROCESS-IND 
+   2 INTRO-FLAG
+   2 MEMBER-FLAG
+   2 WIDOW-FLAG 
+*
+   2 NAME
+*    2 SEX                               /* TT1
+   2 SSN  
+*    2 DATE-OF-BIRTH                     /* TT1
+   2 DATE-OF-DIVORCE
+   2 DATE-OF-DEATH
+   2 BIRTH-CERT-CODE
+   2 DEATH-CERT-CODE                /* RE1
+   2 ACCESS-AUTH-CODE
+*
+   2 SPOUSE-CONTACT-ID
+   2 STATUS-CODE-SP
+   2 BIRTH-CERT-CODE-SP
+   2 TITLE-SP
+   2 NAME-SP
+   2 SSN-SP 
+*    2 SEX-SP                            /* TT1
+*    2 DATE-OF-BIRTH-SP                  /* TT1
+*   
+   2 FORMER-SPOUSE-CONTACT-ID
+   2 FORMER-SPOUSE-NAME
+   2 FORMER-SPOUSE-SSN        
+*    2 FORMER-SPOUSE-DT-OF-BIRTH         /* TT1
+   2 FORMER-SPOUSE-STATUS      
+   2 FORMER-SPOUSE-DATE-OF-MARRIAGE
+   2 FORMER-SPOUSE-DATE-OF-DIVORCE
+   2 FS-BIRTH-CERT-CD
+   2 DTS-DATN                 
+   2 DTS-TIMN                 
+*
+1 CNT-V VIEW OF A-CONTACTS
+   2 ID-NUMBER
+   2 CONTACT-ID       (N8)         /* D
+   2 PREFIX-TITLE
+   2  FULL-NAME
+      3  FIRST-NAME
+      3  MIDDLE-NAME
+      3  LAST-NAME
+      3  SUFFIX
+   2  DATE-OF-BIRTH
+   2  BIRTH-CERT-CODE
+   2  DATE-OF-DEATH
+   2  DEATH-CERT-CODE
+   2  SSN
+   2  GENDER-CD
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+   2 CONTACT-1-ID             
+   2 ROLE-1-CD                
+   2 CONTACT-2-ID             
+   2 ROLE-2-CD
+   2 ACCESS-AUTH-SVC
+*   
+1 v_A25                   (A25)
+1 v_YYYYMMDD              (N8) INIT <*DATN>
+1 REDEFINE v_YYYYMMDD     
+  2 v_YYYYMM              (N6) 
+END-DEFINE
+*
+  ON ERROR 
+     p_Err := *ERROR-NR
+     COMPRESS 'Natural Error:'  *PROGRAM *ERROR-NR  'Error Line:' *ERROR-LINE INTO p_Err_Dscr
+     ESCAPE ROUTINE 
+  END-ERROR 
+* 
+  IF p_CN = 0
+     p_Err := 0001  COMPRESS 'CN = 0' INTO p_Err_Dscr  ESCAPE ROUTINE 
+  END-IF
+*   
+  FST.
+  FIND (1) ST-V WITH ID-NUMBER = p_CN
+*
+     IF NO RECORD FOUND
+          p_Err := 0002  COMPRESS 'CN:' p_CN 'NOT FOUND' INTO p_Err_Dscr  ESCAPE ROUTINE 
+     END-NOREC
+*
+     IF MEMBER-CONTACT-ID = 0
+        p_Err := 0003  COMPRESS 'CN:' p_CN 'MEMBER-CONTACT-ID = 0' INTO p_Err_Dscr  ESCAPE ROUTINE 
+     END-IF 
+*
+     FIND (1) CNT-V WITH CNT-V.CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+         IF NO RECORD FOUND 
+                   p_Err := 0004
+                   COMPRESS 'CN:' p_CN 'CI:' MEMBER-CONTACT-ID 'Not Found' INTO p_Err_Dscr
+                   ESCAPE ROUTINE
+         END-NOREC
+         PERFORM CNT-TO-STATUS-MEM
+     END-FIND
+     FIND  CR-V WITH CR-V.CONTACT-1-ID = ST-V.MEMBER-CONTACT-ID
+        FIND (1) CNT-V WITH CNT-V.CONTACT-ID = CONTACT-2-ID
+               IF NO RECORD FOUND
+                   p_Err := 0005
+                   COMPRESS 'CN:' p_CN 'CI:' MEMBER-CONTACT-ID 'Role:' ROLE-2-CD 'CI-2:' CONTACT-2-ID
+                   'Not Found'  INTO p_Err_Dscr
+                   ESCAPE ROUTINE  
+               END-NOREC 
+          DECIDE ON FIRST VALUE OF ROLE-2-CD
+             VALUE 'S'     
+                 SPOUSE-CONTACT-ID :=  CNT-V.CONTACT-ID
+                 PERFORM CNT-TO-STATUS-SP
+             VALUE 'X'
+                 FORMER-SPOUSE-CONTACT-ID :=  CNT-V.CONTACT-ID 
+                 PERFORM CNT-TO-STATUS-FSP
+            NONE IGNORE
+          END-DECIDE  
+        END-FIND
+     END-FIND
+  UPDATE (FST.)
+END-FIND  
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE CNT-TO-STATUS-MEM
+        PERFORM DO-NAME-25
+        ST-V.NAME              := v_A25
+*         ST-V.SEX               := CNT-V.GENDER-CD           /* TT1
+        ST-V.SSN               := CNT-V.SSN
+*         ST-V.DATE-OF-BIRTH     := CNT-V.DATE-OF-BIRTH       /* TT1
+        ST-V.BIRTH-CERT-CODE   := CNT-V.BIRTH-CERT-CODE
+        ST-V.DATE-OF-DEATH     := CNT-V.DATE-OF-DEATH        
+        ST-V.DEATH-CERT-CODE   := CNT-V.DEATH-CERT-CODE    /* RE1
+        ST-V.ACCESS-AUTH-CODE  := CR-V.ACCESS-AUTH-SVC
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE CNT-TO-STATUS-SP
+        PERFORM DO-NAME-25
+        ST-V.NAME-SP              := v_A25
+        ST-V.TITLE-SP             := CNT-V.PREFIX-TITLE
+*         ST-V.SEX-SP               := CNT-V.GENDER-CD         /* TT1
+        ST-V.SSN-SP               := CNT-V.SSN
+*         ST-V.DATE-OF-BIRTH-SP     := CNT-V.DATE-OF-BIRTH     /* TT1
+        ST-V.BIRTH-CERT-CODE-SP   := CNT-V.BIRTH-CERT-CODE
+        ST-V.STATUS-CODE-SP       := 'S'
+        
+        IF CNT-V.DATE-OF-DEATH <> 0
+           ST-V.DATE-OF-DIVORCE := CNT-V.DATE-OF-DEATH
+        END-IF   
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE CNT-TO-STATUS-FSP
+        PERFORM DO-NAME-25
+        ST-V.FORMER-SPOUSE-NAME              := v_A25
+        ST-V.FORMER-SPOUSE-SSN               := CNT-V.SSN
+*         ST-V.FORMER-SPOUSE-DT-OF-BIRTH       := CNT-V.DATE-OF-BIRTH     /* TT1
+        ST-V.FS-BIRTH-CERT-CD                := CNT-V.BIRTH-CERT-CODE
+        ST-V.FORMER-SPOUSE-STATUS            := 'F'
+        IF CNT-V.DATE-OF-DEATH <> 0
+           ST-V.FORMER-SPOUSE-DATE-OF-DIVORCE := CNT-V.DATE-OF-DEATH
+        END-IF   
+END-SUBROUTINE
+DEFINE DO-NAME-25
+ COMPRESS LAST-NAME ",@" FIRST-NAME "@" MIDDLE-NAME ",@" SUFFIX INTO v_A25 LEAVING NO SPACE
+ EXAMINE v_A25 FOR "@@" REPLACE ' '
+ EXAMINE v_A25 FOR '@' REPLACE ' '
+ EXAMINE v_A25 FOR ' ,' REPLACE ','
+ IF v_A25 = MASK (*','/) EXAMINE DIRECTION  BACKWARD v_A25 FOR "," DELETE FIRST END-IF
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+END

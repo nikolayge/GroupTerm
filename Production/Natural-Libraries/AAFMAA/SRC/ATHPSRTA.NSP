@@ -1,0 +1,132 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPSRTA - Sort SUNGARD PA RECORDS
+*
+DEFINE DATA
+LOCAL
+*
+1 SUNGARD-PA      (A33)
+1 REDEFINE SUNGARD-PA
+ 2 SUN-ACCT-TRAN   (A4)
+ 2 SUN-CAT-1       (A2)
+ 2 SUN-CAT-2       (A2)
+ 2 SUN-STATE       (A2)
+ 2 SUN-AMT-SIGN    (A1)
+ 2 SUN-DB-CR       (A1)
+ 2 SUN-AMT         (N6.2)
+ 2 SUN-FILL        (A1)
+ 2 SUN-SOURCE      (A2)
+ 2 SUN-CN          (N6)
+ 2 REDEFINE SUN-CN
+  3 SUN-CN-A       (A6)
+ 2 SUN-TRAN        (A4)
+*
+1 ST-V VIEW OF A-STATUS
+ 2 X-ALT-LP-AMT   (9)
+ 2 X-ALT-LP-AMT-2 (9)
+ 2 X-ALT-LP-IND   (9)
+ 2 X-ALT-LP-IND-2 (9)
+*
+1 #TOT-PREP      (P7.2)
+1 #TOT-RIDP      (P7.2)
+1 #TOT-DUEP      (P7.2)
+1 #TOT-INT       (P7.2)
+1 #TOT-PRIN      (P7.2)
+1 #TOT-DB-CR     (P7.2)
+1 #TOT-DB-CR-UNDER (P7.2)
+1 #TOT-DB-CR-OVER  (P7.2)
+*
+1 #I1            (I2)
+1 #PRN-INT       (P7.2)
+1 #TOT-ALP       (P7.2)
+1 #LAST-CN       (N6)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X    /* not now used
+          'SUNGARD PA SORT'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+READ WORK 2 RECORD SUNGARD-PA
+*
+END-ALL
+*
+SORT BY SUN-CN SUN-TRAN
+  USING SUNGARD-PA
+  WRITE WORK 3 SUNGARD-PA
+*
+  IF SUN-CN NE #LAST-CN
+    RESET #PRN-INT
+  END-IF
+*
+* IF (SUN-TRAN = 'PREP') AND (SUN-CAT-1 = 'UN')
+  IF (SUN-TRAN = 'PREP') AND (SUN-ACCT-TRAN = '2236' OR = '2336')
+*
+    IF SUN-AMT-SIGN = '-'
+      ADD SUN-AMT TO #TOT-DB-CR-UNDER
+      SUBTRACT SUN-AMT FROM #TOT-DB-CR
+    ELSE
+      ADD SUN-AMT TO #TOT-DB-CR-OVER
+      ADD SUN-AMT TO #TOT-DB-CR
+    END-IF
+  ELSE
+    IF SUN-TRAN = 'PREP'
+      ADD SUN-AMT TO #TOT-PREP
+    ELSE
+      IF SUN-TRAN = 'RIDP'
+        ADD SUN-AMT TO #TOT-RIDP
+      ELSE
+        IF SUN-TRAN = 'DUEP'
+          ADD SUN-AMT TO #TOT-DUEP
+        ELSE
+          IF SUN-TRAN = MASK ('PRN')  /* PRN follows INT
+            ADD SUN-AMT TO #TOT-PRIN
+            ADD SUN-AMT TO #PRN-INT   /* accum this mbrs alp
+            RESET #TOT-ALP
+            FIND ST-V WITH MEMBER-KEY = SUN-CN-A
+              FOR #I1 1 TO 9
+                IF X-ALT-LP-IND (#I1) = '1' OR = '2'
+                  ADD X-ALT-LP-AMT   (#I1) TO #TOT-ALP
+                END-IF
+                IF X-ALT-LP-IND-2 (#I1) = '1' OR = '2'
+                  ADD X-ALT-LP-AMT-2 (#I1) TO #TOT-ALP
+                END-IF
+              END-FOR
+*
+              IF #PRN-INT NE #TOT-ALP
+                WRITE SUN-CN 'mismatched PRN pmt'
+                     'prn/int=' #PRN-INT 'ALP=' #TOT-ALP
+              END-IF
+            END-FIND
+            RESET #PRN-INT
+          ELSE
+            IF SUN-TRAN = MASK ('INT')  /* INT PRECEEDS PRN
+              ADD SUN-AMT TO #TOT-INT
+              ADD SUN-AMT TO #PRN-INT  /* accum this mbrs apl
+            ELSE
+              WRITE 'not PREP/RIDP/DUEP/PRN?/INT?/UN' SUN-TRAN SUN-CAT-1
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  MOVE SUN-CN TO #LAST-CN
+END-SORT
+*
+WRITE 'tot-PREP =' #TOT-PREP  (EM=Z,ZZZ,ZZZ.99)
+WRITE 'tot-DUEP =' #TOT-DUEP  (EM=Z,ZZZ,ZZZ.99)
+WRITE 'tot-RIDP =' #TOT-RIDP  (EM=Z,ZZZ,ZZZ.99)
+WRITE 'tot-PRN? =' #TOT-PRIN  (EM=Z,ZZZ,ZZZ.99)
+WRITE 'tot-INT? =' #TOT-INT   (EM=Z,ZZZ,ZZZ.99)
+WRITE 'Net-DB-CR=' #TOT-DB-CR (EM=Z,ZZZ,ZZZ.99)
+WRITE 'tot-DB-CR under=' #TOT-DB-CR-UNDER (EM=Z,ZZZ,ZZZ.99)
+WRITE 'tot-DB-CR over =' #TOT-DB-CR-OVER (EM=Z,ZZZ,ZZZ.99)
+*
+END

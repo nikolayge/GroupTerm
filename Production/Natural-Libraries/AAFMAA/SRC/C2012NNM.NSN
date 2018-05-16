@@ -1,0 +1,217 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* SERVICES                                                             *
+************************************************************************
+* NAME         : C2012NNM                                              *
+* DESCRIPTION  : Premier Service NM/AI                                 *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON                                         *
+* NGG    20120125      Initial Creation                                *
+* PAM    20120430  PM1 Added transaction processing                    *
+* NGG    20140506  NG1 Only returns Service amount due                 *
+* YAK    20140731  YK1 Fix PSM FPF                                     * 
+* NGG    20141023  NG2 Annuity multiple products                       *
+************************************************************************
+*
+* 1)Switch SVC-STATUS to A
+* 2)Update LAST-UPD-USER, LAST-UPD-DATE and LAST-UPD-TIME with current values
+* 3)If the insurance policy is a SP or SPF or AL, then the plan will be considered
+*   a 1-time payment plan. Update SVC-PAY-UP to Y and place the 1-time outstanding fee amount
+*   in the SVC-ONE-TIME-FEE bucket.
+* 4)Set SVC-MODE to the same MODE as the policy.
+* 5)Set SVC-ISSUE-AGE to the same issue age as the policy
+* 6)Set SVC-ISSUE-DATE to the same issue date as the policy
+* 7)Set SVC-PAID-TO-DATE the same as SVC-ISSUE-DATE
+* 8)Update  SVC-MONTHLY-RATE based on current SVC-ISSUE-AGE
+* 9)Set SVC-CONTRACT-NUMBER to the next available services contract number
+* 10)Set  SVC-ID-NUMBER with the CN
+* 11)Set  SVC-PLAN to the services plan
+* 12)Set  SVC-AT-NUMBER to the application number the plan was tied to
+* 13)Set SVC-FIRST-PLACE-FEE to the calculated amount (as described below).
+*    This will be used in the policy print process (and can be used on the deposit process).
+*
+DEFINE DATA
+PARAMETER
+1 #REQUEST      (A) DYNAMIC
+1 #CLERK-ID     (A3)
+1 #AT-NUMBER    (N6)
+1 #ACTIVE-SEG   (I2)
+1 #SVC-PAY-UP   (A1)
+1 #PSM-FPF      (N7.2)
+1 #MSG          (A) DYNAMIC
+LOCAL USING OBJAMR01
+LOCAL USING OBJAMB01
+LOCAL USING SVCA0003
+LOCAL USING GPRATR01   /* PM1
+LOCAL
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 CONTACT-ID (N8)
+  2 MODE       (A1)
+  2 PLAN       (A3)
+  2 DATE-OF-BIRTH (N8)
+  2 INTRO-FLAG (A1)
+  2 MEMBER-CN  (A6) 2 REDEFINE MEMBER-CN
+    3 MEMBER-CN-N (N6)
+  2 AT-STATUS   (A2) 2 REDEFINE AT-STATUS
+    3 AT-STATUS-1 (A1)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ISSUE-AGE             (A2/9) 2 REDEFINE ISSUE-AGE
+    3 ISSUE-AGE-N         (N2/9)
+  2 ISSUE-DATE            (N8/9)
+  2 PAID-TO-DATE          (N8/9)
+  2 MODE                  (A1/9)
+
+1 #MONTHS      (I4)
+1 #PAID-TO-DATE           (N8) 1 REDEFINE #PAID-TO-DATE
+  2 #PAID-TO-MON          (N6)
+1 REDEFINE #PAID-TO-DATE
+  2 #YYYY      (N4)
+  2 #MM        (N2)
+1 #ISSUE-DATE           (N8) 1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-MON          (N6)
+1 REDEFINE #ISSUE-DATE
+  2 I_YYYY      (N4)
+  2 I_MM        (N2)
+*
+1 #J           (I4)
+1 #GET-BY-AT   (A) DYNAMIC CONST <'GET_BY_AT'>
+1 BLANK        (A1) CONST <' '>
+1 YES          (A1) CONST <'Y'>
+1 ACTIVE       (A1) CONST <'A'>
+1 #NOT-EXIST   (A) DYNAMIC CONST <'No AT record exist'>
+1 #NOT-PENDING (A) DYNAMIC CONST <'Servese is not in pending status'>
+1 #UPDATE      (A) DYNAMIC CONST <'UPDATE'>
+1 #GET-FPF     (A7) CONST <'GET-FPF'>
+1 #SET-FPF     (A7) CONST <'SET-FPF'>
+*
+1 TR_FUNCTION_CODE        (A) DYNAMIC CONST <'Service'>   /* bz1 PM1
+END-DEFINE
+************************************************************************
+*
+FIND (1) AT-V WITH ID-NUMBER = #AT-NUMBER
+  IF NO RECORDS FOUND
+    #MSG := #NOT-EXIST
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+FIND (1) ST-V WITH ID-NUMBER = MEMBER-CN-N
+END-FIND
+IF #ACTIVE-SEG = 0
+  FOR #J 1 9
+    IF PAID-TO-DATE ( #J ) = 0
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+  #ACTIVE-SEG := #J - 1
+END-IF
+*
+**IF AT-V.PLAN = 'SP' OR= 'SPF' OR= 'AL'
+IF AT-V.PLAN = 'SP' OR= 'SPF' OR IS-ANNUITY-LIFE (< AT-V.PLAN >) /* NG2
+  #SVC-PAY-UP := 'Y'
+END-IF
+*
+RESET #SVC-MEMBER
+#SVC-MEMBER.SVC-AT-NUMBER := #AT-NUMBER
+CALLNAT 'OBJNMB01' #GET-BY-AT #MSG #SVC-MEMBER
+IF #MSG NE BLANK
+  ESCAPE ROUTINE
+END-IF
+*                                      NG1    \/\/\/
+IF #SVC-MEMBER.SVC-STATUS NE 'P'      
+  #MSG := #NOT-PENDING
+ELSE                                   /* YK1 < FIX Premier Services FPF
+  IF AT-V.MODE = 'G'
+    #PSM-FPF := #SVC-MEMBER.SVC-MONTHLY-RATE * 2
+  ELSE
+    #PSM-FPF := #SVC-MEMBER.SVC-MONTHLY-RATE * F-PAY-MONTHS(<AT-V.MODE>)
+  END-IF                               /* > YK1 
+*   RESET PARM-SVC
+*   PARM-SVC.ACTION := 'GET'
+*   PARM-SVC.SVC-MEMBER-ID := MEMBER-CN-N
+*   PARM-SVC.SVC-PLAN      := 'PSM'
+*   PARM-SVC.TRANSACTION-DATN := #SVC-MEMBER.SVC-ISSUE-DATE
+*   CALLNAT 'SVCN0003' PARM-SVC #MSG
+*   #PSM-FPF := SVC-AMOUNT-DUE
+END-IF
+ESCAPE ROUTINE
+*                                     NG1     /\/\/\
+* Not used because the service is independent from insurance  NG1     \/\/\/
+*
+* #SVC-MEMBER.SVC-STATUS    := ACTIVE
+* #SVC-MEMBER.SVC-PAY-UP    := #SVC-PAY-UP
+* IF ST-V.ISSUE-AGE-N ( #ACTIVE-SEG ) NE 0
+*   #SVC-MEMBER.SVC-ISSUE-AGE    := ST-V.ISSUE-AGE-N ( #ACTIVE-SEG )
+* END-IF
+* IF ST-V.ISSUE-DATE  ( #ACTIVE-SEG ) NE 0
+*   #SVC-MEMBER.SVC-ISSUE-DATE   := ST-V.ISSUE-DATE  ( #ACTIVE-SEG )
+* *
+* END-IF
+* #PAID-TO-DATE                := ST-V.PAID-TO-DATE ( #ACTIVE-SEG )
+* #SVC-MEMBER.SVC-MODE         := ST-V.MODE ( #ACTIVE-SEG )
+* *
+* #ISSUE-DATE                  := #SVC-MEMBER.SVC-ISSUE-DATE
+* #SVC-MEMBER.SVC-PAID-TO-DATE := #SVC-MEMBER.SVC-ISSUE-DATE
+* *     Get Plan Rates
+* #SVC-RATES.SVC-PLAN          := #SVC-MEMBER.SVC-PLAN
+* #SVC-RATES.SVC-PLAN-AGE-FROM := #SVC-MEMBER.SVC-ISSUE-AGE
+* CALLNAT 'SVCNMR02' #SVC-RATES #MSG
+* #SVC-MEMBER.SVC-MONTHLY-RATE := #SVC-RATES.SVC-PLAN-RATE / 12
+* IF #SVC-MEMBER.SVC-PAY-UP = YES
+*   #SVC-MEMBER.SVC-ONE-TIME-FEE    := #SVC-RATES.SVC-ONE-TIME-FEE
+*   #SVC-MEMBER.SVC-FIRST-PLACE-FEE := #SVC-MEMBER.SVC-ONE-TIME-FEE
+* ELSE
+*   RESET #SVC-MEMBER.SVC-ONE-TIME-FEE
+*   IF #PAID-TO-DATE = 0
+*     #PAID-TO-DATE := *DATN
+*   END-IF
+*   IF #ISSUE-DATE = 0
+*     #ISSUE-DATE := *DATN
+*   END-IF
+*   I_YYYY := #YYYY - I_YYYY
+*   #MONTHS := I_YYYY * 12 + #MM - I_MM
+*   IF #MONTHS = 0
+*     #SVC-MEMBER.SVC-FIRST-PLACE-FEE := SVC-MONTHLY-RATE
+*   ELSE
+*     #SVC-MEMBER.SVC-FIRST-PLACE-FEE := #MONTHS * SVC-MONTHLY-RATE
+*   END-IF
+* END-IF
+* #PSM-FPF := #SVC-MEMBER.SVC-FIRST-PLACE-FEE
+* IF #REQUEST = #SET-FPF
+*   #SVC-MEMBER.LAST-UPD-USER := *USER
+*   #SVC-MEMBER.LAST-UPD-USER := FUNCTION-CLERK (< #SVC-MEMBER.LAST-UPD-USER >)
+*   #SVC-MEMBER.LAST-UPD-DATE := *DATN
+*   #SVC-MEMBER.LAST-UPD-TIME := *TIMN
+*   CALLNAT 'OBJNMB01' #UPDATE #MSG #SVC-MEMBER   /* Apply member service record changes
+*   PERFORM CREATE-TRANSACTION-ENTRY              /* Create TR entry --- PM1
+*   CALLNAT 'MBRSVCY' MEMBER-CN-N #MSG            /* Synch status with CRM
+* END-IF
+* *
+* ************************************************************************
+* DEFINE SUBROUTINE CREATE-TRANSACTION-ENTRY                        /* PM1
+* ************************************************************************
+* *
+* BEFORE_IMAGE.SVC-ISSUE-DATE       := ' '
+* BEFORE_IMAGE.SVC-MODE             := ' '
+* BEFORE_IMAGE.SVC-STATUS           := 'P'
+* BEFORE_IMAGE.SVC-ISSUED-BY        := ' '
+* *
+* AFTER_IMAGE.SVC-ISSUE-DATE        := #SVC-MEMBER.SVC-ISSUE-DATE
+* AFTER_IMAGE.SVC-MODE              := #SVC-MEMBER.SVC-MODE
+* AFTER_IMAGE.SVC-STATUS            := #SVC-MEMBER.SVC-STATUS
+* AFTER_IMAGE.SVC-ISSUED-BY         := 'NM/AI Process - issued with insurance  policy'
+* *
+* TR_ID_NUMBER  := #SVC-MEMBER.SVC-ID-NUMBER
+* TR_NAME       := FUNCTION-CONTACT-NAME(<AT-V.CONTACT-ID>)
+* TR_CLERK      := #CLERK-ID
+* CALLNAT 'GPRNTR01' TR_FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+* *
+* END-SUBROUTINE
+*                                                             NG1  /\/\/\
+END

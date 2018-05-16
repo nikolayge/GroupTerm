@@ -1,0 +1,93 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* A000CCMC  Credit cards updated by members
+* 10/01/2016 bx
+* Run every Monday and Last Business day 
+* Consumed by Kathie 
+* Usage FETCH 'A000CCMC'  <LastBD>;<DayName>
+DEFINE DATA LOCAL
+1  CC-V VIEW OF A-CC-INFO
+  2 ID-NUMBER              
+  2 CC-EXPIRATION-YEAR    (A4)  
+  2 CC-EXPIRATION-MONTH   (A2)
+  2 LAST-USER-UPDATE      (A8)      
+  2 LAST-DATE-UPDATE      (N8)
+*
+ 1 ST-V VIEW OF A-STATUS  /* File No=40
+   2 ID-NUMBER
+   2 C*ACTIVE-SEGMENTS
+   2 ACTIVE-SEGMENTS(9)
+     3 STATUS
+     3 POLICY-ID
+     3 MODE
+*
+1 dm      (A1) INIT  <H'09'>
+1 #i              (I2)
+1 #n              (I2)
+*
+1 v_Parm (A30) 
+1 v_LBDM (A8)
+1 REDEFINE v_LBDM
+  2 v_LBDM_N (N8)
+1 v_DW3  (A3) 
+*
+1 First_Day (N8)
+1 REDEFINE First_Day
+  2 YYYYMM   (A6)
+  2 DD       (N2) 
+END-DEFINE
+ ON ERROR
+   WRITE NOTITLE  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR  
+ END-ERROR
+
+ IF *DATA <> 0
+    INPUT v_PARM
+    SEPARATE v_Parm INTO v_LBDM v_DW3 IGNORE WITH DELIMITER ';'
+ ELSE
+    PRINT 'No parameters. Now exit'
+    TERMINATE 4
+ END-IF
+
+ PRINT NOTITLE *PROGRAM 4x 'Today  :' *DATN 3x 'Run day: MON' / 'Parameters:' 'Last BD:' 2x v_LBDM 4x 'Today :' v_DW3 
+ IF v_DW3 <> 'MON' AND *DATN <> v_LBDM_N
+    PRINT 'Skip. Running on Monday or Last Business day only'
+    TERMINATE 4
+ END-IF    
+ 
+ PRINT 'Running'   
+ 
+* DEFINE WORK FILE 1 "/usr/SAG/TEMP/CC_Q.TXT"
+ WRITE WORK FILE 1 VARIABLE
+ 'CC for active policies with mode Q updated by Members this month'
+ WRITE WORK FILE 1 VARIABLE
+ 'CN' dm 'Exp-Y' dm 'Exp-M' dm 'User' dm 'Updated' dm 'Policy' dm 'Mode' dm 'Status'
+ 
+  First_Day := *DATN
+  DD        := 01
+  READ  CC-V
+     WHERE LAST-DATE-UPDATE > First_Day AND
+     LAST-USER-UPDATE = 'MEMBER'  
+        FIND(1) ST-V WITH ID-NUMBER = CC-V.ID-NUMBER
+          FOR #i = 1 TO C*ACTIVE-SEGMENTS
+            IF STATUS(#i)  <> 'D' ESCAPE TOP END-IF
+            IF MODE(#i)  <> 'Q' ESCAPE TOP END-IF
+            #n := #n + 1
+            WRITE WORK 1 VARIABLE 
+                    ID-NUMBER              
+              dm    CC-EXPIRATION-YEAR
+              dm    CC-EXPIRATION-MONTH
+              dm    LAST-USER-UPDATE
+              dm    LAST-DATE-UPDATE
+              dm    POLICY-ID(#i)
+              dm    MODE(#i)
+              dm    STATUS(#i)
+           END-FOR
+        END-FIND
+    END-READ
+
+  PRINT #n 'records reported'
+END
+

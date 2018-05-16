@@ -1,0 +1,159 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHP05PA    - ALLOTMENT EXCEPTION REPORTS
+*
+* Modification Log
+* DRW 11/05/2008 DW1 Show new CAP policies with AIP amount less than 107.25
+* RSE 09/17/2009 RE1 Change PROCESS-IND logic
+* VXT 10/31/2010 vt1 replace name field from Status file with the name from the Contact file
+*
+DEFINE DATA
+GLOBAL USING ATHG05P0
+LOCAL
+*
+1 #COUNTERS
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #I3               (I2)
+1 #TYPE          (A18)
+1 #DATE          (N8)
+1 #TOT-PREM      (N9.2)
+1 #SHOW-1        (L)
+1 #SHOW-2        (L)
+1 #SHOW-FPF      (L)
+1 #show-aip-shortage   (l)   /* DW1
+1 #aip-amt             (n5.2)
+*
+1 #HOLD-PT-DATE   (N8)
+1 #FPF-PT-DATE    (N8)
+1 #FPF-IS-DATE    (N8)
+1 #RD-MINUS-2-MONS   (N8)
+1 #RD-MINUS-3-MONS   (N8)
+1 #RD-MINUS-1-YRS    (N8)
+*
+1 #YYYYMMDD     (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY    (N4)
+  2 #MM      (N2)
+  2 #DD      (N2)
+*
+1 #name (a70)                                         /* vt1 \/
+1 #name-f  (a70)
+1 #first-name  (a25)
+1 #middle-name (a25)
+1 #last-name   (a25)
+1 #suffix      (a10)
+1 #contact-id  (n8)                                   /* vt1 /\
+*
+END-DEFINE
+*
+at top of page(7)                           /* vt1 \/
+  write 'CN' 5x 'SSN' 7x 'TYPE' 15x 'STOP-DATE/PD-TO/DATE' 'ALOT/AMT' 'TOT/PREM' 'DB-CR''NAME'
+    'Low/AIP-AMT '
+end-toppage                                   /* vt1 /\
+**IF PROCESS-IND = 'S' OR = 'C'
+IF PROCESS-IND = 'C'                    /* RE1
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+SUBTRACT 2 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #RD-MINUS-2-MONS
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+SUBTRACT 3 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #RD-MINUS-3-MONS
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 1 FROM #YYYY
+MOVE #YYYYMMDD TO #RD-MINUS-1-YRS
+*
+FORMAT (7) LS=133 PS=76
+WRITE  (7) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Allotment Exceptions'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+RESET #TOT-PREM #SHOW-1 #SHOW-2 #SHOW-FPF
+RESET #HOLD-PT-DATE #FPF-IS-DATE #FPF-PT-DATE
+reset #show-aip-shortage #aip-amt
+*
+FOR #I1 1 TO 9
+  IF STATUS (#I1) NE 'D'
+    ESCAPE TOP
+  END-IF
+*
+  if   (issue-date (#i1) = #C-RUN-DT-YYYYMMDD)    /* New Cap Policy   DW1
+      and (conv-duration (#i1) = 999)
+      and (x-alt-lp-amt (#i1) lt 107.25)
+    move true to #show-aip-shortage
+    move x-alt-lp-amt (#i1) to #aip-amt
+  end-if                                                   /* END DW1
+*
+  MOVE PAID-TO-DATE (#I1) TO #FPF-PT-DATE /* find lated p-t-date
+  MOVE ISSUE-DATE   (#I1) TO #FPF-IS-DATE /* find lated issue date
+*
+  IF  (MODE (#I1) NE 'G')
+      OR (PAY-STATUS (#I1) GE '40')
+    ESCAPE TOP
+  END-IF
+*
+  COMPUTE #TOT-PREM = #TOT-PREM + (ANNUAL-PREM (#I1) / 12)
+*
+  IF   (X-FIRST-PLACE-FEE (#I1) NE 0)
+      AND (#FPF-IS-DATE LT #C-LAST-MON-YYYYMMDD)
+      AND (NOT #SHOW-FPF)
+    IF #TYPE = ' '
+      MOVE 'FPF Delinquent' TO #TYPE
+    ELSE
+      COMPRESS #TYPE '& FPF' INTO #TYPE
+    END-IF
+    MOVE TRUE TO #SHOW-FPF
+    MOVE #FPF-PT-DATE TO #DATE
+  END-IF
+END-FOR
+*
+FOR #I1 1 TO 9
+  IF X-ALT-LP-IND (#I1) = '1' OR = '2'
+    ADD X-ALT-LP-AMT (#I1) TO #TOT-PREM
+  END-IF
+*
+  IF X-ALT-LP-IND-2 (#I1) = '1' OR = '2'
+    ADD X-ALT-LP-AMT-2 (#I1) TO #TOT-PREM
+  END-IF
+END-FOR
+*
+IF ((#SHOW-1 OR #SHOW-2) AND (ALOT-AMT NE #TOT-PREM))
+    OR #SHOW-FPF
+    or #show-aip-shortage          /* DW1
+  move status-view.member-contact-id to #contact-id                    /* vt1 \/
+  #name-f := FUNCTION-FRM-NAME (<#contact-id,#first-name,#middle-name,#last-name,#suffix>) /* vt1
+  compress #first-name #middle-name #last-name into #name 
+*                                                                     / vt1 /\
+*  DISPLAY (7)                                     /* vt1   \/
+  write (7)                                        /* vt1 /\
+    ID-NUMBER
+    SSN
+    #TYPE
+    #DATE
+*  'FIRST/PLACE-FEE'      x-FIRST-PLACE-FEE (1)
+    12x  ALOT-AMT
+    #TOT-PREM
+    DEBIT-CREDIT-AMT
+*    NAME                                           /* vt1 \/
+    #NAME                                          /* vt1  /\
+    #AIP-AMT                      /* DW1
+*  'linked/cn'            LINKED-CN (1)
+END-IF
+*
+END

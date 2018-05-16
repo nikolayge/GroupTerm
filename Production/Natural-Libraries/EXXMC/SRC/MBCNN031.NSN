@@ -1,0 +1,139 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online - MC-II
+* MBCNN032 - Update Address Relationship (Only) logic
+*******************************************************************************
+*        MODIFICATION LOG
+*******************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    09072010       Initial Creation
+* YAK    11292011  YK1  Fix logic to match attached contacts for ADDR-REL file
+*        OI-665         to update existing ADDR-POOL-ID instead of creating new
+*******************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAN030
+PARAMETER 1 #ErrorCode (A3)
+*
+LOCAL USING OBJAADRL
+LOCAL USING GPRATR00
+LOCAL USING ADDA0001
+LOCAL USING ERROR_L
+LOCAL USING ERROR_LN
+LOCAL
+*
+1 #MEMBER                   (A) DYNAMIC INIT  <'MEMBER'>
+1 #MEMBER-CENTER-CLERK      (A) DYNAMIC INIT  <'MBR'>
+1 #GET-CONT-POOL            (A) DYNAMIC CONST <'GET-CONT-POOL'>
+1 #NEW-TYPE                 (A) DYNAMIC CONST <'NEW-TYPE'>
+1 #SOURCE-WEBSITE           (A) DYNAMIC CONST <'W'>
+1 #VALID-TYPES              (A1/3)CONST <'P','S','O'>
+1 #DATN                     (N8)
+1 #TIMN                     (N7)
+1 #I                        (I2)
+1 #ContactID                (N8)
+1 #ExistingTypeForPoolId    (A1)
+1 #ExistingPoolIdForType    (N8)
+1 #LOG                      (A100)
+1 #CN                       (N6)
+1 FUNCTION_CODE             (A) DYNAMIC CONST <'ADDRESS'>
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+IF AddressRelInfo.UserID <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<AddressRelInfo.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<AddressRelInfo.UserID>)(2)
+END-IF
+*
+#ContactID := F-GET-CONTACT-ID(<AddressRelInfo.CN>)
+FOR #I = 1 TO C@AddressRel
+  DECIDE FOR FIRST CONDITION
+    WHEN AddressRelInfo.AddressPoolId(#I) = 0
+      #ErrorCode  := #MISSING-ADDR-POOL-ID
+      ESCAPE ROUTINE
+    WHEN AddressRelInfo.AddressTypeCode(#I) = ' '
+      #ErrorCode  := #UPDATE-TYPE-PARMS-NOT-FOUND
+      ESCAPE ROUTINE
+    WHEN NOT (AddressRelInfo.AddressTypeCode(#I) = #VALID-TYPES(*))
+      #ErrorCode  := #INVALID-ADDRESS-TYPE-CODE
+      ESCAPE ROUTINE
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+*
+#CN := AddressRelInfo.CN
+FOR #I = 1 TO C@AddressRel
+* Get existing address type for address-id
+  PARM-ADDRESS-REL.#ACTION := #GET-CONT-POOL
+  PARM-ADDRESS-REL.CONTACT-ID := #ContactID
+  PARM-ADDRESS-REL.ADDRESS-POOL-ID := AddressRelInfo.AddressPoolId(#I)
+  CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+  IF #NUMBER-OF-RECORDS = 0
+    #ErrorCode  := #ADDR-REL-CONT-POOL-NOT-FOUND
+    ESCAPE ROUTINE
+  END-IF
+  #ExistingPoolIdForType := PARM-ADDRESS-REL.ADDRESS-POOL-ID
+  #ExistingTypeForPoolId := PARM-ADDRESS-REL.ADDR-TYPE-CD
+*
+  PERFORM POPULATE-BEFORE-IMAGE
+*
+  PARM-ADDRESS-REL.#ACTION := #NEW-TYPE
+  PARM-ADDRESS-REL.CONTACT-ID := #ContactID
+  PARM-ADDRESS-REL.ADDR-TYPE-CD := AddressRelInfo.AddressTypeCode(#I)
+  CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+* Write Log
+  COMPRESS PARM-ADDRESS-REL.#ACTION ' TYPE ' PARM-ADDRESS-REL.ADDR-TYPE-CD
+    ' ADDR-POOL-ID '  PARM-ADDRESS-REL.ADDRESS-POOL-ID
+    ' CONTACT ID ' PARM-ADDRESS-REL.CONTACT-ID INTO #LOG
+  WRITE WORK FILE 1 VARIABLE #LOG
+**************************************************************************
+* Populate After Image
+  MOVE BY NAME BEFORE_IMAGE.ADDRESS_GROUP TO AFTER_IMAGE.ADDRESS_GROUP
+  AFTER_IMAGE.ADDR-TYPE-CD := PARM-ADDRESS-REL.ADDR-TYPE-CD
+  PERFORM WRITE-TRANSACTION-LOG                /* tr-log
+END-FOR
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-BEFORE-IMAGE
+***************************************
+*
+RESET #PDA-ADDRESS
+#ADD-CONTACT-ID := #ContactID
+#ADD-POOL-ID    := #ExistingPoolIdForType
+#ADD-TYPE       := #ExistingTypeForPoolId
+* Load address before update for transaction logging
+CALLNAT 'ADDN001M' #PDA-ADDRESS
+BEFORE_IMAGE.ADDRESS-LINE-1    := #ADD-LINE-1
+BEFORE_IMAGE.ADDRESS-LINE-2    := #ADD-LINE-2
+BEFORE_IMAGE.ADDRESS-LINE-3    := #ADD-LINE-3
+*
+BEFORE_IMAGE.ADDR-TYPE-CD      := #ADD-TYPE
+BEFORE_IMAGE.ADDR-VALID-IND    := #ADD-VALID-IND
+BEFORE_IMAGE.RETURNED-MAIL-IND := #ADD-RETURNED-MAIL
+BEFORE_IMAGE.PREVENT-OVER-IND  := #ADD-PREVENT-OVER-IND
+BEFORE_IMAGE.ADDR-LOCATION     := #ADD-LOCATION
+BEFORE_IMAGE.ADDRESS-SOURCE    := #ADD-ADDRESS-SOURCE
+BEFORE_IMAGE.DATE-LAST-UPDATE  := #ADD-LAST-DATE-UPD
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+RESET TRAN_LOG_HEADER
+TR_ID_NUMBER  := #CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<PARM-ADDRESS-REL.CONTACT-ID>)
+TR_CLERK      := #MEMBER-CENTER-CLERK
+CALLNAT 'GPRNTR00' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+END

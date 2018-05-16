@@ -1,0 +1,1159 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PGM-ID: C2304PCI
+*
+*    CI SCREEN 'CONV' PROCESSING   OLD TRAN 604
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    08042004  PM1     Changed Conversion to Paid-Up process to    *
+*                          add paid up lump sum payments to orig cost  *
+*                          basis, cost basis, and total prem paid.     *
+* DRW    09292004  DW2     Add Credit Card Processing                  *
+* DRW    11302004  DW3     Compute paid-up dt on flex pols convs       *
+* DRW    12292004  DW4     Increase Var Loan to handle 99,99.99        *
+* PAM    01052004  PM5     If paid-thru-date lt effective-date, don't  *
+*                          make any calc changes to db/cr,etc.         *
+* PAM    02032005  PM6     Prompt user to proceed when a policy is     *
+*                          converted to PDUP, but the policy is over-  *
+*                          loaned at the time.                         *
+* PAM    02102005  PM7     Increased size of #LUMP-SUM from 5.2 to     *
+*                          6.2.  Fixed logic for VT insurance policies *
+* DRW    05152005  DW8     Add face Amt & TPP linkage to CVALUSXX
+* DRW    05152005  DW9     Add SEX for LTII prem calc
+* DRW    07202005  DW0     Create Acct TR if DB/CR or BADJ chges
+* PAM    10142005  PM11    Fixed paid-thru date check
+* DRW    08292006  DW12 Enlarge size of tran amt for adjustments
+* DRW    09052007  DW13 Include LTII with RT/LT Term list
+* DRW 04/07/2008   DW14 Add TIMN to C2522SAM Linkage so all trans have same time
+* DRW 04/14/2008   DW15  ON CONV AP add prems paid to ACV ADJUST
+* DRW 06/06/2008   DW16 Fix add to MTD ACV when it already is 999999.99
+* DRW 09/22/2009 DW17 SVC-FEE CALC  /  PROCESS-IND / Number-memberships /600000
+* vxt 07/10/2012 vt1  Increase the size of #remaining-prems fiels
+* YAK 10/03/2012 YK1  Use function to identify Level Term II plans
+* YAK 01/09/2013 YK2  Add EZ Term plan
+* vxt 12/04/2013 vt2  fix 0936 erro in Production 
+* TMT 06/19/2014 TT1  Contact Normalization DOB and Sex
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.CI-BLOCK
+LOCAL USING CONTPDA1
+LOCAL
+*
+* LINKAGE TO C2522SAM BELOW    /* DW10
+1 #SOURCE-PROG  (A8)   /* Prog sending Info
+1 #REM-AMT      (N6.2)    /* DW12
+1 #EFF-DT       (N8)
+1 #ILN1       (I2)
+1 #TR-CD      (A4)
+1 #ADJ-AMT-8  (N6.2)   /* DW12
+1 #ADJ-AMT    (N5.2)
+1 #OLD-FPF         (N7.2)
+1 #NEW-FPF         (N7.2)
+1 #LAST-DATE-UPDATE (N8)
+1 #NEW-DATE-UPDATE  (N8)
+1 #ISSUE-DATE      (N8)   /* issue date of affected policy
+1 #SCR-TRAN-COD    (A4)   /* TRAN Code if from CI
+1 #CMBX            (A4)   /* Used to send indicator to C2522sam for Desc
+1 #TIMN            (N7)             /* DW14
+* Linkage to C2522SAM above
+*
+1 #DC-ADJ      (N7.2)   /* DW10
+1 #TRAN-DATE   (N8)
+1 #CI-ISN      (P8)
+1 #LUMP-SUM    (N6.2)                                             /* PM7
+1 #NEW-ISSUE-DATE (N8)
+1 #NEW-DUES   (N3.2)
+1 #OLD-DUES   (N3.2)
+1 #SVC-FEE-7P (N1.2) INIT <6.00>
+1 #SVC-FEE-20 (N1.2) INIT <3.00>
+1 #SVC-FEE-30 (N1.2) INIT <2.50>
+1 #SVC-FEE-OL (N1.2) INIT <2.00>
+1 #SVC-FEE-TM (N1.2) INIT <2.00>
+1 #SVC-FEE-SP (N3.2) INIT <450.00>
+*
+1 ST-V VIEW OF A-STATUS
+ 2 INTRO-FLAG
+ 2 PROCESS-IND              /* DW17
+*
+1 #TR-REG-CONV-OLD-GR
+ 2 #TR-REG-CONV-OLD-LBL-1         (A08) INIT <'CI-CONV '>
+ 2 #TR-REG-CONV-OLD-LBL-2         (A11) INIT <'ISSUE-DATE '>
+ 2 #TR-REG-CONV-OLD-ISSUE-DATE    (N08)
+ 2 #TR-REG-CONV-OLD-LBL-3         (A07) INIT <'  PLAN '>
+ 2 #TR-REG-CONV-OLD-PLAN          (A03)
+ 2 #TR-REG-CONV-OLD-LBL-4         (A11) INIT <'  FACE-AMT '>
+ 2 #TR-REG-CONV-OLD-FAC-AMT       (A09)
+ 2 #TR-REG-CONV-OLD-LBL-5         (A07) INIT <'  MODE '>
+ 2 #TR-REG-CONV-OLD-MODE          (A01)
+ 2 #TR-REG-CONV-OLD-LBL-6         (A10) INIT <'  ANN-PRM '>
+ 2 #TR-REG-CONV-OLD-ANN-PRM       (A08)
+ 2 #TR-REG-CONV-OLD-LBL-7         (A06) INIT <'  ACV '>
+ 2 #TR-REG-CONV-OLD-ACV           (A10)
+ 2 #TR-REG-CONV-OLD-LBL-8         (A12) INIT <'  CST-BASIS '>
+ 2 #TR-REG-CONV-OLD-COST-BASIS    (A10)
+1 REDEFINE #TR-REG-CONV-OLD-GR
+ 2 #TR-REG-CONV-OLD               (A120)
+*
+1 #TR-REG-CONV-NEW-GR
+ 2 #TR-REG-CONV-NEW-LBL-1         (A12) INIT <' AFTER CONV '>
+ 2 #TR-REG-CONV-NEW-LBL-2         (A11) INIT <'ISSUE-DATE '>
+ 2 #TR-REG-CONV-NEW-ISSUE-DATE    (N08)
+ 2 #TR-REG-CONV-NEW-LBL-3         (A07) INIT <'  PLAN '>
+ 2 #TR-REG-CONV-NEW-PLAN          (A03)
+ 2 #TR-REG-CONV-NEW-LBL-4         (A11) INIT <'  FACE-AMT '>
+ 2 #TR-REG-CONV-NEW-FAC-AMT       (A09)
+ 2 #TR-REG-CONV-NEW-LBL-5         (A07) INIT <'  MODE '>
+ 2 #TR-REG-CONV-NEW-MODE          (A01)
+ 2 #TR-REG-CONV-NEW-LBL-6         (A10) INIT <'  ANN-PRM '>
+ 2 #TR-REG-CONV-NEW-ANN-PRM       (A08)
+ 2 #TR-REG-CONV-NEW-LBL-7         (A06) INIT <'  ACV '>
+ 2 #TR-REG-CONV-NEW-ACV           (A10)
+ 2 #TR-REG-CONV-NEW-LBL-8         (A12) INIT <'  CST-BASIS '>
+ 2 #TR-REG-CONV-NEW-COST-BASIS    (A10)
+1 REDEFINE #TR-REG-CONV-NEW-GR
+ 2 #TR-REG-CONV-NEW               (A125)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY     (N4)
+ 2 #MM       (N2)
+ 2 #DD       (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A   (A4)
+ 2 #MM-A     (A2)
+ 2 #DD-A     (A2)
+*
+1 #W-ISS-YYYYMM
+ 2 #W-ISS-YYYY (N4)
+ 2 #W-ISS-MM   (N2)
+*
+1 #W-PDTO-YYYYMM
+ 2 #W-PDTO-YYYY (N4)
+ 2 #W-PDTO-MM   (N2)
+*
+1 #CHECK-ISSUE-DATE       (N8) /* PM11
+1 REDEFINE #CHECK-ISSUE-DATE   /* PM11
+ 2 #CHECK-ISSUE-DATE-YYYY (N4) /* PM11
+ 2 #CHECK-ISSUE-DATE-MM   (N2) /* PM11
+ 2 #CHECK-ISSUE-DATE-DD   (N2) /* PM11
+1 #OUTPUT-CALC-AMT     (P7.2)     /* passed to c1601sco for results
+1 #OUTPUT-OLD-PDUP-AMT (P7.2) /* passed to c1601sco for results
+1 #PRORATE-LOAN        (L)
+1 #RPU-ACV             (P7.2)
+1 #NU-ANN-PREM         (N7.2)                     /* vt2  
+1 #OUTPUT-PREM-DIFF    (N6.2)
+1 #TOT-LOAN-AMOUNT     (P6.2)
+1 #TOT-CURR-ACCUM-INT  (P5.2)
+*
+1 #HIGHEST-FROM       (P7.2)
+1 #HIGHEST-TO         (P7.2)
+1 #WORK-LAST-DURATION (P3)
+1 #PREMS-YET-TO-PAY  (P7.2)
+1 #NUM-MONTHS        (P5)
+1 #OLD-PRMS-PD     (P6.2)
+1 #NEW-PRMS-PD     (P6.2)
+1 #MONTHLY-INCR      (P5.2)
+1 #FPF-AMT           (P5.2)
+1 #WORK-FREQ         (P2)
+1 #DAILY-INT-RATE    (P0.7)
+1 #TOT-LST-ANN-CV    (P5.2)
+1 #WORK-MONTHS       (P3)
+1 #WORK-AMT          (P5.2)
+1 #OLD-ANN-PRM       (P5.2)
+1 #NEW-ANN-PRM       (P5.2)
+1 #CURR-DAYS         (P2)
+*
+1 #WORK-DATE-G
+ 2 #WD-YYYY (N4)
+ 2 REDEFINE #WD-YYYY
+  3 #WD-CC  (N2)
+  3 #WD-YY  (N2)
+ 2 #WD-MM   (N2)
+ 2 #WD-DD   (N2)
+1 REDEFINE #WORK-DATE-G
+ 2 #WORK-DATE     (N8)
+*
+1 #NEW-AMT-TO-ADD-TO-ACV (P5.2)
+1 #AMT-TO-ADD-TO-ACV (P5.2)
+1 #AMT-TO-CHG-MBR    (P5.2)
+1 #PREM-DIFF         (P5.2)
+1 #ACCUM-PREM-DIFF   (P5.2)
+1 #ORIG-ACV-ADD      (P5.2)
+*
+1 #CONV-MSG-LINE-G
+ 2 #CONV-MSG-OWES    (A12)
+ 2 #CONV-MSG-AMT     (A10)
+ 2 #CONV-MSG-REASON  (A16)
+1 REDEFINE #CONV-MSG-LINE-G
+ 2 #CONV-MSG-LINE    (A38)
+*
+1 #PRM-PAID-LINE-G
+ 2 #PRM-LBL          (A15) INIT <' TOT PRMS PAID '>
+ 2 #PRM-AMT          (A10)
+ 2 #PRM-THRU-LBL     (A06) INIT <' THRU '>
+ 2 #PRM-PD-THRU      (A07)
+1 REDEFINE #PRM-PAID-LINE-G
+ 2 #PRM-PAID-LINE    (A38)
+*
+1 #NET-PREM-CALC       (P5.2)
+1 #NUM-DAYS            (P3)
+1 #PREM-FOR-DAYS       (P5.2)
+1 #CALC-PD-THRU-YYYY   (N4)
+1 #FREQ                (N2)
+1 #NUM-OF-MONTHS       (N3)
+1 #CALC-PD-THRU-MM     (N2)
+1 #NUM-MONS-DIFF       (N3)
+1 #NUM-MODES-DIFF      (N3)
+1 #MODAL-PREM          (P5.2)
+1 #MONTHLY-PREM        (P5.2)
+1 #DAILY-PREM          (P2.5)
+1 #PRM-DUE-AMT         (A7)
+1 #PD-UP-AMT-PD     (P7.2)
+1 #REMAINING-PREMS   (P7.2)                   /* vt was p5.2
+1 #TOTAL-PREMS-PAID (P7.2)
+1 #NEW-LIMIT        (P7.2)
+1 #OLD-LIMIT        (P7.2)
+1 #TEXT             (A75)
+1 #CASH-VALUE       (P7.2)
+1 #SUFFIX       (A3)
+1 #TO-PLAN      (A3)
+1 #PUSP-PRM     (N6.2)
+1 #WHOLE-DOLLARS (N6)
+1 #DUES-DIFF     (N5.2)
+1 #CSV-LBL     (A8)
+1 #CSV-AMT     (A10)
+1 #CSV-DESC    (A8)
+1 #PREM-LBL    (A8)
+1 #PREM-AMT    (A10)
+1 #PREM-DESC   (A8)
+1 #DUE-AMT     (A6)
+1 #DUE-DESC    (A8)
+1 #TOT-NUM-MONS       (N5)
+1 #TOT-PREM-PAID-DIFF (N6.2)  /* DW4
+1 #PLAN    (A3)
+1 REDEFINE #PLAN
+ 2 #PLAN-A1   (A1)
+ 2 #PLAN-N2   (N2)
+1 REDEFINE #PLAN
+ 2 #PLAN-FLEX-N2  (N2)
+ 2 REDEFINE #PLAN-FLEX-N2
+  3 #PLAN-FLEX-N1 (N1)
+  3 #PLAN-FLEX-P  (A1)
+ 2 #PLAN-FLEX-F   (A1)
+*
+1 #AS-OF-DT   (N8)                                                /* PM6
+1 #LOAN-BAL   (N7.2/9)                                            /* PM6
+1 #LOAN-BAL-2 (N7.2/9)                                            /* PM6
+1 #ACC-INT    (N7.2/9)                                            /* PM6
+1 #ACC-INT-2  (N7.2/9)                                            /* PM6
+1 #CSV        (N7.2/9)                                            /* PM6
+1 #CVALUE     (N7.2/9)                                            /* PM6
+1 #LVALUE     (N7.2/9)                                            /* PM6
+1 #MCSV       (N7.2/9)                                            /* PM6
+1 #DB         (N7.2/9)                                            /* PM6
+1 #ANN-PREMIUM (N7.2/9)                                           /* PM6
+1 #FACE-AMT    (N7.2/9)  /* DW8
+1 #TPP         (N7.2/9)  /* DW8
+*
+1 #MAKE-PDUP (A1)                                                 /* PM6
+1 #TOTAL-LOAN (P7.2)                                              /* PM6
+1 #DIS-CSV (A13)                                                  /* PM6
+1 #DIS-LOAN-VALUE (A13)                                           /* PM6
+1 #DIS-TOT-LOAN (A13)                                             /* PM6
+1 #I2      (I2)
+1 #I3      (I2)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+DEFINE WINDOW SINGLE-PAY                                          /* PM6
+  SIZE QUARTER
+  BASE TOP LEFT
+  FRAMED ON POSITION SYMBOL AUTO
+*
+GET ST-V #CGA-ISN
+MOVE TRUE TO #REC-CHGD              /* INDICATE RECORD CHANGED
+*
+MOVE *TIMN TO #TIMN                      /* DW14
+MOVE *DATN TO #AS-OF-DT                                           /* PM6
+RESET #SUFFIX                                                     /* PM6
+MOVE CI-V.FACE-AMOUNT (*) TO #FACE-AMT (*)  /* DW8
+CALLNAT 'CVALUSXX'                                                /* PM6
+  CI-V.ID-NUMBER
+  #SUFFIX
+  #AS-OF-DT
+  #LOAN-BAL   (1:9)
+  #LOAN-BAL-2 (1:9)
+  #ACC-INT    (1:9)
+  #ACC-INT-2  (1:9)
+  #CSV        (1:9)
+  #CVALUE     (1:9)
+  #LVALUE     (1:9)
+  #MCSV       (1:9)
+  #DB         (1:9)
+  #ANN-PREMIUM  (1:9)
+  #FACE-AMT   (1:9)   /* DW8
+  #TPP        (1:9)   /* DW8
+*
+MOVE CI-V.PAY-STATUS (#IFL) TO CI-V.PRIOR-STATUS (#IFL) /* PRIOR STATUS
+*
+IF  (CI-V.ONLINE-ACTION-GN = '2')                /* NEW MEMBER
+ OR (CI-V.ONLINE-ACTION (#IFL) = '1')            /* NEW POLICY
+ OR (CI-V.ONLINE-ACTION (#IFL) = '2' OR = '3' OR = '4' OR = 'N')
+*                                                /* ALREADY CONV THIS MO
+  IGNORE
+ELSE
+  IF CI-V.PLAN (#IFL) = 'OL'
+    MOVE '2' TO CI-V.ONLINE-ACTION (#IFL)       /* INDICATE WAS OL
+  ELSE
+    IF CI-V.PLAN (#IFL) = '20P'
+      MOVE '3' TO CI-V.ONLINE-ACTION (#IFL)     /* INDICATE WAS 20
+    ELSE
+      IF CI-V.PLAN (#IFL) = '30P'
+        MOVE '4' TO CI-V.ONLINE-ACTION (#IFL)     /* INDICATE WAS 30
+      ELSE
+        IF CI-V.PLAN (#IFL) = '7P'
+          MOVE 'N' TO CI-V.ONLINE-ACTION (#IFL)     /* INDICATE WAS 7P
+        ELSE
+          IF CI-V.PLAN (#IFL) = 'RT'
+            MOVE 'O' TO CI-V.ONLINE-ACTION (#IFL)  /* INDICATE WAS RT
+          ELSE
+            IF CI-V.PLAN (#IFL) = 'LT'
+              MOVE 'P' TO CI-V.ONLINE-ACTION (#IFL)  /* INDICATE WAS LT
+            ELSE
+              MOVE 'R' TO CI-V.ONLINE-ACTION (#IFL) /* INDICATE WAS FSO               
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+IF CI-V.ONLINE-ACTION-GN = '1' OR = '2' OR = '3'     /* ALREADY FLAGGED
+  IGNORE
+ELSE
+  MOVE  '4' TO CI-V.ONLINE-ACTION-GN     /* INDICATE ACTION THIS MONTH
+END-IF
+*
+*
+RESET PDA-CONTACT                                 /* TT1
+P-CONTACT-ID := CI-V.MEMBER-CONTACT-ID            /* TT1
+CALLNAT 'CONTS001' PDA-CONTACT
+*
+MOVE CI-V.ISSUE-DATE (#IFL) TO #NEW-ISSUE-DATE
+* BELOW IS ALSO AT LINE 6200 & C2300PCI LINE 4900
+IF (((#SCR-PLN (#ISC) = 'RT') AND (CI-V.PLAN (#IFL) = 'LT'))
+ OR ((#SCR-PLN (#ISC) = 'LT') AND (CI-V.PLAN (#IFL) = 'RT')))
+   AND (CI-V.ONLINE-ACTION-GN NE '2')   /* NOT 1ST MONTH CONV
+   AND (CI-V.ONLINE-ACTION (#IFL) NE '1')
+  MOVE *DATN TO #YYYYMMDD
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-EFF-DTE (#ISC) LEAVING NO
+  SUBTRACT P-DATE-OF-BIRTH FROM #YYYYMMDD                                 /* TT1
+  MOVE #YYYY TO #SCR-AGE-N (#ISC)            /* NEW ISS AGE
+  MOVE #YYYY TO CI-V.ISSUE-AGE-N (#IFL)      /* NEW ISS AGE
+  MOVE *DATN TO #NEW-ISSUE-DATE
+END-IF
+* the above new-issue-date is actually entered in c2300pci at line 5700
+* below resets split indicator if conv from lt to RT
+IF (((#SCR-PLN (#ISC) = 'RT') AND (CI-V.PLAN (#IFL) = 'LT'))
+ OR ((#SCR-PLN (#ISC) = 'LT') AND (CI-V.PLAN (#IFL) = 'RT')))
+  IF #SCR-PLN (#ISC) = 'LT' MOVE 5 TO CI-V.SPLIT-IND (#IFL) END-IF
+  IF #SCR-PLN (#ISC) = 'RT' MOVE 6 TO CI-V.SPLIT-IND (#IFL) END-IF
+END-IF
+*
+RESET #CGA-MF-SCR-PARM-1-N /* to store dues due
+IF #SCR-PLN (#ISC) NE 'SO' /* prems do not chg on FSO To SO CONV
+  PERFORM CALC-PREM-DIFF
+END-IF
+*
+IF CI-V.DEATH-BENEFIT (#IFL) GT CI-V.NXT-MON-DEATH-BENEFIT (#IFL)
+  WRITE //  'Policies "in the corridor" (ie Death Benefit is'
+  WRITE      '   growing) should only be allowed to convert'
+  WRITE      '   to Paid-Up. To terminate this conversion, on the'
+  WRITE      '   next screen discontine the process.'
+  WRITE /    'Press enter to continue'
+END-IF
+*
+IF #SCR-ANN-PRM (#ISC) LT CI-V.ANNUAL-PREM (#IFL)
+  WRITE //  'To convert to a lower premium, proof of insurability'
+  WRITE      '   must be provided'
+  WRITE /    'Press enter to continue'
+END-IF
+*
+*               PUT OUT TRANS REGISTER <<<<<<<<<<<<<<<<<<<<<<
+MOVE CI-V.ISSUE-DATE (#IFL) TO #TR-REG-CONV-OLD-ISSUE-DATE
+MOVE CI-V.PLAN       (#IFL) TO #TR-REG-CONV-OLD-PLAN
+MOVE EDITED CI-V.FACE-AMOUNT(#IFL) (EM=ZZZZZZ.99)
+                                     TO #TR-REG-CONV-OLD-FAC-AMT
+MOVE CI-V.MODE (#IFL)         TO #TR-REG-CONV-OLD-MODE
+MOVE EDITED CI-V.ANNUAL-PREM (#IFL) (EM=ZZZZZ.99)
+                                  TO #TR-REG-CONV-OLD-ANN-PRM
+MOVE EDITED #SCR-ACV (#ISC) (EM=ZZZ,ZZZ.99) TO #TR-REG-CONV-OLD-ACV
+MOVE #TR-REG-CONV-OLD     TO TR-REG-V.OLD-DATA (#ITR1)
+*
+MOVE #NEW-ISSUE-DATE TO #TR-REG-CONV-NEW-ISSUE-DATE
+MOVE #SCR-PLN        (#ISC) TO #TR-REG-CONV-NEW-PLAN
+MOVE EDITED CI-V.FACE-AMOUNT(#IFL) (EM=ZZZZZZ.99)
+                                     TO #TR-REG-CONV-NEW-FAC-AMT
+MOVE CI-V.MODE (#IFL)         TO #TR-REG-CONV-NEW-MODE
+MOVE EDITED #SCR-ANN-PRM (#ISC) (EM=ZZZZZ.99)
+                                           TO #TR-REG-CONV-NEW-ANN-PRM
+MOVE EDITED CI-V.ACC-CASH-VALUE(#IFL) (EM=ZZZ,ZZZ.99)
+                                             TO #TR-REG-CONV-NEW-ACV
+MOVE EDITED CI-V.COST-BASIS (#IFL) (EM=ZZZ,ZZZ.99)
+                                         TO #TR-REG-CONV-NEW-COST-BASIS
+MOVE #TR-REG-CONV-NEW     TO TR-REG-V.NEW-DATA (#ITR1)
+ADD 1 TO #ITR1
+*
+MOVE #SCR-ANN-PRM (#ISC) TO CI-V.ANNUAL-PREM (#IFL)
+*
+IF #SCR-PLN (#ISC) = 'AP'
+  MOVE CI-V.PLAN (#IFL) TO #SCR-PLN (#ISC)
+ELSE
+  IF #SCR-PLN (#ISC) NE 'LTD'   /* lt decrease premium
+    MOVE #SCR-PLN (#ISC) TO CI-V.PLAN (#IFL)
+  END-IF
+END-IF
+*                  RESET SCREEN <<<<<<<<<<<<<<<<<<<<<<<<<<<
+MOVE CI-V.PAID-UP-DATE (#IFL) TO #YYYYMMDD
+COMPRESS #MM-A #YYYY-A INTO #SCR-PAID-UP (#ISC) LEAVING NO
+MOVE CI-V.FACE-AMOUNT    (#IFL) TO #SCR-FACE-AMT   (#ISC)
+MOVE CI-V.DEATH-BENEFIT  (#IFL) TO #SCR-DB         (#ISC)
+MOVE CI-V.MIN-CASH-VALUE (#IFL) TO #SCR-MIN-CV     (#ISC)
+MOVE CI-V.ACC-CASH-VALUE (#IFL) TO #SCR-ACV        (#ISC)
+MOVE CI-V.CASH-VALUE     (#IFL) TO #SCR-CSH-VL     (#ISC)
+MOVE CI-V.COST-BASIS     (#IFL) TO #SCR-COST-BASIS (#ISC)
+MOVE CI-V.ORIG-COST-BASIS(#IFL) TO #SCR-ORIG-COST-BASIS (#ISC)
+*
+* DISPLAY #IFL 'NPR'   CI-V.NET-PR-RATIO (#IFL)
+*         'MCSV'  CI-V.MIN-CASH-VALUE (#IFL)
+*         'NXT-MCSV' CI-V.NXT-YR-MIN-CASH-VALUE (#IFL)
+*         'DB-CR' CI-V.DEBIT-CREDIT-AMT
+*         'STAT'  CI-V.PAY-STATUS (#IFL)
+*         'COST-BASIS'  CI-V.COST-BASIS (#IFL)
+*         'DUES'  #CGA-MF-SCR-PARM-1-N
+*
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-PREM-DIFF
+* * * * * * * * * * * * * * * * *
+*
+* * * conv on FLEX plans are currently not allowed so not to worry
+* * * on the premium calculation
+* ABOVE NO LONGER APPLIES   (8/14/2000)
+*
+IF  (#SCR-PLN (#ISC) NE 'AP')  /* ONLY CALC NEW PREM IF OLD OR NEW
+ AND ((CI-V.ISSUE-DATE (#IFL) LT 19970101)     /* NON AP
+  OR   (CI-V.MONTH-ALLOC-AMT (#IFL) = 999.99))
+*  OR ((#SCR-PLN (#ISC) = 'AP')
+* AND  (CI-V.ISSUE-DATE (#IFL) GE 19970101)
+* AND  (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99))
+  IF #SCR-PLN (#ISC) NE 'AP'
+    MOVE #SCR-PLN (#ISC) TO #TO-PLAN
+  ELSE
+    IF CI-V.PLAN (#IFL) = 'SO'
+      MOVE 'S1' TO #TO-PLAN
+    ELSE
+      MOVE 'SI' TO #TO-PLAN
+    END-IF
+  END-IF
+*
+  RESET #SUFFIX
+  IF CI-V.MONTH-ALLOC-AMT (#IFL) = 999.99   /* use old prems
+    MOVE 'OLD' TO #SUFFIX
+  END-IF
+*
+  CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID #SUFFIX
+           #TO-PLAN #SCR-AGE-N (#ISC)
+           #NU-ANN-PREM #NEW-ISSUE-DATE
+           #SCR-SMK (#ISC) #SCR-FACE-AMT (#ISC) P-GENDER  /* DW9       /* TT1
+*
+  IF #SCR-PLN (#ISC) = 'AP'
+*   WRITE 'NU ANN PREM' #NU-ANN-PREM
+    MOVE ROUNDED #NU-ANN-PREM TO #WHOLE-DOLLARS
+    MOVE #WHOLE-DOLLARS TO #PUSP-PRM
+    RESET #NU-ANN-PREM
+  ELSE
+    MOVE #NU-ANN-PREM TO #SCR-ANN-PRM (#ISC)
+*
+    IF CI-V.MODE (#IFL) = 'A' OR = '1'  /* DW2
+      MOVE  1 TO #WORK-FREQ
+    ELSE
+      IF CI-V.MODE (#IFL) = 'S' OR = '2'   /* DW2
+        MOVE 2 TO #WORK-FREQ
+      ELSE
+        IF CI-V.MODE (#IFL) = 'Q' OR = '4'   /* DW2
+          MOVE 4 TO #WORK-FREQ
+        ELSE
+          MOVE 12 TO #WORK-FREQ
+        END-IF
+      END-IF
+    END-IF
+*
+    COMPUTE #SCR-MODAL-PRM (#ISC) = #SCR-ANN-PRM (#ISC) / #WORK-FREQ
+  END-IF
+END-IF
+*
+IF  (CI-V.ONLINE-ACTION-GN = '2')   /* 1ST MONTH CONV
+ OR (CI-V.ONLINE-ACTION (#IFL) = '1')
+*   MOVE 'NEW POL THIS MONTH' TO #SCR-MSG-LINE-2
+* IF CI-V.PAY-STATUS (#IFL) = '47'   /* if originally was a pusp
+*     RESET CI-V.DEBIT-CREDIT-AMT
+*           CI-V.COST-BASIS        (#IFL)
+*           CI-V.ORIG-COST-BASIS   (#IFL)
+*           CI-V.TOT-PREMIUMS-PAID (#IFL)
+*     MOVE 'UNPD' TO #SCR-STATUS   (#ISC)
+*     MOVE '12' TO CI-V.PAY-STATUS (#IFL)
+* END-IF
+*
+  IF #SCR-PLN (#ISC) = 'AP'
+    ADD  #PUSP-PRM TO CI-V.DEBIT-CREDIT-AMT
+    MOVE #PUSP-PRM TO CI-V.COST-BASIS (#IFL)
+    MOVE #PUSP-PRM TO CI-V.ORIG-COST-BASIS (#IFL)
+    MOVE #PUSP-PRM TO CI-V.TOT-PREMIUMS-PAID (#IFL)
+    MOVE '47'      TO CI-V.PAY-STATUS      (#IFL)
+    MOVE CI-V.ISSUE-DATE (#IFL) TO CI-V.PAID-TO-DATE (#IFL)
+    MOVE CI-V.ISSUE-DATE (#IFL) TO CI-V.PAID-UP-DATE (#IFL)
+*
+*   DISPLAY #SCR-PLN (#ISC) #PUSP-PRM
+    IF #PUSP-PRM NE 0            /* DW10
+      IF #PUSP-PRM GT 0
+        MOVE 'RDCR' TO #TR-CD
+      ELSE
+        MOVE 'ADCR' TO #TR-CD
+      END-IF
+*
+      MOVE #PUSP-PRM TO #ADJ-AMT-8    /* DW12
+      PERFORM CALL-C2522SAM
+    END-IF
+  END-IF
+*
+  IF   (CI-V.PLAN (#IFL) NE #SCR-PLN (#ISC))
+   AND (CI-V.PLAN (#IFL) = MASK (..'F'))
+    WRITE /// 'Since this was a Flex plan you must calc the new'
+    WRITE 'premium using a PO FLX and have EDS enter it manually.'
+    WRITE // 'Press ENTER to continue'
+  END-IF
+* for a non-AP the below does nothing since new premium is not calced
+  COMPUTE #OLD-PRMS-PD = (CI-V.ANNUAL-PREM (#ISC) / 12) * 2
+*
+  IF #SCR-PLN (#ISC) = 'AP'
+    MOVE #PUSP-PRM TO #NEW-PRMS-PD
+  ELSE
+    COMPUTE #NEW-PRMS-PD = (#SCR-ANN-PRM (#ISC) / 12) * 2
+  END-IF
+*
+  COMPUTE #PREM-DIFF = #NEW-PRMS-PD - #OLD-PRMS-PD
+  RESET #DUES-DIFF
+  PERFORM GET-OLD-AND-NEW-DUES
+*
+  IF #SCR-PLN (#ISC) = 'AP'
+    COMPUTE #DUES-DIFF = #NEW-DUES - (#OLD-DUES * 2) /* These 2 calcs
+  ELSE
+    COMPUTE #DUES-DIFF = (#NEW-DUES - #OLD-DUES) * 2 /*  are different
+  END-IF
+*
+  COMPUTE #CGA-MF-SCR-PARM-1-N = #DUES-DIFF * 100
+*
+  MOVE EDITED #DUES-DIFF (EM=ZZZ.99) TO #DUE-AMT
+  MOVE EDITED #PREM-DIFF (EM=ZZZ,ZZZ.99) TO #PREM-AMT
+  COMPRESS 'Member owes' #PREM-AMT 'in 2 month prem pmt difference'
+     'and' #DUE-AMT 'in Dues difference' INTO #SCR-MSG-LINE-1
+ELSE
+  MOVE CI-V.PLAN (#IFL) TO #PLAN
+* IF ((#SCR-PLN (#ISC) = 'RT' OR = 'LT')                            /* YK1       
+*        OR ((#SCR-PLN-A1 (#ISC) GE 'U') AND (#SCR-PLN-A1 (#ISC) LE 'Z')))  /* DW13 /* YK1
+*        AND ((NOT CI-V.PLAN (#IFL) = 'RT' OR = 'LT')               /* YK1
+*        AND (NOT ((#PLAN-A1 GE 'U') AND (#PLAN-A1) LE 'Z')))       /* DW13 /* YK1  
+  IF (FUNCTION-TERM-POLICY(<#SCR-PLN(#ISC)>))                       /* YK1
+    AND (NOT FUNCTION-TERM-POLICY(<#PLAN>))                         /* YK1
+    PERFORM RESET-WHOLE-LIFE-INFO
+  END-IF
+*
+*  write 'C2304PCI call aocx2v6a line 2751'
+  PERFORM CALL-AOCX2V6A
+*
+  MOVE #NU-ANN-PREM TO #SCR-ANN-PRM (#ISC)
+*
+  IF CI-V.MODE (#IFL) = 'A' OR = '1'  /* DW2
+    MOVE  1 TO #WORK-FREQ
+  ELSE
+    IF CI-V.MODE (#IFL) = 'S' OR = '2'   /* DW2
+      MOVE 2 TO #WORK-FREQ
+    ELSE
+      IF CI-V.MODE (#IFL) = 'Q' OR = '4'  /* DW2
+        MOVE 4 TO #WORK-FREQ
+      ELSE
+        MOVE 12 TO #WORK-FREQ
+      END-IF
+    END-IF
+  END-IF
+*
+  COMPUTE #SCR-MODAL-PRM (#ISC) = #SCR-ANN-PRM (#ISC) / #WORK-FREQ
+END-IF
+*
+IF #SCR-PLN (#ISC) = 'AP'
+  RESET #NEW-ANN-PRM        /* NO NEW PREM IF GOING TO PAID UP
+ELSE
+  MOVE #SCR-ANN-PRM (#ISC) TO #NEW-ANN-PRM  /* NEW PREMIUM
+END-IF
+*
+MOVE CI-V.ANNUAL-PREM(#IFL) TO #OLD-ANN-PRM  /* OLD PREMIUM
+*
+IF #SCR-PLN (#ISC) = 'AP'
+  IF  (CI-V.ONLINE-ACTION-GN = '2')   /* 1ST MONTH CONV
+   OR (CI-V.ONLINE-ACTION (#IFL) = '1')
+    IGNORE
+  ELSE
+    MOVE #TODAY-YYYYMMDD-N TO CI-V.PAID-UP-DATE (#IFL)
+    MOVE '48'       TO CI-V.PAY-STATUS (#IFL)
+    MOVE 'PUAP'     TO #SCR-STATUS (#ISC)
+  END-IF
+ELSE
+  IF #SCR-PLN (#ISC) = 'OL'
+    IF   (CI-V.ISSUE-DATE (#IFL) GE 19970101)
+     AND (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99)
+      COMPUTE CI-V.PAID-UP-DATE (#IFL) = P-DATE-OF-BIRTH + 1000000        /* TT1
+    ELSE
+      COMPUTE CI-V.PAID-UP-DATE (#IFL) = P-DATE-OF-BIRTH + 960000         /* TT1
+    END-IF
+  ELSE
+    IF #SCR-PLN (#ISC) = '20P'
+      COMPUTE CI-V.PAID-UP-DATE (#IFL) = CI-V.ISSUE-DATE(#IFL) + 200000
+    ELSE
+      IF #SCR-PLN (#ISC) = '30P'
+       COMPUTE CI-V.PAID-UP-DATE (#IFL) = CI-V.ISSUE-DATE(#IFL) + 300000
+      ELSE
+        IF #SCR-PLN (#ISC) = '7P'
+         COMPUTE CI-V.PAID-UP-DATE(#IFL) = CI-V.ISSUE-DATE(#IFL) + 70000
+        ELSE
+          IF #SCR-PLN (#ISC) = 'RT'
+            COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+*               CI-V.ISSUE-DATE (#IFL) + 50000 /* chged 1/17/2002
+                #NEW-ISSUE-DATE + 50000
+          ELSE
+            IF #SCR-PLN (#ISC) = 'LT'
+              IF CI-V.SMOKER-FLAG  (#IFL) = 'S'
+                COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+                      P-DATE-OF-BIRTH + 500000          /* TT1
+              ELSE
+                COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+                      P-DATE-OF-BIRTH + 600000          /* TT1
+              END-IF
+            ELSE
+              IF #SCR-PLN (#ISC) = 'EZ'                                  /* YK2
+                COMPUTE CI-V.PAID-UP-DATE (#IFL) =                       /* YK2
+                      P-DATE-OF-BIRTH + 800000          /* TT1           /* YK2
+              ELSE
+                MOVE #SCR-PLN (#ISC) TO #PLAN                     /* DW3
+*               IF  (#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z') /* LTII /* DW3 /* YK1
+                IF F-LT2-TRUE(<#PLAN>)                                     /* YK1 
+                  IF #PLAN = MASK (.NN)
+                    COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+                      CI-V.ISSUE-DATE(#IFL) + (#PLAN-N2 * 10000)
+                  END-IF
+                ELSE    /* MUST BE OL FLEX                       /* DW3
+                  IF #PLAN-FLEX-F = 'F'    /* ??F                /* DW3
+                    IF #PLAN-FLEX-P = 'P'  /* 4PF etc            /* DW3
+                      COMPUTE CI-V.PAID-UP-DATE (#IFL) =         /* DW3
+                        CI-V.ISSUE-DATE (#IFL) + (#PLAN-FLEX-N1 * 10000)
+                    ELSE                   /* MUST BE 59F ETC
+                      COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+                        CI-V.ISSUE-DATE (#IFL) + (#PLAN-FLEX-N2 * 10000)
+                    END-IF    
+                  END-IF
+                END-IF
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-AOCX2V6A
+* * * * * * * * * * * * * * * *
+*
+IF   (CI-V.ISSUE-DATE (#IFL) GE 19970101)
+ AND (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99)
+ AND (NOT #SCR-PLN (#ISC) = 'AP')                                           /* YK1
+ AND (NOT FUNCTION-TERM-POLICY(<#SCR-PLN(#ISC)>))                           /* YK1
+* AND (NOT #SCR-PLN (#ISC) = 'AP' OR = 'LT' OR = 'RT')                      /* YK1
+* AND ((#SCR-PLN-A1 (#ISC) LT 'U')                                 /* PM7   /* YK1
+*  OR (#SCR-PLN-A1 (#ISC) GT 'Z'))                                 /* PM7   /* YK1
+  INPUT MARK *#LUMP-SUM USING MAP 'C2305MCI'
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+MOVE #SCR-ANN-PRM (#ISC) TO #NU-ANN-PREM
+MOVE CI-V.PAID-TO-DATE (#IFL) TO #TRAN-DATE
+*  write 'C2304PCI call c1601sco line 3330'
+
+CALLNAT 'C1601SCO'
+  #CGA-ORIG-COMMAND
+  #CGA-ORIG-ID
+  #CGA-ID
+  #CGA-SCR-SUFFIX
+  #SCR-PLN (#ISC)
+  P-GENDER             /* TT1
+  #IFL
+  #TRAN-DATE
+  CI-V.STATUS          (1:9)
+  CI-V.PLAN            (1:9)
+  CI-V.ONLINE-ACTION   (1:9)
+  CI-V.MODE            (1:9)
+  CI-V.CONVERSION-FLAG (1:9)
+  CI-V.SMOKER-FLAG     (1:9)
+  CI-V.ISSUE-AGE       (1:9)
+  CI-V.PAY-STATUS      (1:9)
+  CI-V.ISSUE-DATE      (1:9)
+  CI-V.PAID-TO-DATE    (1:9)
+  CI-V.FACE-AMOUNT     (1:9)
+  CI-V.ANNUAL-PREM     (1:9)
+  CI-V.LAST-DURATION   (1:9)
+  CI-V.CASH-VALUE      (1:9)
+  CI-V.DEATH-BENEFIT   (1:9)
+  CI-V.NUM-MBRSHIPS    (1:9)
+  CI-V.DURATION        (1:9)
+  CI-V.MONTH-IND       (1:9)
+  CI-V.MIN-CASH-VALUE  (1:9)
+  CI-V.NXT-YR-MIN-CASH-VALUE (1:9)
+  CI-V.NXT-MON-CASH-VALUE    (1:9)
+  CI-V.NXT-MON-DEATH-BENEFIT (1:9)
+  CI-V.ACC-CASH-VALUE        (1:9)
+  CI-V.CONV-DURATION         (1:9)
+  CI-V.MONTH-ALLOC-AMT       (1:9)
+  CI-V.PREM-DEFICIENCY       (1:9)
+  CI-V.BEG-CASH-VALUE        (1:9)
+  CI-V.NET-PR-RATIO          (1:9)
+  #OUTPUT-CALC-AMT
+  #OUTPUT-OLD-PDUP-AMT
+  #PRORATE-LOAN
+  #RPU-ACV
+  #TOT-LOAN-AMOUNT
+  #TOT-CURR-ACCUM-INT
+  #NU-ANN-PREM
+  #OUTPUT-PREM-DIFF
+  #DUES-DIFF
+  #LUMP-SUM
+*  WRITE 'after C1601sco #output prem-diff=' #OUTPUT-PREM-DIFF
+*  WRITE 'after C1601sco #nu-ann-prem=' #nu-ann-prem
+*  write 'after C1601sco npr=' ci-v.net-pr-ratio  (2)
+*
+IF  (#SCR-PLN (#ISC) = 'AP')
+ AND (CI-V.ISSUE-DATE (#IFL) GE 19970101)
+ AND (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99)
+* MOVE #NU-ANN-PREM TO #OUTPUT-PREM-DIFF
+  MOVE #NU-ANN-PREM TO #OUTPUT-CALC-AMT
+*  WRITE 'c2304pci new ann prem' #NU-ANN-PREM
+  RESET #NU-ANN-PREM
+END-IF
+*
+IF   (CI-V.ISSUE-DATE (#IFL) GE 19970101)
+ AND (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99)
+ AND (#SCR-PLN (#ISC) NE 'AP')
+  IGNORE
+ELSE
+  IF #SCR-PLN (#ISC) = 'AP'
+    COMPUTE #TOTAL-LOAN = #LOAN-BAL (#IFL) + #LOAN-BAL-2 (#IFL)   /* PM6
+                        + #ACC-INT (#IFL) + #ACC-INT-2 (#IFL)     /* PM6
+    IF #TOTAL-LOAN > .75 * #CSV (#IFL)                            /* PM6
+       SET WINDOW 'SINGLE-PAY'                                    /* PM6
+         MOVE EDITED #TOTAL-LOAN (EM=Z,ZZZ,ZZ9.99) TO #DIS-TOT-LOAN
+         COMPRESS '$' #DIS-TOT-LOAN INTO #DIS-TOT-LOAN LEAVING NO /* PM6
+         MOVE EDITED #LVALUE (#IFL) (EM=Z,ZZZ,ZZ9.99) TO #DIS-LOAN-VALUE
+         COMPRESS '$' #DIS-LOAN-VALUE INTO #DIS-LOAN-VALUE LEAVING NO
+         MOVE EDITED #CSV (#IFL) (EM=Z,ZZZ,ZZ9.99) TO #DIS-CSV    /* PM6
+         COMPRESS '$' #DIS-CSV INTO #DIS-CSV LEAVING NO           /* PM6
+         MOVE 'N' TO #MAKE-PDUP                                   /* PM6
+         INPUT MARK *#MAKE-PDUP USING MAP 'C2303MCI'              /* PM6
+         IF NOT #MAKE-PDUP = 'Y' OR ='N'                          /* PM6
+           REINPUT WITH TEXT #TEXT                                /* PM6
+           MARK *#MAKE-PDUP                                       /* PM6
+         END-IF                                                   /* PM6
+       SET WINDOW OFF                                             /* PM6
+*                                                                 /* PM6
+       IF #MAKE-PDUP = 'N'                                        /* PM6
+         MOVE 'CI' TO #CGA-SCR-COMMAND                            /* PM6
+         FETCH 'G1000PXX'                                         /* PM6
+       END-IF                                                     /* PM6
+    END-IF                                                        /* PM6
+*
+    IF CI-V.ISSUE-DATE (#IFL) LT 19860701
+      COMPUTE #NEW-LIMIT = #OUTPUT-CALC-AMT + 50
+      COMPUTE #OLD-LIMIT = #OUTPUT-OLD-PDUP-AMT - 50
+*  chg above to 150 when lcc calls
+     WRITE 'Original old/new limits' #OLD-LIMIT #NEW-LIMIT
+*
+      IF #OUTPUT-OLD-PDUP-AMT GT #OUTPUT-CALC-AMT
+        COMPUTE #OLD-LIMIT = #OUTPUT-CALC-AMT - 50
+      END-IF
+    ELSE
+*     WRITE #OLD-LIMIT #NEW-LIMIT #OUTPUT-CALC-AMT
+      COMPUTE #NEW-LIMIT = #OUTPUT-CALC-AMT + 50
+      COMPUTE #OLD-LIMIT = #OUTPUT-CALC-AMT - 50
+*
+      IF #OLD-LIMIT LT 0
+       AND (#SCR-PLN (#ISC) = 'AP')
+        RESET #OLD-LIMIT
+      END-IF
+*
+      IF   (#OUTPUT-CALC-AMT LT 0)  /* WE NEVER PAY TO PAU-UP
+       AND (#SCR-PLN (#ISC) = 'AP')
+        MOVE 50.00 TO #NEW-LIMIT
+        RESET #OLD-LIMIT
+      END-IF
+    END-IF
+*
+    INPUT TEXT #TEXT MARK *#PD-UP-AMT-PD USING MAP 'C2304MCI'
+    IF #CGA-SCR-COMMAND NE '*'
+      FETCH 'G1000PXX'
+    END-IF
+*
+* REMOVE BELOW TO ALLOW ELB TO EXCEED LIMITS
+    IF  (#CGA-CLERK NE 'ELB')    /* LEE CAN EXCEED LIMItS (3/26/2001)
+     AND ((#PD-UP-AMT-PD LT #OLD-LIMIT)
+       OR (#PD-UP-AMT-PD GT #NEW-LIMIT))
+      REINPUT 'Amount not within valid limits'
+      MARK *#PD-UP-AMT-PD
+    END-IF
+*
+    MOVE #PD-UP-AMT-PD TO #OUTPUT-CALC-AMT
+*
+* Below adjusts ACV ADJUST PREM with Amt Paid                  /* DW15
+    IF #IFL NE 1            /* FILLUP PRECEEDING MULTIPLE FIELDS
+      COMPUTE #I3 = #IFL - 1
+      FOR #I2 1 TO #I3
+        IF CI-V.MTD-ACV-PREM-ADJ (#I2) = 0
+          MOVE 9999999.99 TO CI-V.MTD-ACV-PREM-ADJ (#I2)
+        END-IF
+      END-FOR
+    END-IF
+*
+    IF CI-V.MTD-ACV-PREM-ADJ (#IFL) = 9999999.99         /* DW16
+      RESET CI-V.MTD-ACV-PREM-ADJ (#IFL)
+    END-IF
+*
+    ADD #PD-UP-AMT-PD TO CI-V.MTD-ACV-PREM-ADJ (#IFL)
+*
+    IF CI-V.MTD-ACV-PREM-ADJ (#IFL) = 0
+      MOVE 9999999.99 TO CI-V.MTD-ACV-PREM-ADJ (#IFL)
+    END-IF                                                         /* END DW15
+  END-IF
+END-IF
+*
+MOVE CI-V.ISSUE-DATE (#IFL) TO #CHECK-ISSUE-DATE                 /* PM11
+MOVE 15 TO #CHECK-ISSUE-DATE-DD                                  /* PM11
+* IF CI-V.PAID-TO-DATE (#IFL) LE CI-V.ISSUE-DATE (#IFL)           /* PM5
+IF CI-V.PAID-TO-DATE (#IFL) LE #CHECK-ISSUE-DATE                 /* PM11
+  ESCAPE ROUTINE /* no changes to db/cr, prems paid, etc.
+END-IF
+*
+* * * * update db-cr amount which was not done by c1601sco
+*
+* WRITE 'c2304pci #PREM-DIFF=' #OUTPUT-PREM-DIFF
+* WRITE 'c2304pci #CALC-AMT=' #OUTPUT-CALC-AMT
+* IF (#SCR-PLN (#ISC) = 'AP')
+*  OR (#SCR-MODE (#ISC) = 'G' OR = 'E')
+    COMPUTE #DC-ADJ = #OUTPUT-CALC-AMT + #OUTPUT-PREM-DIFF
+    ADD #DC-ADJ TO CI-V.DEBIT-CREDIT-AMT
+*
+    IF #DC-ADJ NE 0            /* DW10
+      IF #DC-ADJ GT 0
+        MOVE 'RDCR' TO #TR-CD
+      ELSE
+        MOVE 'ADCR' TO #TR-CD
+      END-IF
+*
+      MOVE #DC-ADJ TO #ADJ-AMT-8    /* DW12
+      PERFORM CALL-C2522SAM
+    END-IF
+* ELSE
+* COMPUTE CI-V.X-BILL-ADJUST (#IFL) = CI-V.X-BILL-ADJUST (#IFL) +
+*    #OUTPUT-CALC-AMT + #OUTPUT-PREM-DIFF
+* END-IF
+COMPUTE #CGA-MF-SCR-PARM-1-N = #DUES-DIFF * 100 /* store dues due
+*
+* * * * * * * * * CALC TOT PREMIUM PAID * * * * * *
+*
+IF   (CI-V.ISSUE-DATE (#IFL) GE 19970101)
+ AND (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99)
+  COMPUTE ROUNDED #FPF-AMT = (CI-V.ANNUAL-PREM (#IFL) / 12) * 2
+ELSE
+  IF CI-V.ISSUE-DATE-DD (#IFL) = 01
+    COMPUTE ROUNDED #FPF-AMT = (CI-V.ANNUAL-PREM (#IFL) / 12) * 2
+  ELSE
+    COMPUTE ROUNDED #FPF-AMT = (CI-V.ANNUAL-PREM (#IFL) / 12)
+     + (((CI-V.ANNUAL-PREM (#IFL) / 12) / 30)
+                     * ((30 - CI-V.ISSUE-DATE-DD (#IFL)) + 1))
+  END-IF
+END-IF
+*
+MOVE CI-V.ISSUE-DATE-YYYY   (#IFL) TO #W-ISS-YYYY  /* COMPUTE PREMIUMS
+MOVE CI-V.ISSUE-DATE-MM     (#IFL) TO #W-ISS-MM    /* PAID
+MOVE CI-V.PAID-TO-DATE-YYYY (#IFL) TO #W-PDTO-YYYY
+MOVE CI-V.PAID-TO-DATE-MM   (#IFL) TO #W-PDTO-MM
+ADD 02 TO #W-ISS-MM                  /* TO HANDLE FREE MONTH & FPF
+*
+IF   (CI-V.ISSUE-DATE (#IFL) GE 19970101)  /* added 8/99
+ AND (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99)
+ AND (CI-V.ISSUE-DATE-DD (#IFL) = 01)
+  SUBTRACT 1 FROM #W-ISS-MM
+END-IF
+*
+IF #W-ISS-MM GT 12
+  SUBTRACT 12 FROM #W-ISS-MM
+  ADD 01 TO #W-ISS-YYYY
+END-IF
+*
+IF #W-ISS-MM GT #W-PDTO-MM
+  ADD 12 TO #W-PDTO-MM
+  SUBTRACT 01 FROM #W-PDTO-YYYY
+END-IF
+*
+COMPUTE ROUNDED #REMAINING-PREMS = #FPF-AMT
+  + (CI-V.ANNUAL-PREM (#IFL) * (#W-PDTO-YYYY - #W-ISS-YYYY))
+  + ((CI-V.ANNUAL-PREM (#IFL) / 12) * (#W-PDTO-MM - #W-ISS-MM))
+COMPUTE ROUNDED #TOTAL-PREMS-PAID =
+  #OUTPUT-CALC-AMT + #OUTPUT-PREM-DIFF + #REMAINING-PREMS
+  + CI-V.TOT-PREMIUMS-PAID (#IFL)                                 /* PM1
+* write 'C2304pci tots below'
+* display #OUTPUT-CALC-AMT #OUTPUT-PREM-DIFF #REMAINING-PREMS #total-prems-paid
+
+* WRITE #OUTPUT-CALC-AMT #OUTPUT-PREM-DIFF #REMAINING-PREMS
+*       CI-V.ANNUAL-PREM (#IFL)
+* WRITE '#OUTPUT-CALC-AMT ' #OUTPUT-CALC-AMT
+*       '#OUTPUT-PREM-DIFF' #OUTPUT-PREM-DIFF
+*       '#REMAINING-PREMS ' #REMAINING-PREMS
+*       'CI-V.ANNUAL-PREM ' CI-V.ANNUAL-PREM (#IFL)
+*       'TOTAL PREMS PAID ' #TOTAL-PREMS-PAID
+*
+*
+* * * * * * * * * HANDLE MECS PDUP CONDITION * * * * * *
+*
+IF #SCR-PLN (#ISC) = 'AP'  /* mec-ind will be set at end of ci process
+  MOVE #TOTAL-PREMS-PAID TO CI-V.TOT-PREMIUMS-PAID (#IFL)
+  IF CI-V.ISSUE-DATE (#IFL) GT 19880620  /* this test is good enough
+   AND (*DATN - CI-V.ISSUE-DATE (#IFL) LT 70000)   /*
+    MOVE #TOTAL-PREMS-PAID TO CI-V.COST-BASIS (#IFL)
+                              CI-V.ORIG-COST-BASIS (#IFL)
+  END-IF
+ELSE
+  COMPUTE #TOT-NUM-MONS = ((#W-PDTO-YYYY - #W-ISS-YYYY) * 12)
+                        + (#W-PDTO-MM - #W-ISS-MM)
+                        + 2    /* to put back fpf period
+* BELOW IS ALSO AT LINE 2200 & C2300PCI LINE 4900 - REMOVED 4/11/00
+  IF (((#SCR-PLN (#ISC) = 'RT') AND (CI-V.PLAN (#IFL) = 'LT'))
+   OR ((#SCR-PLN (#ISC) = 'LT') AND (CI-V.PLAN (#IFL) = 'RT')))
+     AND (CI-V.ONLINE-ACTION-GN NE '2')   /* NOT 1ST MONTH CONV
+     AND (CI-V.ONLINE-ACTION (#IFL) NE '1')
+    RESET #TOT-PREM-PAID-DIFF   /* NO CARRY-OVER TO NEW PLAN
+*   COMPUTE #TOT-PREM-PAID-DIFF =
+*        (CI-V.ANNUAL-PREM (#IFL) / 12 * #TOT-NUM-MONS)
+*      + #OUTPUT-CALC-AMT
+*      + #OUTPUT-PREM-DIFF
+  ELSE
+    COMPUTE #TOT-PREM-PAID-DIFF =
+         (CI-V.ANNUAL-PREM (#IFL) / 12 * #TOT-NUM-MONS)
+       - (#NU-ANN-PREM            / 12 * #TOT-NUM-MONS)
+       + #OUTPUT-CALC-AMT
+       + #OUTPUT-PREM-DIFF
+  END-IF
+*
+  ADD #TOT-PREM-PAID-DIFF TO CI-V.TOT-PREMIUMS-PAID (#IFL)
+* WRITE 'TOT-PREM-PAID-DIFF'  #TOT-PREM-PAID-DIFF
+*       'CI-V.TOT-PREMS-PD '  CI-V.TOT-PREMIUMS-PAID(#IFL)
+*       '#TOT-NUM-MONTHS   '  #TOT-NUM-MONS
+*       'NU-ANN-PREM       '  #NU-ANN-PREM
+* above will have approximatelly the difference needed to show
+* the correct prems to date on the VP in the future years
+END-IF
+*
+IF #OUTPUT-CALC-AMT LT 0
+  MOVE 'AAF owes' TO #CSV-LBL
+ELSE
+  MOVE 'MBR owes' TO #CSV-LBL
+END-IF
+*
+MOVE EDITED #OUTPUT-CALC-AMT (EM=ZZZ,ZZZ.99) TO #CSV-AMT
+MOVE 'CSV Dif' TO #CSV-DESC
+*
+IF #OUTPUT-PREM-DIFF LT 0
+  MOVE 'AAF owes' TO #PREM-LBL
+ELSE
+  MOVE 'MBR owes' TO #PREM-LBL
+END-IF
+*
+MOVE EDITED #OUTPUT-PREM-DIFF (EM=ZZZ,ZZZ.99) TO #PREM-AMT
+MOVE 'PRM Dif' TO #PREM-DESC
+*
+MOVE EDITED #DUES-DIFF (EM=ZZZ.99) TO #DUE-AMT
+MOVE 'DUES Dif' TO #DUE-DESC
+COMPRESS #CSV-LBL #CSV-AMT #CSV-DESC '*' #PREM-LBL #PREM-AMT #PREM-DESC
+    #DUE-AMT #DUE-DESC   INTO #SCR-MSG-LINE-1
+*
+* IF #TOTAL-PREMS-PAID LE 99999.99
+*   MOVE EDITED #TOTAL-PREMS-PAID (EM=ZZ,ZZZ.99) TO #PRM-AMT
+*   COMPRESS '$' #PRM-AMT INTO #PRM-AMT LEAVING NO
+* ELSE
+  MOVE EDITED #TOTAL-PREMS-PAID (EM=ZZZ,ZZZ.99) TO #PRM-AMT
+* END-IF
+*
+COMPRESS CI-V.PAID-TO-DATE-MM (#IFL) '/' CI-V.PAID-TO-DATE-YYYY (#IFL)
+      INTO #PRM-PD-THRU LEAVING NO
+MOVE #PRM-PAID-LINE TO #SCR-MSG-LINE-2
+*
+END-SUBROUTINE /* (0681)
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE RESET-WHOLE-LIFE-INFO
+* * * * * * * * * * * * * * * * * * * * *
+RESET CI-V.MIN-CASH-VALUE        (#IFL)
+      CI-V.NXT-YR-MIN-CASH-VALUE (#IFL)
+      CI-V.NET-PR-RATIO          (#IFL)
+      CI-V.ACC-CASH-VALUE        (#IFL)
+      CI-V.BEG-CASH-VALUE        (#IFL)
+      CI-V.CASH-VALUE            (#IFL)
+      CI-V.NXT-MON-CASH-VALUE    (#IFL)
+      CI-V.COST-BASIS            (#IFL)
+      CI-V.ORIG-COST-BASIS       (#IFL)
+      CI-V.TOT-PREMIUMS-PAID     (#IFL)
+      CI-V.MONTH-ALLOC-AMT       (#IFL)
+      CI-V.PREM-DEFICIENCY       (#IFL)
+      CI-V.CONV-DURATION         (#IFL)
+      CI-V.DURATION              (#IFL)
+      CI-V.LAST-DURATION         (#IFL)
+      CI-V.MONTH-IND             (#IFL)
+      #SCR-RPU-ACV               (#ISC)
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE GET-OLD-AND-NEW-DUES
+* * * * * * * * * * * * * * * * * * * * *
+*
+RESET #NEW-DUES #OLD-DUES
+IF   (NOT ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+                       OR = 'O' OR = 'P' OR = 'Q')
+ AND (#IFL = 1)
+ AND (ST-V.PROCESS-IND = 'G')           /* MUST BE G/F         DW17
+  DECIDE ON FIRST VALUE #SCR-PLN (#ISC)
+    VALUE '7P' MOVE #SVC-FEE-7P TO #NEW-DUES
+    VALUE '20P' MOVE #SVC-FEE-20 TO #NEW-DUES
+    VALUE '30P' MOVE #SVC-FEE-30 TO #NEW-DUES
+    VALUE 'OL' MOVE #SVC-FEE-OL TO #NEW-DUES
+*   VALUE 'RT' MOVE #SVC-FEE-TM TO #NEW-DUES                     /* YK1
+*   VALUE 'LT' MOVE #SVC-FEE-TM TO #NEW-DUES                     /* YK1
+    VALUE 'AP' MOVE #SVC-FEE-SP TO #NEW-DUES
+    NONE       IGNORE
+  END-DECIDE
+*
+* IF (#SCR-PLN-A1 (#ISC) GE 'U') AND (#SCR-PLN-A1 (#ISC) LE 'Z') /* YK1
+  IF FUNCTION-TERM-POLICY(<#SCR-PLN(#ISC)>)                      /* YK1
+    MOVE #SVC-FEE-TM TO #NEW-DUES
+  END-IF
+END-IF
+*
+IF   (NOT ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+                       OR = 'O' OR = 'P' OR = 'Q')
+ AND (#IFL = 1)
+ AND (ST-V.PROCESS-IND = 'G')           /* MUST BE G/F         DW17          
+  DECIDE ON FIRST VALUE CI-V.PLAN (#IFL)
+    VALUE '7P'  MOVE #SVC-FEE-7P TO #OLD-DUES
+    VALUE '20P' MOVE #SVC-FEE-20 TO #OLD-DUES
+    VALUE '30P' MOVE #SVC-FEE-30 TO #OLD-DUES
+    VALUE 'OL'  MOVE #SVC-FEE-OL TO #OLD-DUES
+*   VALUE 'RT'  MOVE #SVC-FEE-TM TO #OLD-DUES    /* YK1
+*   VALUE 'LT'  MOVE #SVC-FEE-TM TO #OLD-DUES    /* YK1
+    VALUE 'AP'  MOVE #SVC-FEE-SP TO #OLD-DUES
+    NONE        IGNORE
+  END-DECIDE
+*
+  MOVE CI-V.PLAN (#IFL) TO #PLAN
+* IF (#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z')      /* YK1 
+  IF FUNCTION-TERM-POLICY(<#PLAN>)                /* YK1
+    MOVE #SVC-FEE-TM TO #OLD-DUES
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-C2522SAM   /* DW10
+* * * * * * * * * * * * * * * *
+*
+IF NOT #CGA-ORIG-SUFFIX = 'UPD' OR = 'UPO' OR = 'PUU'
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE CI-V.DATE-ACCT-UPDATE TO #LAST-DATE-UPDATE
+MOVE *DATN TO CI-V.DATE-ACCT-UPDATE #NEW-DATE-UPDATE #EFF-DT
+*
+MOVE 'C2304PCI' TO #SOURCE-PROG
+MOVE CI-V.ISSUE-DATE (#IFL) TO #ISSUE-DATE
+MOVE #SCR-MODE (#ISC) TO #SCR-TRAN-COD /* C2522SAM USES FOR MACV
+MOVE 'CONV' TO #CMBX
+*
+IF #ADJ-AMT-8 LT 100000           /* DW12
+  MOVE #ADJ-AMT-8 TO #ADJ-AMT
+  PERFORM CALLNAT-C2522SAM
+ELSE
+  MOVE #ADJ-AMT-8 TO #REM-AMT      /* DW12
+  REPEAT
+    SUBTRACT 99999.00 FROM #REM-AMT
+*
+    IF #REM-AMT LE 0
+      ADD 99999 TO #REM-AMT
+      IF #REM-AMT GT 0
+        MOVE #REM-AMT TO #ADJ-AMT
+        PERFORM CALLNAT-C2522SAM
+      END-IF
+      ESCAPE BOTTOM
+    ELSE
+      MOVE 99999.00 TO #ADJ-AMT
+      PERFORM CALLNAT-C2522SAM
+    END-IF
+  END-REPEAT
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * *
+DEFINE CALLNAT-C2522SAM    /* DW12
+* * * * * * * * * * *
+*
+CALLNAT 'C2522SAM'
+  #CGA-SCR-COMMAND
+  #CGA-SCR-ID
+  #CGA-SCR-SUFFIX
+  #CGA-CLERK
+  CI-V.ID-NUMBER
+  #SOURCE-PROG
+  #EFF-DT
+  #TR-CD
+  #ADJ-AMT
+  #OLD-FPF
+  #NEW-FPF
+  #LAST-DATE-UPDATE
+  #NEW-DATE-UPDATE
+  #ISSUE-DATE
+  #SCR-TRAN-COD
+  #CMBX
+  #TIMN                     /* DW14
+END-SUBROUTINE
+*
+END

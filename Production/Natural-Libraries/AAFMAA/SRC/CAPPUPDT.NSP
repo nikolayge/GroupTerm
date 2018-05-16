@@ -1,0 +1,125 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+*                       MODIFICATION LOG                               *
+* This runs after CAPPEXTR to update loan history file with paid off   *
+*    statuses.                                                         *
+*                                                                      *
+* USER     DATE        TAG     REASON                                  *
+* vxt    08-31-2017    none    Initial creation                        *
+************************************************************************
+*
+DEFINE DATA LOCAL
+*********
+* Views *
+*********
+1 LNS-V VIEW OF A-LOANS
+  2 LAST-UPD-USER        
+  2 LAST-UPD-DATE        
+  2 LAST-UPD-TIME        
+  2 LOAN-POLICY-NUMBER   
+  2 LOAN-PAYOFF-DATE     
+  2 LOAN-STATUS          
+  2 ID-NUMBER            
+  2 LOAN-NUMBER     
+*
+************
+* COUNTERS *
+************
+1 #cnt               (p7)
+1 #NUM-PAID-OFF-CAPS (p7)
+*
+******************
+* WORK VARIABLES *
+****************** 
+1 #in-file          (a23)
+1 #out-file         (A35)
+1 #pol-id-in        (a) Dynamic
+1 #cn-in            (a) Dynamic
+1 #cn-a             (a6)
+1 redefine #cn-a
+  2 #cn             (n6)
+1 #pol-id           (a16)
+1 #ACTION-TYPE      (I4)
+1 #CLERK-ID         (A3)
+1 #CAP-NUM          (N2)
+1 #CAP-STATUS       (A1)
+1 #LOAN-ISSUE-DATE  (N8)
+1 #TAB              (A1) CONSTANT <H'09'>
+* 
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/PAID-POL-ID.TXT'   TYPE 'ASCII-COMPRESSED'
+* DEFINE WORK FILE 2 '/usr/SAG/tmp/Month_End/PAID_OFF_CAPS.TXT'                    TYPE 'ASCII-COMPRESSED'
+*
+read WORK FILE 1 #in-file
+  ADD 1 TO #CNT
+*
+  separate #IN-file INTO
+    #pol-id-in
+    #cn-in
+  ignore with delimiter #TAB
+*
+  #pol-id    := #pol-id-in
+  move #cn-in  to #cn-a
+  move #cn-in  to #cn-a
+  move right justified #cn-a to #cn-a
+* 
+  f1. FIND LNS-V WITH LNS-V.LOAN-POLICY-NUMBER = #pol-id
+    IF NO RECORDS FOUND
+      write 'no record on the loan file for ' #pol-id
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    if LOAN-STATUS = 'C'
+      LNS-V.LOAN-STATUS      := 'Q'
+      LNS-V.LOAN-PAYOFF-DATE := *datn
+      LAST-UPD-USER          := *program
+      LAST-UPD-DATE          := *datn
+      LAST-UPD-TIME          := *timn
+* create note for payoff loan
+      #ACTION-TYPE     := 1
+      #CLERK-ID        := 'EDS'
+      #CAP-STATUS      := 'Q'
+      #CAP-NUM         := LNS-V.LOAN-NUMBER
+      CALLNAT 'CAPN0002'
+        #ACTION-TYPE
+        #CLERK-ID
+        #CN
+        #CAP-NUM
+        #CAP-STATUS
+* create report for updated records
+      PERFORM WRITE-REPORT
+
+        UPDATE(F1.)
+        END TRANSACTION
+      ADD 1 TO #NUM-PAID-OFF-CAPS
+      ESCAPE BOTTOM (f1.)
+    end-if
+  END-FIND
+*
+  at end of data
+    COMPRESS 'Total number of CAP loans paid off is: ' #NUM-PAID-OFF-CAPS INTO #out-file
+    WRITE WORK 2 #out-file
+    write 'Total number of records read is     :'  #cnt /
+          'Total number of CAP loans updated is:'  #NUM-PAID-OFF-CAPS
+  end-enddata
+*
+END-work
+*
+*****************
+DEFINE SUBROUTINE WRITE-REPORT
+*****************
+*
+COMPRESS LNS-V.ID-NUMBER
+         LNS-V.LOAN-POLICY-NUMBER
+         LNS-V.LOAN-PAYOFF-DATE
+         INTO #out-file WITH DELIMITER #TAB
+WRITE WORK 2 #out-file
+*
+END-SUBROUTINE
+*
+END

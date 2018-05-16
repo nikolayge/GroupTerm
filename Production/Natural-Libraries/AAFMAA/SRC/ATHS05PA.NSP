@@ -1,0 +1,2035 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 2
+* <Natural Source Header
+******** CONVERTED TO NATURAL BY SOFTWARE AG ON 07/09/05 ********
+*
+* COMPOPT:RENT,RES,OPT,LIB
+* LINKOPT:RENT,AMODE=31,RMODE=ANY
+*  PROGRAM-ID. ATHP05PA.
+* DATE-WRITTEN. '10/05/87'. C MAINLINE
+* DATE-COMPILED.  TODAY.
+* AUTHOR. D. WINGERT.
+* REMARKS.
+* 89.1  AUTOMATICALLY RETIRE MBRS IF SO INDICATED ON TAPE 08/89 DRW
+* 89.2  FIX RETIRED-DATE PROBLEM ON AUTOMATIC RETIREES    09/89 DRW
+* 89.3  MODIFY ALLOTMENT REPORTING.                       10/89 DRW
+* 90.1  CHG ERROR MSG IF NO POLICIES.                     04/90 DRW
+* 90.2  ADD NOTICE PROCESSING                             10/90 DRW
+* DW2   FIX PAID-UP CALCULATION                         05/2005 DRW
+* DW3  12/28/2005 DRW/AB Modify FPF processing (Cobol 09/15/2005)
+* RH1  01/16/2006 SAG/AB reassigned ATHNREPT to WORK FILE 9
+* SAG-AB 20060314 split test to evaluate exceed index condition first
+* SAG-AB 20060420 Workaround for X-FIRST-PLACE-FEE exceeding 5.2 in one case
+*                 Permanent correction coming, 7 code locations affected
+* SAG-AB 20060919 Changed move of id-number to move edited so leading zero is written
+* DRW DW4 04262007 Include Flex plans (2PF thru 9PF) in Dues Calcs
+* PAM PM5 08052007 Adjust SAG's fix - can't subtract money from FPF
+* DRW DW6 03/2/2008  Do not remove ALP Indicator (AIL) (L) if loan is Zero
+* DRW DW7 05/15/2008 On lst pd-up pmt apply diff to ext-prms-pd&adj AUTH-CODE
+* DRW 06/06/2008 DW8 Add ALOT-CHG-AUTH "A" checking
+* DRW 06/27/2008 DW9 Remove DW7 now that WE chg partal pd-up alot amt last mon
+* DRW 07/01/2008 DW10 Set Segment # for SG-LOOP for ALP processing
+* DRW 07/16/2008 DW11 Write-Off PD-UP less than 1.00 since DFAS cannot handle
+* PAM 07/28/2008 PM12 Do not remove ALP Indicator (EIL)
+* DRW 08/28/2008 DW13 Gen Plus Processing
+* PAM 03/19/2009 PM14 Do not remove ALp Indicator (CIL)
+* DRW 05/29/2009 DW15 Modify Erros & Exception Report
+* DRW 06/27/2009 DW16 Stop modification to AUX-DEBIT-CREDIT-AMT
+* RSE 09/18/2009 RE1  Change PROCESS-IND/600K logic for Unification
+* PAM 05/28/2010 PM17 Modified to handle over $200K of FPF
+* vxt 11/18/2010 vt1 Change the source for address, name and rank.
+* NGG 02/14/2012 NG1  Premier services
+* YAK 10/10/2012 YK1  Use function to identify Level Term II plans
+* YAK 11/15/2012 YK2  Add No Medical Term plan (EZ) 
+* YAK 02/13/2012 YK3  Add special processing for EZ term - deduct $1 from premium
+*                     for Allotment payment
+* JNT 09/26/2013 JT1  Address normalization 
+* YAK 01/13/2014 YK4  Add GP2 plan
+******************************************************************
+* Converted to Natural by SAGUK ( UKALI ) on 07/09/05            *
+* ---------------------------------------------------            *
+* Notes:                                                         *
+* 1.  UT-S-ATHNREPT re-assigned to WORK FILE 9                   *
+*                                                                *
+******************************************************************
+DEFINE DATA
+** SAG 02072006 DRC BEGIN
+ GLOBAL USING ATHG05P0               /* ADDRESS FIELDS REMOVED FROM GLOBAL  /* JT1
+**PARAMETER USING ATHY05P0
+*
+LOCAL USING C2500AAM                              /* DW7
+LOCAL USING ADDA0001                     /* pda for the address      vt1
+LOCAL USING SVCA0003                          /* NG1
+LOCAL
+1 #MSG                (A) DYNAMIC             /* NG1
+*
+* #LINKAGE TO C2520SAM below    /* Not now used           /* DW7 DW9
+1 #CLERK         (A3)
+1 #DATE-OF-UPDATE    (N8)
+1 #TIME-OF-UPDATE    (N7)
+1 #HOLD-CUR-ACCT-UPDT (N8)
+1 #EXTRA-STOP         (L)
+1 #BANKRUPT           (L)
+*
+1 #SG-TBL (15)
+  2 #SG-CAT1 (A2)
+  2 #SG-CAT2 (A2)
+  2 #SG-AMT  (N6.2)
+1 #CMBX   (A4)
+* #LINKAGE TO C2520SAM ABOVE
+*
+1 #TR-REG-AUTH-GR
+  2 #TR-REG-AUTH-LBL-1A        (A3)  INIT <'CA-'>
+  2 #TR-REG-AUTH-LBL-1B        (A9)  INIT <'ALOT-AUTH'>
+  2 #TR-REG-AUTH-LBL-13        (A19) INIT <'-CHG ALOT-CHG-AUTH '>
+  2 #TR-REG-AUTH-CODE          (A08)
+1 REDEFINE #TR-REG-AUTH-GR
+  2 #TR-REG-AUTH               (A39)
+*
+1 TR-V VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER (N6)
+  2 PROCESS-IND (A1)
+  2 NAME (A25)
+  2 DATE-LAST-UPDATE (N8)
+  2 TERMINAL-ID (A8)
+  2 CLERK-ID (A3)
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 OLD-DATA (A125/20)
+  2 NEW-DATA (A125/20)                             /* END DW7
+*
+01 ALLOT-REPT-REC
+  02 AL-RP-REC
+    03 AL-RP-FILL-1                 (A31)
+    03 AL-RP-AMOUNT                 (P8.2)
+    03 AL-RP-NAME
+      04 AL-RP-NAME-QTD             (A4)
+      04 AL-RP-NAME-21              (A21)
+  02 AL-RP-MSG
+    03 AL-RP-ACT-RET                (A4)
+    03 AL-RP-STOP-START             (A6)
+    03 AL-RP-DESCRIPTION
+      04 AL-RP-STOP-REASON
+        05 AL-RP-MSG-1              (A5)
+        05 AL-RP-MSG-2              (A5)
+      04 AL-RP-MSG-3                (A5)
+      04 AL-RP-MSG-4                (A5)
+      04 AL-RP-MSG-5                (A5)
+  02 REDEFINE AL-RP-MSG
+    03 AL-RP-MSG/ALPHA              (A35)
+  02 REDEFINE AL-RP-MSG
+    03 FILLER                       (A22)
+    03 AL-RP-DEAD                   (A13)
+  02 AL-RP-CODE                     (A1)
+  02 AL-RP-DATE-DIF                 (A1)
+  02 FILLER-1                       (A1)
+*
+1 #FINAL-PMT-LESS-THAN-1            (L)    /* DW11
+1 #FINAL-PMT-LESS-THAN-1-AMT        (N3.2)
+1 #FINAL-PMT-PLAN                   (A3)
+*
+1 #SUBTRACT-VALUE                   (P7.2) /* PM17
+1 #I1   (I2)
+1 #I2   (I2)
+1 #I3   (I2)
+1 #ILN1 (I2)
+1 #LAST-DATE-UPDATE  (N8)
+01 TEST1                            (P3)
+01 PRM-X                            (P3)
+01 WRK-MON                          (P3)
+01 MODE-CHGD-TO-G                   (A1)
+01 EMESS                            (A50)
+01 W-MODE-PREMIUM-PA                 (P5.2)
+01 W-MODE                           (P3)
+01 SAVE-NAME                        (A25)
+01 AFTER-STOP-START-SW              (P2)
+01 AFTER-WRITE-STOP-SW              (P2)
+01 SAVE-PAY-STATUS                  (A2)
+01 SAVE-MODE-PA                      (A1)
+01 CAP-LOAN                         (P7.2)
+01 TOT-LV                           (P7.2)
+01 LV                               (P7.2)
+01 L-TYPE-PA                           (A1)
+01 STOP-CODE                        (A1)
+01 IS-WORK-PREM                     (P5.2)
+01 OL-YEARS                         (N3)
+01 SVC-FEE-2P                       (P2.2) INIT <18.50>
+01 SVC-FEE-3P                       (P2.2) INIT <12.50>
+01 SVC-FEE-4P                       (P1.2) INIT <9.50>
+01 SVC-FEE-5P                       (P1.2) INIT <7.50>
+01 SVC-FEE-6P                       (P1.2) INIT <6.50>
+01 SVC-FEE-7P                       (P1.2) INIT <6.00>
+01 SVC-FEE-10                       (P1.2) INIT <4.50>
+01 SVC-FEE-20                       (P1.2) INIT <3.00>
+01 SVC-FEE-30                       (P1.2) INIT <2.50>
+01 SVC-FEE-OL                       (P1.2) INIT <2.00>
+01 SVC-FEE-TM                       (P1.2) INIT <2.00>
+01 SVC-FEE-PA                       (P3.2)
+01 WORK-DUES                        (P3.2)
+01 RID-MON-PREM-PA                  (P3.2)
+01 WORK-RIDER                       (P3.2)
+01 WORK-AREAS
+  02 SAVE-PLAN
+    03 SAVE-PLAN-1                  (A1)
+    03 SAVE-PLAN-2                  (A1)
+    03 SAVE-PLAN-3                  (A1)
+  02 REDEFINE SAVE-PLAN
+    03 SAVE-PLAN/ALPHA              (A3)
+*
+  02 FPF-MESSAGE
+    03 FPF-AMT                      (N0.2) (EM=.99)
+    03 F                            (A31) INIT <' FPF TRANSFERRED TO DB/CR FIELD'>
+*
+  02 ALOT-MESSAGE
+    03 ALOT-MSG-1                   (A32)
+    03 ALOT-AMT-1                   (N6.2) (EM=$$$,$$$.99)
+*
+  02 DEAD-MSG
+    03 DEAD-MSG-DEAD                (A5)
+    03 DEAD-MSG-DATE                (N8)
+*
+  02 FILE-KEY
+    03 FILE-KEY-NAME                (A25)
+    03 FILE-KEY-ID                  (N6)
+*
+  02 ALLOT-KEY
+    03 ALLOT-KEY-NAME               (A25)
+    03 ALLOT-KEY-ID                 (N6)
+*
+  02 SG-TRAN                        (A4)
+  02 SG-YEAR                        (A2)
+  02 SG-PLAN                        (A2)
+  02 SG-AMT                         (N6.2)
+  02 SG-PREM                        (N6.2)
+  02 SG-DUES                        (N6.2)
+  02 SG-PRIN                        (N6.2)
+  02 SG-INT                         (N6.2)
+  02 ISS-DT-1-YEAR                  (N8)
+  02 REDEFINE ISS-DT-1-YEAR
+    03 ISS-DT-1-YYYYMM              (N6)
+    03 REDEFINE ISS-DT-1-YYYYMM
+      04 ISS-DT-1-YYYY              (N4)
+      04 ISS-DT-1-MM                (N2)
+    03 ISS-DT-1-DD                  (N2)
+  02 IS-PD-UP                       (N8)
+  02 REDEFINE IS-PD-UP
+    03 IS-PD-UP-YYYY                (N4)
+    03 IS-PD-UP-MM                  (N2)
+    03 IS-PD-UP-DD                  (N2)
+  02 REDEFINE IS-PD-UP
+    03 IS-PD-UP-YYYYMM              (N6)
+    03 FILLER-4                     (N2)
+  02 STOP-PENDING-DATE-GR
+    03 ST-P-DT-YYYYMM               (N6)
+    03 REDEFINE ST-P-DT-YYYYMM
+      04 ST-P-DT-YYYY               (N4)
+      04 ST-P-DT-MM                 (N2)
+    03 ST-P-DT-DD                   (N2)
+*
+  02 REDEFINE STOP-PENDING-DATE-GR
+    03 STOP-PENDING-DATE            (N8)
+  02 HOLD-LST-UPDT-GR
+    03 HOLD-LST-UPDT-CENT           (N2)
+    03 HOLD-LST-UPDT-YY             (N2)
+    03 HOLD-LST-UPDT-MM             (N2)
+    03 HOLD-LST-UPDT-DD             (N2)
+*
+  02 REDEFINE HOLD-LST-UPDT-GR
+    03 HOLD-LST-UPDT                (N8)
+*
+01 WORK-DATES
+  02 WORK-DATE-G
+    03 WORK-YYYY                    (N4)
+    03 WORK-MM                      (N2)
+    03 WORK-DD                      (N2)
+*
+  02 REDEFINE WORK-DATE-G
+    03 WORK-DATE                    (N8)
+*
+  2 #YYYYMMDD                  (N8)
+  2 REDEFINE #YYYYMMDD
+    3 #YYYY-A     (A4)
+    3 #MM-A       (A2)
+    3 #DD-A       (A2)
+*
+  02 SG-X                           (P2)
+*
+  02 WORK-AMT                       (P9.2)
+  02 #AMT-DUE                       (P9.2)     /*  DW7
+  02 #DIFF                          (P9.2)
+  02 #DB-CR-ADJ-AMT                 (P9.2)
+  02 #ALOT-PD-UP-THIS-MONTH         (L)
+  02 #PD-UP-ALOT-DIFF               (P7.2)
+  02 #TOT-AMT-XTR-PRMS-PAID         (P7.2)
+  02 #XTRA-PREMS-TBL     (9)    /* Store Adj to Xtra-Prems-Paid
+    3 #XTRA-SG-PREM           (N6.2)
+    3 #XTRA-PREM-DIFF-AMT     (N6.2)            /* End DW7
+*
+  02 AMT-DIFF                       (P9.2)
+  02 RIDER-DIFF                     (P9.2)
+  02 WORK-DIFF                      (P9.2)
+  02 WORK-DUES-DIFF                 (P9.2)
+  02 WORK-RIDER-DIFF                (P9.2)
+  02 TOT-MODE                       (P9.2)
+  02 TOT-RIDER                      (P9.2)
+  02 NUM-GMASQ-POLS                 (P3)
+  02 SAVE-UPDATED-FIELDS
+    03 SV-G-STOP-DATE               (N8)
+    03 SV-I-FLDS(9)
+      04 SV-I-PAID-TO-DATE          (N8)
+      04 SV-I-PAID-UP-DATE          (N8)
+      04 SV-I-PAY-STATUS            (A2)
+      04 SV-I-MODE                  (A1)
+      04 SV-I-RID-PD-TO             (N8)
+  02 PT-MM                          (P2)
+  02 TD-MM                          (P2)
+  02 PU-MM                          (P2)
+  02 PU-YYYY                        (P4)
+  02 SWITCHES
+    03 ALLOT-EOF-SW                 (A1) INIT <'N'>
+    03 MASTER-UPDT-ERR              (A1) INIT <'N'>
+    03 REC-1-REJ-SW                 (A1) INIT <'N'>
+    03 FPF-SWITCH                   (A1)
+    03 FPF-SWITCH-1                 (A1)
+    03 REFUND-SWITCH                (A1)
+    03 REFUND-SWITCH-1              (A1)
+    03 ALLOT-AMT-SWITCH             (A1)
+    03 ALLOT-AMT-SWITCH-1           (A1)
+    03 SET-2-SW                     (A1) INIT <'N'>
+    03 DT-DIF-1-SW                  (A1) INIT <'N'>
+    03 DT-DIF-SW                    (A1) INIT <'N'>
+    03 NON-PAID-UP-SWITCH           (A1) INIT <'N'>
+    03 ALL-POLS-ARE-G-PP-SWITCH     (A1) INIT <'Y'>
+    03 CERT-STOP-NOTICE-SWITCH      (A1) INIT <'N'>
+*
+01 TRANS-REG-REC
+  02 TR-RG-TR-TYP                   (A1)
+  02 FILLER                         (A3)
+  02 TR-RG-ID-GR
+    03 TR-RG-ID-CN                  (A2)
+    03 TR-RG-ID                     (N6)
+    03 TR-RG-FILL                   (A1)
+*
+  02 TR-RG-DATE                     (N6)
+  02 TR-RG-CODE                     (A4)
+  02 TR-RG-COL                      (A1)
+  02 TR-RG-NAME                     (A25)
+  02 FILLER1                        (A1)
+  02 TR-RG-CERT                     (A5)
+  02 TR-RG-NUM                      (A3)
+  02 TR-RG-LDTE-GR
+    03 TR-RG-LDTE-MM                (N2)
+    03 TR-RG-LDTE-DD                (N2)
+    03 TR-RG-LDTE-YY                (N2)
+*
+  02 REDEFINE TR-RG-LDTE-GR
+    03 TR-RG-LDTE                   (N6)
+  02 TR-RG-DEBT                     (N7.2)
+  02 TR-RG-CRDT                     (N7.2)
+  02 TR-RG-REF                      (A10)
+  02 TR-RG-DESC                     (A20)
+  02 TR-RG-MSG                      (A1)
+  02 TR-RG-PROCESS-DATE             (A6)
+  02 FILLER2                        (A4)
+  02 TR-RG-AALP                     (A1)
+  02 TR-RG-CLERK                    (A4)
+  02 TR-RG-TR-DATE                  (A6)
+  02 TR-RG-TR-TIME                  (A6)
+  02 TR-RG-TERMINAL                 (A4)
+  02 FILLER3                        (A140)
+01 REDEFINE TRANS-REG-REC
+  02 TRANS-REG-REC/ALPHA            (A284)
+*
+*****************************************************************
+* T I N 1 *
+*****************************************************************
+*
+01 TIN1-PA
+  02 GENERAL-REC
+    03 TIN1-PA-SECT                    (A1)
+    03 TIN1-PA-SUB-SECT                (A1)
+    03 TIN1-PA-NAME-ADDRESS
+      04 TIN1-PA-NAME                  (A70)                                   /* was 25 VT1
+      04 TIN1-PA-LN1                   (A70)                                   /* was 25  vt1 \/
+      04 TIN1-PA-LN2                   (A70)                                   /* was 25
+      04 TIN1-PA-LN3                   (A70)                                   /* was 25
+      04 TIN1-PA-LN4                   (A70)                                    /* was 25
+      04 TIN1-PA-CITY                  (A50)                                   /* new
+      04 TIN1-PA-STATE                 (A2)                                    /* new     vt1 /\
+      04 TIN1-PA-ZIP-G                 (A10)
+      04 REDEFINE TIN1-PA-ZIP-G
+        05 TIN1-PA-ZIP                 (N5)                                     /* vt1  was A5
+        05 TIN1-PA-DASH                (A1)
+        05 TIN1-PA-ZIP-LST-4           (N4)
+*
+    03 TIN1-PA-RANK                    (A25)                                    /* vt1 was 3
+    03 TIN1-PA-CL                      (A1)
+    03 TIN1-PA-CN-NUMBER
+      04 TIN1-PA-CN                    (A2) INIT <'CN'>
+      04 TIN1-PA-ID                    (N6)
+*
+    03 TIN1-PA-GEN-MODE                (A1)
+    03 TIN1-PA-OLD-SECT                (A1)
+    03 TIN1-PA-NON-MBR-FLAG            (A1)
+    03 TIN1-PA-POL                     (A5)
+    03 TIN1-PA-TYPE                    (A1)
+    03 TIN1-PA-DUEDT
+      04 TIN1-PA-DUEDT-MM              (N2)
+      04 TIN1-PA-DUEDT-DD              (N2)
+      04 TIN1-PA-DUEDT-YY              (N2)
+*
+    03 TIN1-PA-PRINC                   (N5.2)
+    03 TIN1-PA-TOTBIL                  (N5.2)
+    03 TIN1-PA-PREPD                   (N5.2)
+    03 TIN1-PA-NETBIL                  (N5.2)
+    03 TIN1-PA-OVER-CV-SW              (A1)
+    03 FILLER-5                     (A2)
+    03 TIN1-PA-ALLOT-DIFF              (N3.2)
+    03 FILLER-6                     (A13)
+*
+  02 REDEFINE GENERAL-REC
+    03 FILLER-7                     (A451)                               /* vt1 was 152
+    03 TIN1-PA-FPF-AMT                 (N5.2)
+    03 TIN1-PA-FPF-ISS-DATE            (N8)
+    03 REDEFINE TIN1-PA-FPF-ISS-DATE
+      04 TIN1-PA-FPF-ISS-DT-YYYYMM     (N6)
+      04 TIN1-PA-FPF-ISS-DT-DD         (N2)
+    03 TIN1-PA-FPF-PDTO-DATE           (N8)
+    03 TIN1-PA-FPF-DUE-DATE            (N8)
+    03 TIN1-PA-FPF-NEW-ADDL            (A1)
+    03 TIN1-PA-FPF-INTRO-FLAG          (A1)
+    03 TIN1-PA-FPF-SNG-PREM            (A1)
+    03 TIN1-PA-FPF-APL-LAPS            (A1)
+    03 TIN1-PA-SEG-NUM                 (N1)   /* DW3 12/28/2005 DRW/AB
+    03 FILLER-8                     (A25)  /* DW3 12/28/2005 DRW/AB
+  02 REDEFINE GENERAL-REC
+    03 FILLER-9                     (A451)                            /* vt1 was 152
+    03 TIN1-PA-ALLT-AMT                (N5.2)
+    03 TIN1-PA-DB-CR                   (N5.2)
+    03 TIN1-PA-QTR-PREM                (N5.2)
+    03 TIN1-PA-FIXED-LOAN              (N5.2)
+    03 FILLER-10                    (A33)
+01 REDEFINE TIN1-PA
+  02 TIN1-PA/ALPHA                     (A512)                        /* vt1 was 213
+*
+01 EPR-X                            (P1)
+*
+01 #LOOP-SEGS                       (L) INIT <FALSE>
+01 #AFTER-WRITE-STOP-SW-1           (L) INIT <FALSE>
+*
+1 #ZIP-CODE  (N9)                                         /* vt1 \/
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-CODE-5    (N5)
+  2 #ZIP-CODE-4    (N4)
+1 #CONTACT-ID     (N8)
+1 #PDA-RANK
+  2 #PASS-COMMAND       (A2)
+  2 #RANK-PASS          (A3)
+  2 #MIL-ID-PASS        (A3)
+  2 #INVALID            (L)
+  2 #RANK-PAY-TBL-DISPL (P2)
+  2 #RANK-LITERAL-PASS  (A23)
+  2 #RANK-DISPLAY       (A5)
+*
+  2 #CONTACT-ID-R         (N8)
+  2 #RANK-ABBR          (A) DYNAMIC
+  2 #LETTER-ENV         (A) DYNAMIC
+  2 #SALUTATION         (A) DYNAMIC
+  2 #SALUTATION-WITH-NAME (A) DYNAMIC                      /* vt1 11/08/2010 vt1
+1 #FIRST-NAME   (A25)
+1 #MIDDLE-NAME  (A25)
+1 #LAST-NAME    (A25)
+1 #SUFFIX       (A10)
+1 #NAME         (A70)                          /* vt1 /\
+1 #EZ-TERM      (A3) CONST <'EZ '>             /* YK3 
+1 #DATE-OF-BIRTH       (N8.0)            /* TT1
+END-DEFINE
+**
+IF PROCESS-SWITCH = 'I'
+  PERFORM INIT-PROCESS
+END-IF
+*
+IF PROCESS-SWITCH = 'P'
+  IGNORE /* drop through to PROCESS-RECORD
+END-IF
+*
+IF PROCESS-SWITCH = 'F'
+  IF RETURN-SW = 96
+    RESET RETURN-SW TRANS-REG-REC
+    MOVE 'B' TO TR-RG-TR-TYP
+    MOVE 'CN' TO TR-RG-ID-CN
+    MOVE 999999 TO TR-RG-ID
+    MOVE CURR-DATE-MMDDYY/NUM TO TR-RG-DATE
+    MOVE 'EDS' TO TR-RG-CLERK
+    MOVE 'ALRD' TO TR-RG-CODE
+    MOVE TOT-ALLOT-PREMS TO TR-RG-CRDT
+    MOVE TOT-ALLOT-RIDER TO TR-RG-DEBT
+    MOVE '999' TO TR-RG-NUM
+    MOVE 'A' TO TR-RG-MSG
+    RESET #C-OUTGOING-FLAG
+    MOVE TRANS-REG-REC/ALPHA TO #C-REPORT-RECORD
+  ELSE
+    IF RETURN-SW = 95
+      RESET TRANS-REG-REC
+      MOVE 'B' TO TR-RG-TR-TYP
+      MOVE 'CN' TO TR-RG-ID-CN
+      MOVE 999999 TO TR-RG-ID
+      MOVE CURR-DATE-MMDDYY/NUM TO TR-RG-DATE
+      MOVE 'EDS' TO TR-RG-CLERK
+      MOVE 'ALDC' TO TR-RG-CODE
+      MOVE TOT-ALLOT-INSUFF TO TR-RG-CRDT
+      MOVE TOT-ALLOT-EXCEEDS TO TR-RG-DEBT
+      MOVE '999' TO TR-RG-NUM
+      MOVE 'A' TO TR-RG-MSG
+      MOVE 1 TO #C-OUTGOING-FLAG
+      MOVE TRANS-REG-REC/ALPHA TO #C-REPORT-RECORD
+      MOVE 96 TO RETURN-SW
+    ELSE
+      PERFORM FINALIZATION-PROCESS
+      RESET TRANS-REG-REC
+      MOVE 'B' TO TR-RG-TR-TYP
+      MOVE 'CN' TO TR-RG-ID-CN
+      MOVE 999999 TO TR-RG-ID
+      MOVE CURR-DATE-MMDDYY/NUM TO TR-RG-DATE
+      MOVE 'EDS' TO TR-RG-CLERK
+      MOVE 'ALDU' TO TR-RG-CODE
+      MOVE TOT-ALLOT-DUES-SO TO TR-RG-CRDT
+      MOVE TOT-ALLOT-DUES TO TR-RG-DEBT
+      MOVE '999' TO TR-RG-NUM
+      MOVE 'A' TO TR-RG-MSG
+      MOVE 1 TO #C-OUTGOING-FLAG
+      MOVE TRANS-REG-REC/ALPHA TO #C-REPORT-RECORD
+      MOVE 95 TO RETURN-SW
+    END-IF
+  END-IF
+  ESCAPE MODULE
+END-IF
+*
+* PROCESS-RECORD
+*
+IF RETURN-SW = 4
+  #LOOP-SEGS := TRUE
+  PERFORM END-SECTION-1 /* GO TO LOOP-SEGS
+END-IF
+IF RETURN-SW = 5
+  PERFORM END-OF-WRITE-STOP-ALLT-NOTICE
+END-IF
+*
+MOVE 1 TO EPR-X
+SUBTRACT 1 FROM EPR-X
+*
+*****************************************************************
+*              S E T U P - A C T I V E - S E G S                *
+*****************************************************************
+*
+RESET NAS-X P05PA.I-NEW-ACTIVE-SEG
+*
+SETUP-ACTIVE-SEGS-LOOP.
+REPEAT
+  ADD 1 TO NAS-X
+  IF NAS-X GT 9              /* SAG-AB 20060314 split test
+    ESCAPE BOTTOM
+  END-IF
+  IF STATUS(NAS-X) = ' '
+    ESCAPE BOTTOM
+  END-IF
+  ADD 1 TO P05PA.I-NEW-ACTIVE-SEG
+END-REPEAT
+*
+PERFORM END-SECTION-1 /* GO TO ALLOTMENT-SPECIAL-PROCESSING
+*
+PERFORM P-R-XIT
+*
+********************************************************************************
+DEFINE SUBROUTINE INIT-PROCESS
+********************************************************************************
+MOVE #C-RUN-DT-MM TO CD-MM-1
+MOVE #C-RUN-DT-DD TO CD-DD-1
+MOVE #C-RUN-DT-YY TO CD-YY-1
+MOVE #C-RUN-DT-MM TO CD-MM LM-MM
+MOVE #C-RUN-DT-YYYY TO CD-YYYY LM-YYYY
+*
+* BUILD-LAST-MONTH-DATE.
+SUBTRACT 1 FROM LM-MM
+IF LM-MM = 0
+  MOVE 12 TO LM-MM
+  SUBTRACT 1 FROM LM-YYYY
+END-IF
+*
+* BUILD-CURR-YYYYMMDD.
+MOVE CD-YYYY TO CD-YYYYMMDD-YYYY
+MOVE CD-MM TO CD-YYYYMMDD-MM
+MOVE #C-RUN-DT-DD TO CD-YYYYMMDD-DD
+*
+* BUILD-LAST-MON-YYYYMMDD.
+MOVE LM-YYYY TO LM-YYYYMMDD-YYYY
+MOVE LM-MM TO LM-YYYYMMDD-MM
+MOVE #C-RUN-DT-DD TO LM-YYYYMMDD-DD
+*
+* BUILD-STOP-PENDING-DATE.
+MOVE LMON-DATE-YYYYMMDD TO STOP-PENDING-DATE
+SUBTRACT 1 FROM ST-P-DT-MM
+IF ST-P-DT-MM = 0
+  MOVE 12 TO ST-P-DT-MM
+  SUBTRACT 1 FROM ST-P-DT-YYYY
+END-IF
+MOVE 31 TO ST-P-DT-DD
+IF ST-P-DT-MM = 04 OR ST-P-DT-MM = 06 OR
+    ST-P-DT-MM = 09    OR ST-P-DT-MM = 11
+  MOVE 30 TO ST-P-DT-DD
+ELSE
+  IF ST-P-DT-MM = 02
+    MOVE 28 TO ST-P-DT-DD
+  END-IF
+END-IF
+*
+* BUILD-NU-START-PAID-THRU-DATE.
+MOVE CURR-DATE-YYYYMMDD TO NU-START-PAID-THRU-DATE
+MOVE 15 TO NU-ST-PT-DD
+*
+* BUILD-LM-START-PAID-THRU-DATE.
+MOVE LMON-DATE-YYYYMMDD TO LM-START-PAID-THRU-DATE
+MOVE 15 TO LM-ST-PT-DD
+*
+* BUILD-RUN-MONTH-1AGO.
+MOVE CURR-DATE-YYYYMMDD TO P05PA.RUN-DATE-MINUS-1MON
+SUBTRACT 1 FROM P05PA.RDM1MON-MM
+IF P05PA.RDM1MON-MM = 0
+  MOVE 12 TO P05PA.RDM1MON-MM
+  SUBTRACT 1 FROM P05PA.RDM1MON-YYYY
+END-IF
+*
+* BUILD-RUN-MONTH-3AGO.
+MOVE CURR-DATE-YYYYMMDD TO RUN-DATE-MINUS-3MON
+SUBTRACT 3 FROM RDM3MON-MM
+IF RDM3MON-MM < 0
+  ADD 12 TO RDM3MON-MM
+  SUBTRACT 1 FROM RDM3MON-YYYY
+END-IF
+*
+* BUILD-NOTICE-DATES.
+MOVE #C-RUN-DT-YYYYMM TO P05PA.DUE-DATE-FOR-REMINDER
+SUBTRACT 2 FROM P05PA.DDFR-MM
+IF P05PA.DDFR-MM < 1
+  ADD 12 TO P05PA.DDFR-MM
+  SUBTRACT 1 FROM P05PA.DDFR-YYYY
+END-IF
+MOVE #C-RUN-DT-YYYYMM TO DUE-DATE-FOR-PEND-LAP
+SUBTRACT 3 FROM DDFP-MM
+IF DDFP-MM < 1
+  ADD 12 TO DDFP-MM
+  SUBTRACT 1 FROM DDFP-YYYY
+END-IF
+MOVE #C-RUN-DT-YYYYMMDD TO WORK-DATE
+ADD 1 TO WORK-MM
+IF WORK-MM > 12
+  MOVE 1 TO WORK-MM
+  ADD 1 TO WORK-YYYY
+END-IF
+MOVE WORK-DATE TO NEXT-RUN-MONTH
+*
+** DEFINE WORK FILE 9   /* removed SAG/AB RH1 01/16/2006
+IF UPDATE-SWITCH = 'Y'
+  IGNORE
+ELSE
+  RESET ALLOT-REPT-REC
+  MOVE 'AUTOMATED  ALLOT PROCESS NOT RUN' TO AL-RP-MSG/ALPHA
+  MOVE 'E' TO AL-RP-CODE
+  WRITE WORK FILE 9 ALLOT-REPT-REC
+  ADD 1 TO ALLOT-ERRORS
+END-IF
+ESCAPE MODULE
+*
+END-SUBROUTINE
+**************************************
+DEFINE SUBROUTINE FINALIZATION-PROCESS
+**************************************
+** CLOSE WORK FILE 9     /* removed SAG/AB RH1 01/16/2006
+WRITE 'BELOW ALOT AMTS APPLY ONLY TO AAFMAA'
+WRITE 'ALLOT DATES UPDATED    = ' ALLOT-DATE-UPDATED
+WRITE 'DB CR AMOUNTS CHANGED  = ' DB-CR-AMT-CHANGED
+WRITE 'TRANS REG RECS WRITTEN = ' TRANS-REG-OT
+WRITE 'ALOT AMT EXCEEDS AMT NEEDED = ' TOT-ALLOT-EXCEEDS
+WRITE 'ALOT AMT INSUFFICIENT       = ' TOT-ALLOT-INSUFF
+WRITE 'ALOT PREMS APPLIED          = ' TOT-ALLOT-PREMS
+WRITE 'ALOT RIDER APPLIED          = ' TOT-ALLOT-RIDER
+WRITE 'ALOT DUES  APPLIED          = ' TOT-ALLOT-DUES
+WRITE 'ALOT DUES-SO APPLIED        = ' TOT-ALLOT-DUES-SO
+*
+END-SUBROUTINE
+*
+********************************************************************************
+*******************************
+DEFINE SUBROUTINE END-SECTION-1
+*******************************
+X01.
+REPEAT
+  X04.
+  REPEAT
+    X03.
+    REPEAT
+      X02.
+      REPEAT
+        ALLOTMENT-SPECIAL-PROCESSING.
+        REPEAT
+*****************************************************************
+*           NOTICE PROCESSING
+*****************************************************************
+*
+          IF NOT #LOOP-SEGS
+            RESET P05PA.FIRST-ACTIVE
+            FOR P05PA.SUB = 1 TO 9
+              PERFORM FIND-FST-ACTIVE
+            END-FOR
+            RESET NAS-X
+          ELSE
+            #LOOP-SEGS := FALSE
+          END-IF
+          ESCAPE BOTTOM
+        END-REPEAT
+*
+        LOOP-SEGS.
+        REPEAT
+          ADD 1 TO NAS-X
+          MOVE NAS-X TO P05PA.SUB
+          IF NAS-X > P05PA.I-NEW-ACTIVE-SEG
+            ESCAPE BOTTOM (X01.) /* GO TO CONTINUE-ALLOTMENT-SPECIAL-4
+          END-IF
+          IF STATUS(NAS-X) NE 'D' OR ISSUE-DATE(NAS-X) = 0
+            ESCAPE TOP  /* LOOP-SEGS.
+          END-IF
+          RESET GENERAL-REC /* formerly FPF-NOTICE
+          MOVE PLAN(NAS-X) TO SAVE-PLAN/ALPHA
+          RESET LV
+** DW3  BELOW LV CALC NOT USED AS OF 9/15/2995   /* DW3 12/28/2005 DRW/AB
+          COMPUTE LV = LV + (CASH-VALUE(NAS-X) * 0.75)
+          SUBTRACT X-LOAN-AMOUNT(NAS-X) FROM LV
+          SUBTRACT X-LOAN-AMOUNT-2(NAS-X) FROM LV
+          SUBTRACT X-ACCUM-INTEREST(NAS-X) FROM LV
+          SUBTRACT X-ACCUM-INTEREST-2(NAS-X) FROM LV
+          MOVE PAID-TO-DATE(NAS-X) TO TIN1-PA-FPF-PDTO-DATE
+          MOVE ISSUE-DATE(NAS-X) TO TIN1-PA-FPF-ISS-DATE
+** DW3 09/15/2005 DRW/AB START
+          IF      (X-FIRST-PLACE-FEE (NAS-X) GT .00)
+*              AND (STATUS-VIEW.ID-NUMBER LT 600000)                       /* RE1
+            MOVE ' '    TO L-TYPE
+            MOVE 'J' TO TIN1-PA-SECT
+            MOVE ' ' TO TIN1-PA-SUB-SECT
+            MOVE 'J' TO TIN1-PA-OLD-SECT
+            MOVE ' ' TO TIN1-PA-FPF-SNG-PREM
+            MOVE NAS-X TO TIN1-PA-SEG-NUM
+            PERFORM FORM-BASE
+            PERFORM FIND-ADDRESS
+            IF X-FIRST-PLACE-FEE (NAS-X) LE 99999.99 /* workaround on advice of DRW
+              MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+            ELSE
+              DECIDE FOR FIRST CONDITION                                /* PM17
+                WHEN X-FIRST-PLACE-FEE (NAS-X) GT 300000                /* PM17
+                  #SUBTRACT-VALUE := 300000                             /* PM17
+                WHEN X-FIRST-PLACE-FEE (NAS-X) GT 200000                /* PM17
+                  #SUBTRACT-VALUE := 200000                             /* PM17
+                WHEN X-FIRST-PLACE-FEE (NAS-X) GT 100000                /* PM17
+                  #SUBTRACT-VALUE := 100000                             /* PM17
+                WHEN NONE                                               /* PM17
+                  #SUBTRACT-VALUE := 0                                  /* PM17
+              END-DECIDE                                                /* PM17
+              SUBTRACT #SUBTRACT-VALUE FROM X-FIRST-PLACE-FEE (NAS-X)   /* PM17
+              MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+              ADD #SUBTRACT-VALUE TO X-FIRST-PLACE-FEE (NAS-X)          /* PM5 PM17
+            END-IF /* get response from DRW of lon-term solution - 20060420 SAG-AB
+            MOVE NEXT-RUN-MONTH     TO TIN1-PA-FPF-DUE-DATE
+            MOVE INTRO-FLAG      TO TIN1-PA-FPF-INTRO-FLAG
+            MOVE ' ' TO TIN1-PA-FPF-NEW-ADDL
+            MOVE 4 TO RETURN-SW
+            PERFORM END-WITH-MORE-WRITE-NOTC
+          ELSE
+            ESCAPE TOP  /* LOOP-SEGS.
+          END-IF
+** DW3 BELOW IS NEVER USED AS OF 9/15/2005
+** DW3 09/15/2005 DRW/AB END
+          ESCAPE BOTTOM
+        END-REPEAT
+*
+        TRY-REGULAR-FPF-DELINQUENT.
+        REPEAT
+          IF X-FIRST-PLACE-FEE(NAS-X) > 0.99 AND PAY-STATUS(NAS-X) = '12'
+              AND ISSUE-DATE-YYYYMM(NAS-X) = P05PA.DUE-DATE-FOR-REMINDER
+            ESCAPE BOTTOM
+          END-IF
+          ESCAPE BOTTOM (X02.)
+        END-REPEAT
+*
+        RESET L-TYPE
+        MOVE 'J' TO TIN1-PA-SECT
+        RESET TIN1-PA-SUB-SECT
+        MOVE 'J' TO TIN1-PA-OLD-SECT
+        MOVE 'F' TO TIN1-PA-FPF-SNG-PREM
+        PERFORM FORM-BASE
+        PERFORM FIND-ADDRESS
+        IF X-FIRST-PLACE-FEE (NAS-X) LE 99999.99 /* workaround on advice of DRW
+          MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+        ELSE
+          SUBTRACT 100000 FROM X-FIRST-PLACE-FEE (NAS-X)
+          MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+        END-IF /* get response from DRW of lon-term solution - 20060420 SAG-AB
+        MOVE NEXT-RUN-MONTH TO TIN1-PA-FPF-DUE-DATE
+        MOVE INTRO-FLAG TO TIN1-PA-FPF-INTRO-FLAG
+        IF P05PA.I-NEW-ACTIVE-SEG = 1
+          MOVE 'N' TO TIN1-PA-FPF-NEW-ADDL
+        ELSE
+          MOVE 'A' TO TIN1-PA-FPF-NEW-ADDL
+        END-IF
+        MOVE 4 TO RETURN-SW
+        PERFORM END-WITH-MORE-WRITE-NOTC
+*
+        ESCAPE BOTTOM (X02.)
+      END-REPEAT /* (X02.)
+*
+      IF NOT ((X-FIRST-PLACE-FEE(NAS-X) > 0.99) AND
+          (PAY-STATUS(NAS-X) = '47')
+          AND (MODE(NAS-X) = 'G')
+          AND (ISSUE-DATE-YYYYMM(NAS-X) = P05PA.DUE-DATE-FOR-REMINDER))
+        ESCAPE BOTTOM (X03.)
+      END-IF
+*
+      RESET L-TYPE
+      MOVE 'J' TO TIN1-PA-SECT
+      RESET TIN1-PA-SUB-SECT
+      MOVE 'J' TO TIN1-PA-OLD-SECT
+      MOVE 'S' TO TIN1-PA-FPF-SNG-PREM
+      PERFORM FORM-BASE
+      PERFORM FIND-ADDRESS
+      IF X-FIRST-PLACE-FEE (NAS-X) LE 99999.99 /* workaround on advice of DRW
+        MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+      ELSE
+        SUBTRACT 100000 FROM X-FIRST-PLACE-FEE (NAS-X)
+        MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+      END-IF /* get response from DRW of lon-term solution - 20060420 SAG-AB
+      MOVE NEXT-RUN-MONTH TO TIN1-PA-FPF-DUE-DATE
+      MOVE INTRO-FLAG TO TIN1-PA-FPF-INTRO-FLAG
+      IF P05PA.I-NEW-ACTIVE-SEG = 1
+        MOVE 'N' TO TIN1-PA-FPF-NEW-ADDL
+      ELSE
+        MOVE 'A' TO TIN1-PA-FPF-NEW-ADDL
+      END-IF
+      MOVE 4 TO RETURN-SW
+      PERFORM END-WITH-MORE-WRITE-NOTC
+*
+      ESCAPE BOTTOM (X03.)
+    END-REPEAT /* (X03.)
+
+    IF PAY-STATUS(NAS-X) = '47'
+      SUBTRACT X-FIRST-PLACE-FEE(NAS-X) FROM LV
+    END-IF
+    IF NOT ((X-FIRST-PLACE-FEE(NAS-X) > 0.99) AND
+        (X-FIRST-PLACE-FEE(NAS-X) > LV)
+        AND (PAY-STATUS(NAS-X) = '12')
+        AND (ISSUE-DATE-YYYYMM(NAS-X) = DUE-DATE-FOR-PEND-LAP))
+      ESCAPE BOTTOM (X04.)
+    END-IF
+*
+    RESET L-TYPE
+    MOVE 'D' TO TIN1-PA-SECT
+    RESET TIN1-PA-SUB-SECT
+    MOVE 'D' TO TIN1-PA-OLD-SECT
+    MOVE 'F' TO TIN1-PA-FPF-SNG-PREM
+    PERFORM FORM-BASE
+    PERFORM FIND-ADDRESS
+    MOVE 'L' TO TIN1-PA-FPF-APL-LAPS
+    IF X-FIRST-PLACE-FEE (NAS-X) LE 99999.99 /* workaround on advice of DRW
+      MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+    ELSE
+      SUBTRACT 100000 FROM X-FIRST-PLACE-FEE (NAS-X)
+      MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+    END-IF /* get response from DRW of lon-term solution - 20060420 SAG-AB
+    MOVE NEXT-RUN-MONTH TO TIN1-PA-FPF-DUE-DATE
+    MOVE INTRO-FLAG TO TIN1-PA-FPF-INTRO-FLAG
+    MOVE 4 TO RETURN-SW
+    PERFORM END-WITH-MORE-WRITE-NOTC
+*
+    ESCAPE BOTTOM (X04.)
+  END-REPEAT /* (X04.)
+*
+  X06.
+  REPEAT
+    X05.
+    REPEAT
+      IF NOT ((X-FIRST-PLACE-FEE(NAS-X) > 0.99) AND
+          (X-FIRST-PLACE-FEE(NAS-X) > TOT-LV) AND
+          (PAY-STATUS(NAS-X) = '47')
+          AND (MODE(NAS-X) = 'G')
+          AND (ISSUE-DATE-YYYYMM(NAS-X) = DUE-DATE-FOR-PEND-LAP))
+        ESCAPE BOTTOM (X05.)
+      END-IF
+*
+      RESET L-TYPE
+      MOVE 'D' TO TIN1-PA-SECT
+      RESET TIN1-PA-SUB-SECT
+      MOVE 'D' TO TIN1-PA-OLD-SECT
+      MOVE 'S' TO TIN1-PA-FPF-SNG-PREM
+      PERFORM FORM-BASE
+      PERFORM FIND-ADDRESS
+      MOVE 'L' TO TIN1-PA-FPF-APL-LAPS
+      IF X-FIRST-PLACE-FEE (NAS-X) LE 99999.99 /* workaround on advice of DRW
+        MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+      ELSE
+        SUBTRACT 100000 FROM X-FIRST-PLACE-FEE (NAS-X)
+        MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+      END-IF /* get response from DRW of lon-term solution - 20060420 SAG-AB
+      MOVE NEXT-RUN-MONTH TO TIN1-PA-FPF-DUE-DATE
+      MOVE INTRO-FLAG TO TIN1-PA-FPF-INTRO-FLAG
+      MOVE 4 TO RETURN-SW
+      PERFORM END-WITH-MORE-WRITE-NOTC
+*
+      ESCAPE BOTTOM (X05.)
+    END-REPEAT /* (X05.)
+*
+    IF NOT ((X-FIRST-PLACE-FEE(NAS-X) > 0.99) AND
+        (X-FIRST-PLACE-FEE(NAS-X) LE TOT-LV) AND
+        (PAY-STATUS(NAS-X) = '12')
+        AND (ISSUE-DATE-YYYYMM(NAS-X) = DUE-DATE-FOR-PEND-LAP))
+      ESCAPE BOTTOM (X06.)
+    END-IF
+*
+    RESET L-TYPE
+    MOVE 'D' TO TIN1-PA-SECT
+    RESET TIN1-PA-SUB-SECT
+    MOVE 'D' TO TIN1-PA-OLD-SECT
+    MOVE 'F' TO TIN1-PA-FPF-SNG-PREM
+    PERFORM FORM-BASE
+    PERFORM FIND-ADDRESS
+    MOVE 'A' TO TIN1-PA-FPF-APL-LAPS
+    IF X-FIRST-PLACE-FEE (NAS-X) LE 99999.99 /* workaround on advice of DRW
+      MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+    ELSE
+      SUBTRACT 100000 FROM X-FIRST-PLACE-FEE (NAS-X)
+      MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+    END-IF /* get response from DRW of lon-term solution - 20060420 SAG-AB
+    MOVE NEXT-RUN-MONTH TO TIN1-PA-FPF-DUE-DATE
+    MOVE INTRO-FLAG TO TIN1-PA-FPF-INTRO-FLAG
+    MOVE 4 TO RETURN-SW
+    PERFORM END-WITH-MORE-WRITE-NOTC
+*
+    ESCAPE BOTTOM (X06.)
+  END-REPEAT /* (X06.)
+
+  IF NOT ((X-FIRST-PLACE-FEE(NAS-X) > 0.99) AND
+      (X-FIRST-PLACE-FEE(NAS-X) LE TOT-LV) AND
+      (PAY-STATUS(NAS-X) = '47') AND
+      (ISSUE-DATE-YYYYMM(NAS-X) = DUE-DATE-FOR-PEND-LAP))
+    #LOOP-SEGS := TRUE
+    PERFORM END-SECTION-1 /* GO TO LOOP-SEGS
+  END-IF
+*
+  RESET L-TYPE
+  MOVE 'D' TO TIN1-PA-SECT
+  RESET TIN1-PA-SUB-SECT
+  MOVE 'D' TO TIN1-PA-OLD-SECT
+  MOVE 'S' TO TIN1-PA-FPF-SNG-PREM
+  PERFORM FORM-BASE
+  PERFORM FIND-ADDRESS
+  MOVE 'A' TO TIN1-PA-FPF-APL-LAPS
+  IF X-FIRST-PLACE-FEE (NAS-X) LE 99999.99 /* workaround on advice of DRW
+    MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+  ELSE
+    SUBTRACT 100000 FROM X-FIRST-PLACE-FEE (NAS-X)
+    MOVE X-FIRST-PLACE-FEE (NAS-X) TO TIN1-PA-FPF-AMT
+  END-IF /* get response from DRW of lon-term solution - 20060420 SAG-AB
+  MOVE NEXT-RUN-MONTH TO TIN1-PA-FPF-DUE-DATE
+  MOVE INTRO-FLAG TO TIN1-PA-FPF-INTRO-FLAG
+  MOVE 4 TO RETURN-SW
+  PERFORM END-WITH-MORE-WRITE-NOTC
+*
+  ESCAPE BOTTOM (X01.)
+END-REPEAT /* (X01.)
+*
+RESET RETURN-SW WORK-AMT SVC-FEE-PA RID-MON-PREM WORK-DUES WORK-RIDER CAP-LOAN
+RESET #ALOT-PD-UP-THIS-MONTH #TOT-AMT-XTR-PRMS-PAID #AMT-DUE       /* DW7
+RESET #FINAL-PMT-LESS-THAN-1-AMT #FINAL-PMT-LESS-THAN-1         /* DW11
+MOVE 'N' TO NON-PAID-UP-SWITCH
+MOVE 'Y' TO ALL-POLS-ARE-G-PP-SWITCH
+MOVE 'N' TO CERT-STOP-NOTICE-SWITCH
+RESET TOT-PREM-DUE
+FOR P05PA.SUB = 1 TO 9 STEP +1
+  PERFORM ALLOTMENT-LOOP
+END-FOR
+PERFORM END-ALLOTMENT-LOOP /* GO TO END-ALLOTMENT-LOOP
+**
+END-SUBROUTINE
+**************
+********************************
+DEFINE SUBROUTINE ALLOTMENT-LOOP
+********************************
+REPEAT
+  IF STATUS(SUB) NE 'D'                     /* Bypass if Policy not Active
+    ESCAPE ROUTINE /* GO TO A-L-XIT
+  END-IF
+*
+  IF MODE(SUB) = 'G'
+    IF RID-PLAN(SUB) NE '  '
+      PERFORM CALC-RIDER-MON-PREM
+      COMPUTE TOT-PREM-DUE = TOT-PREM-DUE + (RID-MON-PREM * 12)
+    END-IF
+    IF (PAY-STATUS(SUB) < '40')
+      ADD ANNUAL-PREM(SUB) TO TOT-PREM-DUE
+      PERFORM CALC-DUES
+      COMPUTE TOT-PREM-DUE = TOT-PREM-DUE + (SVC-FEE-PA * 12)
+    END-IF
+  END-IF
+*
+  IF (PLAN(SUB) = 'OL' OR = 'SO' OR = 'FSO' OR = 'GPL' OR = 'GP2' )    /* DW13   YK4
+*   OR STATUS-VIEW.PROCESS-IND = 'S'                       /* RE1
+    MOVE 96 TO OL-YEARS                       /* OLD/NEW OL is 96 years
+    IF ISSUE-DATE(SUB) GE 19970101 AND
+        MONTH-ALLOC-AMT(SUB) NE 999.99
+      MOVE 100 TO OL-YEARS                           /* NXT OL is 100 years
+    END-IF
+  END-IF
+*
+  IF (PLAN(SUB) = 'OL' OR = 'SO' OR = 'FSO' OR = 'GPL' OR = 'GP2')     /* DW13   YK4
+*   OR STATUS-VIEW.PROCESS-IND = 'S'                        /* RE1
+    RESET #DATE-OF-BIRTH
+    #DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<MEMBER-CONTACT-ID>)
+    MOVE #DATE-OF-BIRTH TO IS-PD-UP
+    ADD OL-YEARS TO IS-PD-UP-YYYY
+  ELSE
+    MOVE ISSUE-DATE(SUB) TO IS-PD-UP
+    IF PLAN-SUF-A1(SUB) = 'P' OR PLAN-SUF-A1(SUB) = 'F'
+      ADD PLAN-N2(SUB) TO IS-PD-UP-YYYY
+    ELSE
+      IF PLAN-SUF-A2(SUB) = 'P' OR PLAN-SUF-A2(SUB) = 'F'
+        ADD PLAN-N1(SUB) TO IS-PD-UP-YYYY
+      END-IF
+    END-IF
+  END-IF
+*
+* IF (PLAN(SUB) = 'LT' OR = 'RT') OR PLAN-A1(SUB) = 'U' THRU 'Z'    /* YK1
+  IF FUNCTION-TERM-POLICY(<PLAN(SUB)>)                              /* YK1
+    MOVE PAID-UP-DATE(SUB) TO IS-PD-UP
+  END-IF
+*
+  IF PAY-STATUS(SUB) < '40' AND CD-MM NE IS-PD-UP-MM
+      AND CD-YYYY NE IS-PD-UP-YYYY
+      AND ISSUE-DATE(SUB) < RUN-DATE-MINUS-3MON
+    MOVE 'Y' TO NON-PAID-UP-SWITCH
+  END-IF
+*
+  IF PAY-STATUS(SUB) NE '22' OR MODE(SUB) NE 'G'
+    MOVE 'N' TO ALL-POLS-ARE-G-PP-SWITCH
+  END-IF
+*
+  IF MODE(SUB) = 'G' AND PAY-STATUS(SUB) = '21'
+      AND ALOT-AMT = 0 AND PAID-TO-YYYY(SUB) = ST-P-DT-YYYY
+      AND PAID-TO-MM(SUB) = ST-P-DT-MM
+      AND PAID-UP-YYYYMM(SUB) > ST-P-DT-YYYYMM
+*     BELOW CHANGED 4/97 AS PER ELB
+    IF CONV-DURATION(SUB) = 999 AND X-LOAN-AMOUNT(SUB) > 0
+      MOVE 'Y' TO CERT-STOP-NOTICE-SWITCH
+    ELSE
+      IF LAST-DURATION(SUB) > 1
+        MOVE 'Y' TO CERT-STOP-NOTICE-SWITCH
+      END-IF
+    END-IF
+  END-IF
+*
+  IF CONV-DURATION(SUB) = 999
+    MOVE X-LOAN-AMOUNT(SUB) TO CAP-LOAN
+  END-IF
+*
+  IF MODE(SUB) NE 'G'                      /* Bypass if not Mode G
+    ESCAPE ROUTINE /* GO TO A-L-XIT
+  END-IF
+*
+  MOVE RID-EFF-DT(SUB) TO ISS-DT-1-YEAR
+  ADD 1 TO ISS-DT-1-YYYY
+  IF ISS-DT-1-YYYYMM > #C-RUN-DT-YYYYMM
+    MOVE '1Y' TO SG-YEAR
+  ELSE
+    MOVE 'RN' TO SG-YEAR
+  END-IF
+*
+  IF RID-PLAN(SUB) NE '  ' AND RID-PD-TO-YYYYMM(SUB) < CD-YYYYMM AND
+      (PAY-STATUS(SUB) = '20' OR = '22')
+    PERFORM CALC-RIDER-MON-PREM
+    ADD RID-MON-PREM TO WORK-RIDER
+    ADD RID-MON-PREM TO #AMT-DUE                 /* DW7
+*    IF STATUS-VIEW.PROCESS-IND NE 'S'           /* RE1
+    ADD RID-MON-PREM TO TOT-ALLOT-RIDER
+*    END-IF                                      /* RE1
+    ADD RID-MON-PREM TO RID-TOT-PAID
+    MOVE NU-START-PAID-THRU-DATE TO RID-PD-TO(SUB)
+    MOVE 'RIDP' TO SG-TRAN                                  /* DO RIDER
+    MOVE 'RD' TO SG-PLAN
+    MOVE RID-MON-PREM TO SG-AMT
+    FOR SG-X = 1 TO 27
+      PERFORM SG-LOOP
+    END-FOR
+  END-IF
+*
+  IF PAY-STATUS(SUB) > '40'                   /* Bypass if pol Paid-Up
+    ESCAPE ROUTINE /* GO TO A-L-XIT
+  END-IF
+*
+  PERFORM CALC-DUES
+  MOVE ISSUE-DATE(SUB) TO ISS-DT-1-YEAR
+  ADD 1 TO ISS-DT-1-YYYY
+  IF ISS-DT-1-YYYYMM > #C-RUN-DT-YYYYMM
+    MOVE '1Y' TO SG-YEAR
+  ELSE
+    MOVE 'RN' TO SG-YEAR
+  END-IF
+*
+  IF PLAN(SUB) = 'OL' OR = '20P' OR = '30P' OR = '7P' OR = 'SO' OR = 'RT' OR = 'LT'
+      OR = 'GPL' OR = 'EZ' OR = 'GP2'             /* DW13    /* YK2  /* YK4
+    MOVE PLAN(SUB) TO SG-PLAN
+  ELSE
+*   IF PLAN-A1(SUB) GE 'U' AND PLAN-A1(SUB) LE 'Z'       /* YK1
+    IF F-LT2-TRUE(<PLAN(SUB)>)                           /* YK1
+      MOVE 'VT' TO SG-PLAN
+    ELSE
+      MOVE 'FX' TO SG-PLAN
+    END-IF
+  END-IF
+*
+  MOVE 'PREP' TO SG-TRAN
+  IF PLAN(SUB) = 'SO'
+    MOVE 'DUEP' TO SG-TRAN
+    MOVE 'SO' TO SG-YEAR
+    MOVE '**' TO SG-PLAN
+  END-IF
+*
+  IF ISSUE-DATE(SUB) GE 19970101 AND MONTH-ALLOC-AMT(SUB) NE 999.99
+    IF CD-MM = IS-PD-UP-MM AND CD-YYYY = IS-PD-UP-YYYY /*NXT paid-up this mon
+      IF IS-PD-UP-DD = 1
+*        WRITE status-view.ID-NUMBER ' PA NXT PD-UP THIS MON AND NO PREM DUE'
+*          plan (sub) 'iss-dt=' issue-date (sub)
+        ESCAPE ROUTINE /* GO TO A-L-XIT
+*      ELSE
+*        WRITE status-view.ID-NUMBER ' PA NXT PD-UP THIS MON AND PREM DUE'
+*             plan (sub) 'iss-dt=' issue-date (sub)
+      END-IF
+    END-IF
+  ELSE                       /* OLD/NEW paid up this Month
+    IF CD-MM = IS-PD-UP-MM AND CD-YYYY = IS-PD-UP-YYYY
+*        AND STATUS-VIEW.PROCESS-IND NE 'S'                             /* RE1
+      PERFORM CALC-MODE-PREMIUM
+* COMPUTE ROUNDED SG-PREM = (W-MODE-PREMIUM-PA / 30) *(IS-PD-UP-DD - 1) /*DW7
+      COMPUTE ROUNDED SG-PREM = (W-MODE-PREMIUM-PA * (IS-PD-UP-DD - 1)) / 30
+*      WRITE STATUS-VIEW.ID-NUMBER ' PA' PLAN(SUB) 'OLD/NEW PD-UP THS MON'
+*            'Day=' IS-PD-UP-DD 'AMT due=' SG-PREM
+*            'iss-dt=' ISSUE-DATE (SUB)'stat=' MILITARY-STATUS
+*      COMPRESS 'OLD/NEW PD UP this Mon- amt due =' SG-PREM /* DW7  DW15
+*                                INTO EMESS
+*      PERFORM FORM-ERROR-MESSAGE                                /* DW7 DW15
+*
+      IF SG-PREM LT 1.00     /* Final pmt is < 1.00       /* DW11
+        WRITE STATUS-VIEW.ID-NUMBER 'Less than 1.00'
+        MOVE TRUE TO #FINAL-PMT-LESS-THAN-1
+        MOVE SG-PREM TO #FINAL-PMT-LESS-THAN-1-AMT
+        MOVE PLAN (SUB) TO #FINAL-PMT-PLAN
+      END-IF
+*
+*      COMPUTE #diff = W-MODE-PREMIUM-PA - SG-PREM /* Removed 6/27/2008 /* DW7 /DW9
+*      if (#diff lt 100.00) and (#diff gt 0)              /* DW9
+*       and (military-status = 'R')
+*        perform calc-adj-xtra-prms-pd
+*      end-if                                            /* END DW7
+*
+*      IF STATUS-VIEW.PROCESS-IND NE 'S'                 /* RE1
+      ADD SG-PREM TO TOT-ALLOT-PREMS
+*      END-IF                                            /* RE1
+*
+      ADD SG-PREM TO WORK-AMT
+      ADD SG-PREM TO #AMT-DUE                      /* DW7
+      COMPUTE ROUNDED SG-DUES = ((SVC-FEE-PA / 30) * (IS-PD-UP-DD - 1))
+      ADD SG-DUES TO WORK-DUES
+      ADD SG-DUES TO #AMT-DUE                      /* DW7
+      MOVE SG-PREM TO SG-AMT
+      FOR SG-X = 1 TO 27
+        PERFORM SG-LOOP
+      END-FOR
+      MOVE 'DUEP' TO SG-TRAN
+      MOVE '**' TO SG-YEAR SG-PLAN
+      MOVE SG-DUES TO SG-AMT
+      FOR SG-X = 1 TO 27
+        PERFORM SG-LOOP
+      END-FOR
+*      IF STATUS-VIEW.PROCESS-IND NE 'S'          /* RE1
+      ADD SG-DUES TO TOT-ALLOT-DUES
+*      END-IF
+      IF PLAN(SUB) = 'SO'
+*        IF STATUS-VIEW.PROCESS-IND NE 'S'        /* RE1
+        ADD SG-PREM TO TOT-ALLOT-DUES-SO
+        SUBTRACT SG-PREM FROM TOT-ALLOT-PREMS
+*        END-IF                                   /* RE1
+      END-IF
+      ESCAPE ROUTINE /* GO TO A-L-XIT
+    END-IF
+  END-IF
+  IF MODE(SUB) = 'G' AND (PAY-STATUS(SUB) = '20' OR = '22')
+    MOVE NU-START-PAID-THRU-DATE TO PAID-TO-DATE(SUB) BILL-TO-DATE(SUB)
+    ADD SVC-FEE-PA TO DUES-TOT-PAID
+*    IF STATUS-VIEW.PROCESS-IND NE 'S'            /* RE1
+    ADD 1 TO ALLOT-DATE-UPDATED
+*    END-IF                                       /* RE1
+    PERFORM CALC-MODE-PREMIUM
+    MOVE W-MODE-PREMIUM-PA TO SG-PREM
+*    IF STATUS-VIEW.PROCESS-IND NE 'S'            /* RE1
+    ADD SG-PREM TO TOT-ALLOT-PREMS
+*    END-IF                                       /* RE1
+    MOVE SVC-FEE-PA TO SG-DUES
+    MOVE SG-PREM TO SG-AMT
+    FOR SG-X = 1 TO 27
+      PERFORM SG-LOOP
+    END-FOR
+    MOVE 'DUEP' TO SG-TRAN
+    MOVE '**' TO SG-YEAR SG-PLAN
+    MOVE SG-DUES TO SG-AMT
+    FOR SG-X = 1 TO 27
+      PERFORM SG-LOOP
+    END-FOR
+*
+    ADD W-MODE-PREMIUM-PA TO WORK-AMT
+    ADD W-MODE-PREMIUM-PA TO #AMT-DUE    /* DW7
+    ADD SVC-FEE-PA TO WORK-DUES
+    ADD SVC-FEE-PA TO #AMT-DUE           /* DW7
+*
+*    IF STATUS-VIEW.PROCESS-IND NE 'S'   /* RE1
+    ADD SVC-FEE-PA TO TOT-ALLOT-DUES
+*    END-IF                              /* RE1
+    IF PLAN(SUB) = 'SO'
+*     AND STATUS-VIEW.PROCESS-IND NE 'S' /* RE1
+      ADD W-MODE-PREMIUM-PA TO TOT-ALLOT-DUES-SO
+      SUBTRACT W-MODE-PREMIUM-PA FROM TOT-ALLOT-PREMS
+    END-IF
+    ESCAPE ROUTINE /* GO TO A-L-XIT
+  END-IF
+  ESCAPE ROUTINE /* GO TO A-L-XIT
+*
+  IF IS-PD-UP-YYYYMM < CD-YYYYMM OR ISSUE-DATE(SUB) GE CURR-DATE-YYYYMMDD
+    ESCAPE ROUTINE /* GO TO A-L-XIT
+  END-IF
+*
+  PERFORM CALC-MODE-PREMIUM
+  IF IS-PD-UP-YYYYMM = CD-YYYYMM
+    COMPUTE ROUNDED IS-WORK-PREM = (W-MODE-PREMIUM-PA * (IS-PD-UP-DD - 1)) / 30
+  ELSE
+    MOVE W-MODE-PREMIUM-PA TO IS-WORK-PREM
+    IF ONLINE-ACTION-GN = '2' OR (ONLINE-ACTION(SUB) = '1' OR = 'G' OR = 'H')
+      PERFORM CALC-NUM-MONS-TO-BACKOUT
+    END-IF
+  END-IF
+*  IF (PLAN(SUB) = 'RT' OR = 'LT')                                     /* YK1
+*     OR (PLAN-A1(SUB) GE 'U' AND PLAN-A1(SUB) LE 'Z')                 /* YK1
+   IF FUNCTION-TERM-POLICY(<PLAN(SUB)>)                                /* YK1
+      OR (PLAN(SUB) = 'FSO' AND DURATION(SUB) = 1)
+      OR (PLAN(SUB) = 'FSO' AND DURATION(SUB) = 2 AND MONTH-IND(SUB) = 0)
+*      OR STATUS-VIEW.PROCESS-IND = 'S'                     /* RE1
+    ESCAPE ROUTINE /* GO TO A-L-XIT
+  END-IF
+  IF P05PA.SUB NE 1
+    FOR PRM-X = 1 TO 9
+      PERFORM FILL-SEGS
+    END-FOR
+  END-IF
+  MOVE P05PA.SUB TO PRM-X
+*
+  IF MTD-ACV-PREM-ADJ(PRM-X) = 9999999.99
+    COMPUTE MTD-ACV-PREM-ADJ(PRM-X) = IS-WORK-PREM * -1
+  ELSE
+    SUBTRACT IS-WORK-PREM FROM MTD-ACV-PREM-ADJ(PRM-X)
+  END-IF
+*
+  IF MTD-ACV-PREM-ADJ(PRM-X) = 0
+    MOVE 9999999.99 TO MTD-ACV-PREM-ADJ(PRM-X)
+  END-IF
+*
+  ESCAPE ROUTINE /* GO TO A-L-XIT
+*
+END-REPEAT
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-ADJ-XTRA-PRMS-PD /* NOT now used      /* DW7 DW9
+* * * * * * * * * * * * * * * * * *
+*
+COMPUTE #PD-UP-ALOT-DIFF = W-MODE-PREMIUM-PA - SG-PREM
+ADD #PD-UP-ALOT-DIFF TO #TOT-AMT-XTR-PRMS-PAID
+MOVE TRUE TO #ALOT-PD-UP-THIS-MONTH
+*
+MOVE SG-PREM TO          #XTRA-SG-PREM      (SUB)
+MOVE #PD-UP-ALOT-DIFF TO #XTRA-PREM-DIFF-AMT (SUB)
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE APPLY-XTRA-PRMS-PD /* Not now used   /* DW7  DW9
+* * * * * * * * * * * * * * * * * *
+*
+WRITE STATUS-VIEW.ID-NUMBER 'Adj Xtra-Prms PD by' #PD-UP-ALOT-DIFF
+  'sg-prm =' SG-PREM 'mon-prm=' W-MODE-PREMIUM-PA
+*
+ADD #XTRA-PREM-DIFF-AMT (SUB) TO TOT-PREMIUMS-PAID (SUB)
+* Below adjusts PREM ACV ADJUSTMENT
+IF SUB NE 1            /* FILLUP PRECEEDING MULTIPLE FIELDS
+  COMPUTE #I3 = SUB - 1
+  FOR #I2 1 TO #I3
+    IF MTD-ACV-PREM-ADJ (#I2) = 0
+      MOVE 9999999.99 TO MTD-ACV-PREM-ADJ (#I2)
+    END-IF
+  END-FOR
+END-IF
+*
+ADD #XTRA-PREM-DIFF-AMT (SUB) TO MTD-ACV-PREM-ADJ (SUB)
+*
+IF MTD-ACV-PREM-ADJ (SUB) = 0
+  MOVE 9999999.99 TO MTD-ACV-PREM-ADJ (SUB)
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCT-REG  /* NOT now used           /* DW7    DW9
+* * * * * * * * * * * * * *
+*
+MOVE 1 TO #ILN1
+MOVE STATUS-VIEW.ID-NUMBER TO #SCR-ID-SSN (1)
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-EFF-DT (1) LEAVING NO
+MOVE STATUS-VIEW.ISSUE-DATE (SUB) TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-ISS-DT (1) LEAVING NO
+MOVE 'APPD'           TO #SCR-TRAN-CODE (1)
+MOVE '+'              TO #SCR-ADJ (1)
+MOVE #PD-UP-ALOT-DIFF TO #SCR-TRAN-AMT  (1)
+MOVE 'G'              TO #SCR-CASH-CODE (1)  /* to indicate ALOT in desc
+MOVE #C-RUN-DT-YYYYMMDD TO #DATE-OF-UPDATE
+RESET #TIME-OF-UPDATE  /* To match other M/E ALOT trans times
+MOVE 'EDS'          TO #CLERK
+*
+CALLNAT 'C2520SAM' #SCR-LINES
+  STATUS-VIEW.ID-NUMBER
+  STATUS-VIEW.PROCESS-IND
+  INTRO-FLAG
+  STATUS-VIEW.NAME
+  PLAN   (1:9)
+  DEBIT-CREDIT-AMT
+  DATE-ACCT-UPDATE
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #ILN1
+  #HOLD-CUR-ACCT-UPDT
+  #CLERK
+  #EXTRA-STOP
+  #SG-TBL (1:15)
+  #CMBX
+RESET #EXTRA-STOP
+*
+END-SUBROUTINE
+*
+* * * * * * * * * *
+DEFINE SUBROUTINE WRITE-TR-REG-AUTH  /* Not now used     /* DW7   DW9
+* * * * * * * * * *
+*
+MOVE STATUS-VIEW.DATE-ACCT-UPDATE TO #LAST-DATE-UPDATE
+*
+MOVE #C-RUN-DT-YYYYMMDD TO STATUS-VIEW.DATE-ACCT-UPDATE
+*
+RESET TR-V                         /* INITIALIZE TRANS-REGISTER
+MOVE STATUS-VIEW.PROCESS-IND  TO TR-V.PROCESS-IND
+MOVE STATUS-VIEW.ID-NUMBER    TO TR-V.ID-NUMBER
+MOVE STATUS-VIEW.NAME         TO TR-V.NAME
+MOVE #LAST-DATE-UPDATE TO TR-V.DATE-LAST-UPDATE
+MOVE *INIT-ID     TO TR-V.TERMINAL-ID
+MOVE 'EDS'        TO TR-V.CLERK-ID
+MOVE #C-RUN-DT-YYYYMMDD TO TR-V.TRANSACTION-DATN
+RESET                     TR-V.TRANSACTION-TIMN
+*
+MOVE ALOT-CHG-AUTH TO #TR-REG-AUTH-CODE
+MOVE #TR-REG-AUTH TO TR-V.OLD-DATA (1)
+*
+MOVE 'A'   TO #TR-REG-AUTH-CODE
+MOVE #TR-REG-AUTH TO TR-V.NEW-DATA (1)
+*
+STORE TR-V
+*
+END-SUBROUTINE
+*
+***************************
+DEFINE SUBROUTINE FILL-SEGS
+***************************
+IF PRM-X < P05PA.SUB AND MTD-ACV-PREM-ADJ(PRM-X) = 0
+  MOVE 9999999.99 TO MTD-ACV-PREM-ADJ(PRM-X)
+END-IF
+*
+END-SUBROUTINE
+**************
+*************************
+DEFINE SUBROUTINE SG-LOOP
+*************************
+IF SG-AMT = 0
+* OR STATUS-VIEW.PROCESS-IND = 'S'                       /* RE1
+  MOVE 27 TO SG-X
+ELSE
+  IF SG-X = 27
+    WRITE STATUS-VIEW.ID-NUMBER ' SUNGARD FILE TABLE ON 27TH ENTRY ' SG-TRAN
+  END-IF
+  IF SUN-TRAN(SG-X) = ' '
+    MOVE SG-TRAN TO SUN-TRAN(SG-X)
+    MOVE SG-YEAR TO SUN-CAT1(SG-X)
+    MOVE SG-PLAN TO SUN-CAT2(SG-X)
+    ADD SG-AMT TO SUN-AMT(SG-X)
+    IF P05PA.SUB > 9
+      RESET SUN-SEG(SG-X)
+    ELSE
+      MOVE P05PA.SUB TO SUN-SEG(SG-X)
+    END-IF
+    MOVE 27 TO SG-X
+  END-IF
+END-IF
+END-SUBROUTINE /* (SG-LOOP.)
+************************************
+DEFINE SUBROUTINE END-ALLOTMENT-LOOP
+************************************
+IF #AFTER-WRITE-STOP-SW-1
+  #AFTER-WRITE-STOP-SW-1 := FALSE
+ELSE
+  IF CERT-STOP-NOTICE-SWITCH = 'Y'
+    MOVE 'F' TO STOP-CODE
+    RESET AL-RP-AMOUNT
+    MOVE 1 TO AFTER-WRITE-STOP-SW
+    PERFORM WRITE-STOP-ALLT-NOTICE
+  END-IF
+END-IF
+**
+COMPUTE WORK-AMT = ALOT-AMT - WORK-AMT - WORK-DUES - WORK-RIDER
+*
+RESET NAS-X
+**
+LOOP-ALP.
+REPEAT
+  ADD 1 TO NAS-X
+  IF NAS-X > P05PA.I-NEW-ACTIVE-SEG
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE NAS-X TO P05PA.SUB         /* Set Seg for SG-LOOP    DW10
+*
+  MOVE '**' TO SG-YEAR SG-PLAN
+  IF CONV-DURATION(NAS-X) = 999
+    MOVE 'CP' TO SG-YEAR
+  END-IF
+  IF X-ALT-LP-IND(NAS-X) = '1' OR = '2'
+    SUBTRACT X-ALT-LP-AMT(NAS-X) FROM WORK-AMT
+    ADD X-ALT-LP-AMT (NAS-X) TO #AMT-DUE                 /* DW7
+*
+    MOVE 'PRNF' TO SG-TRAN
+    MOVE FIX-ALP-PRN-AMT(NAS-X) TO SG-AMT
+    FOR SG-X = 1 TO 27
+      PERFORM SG-LOOP
+    END-FOR
+  END-IF
+  IF X-ALT-LP-IND(NAS-X) = '1' OR = '2'
+    MOVE 'INTF' TO SG-TRAN
+    MOVE FIX-ALP-INT-AMT(NAS-X) TO SG-AMT
+    FOR SG-X = 1 TO 27
+      PERFORM SG-LOOP
+    END-FOR
+  END-IF
+  MOVE '**' TO SG-YEAR SG-PLAN
+  IF X-ALT-LP-IND-2(NAS-X) = '1' OR = '2'
+    SUBTRACT X-ALT-LP-AMT-2(NAS-X) FROM WORK-AMT
+    ADD X-ALT-LP-AMT-2 (NAS-X) TO #AMT-DUE                 /* DW7
+*
+    MOVE 'PRNV' TO SG-TRAN
+    MOVE VAR-ALP-PRN-AMT(NAS-X) TO SG-AMT
+    FOR SG-X = 1 TO 27
+      PERFORM SG-LOOP
+    END-FOR
+  END-IF
+  IF X-ALT-LP-IND-2(NAS-X) = '1' OR = '2'
+    MOVE 'INTV' TO SG-TRAN
+    MOVE VAR-ALP-INT-AMT(NAS-X) TO SG-AMT
+    FOR SG-X = 1 TO 27
+      PERFORM SG-LOOP
+    END-FOR
+  END-IF
+  IF   (X-LOAN-AMOUNT(NAS-X) = 0)
+      AND NOT (X-ALT-LP-IND (NAS-X) = 'L' OR = 'E' OR = 'C')  /* PM12 PM14 DW6
+**  RESET X-ALT-LP-IND(NAS-X) X-ALT-LP-AMT(NAS-X)  /* SAG-AB 20060926
+    MOVE '0' TO X-ALT-LP-IND(NAS-X)                /* SAG-AB 20060926
+    RESET X-ALT-LP-AMT(NAS-X)                      /* SAG-AB 20060926
+  END-IF
+  IF X-LOAN-AMOUNT-2(NAS-X) = 0
+**  RESET X-ALT-LP-IND-2(NAS-X) X-ALT-LP-AMT-2(NAS-X) /* SAG-AB 20060926
+    MOVE '0' TO X-ALT-LP-IND-2(NAS-X)                 /* SAG-AB 20060926
+    RESET X-ALT-LP-AMT-2(NAS-X)                       /* SAG-AB 20060926
+  END-IF
+END-REPEAT
+*
+IF WORK-AMT > 0
+* AND STATUS-VIEW.PROCESS-IND NE 'S'                  /* RE1
+*                                     NG1  Start
+  PARM-SVC.SVC-PLAN      := 'PSM'
+  PARM-SVC.CASH-MODE     := 'G'
+  PARM-SVC.SVC-MEMBER-ID := STATUS-VIEW.ID-NUMBER
+  SVC-PAY-AMOUNT   := WORK-AMT
+  PARM-SVC.ACTION  := 'ONEMONTH'
+  PARM-SVC.TRANSACTION-TIMN := *TIMN
+  PARM-SVC.TRANSACTION-DATN := CURR-DATE-YYYYMMDD
+  CALLNAT 'SVCN0003' PARM-SVC #MSG
+  IF #MSG = ' '
+    ADD PARM-SVC.SVC-MONTHLY-RATE TO #AMT-DUE
+    SUBTRACT PARM-SVC.SVC-MONTHLY-RATE FROM WORK-AMT
+  END-IF
+*                                     NG1 End
+  ADD WORK-AMT TO TOT-ALLOT-EXCEEDS
+*  write status-view.id-number 'add' work-amt 'to excess alot'
+END-IF
+*
+IF WORK-AMT < 0
+* AND STATUS-VIEW.PROCESS-IND NE 'S'                  /* RE1
+  SUBTRACT WORK-AMT FROM TOT-ALLOT-INSUFF
+*  write status-view.id-number 'subtract'  work-amt 'from insuff alot'
+END-IF
+*
+IF  #TOT-AMT-XTR-PRMS-PAID NE 0   /* Now always zero
+  WRITE STATUS-VIEW.ID-NUMBER 'amt-due =' #AMT-DUE 'alot=' ALOT-AMT
+    'xtra-prms-pd=' #TOT-AMT-XTR-PRMS-PAID
+END-IF
+* compute #db-cr-adj-amt = alot-amt - #amt-due - #tot-amt-xtr-prms-paid /* DW7
+COMPUTE #DB-CR-ADJ-AMT = ALOT-AMT - #AMT-DUE  /* DW9
+*
+IF    #FINAL-PMT-LESS-THAN-1                                      /* DW11
+    AND (#DB-CR-ADJ-AMT = #FINAL-PMT-LESS-THAN-1-AMT * -1) /* exact amt
+  WRITE STATUS-VIEW.ID-NUMBER 'Wrote off < $1.00 final Prem Pmt of '
+    #FINAL-PMT-LESS-THAN-1-AMT
+  COMPRESS 'Wrote off < $1.00 final Prem Pmt of' #FINAL-PMT-LESS-THAN-1-AMT
+    INTO EMESS
+  PERFORM FORM-ERROR-MESSAGE
+*
+  MOVE 'PWOF'  TO SG-TRAN
+  MOVE '**'    TO SG-YEAR
+  MOVE #FINAL-PMT-PLAN TO SG-PLAN
+  MOVE #FINAL-PMT-LESS-THAN-1-AMT TO SG-AMT
+  FOR SG-X = 1 TO 27
+    PERFORM SG-LOOP
+  END-FOR
+*
+  RESET #DB-CR-ADJ-AMT     /* Write-Off the amount needed
+END-IF                                                    /* END DW11
+*
+* IF WORK-AMT NE 0 AND status-view.PROCESS-IND NE 'S'          /* DW7
+IF #DB-CR-ADJ-AMT NE 0
+* AND STATUS-VIEW.PROCESS-IND NE 'S'      /* DW7    RE1
+  ADD 1 TO DB-CR-AMT-CHANGED
+  MOVE 'PREP' TO SG-TRAN
+  MOVE 'DC' TO SG-YEAR
+  MOVE '**' TO SG-PLAN
+* MOVE WORK-AMT TO SG-AMT                 /* DW7
+  MOVE #DB-CR-ADJ-AMT TO SG-AMT           /* DW7
+  FOR SG-X = 1 TO 27
+    PERFORM SG-LOOP
+  END-FOR
+END-IF
+*
+* COMPUTE DEBIT-CREDIT-AMT = DEBIT-CREDIT-AMT - WORK-AMT  /* Adjust DB/CR DW7
+COMPUTE DEBIT-CREDIT-AMT = DEBIT-CREDIT-AMT - #DB-CR-ADJ-AMT /* Adj DB/CR DW7
+*
+IF #ALOT-PD-UP-THIS-MONTH   /* Not now used             /* DW7   DW9
+    AND (#DB-CR-ADJ-AMT NE 0)
+  WRITE STATUS-VIEW.ID-NUMBER 'Alot-pd-up w othr alot dif'
+    'DB-CR ADJ=' #DB-CR-ADJ-AMT (EM=-ZZZZ.99)
+    'Nu DB/CR=' DEBIT-CREDIT-AMT (EM=-ZZZZ.99)
+END-IF
+*
+IF #ALOT-PD-UP-THIS-MONTH    /* NOT now used          /* DW7 DW9
+  FOR SUB 1 TO 9
+    IF #XTRA-SG-PREM (SUB) NE 0
+*     write 'dump xtra-tbl' sub #xtra-sg-prem (sub) #xtra-prem-diff-amt (sub)
+      PERFORM APPLY-XTRA-PRMS-PD
+      PERFORM ACCT-REG
+    END-IF
+  END-FOR
+END-IF
+*
+IF #DB-CR-ADJ-AMT NE 0   /* Just to show remaining DB/CR ADJUSTMENTS
+  IF   (ALOT-CHG-AUTH = 'N' OR = 'B' OR = ' ')           /* DW8
+      AND (MILITARY-STATUS = 'R')
+    WRITE STATUS-VIEW.ID-NUMBER STATUS-VIEW.NAME (EM=XXXXX)
+      'DB/CR adj by' #DB-CR-ADJ-AMT (EM=-ZZ,ZZZ.99)
+      'over/underage=' WORK-AMT (EM=-ZZ,ZZZ.99) 'AUTH=' ALOT-CHG-AUTH
+      'stat=' MILITARY-STATUS
+  END-IF
+END-IF
+*
+IF #ALOT-PD-UP-THIS-MONTH    /* Not now used         /* DW7  DW9
+    AND (MILITARY-STATUS = 'R')
+    AND (ALOT-CHG-AUTH = 'N' OR = 'B' OR = ' ')
+  PERFORM WRITE-TR-REG-AUTH
+  MOVE 'A'                TO ALOT-CHG-AUTH
+  MOVE #C-RUN-DT-YYYYMMDD TO ALOT-CHG-AUTH-DATE  /* date of chg to "A"
+END-IF
+*
+PERFORM P-R-XIT /* GO TO P-R-XIT
+**
+END-SUBROUTINE /* (END-ALLOTMENT-LOOP)
+**************************************
+******************************************
+DEFINE SUBROUTINE CALC-NUM-MONS-TO-BACKOUT
+******************************************
+MOVE LM-YYYYMMDD-MM TO WRK-MON
+IF ISSUE-DATE-MM(SUB) > LM-YYYYMMDD-MM
+  ADD 12 TO WRK-MON
+END-IF
+SUBTRACT ISSUE-DATE-MM(SUB) FROM WRK-MON
+ADD 1 TO WRK-MON
+COMPUTE IS-WORK-PREM = IS-WORK-PREM * WRK-MON
+*
+PERFORM END-WITH-NO-WRITE
+*
+MOVE 1 TO #C-OUTGOING-FLAG
+MOVE TRANS-REG-REC/ALPHA TO #C-REPORT-RECORD
+*
+END-SUBROUTINE
+**************
+******************************************
+DEFINE SUBROUTINE END-WITH-MORE-WRITE-NOTC
+******************************************
+*    DISPLAY ID-NUMBER ' DOING AN EXTRACT'
+MOVE 1 TO #C-OUTGOING-FLAG
+MOVE TIN1-PA/ALPHA TO #C-REPORT-RECORD
+ESCAPE MODULE
+*
+END-SUBROUTINE
+**************
+*****************************************************************
+*          C A L C - M O D E - P R E M I U M                    *
+*****************************************************************
+DEFINE SUBROUTINE CALC-MODE-PREMIUM
+***********************************
+IF MODE(SUB) = 'A'
+  MOVE 1 TO W-MODE
+ELSE
+  IF MODE(SUB) = 'S'
+    MOVE 2 TO W-MODE
+  ELSE
+    IF MODE(SUB) = 'Q'
+      MOVE 4 TO W-MODE
+    ELSE
+      MOVE 12 TO W-MODE
+    END-IF
+  END-IF
+END-IF
+COMPUTE W-MODE-PREMIUM-PA = ANNUAL-PREM(SUB) / W-MODE
+* YK3 Special processing for EZ Term - $1 Less monthly
+IF PLAN(SUB) = #EZ-TERM AND (MODE(SUB) = 'E' OR = 'G')
+  W-MODE-PREMIUM-PA := W-MODE-PREMIUM-PA - 1
+END-IF 
+END-SUBROUTINE /* CALC-MODE-PREMIUM
+***********************************
+*****************************************************************
+*         W R I T E - S T O P - A L L T - N O T I C E           *
+*****************************************************************
+DEFINE SUBROUTINE WRITE-STOP-ALLT-NOTICE
+****************************************
+IF PAD-CODE = 'P' /* check - this logic can never work but is as per original code
+  IF PAD-CODE = 'N'
+    IF PAD-CODE = 'D'
+      IF PAD-CODE = 'L' OR = 'V' OR = 'W' OR = 'X' OR = 'Z'
+        IF STOP-CODE = 'F'
+          MOVE 'ALLOTMENT STOP NOTICE BYPASSED DUE TO EZ-PAY' TO EMESS
+        ELSE
+          MOVE 'ALLOTMENT STOP REMINDER BYPASSED DUE TO EZ-PAY' TO EMESS
+        END-IF
+        PERFORM FORM-ERROR-MESSAGE
+        ESCAPE ROUTINE
+      END-IF
+    END-IF
+  END-IF
+END-IF
+**
+RESET GENERAL-REC /* formerly ALLT-NOTICE
+COMPUTE TIN1-PA-QTR-PREM = TOT-PREM-DUE / 4
+MOVE CAP-LOAN TO TIN1-PA-FIXED-LOAN
+RESET L-TYPE
+MOVE STOP-CODE TO TIN1-PA-SECT
+IF INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q'
+  MOVE '3' TO TIN1-PA-SUB-SECT
+ELSE
+  MOVE '1' TO TIN1-PA-SUB-SECT
+END-IF
+MOVE STOP-CODE TO TIN1-PA-OLD-SECT
+PERFORM FORM-BASE
+PERFORM FIND-ADDRESS
+MOVE AL-RP-AMOUNT TO TIN1-PA-ALLT-AMT
+MOVE DEBIT-CREDIT-AMT TO TIN1-PA-DB-CR
+MOVE 5 TO RETURN-SW
+PERFORM END-WITH-MORE-WRITE-NOTC
+*
+END-SUBROUTINE /* WRITE-STOP-ALLT-NOTICE
+****************************************
+*****************************************************************
+*        F O R M - B A S E                                      *
+*****************************************************************
+***************************
+DEFINE SUBROUTINE FORM-BASE
+***************************
+*
+MOVE STATUS-VIEW.MEMBER-CONTACT-ID TO #CONTACT-ID #CONTACT-ID-R                        /* vt1 \/
+TIN1-PA-NAME := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME,#MIDDLE-NAME,#LAST-NAME,#SUFFIX>)
+COMPRESS #FIRST-NAME #MIDDLE-NAME #LAST-NAME INTO #NAME
+MOVE #NAME TO TIN1-PA-NAME
+* MOVE STATUS-VIEW.NAME TO TIN1-PA-NAME
+CALLNAT 'RANKN001' #PDA-RANK
+TIN1-PA-RANK := #RANK-ABBR
+* MOVE RANK TO TIN1-PA-RANK
+* IF CHIEF-OF-STAFF-IND = 'R'
+*  IF SEX = 'F'
+*    MOVE 'MRS' TO TIN1-PA-RANK
+*  ELSE
+*    MOVE 'MR' TO TIN1-PA-RANK
+*  END-IF
+* END-IF                                                                   /* vt1 /\
+MOVE MILITARY-STATUS TO TIN1-PA-CL
+MOVE STATUS-VIEW.ID-NUMBER TO TIN1-PA-ID
+MOVE MODE(1) TO TIN1-PA-GEN-MODE
+*
+END-SUBROUTINE
+**************
+*******************************
+DEFINE SUBROUTINE END-SECTION-3
+*******************************
+IGNORE /* empty section
+*
+END-SUBROUTINE
+**************
+*****************************************************************
+*        F I N D - A D D R E S S                                *
+*****************************************************************
+******************************
+DEFINE SUBROUTINE FIND-ADDRESS
+******************************
+X09.
+REPEAT
+  X08.
+  REPEAT
+    X07.
+    REPEAT
+      RESET TIN1-PA-NAME-ADDRESS
+      MOVE STATUS-VIEW.MEMBER-CONTACT-ID TO #CONTACT-ID                         /* vt1 \/
+      TIN1-PA-NAME := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME,#MIDDLE-NAME,#LAST-NAME,#SUFFIX>)
+      COMPRESS #FIRST-NAME #MIDDLE-NAME #LAST-NAME INTO #NAME
+      MOVE #NAME TO TIN1-PA-NAME
+*      MOVE STATUS-VIEW.NAME TO TIN1-PA-NAME                                    /* vt1 /\
+      RESET TIN1-PA-NON-MBR-FLAG
+      IF L-TYPE NE '1'
+        ESCAPE BOTTOM (X07.) /* GO TO FIND-ADDR-F
+      END-IF
+*
+      FIND-ADDR-A.
+      REPEAT
+        IF HANDLE-FLAG = ' ' OR = '2' OR = '3' OR = '6' OR = '7'
+          ESCAPE BOTTOM (X08.) /* GO TO FIND-ADDR-B
+        END-IF
+        IF S-ADDRESS-IND = ' '
+          ESCAPE BOTTOM /* goto NO-ADDRESS
+        END-IF
+        IF S-ADDRESS-CODE = ' ' OR = '2' OR = '3' OR = '6' OR = '7'           
+          ESCAPE BOTTOM (X09.) /* GO TO FIND-ADDR-D                           
+        END-IF                                                                
+        ESCAPE BOTTOM
+      END-REPEAT
+*
+      PERFORM NO-ADDRESS
+      ESCAPE ROUTINE
+*
+    END-REPEAT /* (X07.)
+*
+    FIND-ADDR-F.
+    REPEAT
+      IF HANDLE-FLAG = ' ' OR = '1' OR = '3' OR = '5' OR = '7'
+        ESCAPE BOTTOM /* goto FIND-ADDR-B
+      END-IF
+      IF S-ADDRESS-IND = ' '
+        PERFORM NO-ADDRESS /* GO TO NO-ADDRESS
+        ESCAPE ROUTINE
+      END-IF
+      IF S-ADDRESS-CODE = ' ' OR = '1' OR = '3'OR = '5' OR = '7'               
+        ESCAPE BOTTOM (X09.) /* GO TO FIND-ADDR-D                              
+      END-IF                                                                    
+      PERFORM NO-ADDRESS /* GO TO NO-ADDRESS
+      ESCAPE ROUTINE
+    END-REPEAT
+*
+    ESCAPE BOTTOM (X08.)
+  END-REPEAT /* (X08.)
+*
+  FIND-ADDR-B.
+  REPEAT
+    MOVE STATUS-VIEW.MEMBER-CONTACT-ID TO #ADD-CONTACT-ID                     /* vt1 \/
+    MOVE 'P' TO #ADD-TYPE
+    CALLNAT 'ADDN0001' #PDA-ADDRESS
+    MOVE #ADD-LINE-1 TO TIN1-PA-LN1
+    MOVE #ADD-LINE-2 TO TIN1-PA-LN2
+    MOVE #ADD-LINE-3 TO TIN1-PA-LN3
+    MOVE #ADD-ZIP-CODE TO #ZIP-CODE
+    TIN1-PA-CITY  := #ADD-CITY
+    TIN1-PA-STATE := #ADD-STATE
+*    MOVE ADDRESS-1 TO TIN1-PA-LN1
+*    MOVE ADDRESS-2 TO TIN1-PA-LN2
+*    MOVE ADDRESS-3 TO TIN1-PA-LN3
+    RESET TIN1-PA-LN4 TIN1-PA-ZIP-G
+*
+*    IF ZIP-CODE-1-5 = 0
+*      RESET TIN1-PA-ZIP
+*    ELSE
+*      MOVE ZIP-CODE-1-5 TO TIN1-PA-ZIP
+** SAG 20060320 BEGIN
+    IF #ZIP-CODE-5 = 0
+      RESET TIN1-PA-ZIP
+    ELSE
+      MOVE #ZIP-CODE-5 TO TIN1-PA-ZIP                                          /* vt1 /\
+*      MOVE RIGHT TIN1-PA-ZIP TO TIN1-PA-ZIP                                   /* vt1
+*      EXAMINE TIN1-PA-ZIP FOR ' ' REPLACE WITH '0'                            /* vt1
+** SAG 20060320
+*      IF ZIP-CODE-6-9 NE 0                                                    /* vt1
+      IF #ZIP-CODE-4 NE 0                                                      /* vt1
+        MOVE '-' TO TIN1-PA-DASH
+        MOVE #ZIP-CODE-4 TO TIN1-PA-ZIP-LST-4
+*       MOVE ZIP-CODE-6-9 TO TIN1-PA-ZIP-LST-4                                 /* vt1
+      END-IF
+    END-IF
+*
+    IF TIN1-PA-ZIP = 0
+      MOVE 'C' TO TIN1-PA-SECT
+    END-IF
+*    IF ADDRESS-1 = ' '                                  /* vt1
+    IF #ADD-LINE-1 = ' '                                 /* vt1
+      MOVE 'A' TO TIN1-PA-SECT
+      RESET TIN1-PA-SUB-SECT
+    END-IF
+    ESCAPE BOTTOM
+  END-REPEAT
+*
+  ESCAPE ROUTINE
+*
+END-REPEAT /* (X09.)
+*
+FIND-ADDR-D.
+REPEAT
+  MOVE STATUS-VIEW.MEMBER-CONTACT-ID TO #CONTACT-ID                       /* vt1 \/
+  MOVE 's' TO #ADD-TYPE
+  CALLNAT 'addn0001' #PDA-ADDRESS
+  MOVE #ADD-LINE-1 TO TIN1-PA-LN1
+  MOVE #ADD-LINE-2 TO TIN1-PA-LN2
+  MOVE #ADD-LINE-3 TO TIN1-PA-LN3
+  MOVE #ADD-ZIP-CODE TO #ZIP-CODE
+  TIN1-PA-CITY  := #ADD-CITY
+  TIN1-PA-STATE := #ADD-STATE
+*  MOVE S-ADDRESS-1 TO TIN1-PA-LN1
+*  MOVE S-ADDRESS-2 TO TIN1-PA-LN2
+*  MOVE S-ADDRESS-3 TO TIN1-PA-LN3                                      /* vt1 /\
+  RESET TIN1-PA-LN4 TIN1-PA-ZIP-G
+*
+*  IF S-ZIP-CODE-1-5 = 0                                   /* vt1
+  IF #ZIP-CODE-5 =  0                                      /* vt1
+    RESET TIN1-PA-ZIP
+  ELSE
+*    MOVE S-ZIP-CODE-1-5 TO TIN1-PA-ZIP                    /* vt1
+    MOVE #ZIP-CODE-5 TO TIN1-PA-ZIP                         /* vt1
+** SAG 20060320 BEGIN
+*    MOVE RIGHT TIN1-PA-ZIP TO TIN1-PA-ZIP                  /* vt1
+*    EXAMINE TIN1-PA-ZIP FOR ' ' REPLACE WITH '0'           /* vt1
+** SAG 20060320 END
+*    IF S-ZIP-CODE-6-9 NE 0                                 /* vt1
+    IF #ZIP-CODE-4 NE 0                                    /* vt1
+      MOVE '-' TO TIN1-PA-DASH
+*      MOVE S-ZIP-CODE-6-9 TO TIN1-PA-ZIP-LST-4            /* JT1
+      MOVE #ZIP-CODE-4 TO TIN1-PA-ZIP-LST-4                /* JT1
+    END-IF
+  END-IF
+*
+  IF TIN1-PA-ZIP = 0
+    MOVE 'C' TO TIN1-PA-SECT
+  END-IF
+*  IF S-ADDRESS-1 = ' '                        /* vt1
+  IF #ADD-LINE-1 = ' '                        /* vt1
+    MOVE 'A' TO TIN1-PA-SECT
+    RESET TIN1-PA-SUB-SECT
+  END-IF
+*
+  ESCAPE BOTTOM
+END-REPEAT
+*
+END-SUBROUTINE
+**************
+*******************************
+DEFINE SUBROUTINE END-SECTION-4
+*******************************
+IGNORE /* empty section
+*
+END-SUBROUTINE
+**************
+*****************************************************************
+*        F O R M - E R R O R - M E S S A G E                    *
+*****************************************************************
+************************************
+DEFINE SUBROUTINE FORM-ERROR-MESSAGE
+************************************
+IF EPR-X NE 5
+  ADD 1 TO EPR-X
+**MOVE ID-NUMBER TO #C-E-ID(EPR-X)                    /* SAG-AB 20060919
+  MOVE EDITED STATUS-VIEW.ID-NUMBER (EM=999999) TO #C-E-ID(EPR-X) /* SAG-AB 20060919
+  MOVE #NAME TO #C-E-NAME(EPR-X)                              /* vt1
+*  MOVE STATUS-VIEW.NAME TO #C-E-NAME(EPR-X)                  /* vt1
+  MOVE RANK TO #C-E-RANK(EPR-X)
+  MOVE MILITARY-STATUS TO #C-E-RETIRED(EPR-X)
+  MOVE EMESS TO #C-E-MESSAGE(EPR-X)
+END-IF
+*
+END-SUBROUTINE
+**************
+*****************************************************************
+*        F O R M - E R R O R - M E S S A G E                    *
+*****************************************************************
+*******************************
+DEFINE SUBROUTINE END-SECTION-5
+*******************************
+IGNORE /* empty section
+*
+END-SUBROUTINE
+**************
+*****************************************************************
+***************************
+DEFINE SUBROUTINE CALC-DUES
+***************************
+RESET SVC-FEE-PA
+IF ISSUE-DATE(SUB) < 19970101
+    OR MONTH-ALLOC-AMT(SUB) = 999.99
+    OR (INTRO-FLAG = 'S' OR = 'K' OR = 'G' OR = 'O' OR = 'P' OR = 'Q')
+    OR DUES-ALL-PAID-IND = 'Y'
+    OR P05PA.SUB NE P05PA.FIRST-ACTIVE
+  ESCAPE ROUTINE /* GO TO CALC-DUES-XIT
+END-IF
+IF PLAN(SUB) = '2P' OR = '2PF'       /* DW4
+  MOVE SVC-FEE-2P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = '3P' OR = '3PF'       /* DW4
+  MOVE SVC-FEE-3P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = '4P' OR = '4PF'       /* DW4
+  MOVE SVC-FEE-4P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = '5P' OR = '5PF'       /* DW4
+  MOVE SVC-FEE-5P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = '6P' OR = '6PF'       /* DW4
+  MOVE SVC-FEE-6P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = '7P' OR = '7PF'       /* DW4
+  MOVE SVC-FEE-7P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = '8P' OR = '8PF'       /* DW4
+  MOVE SVC-FEE-7P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = '9P' OR = '9PF'       /* DW4
+  MOVE SVC-FEE-7P TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) = 'OL'
+  MOVE SVC-FEE-OL TO SVC-FEE-PA
+END-IF
+* IF PLAN(SUB) = 'RT'                /* YK1 
+*   MOVE SVC-FEE-TM TO SVC-FEE-PA
+* END-IF
+* IF PLAN(SUB) = 'LT'
+*   MOVE SVC-FEE-TM TO SVC-FEE-PA
+* END-IF                             /* YK1 
+* IF PLAN-A1(SUB) GE 'U' AND PLAN-A1(SUB) LE 'Z'    /* YK1
+IF FUNCTION-TERM-POLICY(<PLAN(SUB)>)                /* YK1
+  MOVE SVC-FEE-TM TO SVC-FEE-PA
+END-IF
+IF SVC-FEE-PA NE 0
+  ESCAPE ROUTINE /* GO TO CALC-DUES-XIT
+END-IF
+IF PLAN(SUB) GE '10F' AND PLAN(SUB) LE '19P'
+  MOVE SVC-FEE-10 TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) GE '20F' AND PLAN(SUB) LE '29P'
+  MOVE SVC-FEE-20 TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) GE '30F' AND PLAN(SUB) LE '34P'
+  MOVE SVC-FEE-30 TO SVC-FEE-PA
+END-IF
+IF PLAN(SUB) GE '35F' AND PLAN(SUB) LE '99P'
+  MOVE SVC-FEE-OL TO SVC-FEE-PA
+END-IF
+*
+END-SUBROUTINE
+**************
+*************************************************************************************
+*************************************
+DEFINE SUBROUTINE CALC-RIDER-MON-PREM
+*************************************
+RESET RID-MON-PREM
+IF RID-PLAN(SUB) = '  '
+  ESCAPE ROUTINE /* goto CALC-RIDER-MON-PREM-XIT
+END-IF
+IF RID-PLAN-1(SUB) = 'F'
+  COMPUTE RID-MON-PREM = 1.50 * RID-PLAN-2(SUB)
+END-IF
+IF RID-PLAN-1(SUB) = 'T'
+  COMPUTE RID-MON-PREM = 2.00 * RID-PLAN-2(SUB)
+END-IF
+IF RID-PLAN-1(SUB) = 'C'
+  COMPUTE RID-MON-PREM = 1.00 * RID-PLAN-2(SUB)
+END-IF
+*
+END-SUBROUTINE
+**************
+*********************************
+DEFINE SUBROUTINE FIND-FST-ACTIVE
+*********************************
+IF STATUS(SUB) = 'D'
+  MOVE P05PA.SUB TO P05PA.FIRST-ACTIVE
+  MOVE 9 TO P05PA.SUB
+END-IF
+*
+END-SUBROUTINE
+**************
+***********************************
+DEFINE SUBROUTINE END-WITH-NO-WRITE
+***********************************
+MOVE 2 TO #C-OUTGOING-FLAG
+ESCAPE MODULE
+*
+END-SUBROUTINE
+**************
+***********************************************
+DEFINE SUBROUTINE END-OF-WRITE-STOP-ALLT-NOTICE
+***********************************************
+RESET RETURN-SW
+ASSIGN #AFTER-WRITE-STOP-SW-1 := TRUE
+PERFORM END-ALLOTMENT-LOOP /* GO TO AFTER-WRITE-STOP-SW-1
+*
+END-SUBROUTINE
+**************
+*************************
+DEFINE SUBROUTINE P-R-XIT
+*************************
+MOVE 2 TO #C-OUTGOING-FLAG
+PERFORM END-WITH-NO-WRITE
+*
+END-SUBROUTINE
+**************
+****************************
+DEFINE SUBROUTINE NO-ADDRESS
+****************************
+MOVE 'A' TO TIN1-PA-SECT
+RESET TIN1-PA-SUB-SECT
+*
+END-SUBROUTINE
+**************
+END

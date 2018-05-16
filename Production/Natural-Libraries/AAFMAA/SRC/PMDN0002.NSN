@@ -1,0 +1,202 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PMDN0002   Boris Z. 12-01-2014
+* Send Med exam email submit to dal, for details see OI-3155
+* Prerequisites ----------------------------------------------
+*   Set upload_index.xml permissions to 664 
+*   Using Template: /usr/SAG/APPS/AT/MEDEXAM_TMPL_HTML.TXT
+*   For testing in Prod uncomment --db Prod
+*               ----------------------------------------------
+DEFINE DATA
+PARAMETER
+ 1 p_AT        (N6)
+ 1 p_RC        (N4) 
+
+LOCAL
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER
+ 2 MEMBER-CN
+ 2 NAME
+ 2 CONTACT-ID
+ 2 INTERNET-ADDR
+ 2 PM-VENDOR
+*
+1 TRM-V VIEW OF A-TERMINALS
+  2 TERMINAL-ID
+  2 CLERK-ID           (A3) 
+  2 EMAIL              (A60)
+*   
+ 1 v_User         (A8)
+ 1 f_TMPL         (A)  DYNAMIC INIT <'/usr/SAG/APPS/AT/MEDEXAM_TMPL_HTML.TXT'>       /* 1
+ 1 f_body         (A)  DYNAMIC INIT <' '>                                            /* 2
+ 1 f_body_DIR     (A)  DYNAMIC INIT <'/usr/SAG/APPS/AT'>                             /* 2-1
+ 1 f_body_FN      (A)  DYNAMIC INIT <'EML_TO_@@AT.html'>                             /* 2-2
+ 1 f_attach       (A)  DYNAMIC INIT <' '>       
+ 1 cmd_mailx      (A)  DYNAMIC INIT 
+        <'(cat @@BODY; /opt/sfw/bin/uuenview -b @@FILE_Brochure.pdf; echo --Divider--)|/usr/lib/sendmail -t'>
+ 1 v_A            (A)  DYNAMIC
+ 1 v_MSG          (A)  DYNAMIC INIT<' '>
+ 1 v_Err          (A)  DYNAMIC INIT<' '>
+ 1 v_EML          (A)  DYNAMIC
+ 1 v_Email        (A)  DYNAMIC   
+ 1 v_Email_Test   (A)  DYNAMIC INIT<'bzaslavskiy@aafmaa.com'>
+*
+ 1 xml_TMPL       (A80/12)
+                   INIT<
+                   '<?xml version="1.0" encoding="utf-8"?>',
+                   '<DOCUMENTS>',
+                   '<DOCUMENT>',
+                   '<DOCTITLE>ECOMM</DOCTITLE>',
+                   '<CN>@@CN</CN>',
+                   '<POL-NUM>@@POL</POL-NUM>', 
+                   '<SUBMITDATE>@@DATE</SUBMITDATE>',
+                   '<FILENAME>@@FILE</FILENAME>',
+                   '<DESCRIPTION>Underwriting</DESCRIPTION>',
+                   '<MEMBERACCESSIBLE>FALSE</MEMBERACCESSIBLE>',
+                   '</DOCUMENT>',
+                   '</DOCUMENTS>'
+                   >
+
+1 f_index         (A) DYNAMIC INIT <'/usr/SAG/APPS/AT/upload_index.xml@@AT'>
+* -----------------
+1 FTP_CMD_DAL           (A) DYNAMIC INIT <'/usr/SAG/BV/bv-put -m @@LOCAL FTP/EDS/Downloads/dale/AT-U3-@@AT'>
+1 FTP_CMD_IDX           (A) DYNAMIC INIT <'/usr/SAG/BV/bv-put    @@LOCAL FTP/EDS/Downloads/dale/AT-U3-@@AT upload_index.xml'>
+1 ftp_RC                (N4) 
+* ----------------- 
+ 1 #i              (I2)  
+END-DEFINE
+*
+ON ERROR 
+   COMPRESS 'Program Error' 'Line:' *ERROR-LINE 'Err:' *ERROR-NR INTO v_Err
+   PERFORM sbr_Error
+END-ERROR   
+*  ESCAPE ROUTINE                         /*  hard escape - No email--db      
+   RESET p_RC
+   FIND(1) AT-V WITH ID-NUMBER = p_AT /* No Rec event should not occures
+   END-FIND
+*  -------------------------------
+*    v_Email       := v_Email_Test          /*  --db Force Test
+*    PRINT NOTITLE 5x 'Email:' v_Email 'Force Test mode'(I) // 5x 'Hit Enter to continue ...'(I)   /* --db Force Test    
+*  -------------------------------
+ AT-V.INTERNET-ADDR := GET-EML(<CONTACT-ID>)  
+ IF AT-V.INTERNET-ADDR = ' '
+    v_Err := 'Member email address is blank. Email was not sent' 
+    PERFORM sbr_Error
+ END-IF   
+
+ IF AT-V.NAME = ' '
+    v_Err := 'Member name is blank. Email was not sent' 
+    PERFORM sbr_Error
+ END-IF   
+
+ IF AT-V.PM-VENDOR = ' '
+    v_Err := 'Vendor is blank. Email was not sent' 
+    PERFORM sbr_Error
+ END-IF
+
+ DEFINE WORK FILE 1 f_TMPL TYPE 'UNFORMATTED'
+ READ WORK FILE 1 ONCE v_EML
+ CLOSE WORK FILE 1
+
+ IF F-IS-DEV(<>) OR v_Email <> ' '
+    v_User := *INIT-USER
+    v_User := *TRANSLATE(v_User, UPPER)
+    FIND(1) TRM-V WITH TRM-V.TERMINAL-ID = v_User END-FIND
+    IF TRM-V.EMAIL <> ' '               /* for testing in Prod uncomment --db Force Test
+       v_Email_Test := TRM-V.EMAIL
+    END-IF 
+    COMPRESS '*** Member email' AT-V.INTERNET-ADDR 'changed for user' v_User '***' INTO v_MSG
+    v_Email  := v_Email_Test
+ ELSE
+    v_Email := AT-V.INTERNET-ADDR    
+ END-IF
+*
+ EXAMINE v_EML       FOR '@@TO'    REPLACE v_Email
+ COMPRESS 'Sent' *DAT4U *TIMX 'to' AT-V.INTERNET-ADDR INTO v_A
+ 
+ EXAMINE v_EML       FOR '@@DATE'     REPLACE v_A
+ v_A := AT-V.ID-NUMBER
+ EXAMINE v_EML       FOR '@@CN'       REPLACE v_A
+ EXAMINE v_EML       FOR '@@NAME'     REPLACE AT-V.NAME
+ v_A := *TRIM(PM-VENDOR)
+ IF v_A = SCAN 'Port' 
+    EXAMINE v_EML       FOR '@@FILE'  REPLACE 'PMD'
+    COMPRESS   f_body_DIR '/' 'PMD' INTO  f_attach LEAVING NO SPACE
+    COMPRESS 'APPS/' v_A  INTO v_A 
+ ELSE
+    EXAMINE v_EML       FOR '@@FILE'  REPLACE 'EMSI'
+    COMPRESS   f_body_DIR '/' 'EMSI' INTO  f_attach LEAVING NO SPACE
+ END-IF
+
+ EXAMINE v_EML       FOR '@@PARTNER'  REPLACE v_A 
+ EXAMINE v_EML       FOR '@@MSG'      REPLACE v_MSG
+ v_A := p_AT
+ EXAMINE f_body_FN   FOR '@@AT'      REPLACE v_A
+ COMPRESS f_body_DIR '/' f_body_FN INTO  f_body  LEAVING NO SPACE
+ EXAMINE cmd_mailx FOR '@@BODY'    REPLACE f_Body
+ EXAMINE cmd_mailx   FOR '@@FILE'  REPLACE f_attach         
+ DEFINE WORK FILE 2 f_body TYPE 'UNFORMATTED'  ATTRIBUTES 'NOBOM'
+ v_EML := *TRIM(v_EML)
+ WRITE WORK FILE 2 VARIABLE v_EML
+ CLOSE WORK FILE 2
+ CALL 'shcmd' cmd_mailx
+ p_RC := RET('shcmd')
+* PRINT NOTITLE '**'(I)  'email sent to:' / v_Email 'rc=' p_RC                           /* --db
+ IF p_RC <> 0 
+    v_Err := 'Error sending email' 
+    PERFORM sbr_Error
+ END-IF
+ 
+ PERFORM sbr_INDEX_DAL
+ v_A := AT-V.ID-NUMBER
+ EXAMINE FTP_CMD_DAL FOR  '@@AT'   REPLACE  v_A 
+ EXAMINE FTP_CMD_IDX FOR  '@@AT'   REPLACE  v_A 
+ EXAMINE FTP_CMD_DAL FOR  '@@LOCAL' REPLACE  f_body
+ EXAMINE FTP_CMD_IDX FOR  '@@LOCAL' REPLACE  f_index
+ 
+* PRINT *PROGRAM / '-'(60) / FTP_CMD_DAL / FTP_CMD_IDX / '-'(60)                       /* --db
+* ESCAPE ROUTINE                                                                       /* --db
+ 
+ call 'shcmd' FTP_CMD_DAL
+  ftp_RC := RET('shcmd')
+  IF ftp_RC <> 0
+    COMPRESS 'Error: Dal email FTP' ftp_RC  INTO v_Err
+    PERFORM sbr_Error
+  END-IF
+ 
+ call 'shcmd' FTP_CMD_IDX
+  ftp_RC := RET('shcmd')
+  IF ftp_RC <> 0
+    COMPRESS 'Error: Dal index FTP' ftp_RC  INTO v_Err 
+    PERFORM sbr_Error
+  END-IF
+
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+DEFINE sbr_INDEX_DAL
+  v_A := AT-V.ID-NUMBER
+  EXAMINE f_index FOR '@@AT'   REPLACE v_A
+  v_A := AT-V.MEMBER-CN
+  EXAMINE xml_TMPL(*) FOR '@@CN'   REPLACE v_A
+  COMPRESS v_A '-P' INTO v_A LEAVING NO SPACE
+  EXAMINE xml_TMPL(*) FOR '@@POL'  REPLACE v_A
+  COMPRESS *DAT4U INTO v_A
+  EXAMINE xml_TMPL(*) FOR '@@DATE' REPLACE v_A
+  EXAMINE xml_TMPL(*) FOR '@@FILE' REPLACE f_body_FN
+  DEFINE WORK FILE 2 f_index TYPE 'ASCII-COMPRESSED'
+  FOR #i = 1 TO *OCC(xml_TMPL)
+     WRITE WORK FILE 2 xml_TMPL(#i)
+  END-FOR
+  CLOSE WORK FILE 2
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -  
+DEFINE sbr_Error
+    PRINT 3x v_Err(AD=I) *PROGRAM    /
+          3x 'Please contact MSS'   ///
+          3x '"Enter" to continue'(I)  
+    ESCAPE MODULE
+END-SUBROUTINE
+
+END

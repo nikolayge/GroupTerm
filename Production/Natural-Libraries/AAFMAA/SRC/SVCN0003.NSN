@@ -1,0 +1,637 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************ 
+* Premier SERVICES PSM                                                             * 
+************************************************************************ 
+* NAME         : SVCN0003                                              * 
+* DESCRIPTION  : Premier Service payments                              * 
+************************************************************************ 
+*        MODIFICATION LOG                                              * 
+************************************************************************ 
+* USER   DATE      TAG  REASON 
+* NGG    20111208      Initial Creation 
+* YK1    20120201  YK1 Add logic for reactivation (return arrears for 
+*                      cancelled records) & web charge (get by CN only) 
+* YK2    20120207  YK2 Add logic for waiving reactivation fee & arrears 
+* YK3    20120222  YK3 Fix logic to return arrears for one time fee option 
+* YK4    20120322  YK4 Change error messages to error codes 
+* bz1    20120716  Exclude 3SR from calculation 
+* vxt    20120806  vt1 Populate the clerk-id for Batch processing / OI-1420/ 
+* vxt    20120919  vt2 fix clerk-id EDS to be populated only for true batch 
+* VXT    20130410  VT3 Populate the MONTH-END field with 'Y' when SVC-TRAN-TYPE is 'EZME' /ticket 1929/ 
+* VXT    20140422  VT4 FIX THE CLERK-ID WHEN THE PARAMETER WAS NOT PASSED /Ticket 2759/ 
+* NGG    20140507  NG1  MEMBERSHIP EXPANSION 
+* vxt    20140711  vt5 /Ticket 2891/ 
+* YAK    20150713  YK5 Pass rejection code for checks rejections 
+* ************************************************************************ 
+* 
+DEFINE DATA 
+PARAMETER USING SVCA0003 
+PARAMETER 
+1 #MSG                  (A) DYNAMIC 
+1 #USER-COMPANY         (A2)   OPTIONAL 
+1 ST-V_DEBIT-CREDIT-AMT (P7.2) OPTIONAL 
+LOCAL USING OBJAMB01 
+LOCAL USING ERROR_L                                  /* YK4 
+LOCAL USING GPRATR01 
+LOCAL 
+1 ACCT-REG 
+  2 ID-NUMBER (N6)            /* input 
+  2 TRANSACTION-DATN (P9)     /* input 
+  2 TRANSACTION-TIMN (P7)     /* input 
+  2 TXN-CODE (A4)             /* Hard coded 
+  2 SEQUENCE-NUM (N1)         /* hard coded 
+  2 NAME (A25)                /* Contact source - use standard function 
+  2 TXN-ACCT-NUMBER (N3)      /* Hard coded 
+  2 ACCT-DATE (N8)            /* Transaction date 
+  2 DATE-LAST-ACCT-UPDATE (N8)/* Status 
+  2 DEBIT-AMOUNT (P7.2)       /* Input - reverse 
+  2 CREDIT-AMOUNT (P7.2)      /* Input - apply 
+  2 DESCRIPTION (A20)         /* Hard coded 
+  2 MESSAGE-CODE (A1)         /* NA 
+  2 AALP-FLAG (A1)            /* NA 
+  2 CLERK-ID (A3)             /* Input 
+  2 TERMINAL-ID (A8)          /* Hard coded 
+  2 C#SUNGARD-INFO (I4)       /* Hard coded 
+  2 SG-CATEGORY-1 (A2/1:15)   /* Hard coded 
+  2 SG-CATEGORY-2 (A2/1:15)   /* Hard coded 
+  2 SG-AMOUNT (N6.2/1:15)     /* Transaction amount 
+  2 CASH-CODE (A1)            /* Input 
+  2 PROCESS-IND (A1)          /* Status 
+  2 MONTH-END (A1)            /* Input 
+  2 POLICY-NUMBER (A16)       /* NA 
+  2 USER-COMPANY (A1)         /* Input 
+  2 ACTIVITY-TYPE (A3)        /* Rejection Code 
+  2 STATUS-TYPE (A2)          /* NA 
+* 
+1 #EXTRA-MONEY                (P7.2) 
+1 #PAYMENT-PERIOD             (N2) 
+1 #SVC-PAID-TO-DATE           (N8) 1 REDEFINE #SVC-PAID-TO-DATE 
+  2 #SVC-PAID-TO-MON          (N6) 
+1 REDEFINE #SVC-PAID-TO-DATE 
+  2 #YYYY      (N4) 
+  2 #MM        (N2) 
+1 #ARREAR-DATE           (N8) 1 REDEFINE #ARREAR-DATE 
+  2 #ARREAR-MON          (N6) 
+1 REDEFINE #ARREAR-DATE 
+  2 #A-YYYY (N4) 
+  2 #A-MM   (N2) 
+1 STATUS VIEW OF A-STATUS 
+  2 DEBIT-CREDIT-AMT (P7.2) 
+1 #SYNCH       (L) 
+1 #J           (I2) 
+1 X            (P7.2) 
+1 YES          (A1) CONST <'Y'> 
+1 #GET         (A) DYNAMIC CONST <'GET'> 
+1 #GET-BY-CN   (A) DYNAMIC CONST <'GET-BY-CN'>        /* YK1 
+1 #UPDATE      (A) DYNAMIC CONST <'UPDATE'> 
+1 #APPLY       (A) DYNAMIC CONST <'APPLY'> 
+1 #REVERSE     (A) DYNAMIC CONST <'REVERSE'> 
+1 #ONEMONTH    (A) DYNAMIC CONST <'ONEMONTH'> 
+1 #ARREARS     (A) DYNAMIC CONST <'ARREARS'>          /* YK1 
+1 BLANK        (A1) CONST <' '> 
+1 ACTIVE       (A1) CONST <'A'> 
+1 PENDING      (A1) CONST <'P'> 
+1 FPF          (A1) CONST <'F'> 
+1 TR_FUNCTION_CODE        (A) DYNAMIC CONST <'Service'> 
+* 
+1 #ONLINE      (L)      /* NG1 Start 
+1 #RECORD      (A4096)   
+1 ACTIVE-PLANS (I4) 
+1 TOTAL-PLANS  (I4) 
+1 PLANS        (A3/1:9) 
+1 P-STATUS     (A1/1:9) /* NG1 End 
+* 
+END-DEFINE 
+* 
+DEFINE WORK FILE 19 "/usr/SAG/tmp/CRMsynchCN.txt" TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND' 
+* 
+RESET #SVC-MEMBER ACCT-REG 
+* 
+#SVC-MEMBER.SVC-PLAN      := PARM-SVC.SVC-PLAN 
+#SVC-MEMBER.SVC-ID-NUMBER := PARM-SVC.SVC-MEMBER-ID 
+* 
+IF PARM-SVC.SVC-STATUS SPECIFIED 
+  #SVC-MEMBER.SVC-STATUS := PARM-SVC.SVC-STATUS 
+ELSE 
+  #SVC-MEMBER.SVC-STATUS := ACTIVE 
+END-IF 
+*    Get member service record 
+IF PARM-SVC.SVC-PLAN = BLANK 
+  CALLNAT 'SVCN0002' 
+    PARM-SVC.SVC-MEMBER-ID 
+    ACTIVE-PLANS 
+    TOTAL-PLANS 
+    PLANS        (*) 
+    P-STATUS     (*) 
+  #SVC-MEMBER.SVC-PLAN := PLANS (1) 
+*  CALLNAT 'OBJNMB01' #GET-BY-CN #MSG #SVC-MEMBER 
+END-IF 
+CALLNAT 'OBJNMB01' #GET #MSG #SVC-MEMBER 
+* 
+IF #SVC-MEMBER.SVC-PLAN = '3SR' ESCAPE ROUTINE END-IF   /* bz1 
+* 
+IF #MSG NE BLANK 
+  ESCAPE ROUTINE 
+END-IF 
+* 
+PARM-SVC.ACTION := *TRIM(PARM-SVC.ACTION) 
+IF PARM-SVC.ACTION = #GET OR = #APPLY OR= #GET-BY-CN 
+  IF NOT #SVC-MEMBER.SVC-STATUS EQ ACTIVE OR= PENDING OR= FPF 
+    #MSG := #SERVICE-NOT-ACTIVE 
+    ESCAPE ROUTINE 
+  END-IF 
+END-IF 
+* 
+IF USER EQ BLANK 
+  #SVC-MEMBER.LAST-UPD-USER := *USER 
+ELSE 
+  #SVC-MEMBER.LAST-UPD-USER := PARM-SVC.USER 
+END-IF 
+IF *LENGTH(PARM-SVC.USER) <= 3 
+    AND (*LENGTH(PARM-SVC.USER) GT 0)           /* VT4 
+  ACCT-REG.CLERK-ID := #SVC-MEMBER.LAST-UPD-USER 
+ELSE 
+  ACCT-REG.CLERK-ID := FUNCTION-CLERK (< #SVC-MEMBER.LAST-UPD-USER >) 
+END-IF 
+* 
+IF *DEVICE = 'BATCH'                    /*  VT1 \/ 
+    AND USER EQ BLANK                                  /* VT2 
+  ACCT-REG.CLERK-ID := 'EDS' 
+END-IF                                  /*  VT1 /\ 
+* 
+IF SVC-TRAN-TYPE = 'EZME'                         /* vt3 \/ 
+    or = 'CCME'                                   /* vt5 
+  ACCT-REG.MONTH-END := 'Y' 
+END-IF                                            /* vt3 /\ 
+* 
+* IF PARM-SVC.TRANSACTION-DATN = 0 
+*   PARM-SVC.TRANSACTION-DATN := *DATN 
+* END-IF 
+* 
+DECIDE ON FIRST VALUE PARM-SVC.ACTION 
+  VALUE #GET, #ARREARS 
+    PERFORM PAYMENT-CALCULATOR 
+  VALUE #APPLY 
+    PERFORM PAYMENT-APPLY 
+  VALUE #REVERSE 
+    PERFORM REVERSE-PAYMENT 
+  VALUE #ONEMONTH 
+    PERFORM ONEMONTH-PAYMENT 
+  NONE VALUE 
+    IGNORE 
+END-DECIDE 
+* 
+DEFINE PAYMENT-CALCULATOR 
+/*     ================== 
+* If SVC-PAY-UP switch is Y and SVC-ONE-TIME-FEE is 0, nothing is due. 
+* If SVC-PAY-UP switch is Y and SVC-ONE-TIME-FEE is GT 0, amount due is SVC-ONE-TIME-FEE. 
+* If SVC-REACTIVATION-FEE is GT 0, amount due should include SVC-REACTIVATION-FEE. 
+* If the service plan is in arrears (based on SVC-PAID-TO-DATE vs. the current month), the amount due 
+*  should include the service plan monthly rate * the number of months to make the plan current. 
+* The amount due should include the monthly rate of the service plan * the number of months based on 
+*  the plans payment mode (SVC-MODE). G/E/M/0 = 1 month. Q/4 = 3 months. S/2 = 6 months. A/1 = 12 months. 
+* The calculator should return total due, 1 time fee, reactivation fee, arrears amount and 
+*  regular amount due (mode) as separate fields. That way, the calling program can determine which 
+*  number it needs. 
+MOVE BY NAME #SVC-MEMBER TO PARM-SVC 
+#PAYMENT-PERIOD := F-PAY-MONTHS (< #SVC-MEMBER.SVC-MODE >) 
+IF #PAYMENT-PERIOD = 0 
+  #PAYMENT-PERIOD := 1 
+END-IF 
+RESET SVC-ARREARS-FEE 
+IF #SVC-MEMBER.SVC-PAID-TO-DATE = 0 /* first payment ? 
+  #SVC-PAID-TO-DATE := *DATN        /* maybe Issue date 
+ELSE 
+  #SVC-PAID-TO-DATE := #SVC-MEMBER.SVC-PAID-TO-DATE 
+END-IF 
+*        Get arrears amount if any 
+IF PARM-SVC.TRANSACTION-DATN > 0 
+  #ARREAR-DATE := PARM-SVC.TRANSACTION-DATN 
+  SUBTRACT 1 FROM #A-MM /* REDEFINE OF #SVC-PAID-TO-MON 
+  IF #A-MM < 1 
+    #A-MM := 12 
+    SUBTRACT 1 FROM #A-YYYY 
+  END-IF 
+  REPEAT UNTIL #ARREAR-MON <= #SVC-PAID-TO-MON 
+    ADD #SVC-MEMBER.SVC-MONTHLY-RATE TO PARM-SVC.SVC-ARREARS-FEE 
+    SUBTRACT 1 FROM #A-MM /* REDEFINE OF #SVC-PAID-TO-MON 
+    IF #A-MM < 1 
+      #A-MM := 12 
+      SUBTRACT 1 FROM #A-YYYY 
+    END-IF 
+  END-REPEAT 
+END-IF 
+* 
+PARM-SVC.SVC-TOTAL-DUE := #SVC-MEMBER.SVC-REACTIVATION-FEE 
+* 
+* if you're looking to see if anything is due right now, use current date for parm. 
+* If you're looking for month-end processing, use next month. 
+* 
+IF #SVC-PAID-TO-MON LT PARM-SVC.TRAN-MONTH 
+    OR PARM-SVC.TRANSACTION-DATN = 0 
+  SVC-AMOUNT-DUE := #SVC-MEMBER.SVC-MONTHLY-RATE * #PAYMENT-PERIOD 
+  PARM-SVC.SVC-TOTAL-DUE := PARM-SVC.SVC-ARREARS-FEE 
+    + PARM-SVC.SVC-AMOUNT-DUE 
+    + PARM-SVC.SVC-TOTAL-DUE 
+ELSE 
+  PARM-SVC.SVC-TOTAL-DUE := PARM-SVC.SVC-ARREARS-FEE 
+    + PARM-SVC.SVC-TOTAL-DUE 
+  PARM-SVC.SVC-AMOUNT-DUE := PARM-SVC.SVC-ARREARS-FEE 
+END-IF 
+* 
+IF #SVC-MEMBER.SVC-PAY-UP = YES 
+X := #SVC-MEMBER.SVC-ONE-TIME-FEE - ( PARM-SVC.SVC-ARREARS-FEE + PARM-SVC.SVC-AMOUNT-DUE ) 
+  IF X < 0 
+    X := X + PARM-SVC.SVC-AMOUNT-DUE 
+    IF X > 0 
+      PARM-SVC.SVC-AMOUNT-DUE := X 
+    ELSE 
+      RESET PARM-SVC.SVC-AMOUNT-DUE 
+    END-IF 
+  END-IF 
+  IF X < 0 
+    X := X + PARM-SVC.SVC-ARREARS-FEE 
+    IF X > 0 
+      PARM-SVC.SVC-ARREARS-FEE := X 
+    ELSE 
+      RESET PARM-SVC.SVC-ARREARS-FEE 
+    END-IF 
+  END-IF 
+  IF X >= 0 
+PARM-SVC.SVC-TOTAL-DUE := PARM-SVC.SVC-ARREARS-FEE + PARM-SVC.SVC-AMOUNT-DUE 
+  ELSE 
+    RESET PARM-SVC.SVC-TOTAL-DUE 
+  END-IF 
+  IF ST-V_DEBIT-CREDIT-AMT SPECIFIED 
+    ST-V_DEBIT-CREDIT-AMT := #SVC-MEMBER.SVC-ONE-TIME-FEE 
+  END-IF 
+  RESET PARM-SVC.SVC-PAY-UP 
+    PARM-SVC.SVC-ONE-TIME-FEE 
+END-IF 
+END-SUBROUTINE 
+* 
+DEFINE PAYMENT-APPLY 
+/*     ============= 
+* Payment Apply is not driven by Paid-to-Date. It is driven by Payment Amount 
+* and Payment Apply will consume all money in order: 
+* 1. One-time fee 
+* 2. Reactivation fee 
+* 3. Recuring payments (if it is not One-time) 
+* 4. ADCR accounting transaction 
+* 
+BEFORE_IMAGE.SVC-ISSUE-DATE       := #SVC-MEMBER.LAST-UPD-DATE 
+BEFORE_IMAGE.SVC-MODE             := #SVC-MEMBER.SVC-MODE 
+BEFORE_IMAGE.SVC-STATUS           := #SVC-MEMBER.SVC-STATUS 
+BEFORE_IMAGE.SVC-ISSUED-BY        := #SVC-MEMBER.LAST-UPD-USER 
+* 
+#EXTRA-MONEY := SVC-PAY-AMOUNT 
+IF SVC-PAY-AMOUNT = 0 
+  #MSG := 'No funds for paying' 
+  ESCAPE ROUTINE 
+END-IF 
+* 
+* If a plan has an outstanding 1-time fee, we should reduce the amount of the fee (until $0). 
+* 
+* IF #SVC-MEMBER.SVC-PAY-UP = 'Y'  /* from policy single pay SP/SPF/AL Plan, or input from CRM 
+*   IF #SVC-MEMBER.SVC-ONE-TIME-FEE > 0 
+*     IF #SVC-MEMBER.SVC-ONE-TIME-FEE <= #EXTRA-MONEY 
+*       #EXTRA-MONEY := #EXTRA-MONEY - #SVC-MEMBER.SVC-ONE-TIME-FEE 
+*       ADD #SVC-MEMBER.SVC-ONE-TIME-FEE TO ACCT-REG.CREDIT-AMOUNT 
+*       RESET #SVC-MEMBER.SVC-ONE-TIME-FEE 
+*     ELSE 
+*       #SVC-MEMBER.SVC-ONE-TIME-FEE := #SVC-MEMBER.SVC-ONE-TIME-FEE - #EXTRA-MONEY 
+*       ADD #EXTRA-MONEY TO ACCT-REG.CREDIT-AMOUNT 
+*       RESET #EXTRA-MONEY 
+*     END-IF 
+*   END-IF 
+* END-IF 
+* 
+* If a plan has an outstanding reactivation fee, we should 
+* reduce the reactivation fee (until $0). 
+* 
+IF #EXTRA-MONEY > 0 
+  IF #SVC-MEMBER.SVC-REACTIVATION-FEE > 0 
+    IF #SVC-MEMBER.SVC-REACTIVATION-FEE <= #EXTRA-MONEY 
+      #EXTRA-MONEY := #EXTRA-MONEY - #SVC-MEMBER.SVC-REACTIVATION-FEE 
+      ADD #SVC-MEMBER.SVC-REACTIVATION-FEE TO ACCT-REG.CREDIT-AMOUNT 
+      RESET #SVC-MEMBER.SVC-REACTIVATION-FEE 
+    ELSE 
+#SVC-MEMBER.SVC-REACTIVATION-FEE := #SVC-MEMBER.SVC-REACTIVATION-FEE - #EXTRA-MONEY 
+      ADD #EXTRA-MONEY TO ACCT-REG.CREDIT-AMOUNT 
+      RESET #EXTRA-MONEY 
+    END-IF 
+  END-IF 
+END-IF 
+* 
+* Apply any payment funds left to the plan. Payments can only be made in monthly rate multiples -- 
+* meaning we will only allow them to pay full months (no extra money). 
+* Advance the plans SVC-PAID-TO-DATE by the number of months paid. 
+* 
+IF #SVC-MEMBER.SVC-MONTHLY-RATE > 0 
+    AND #EXTRA-MONEY > 0 
+*    AND #SVC-MEMBER.SVC-PAY-UP NE 'Y' 
+  IF #SVC-MEMBER.SVC-PAID-TO-DATE = 0 
+    #SVC-PAID-TO-DATE := *DATN  /* Maybe Issue date 
+  ELSE 
+    #SVC-PAID-TO-DATE := #SVC-MEMBER.SVC-PAID-TO-DATE 
+  END-IF 
+  #PAYMENT-PERIOD := F-PAY-MONTHS (< #SVC-MEMBER.SVC-MODE >) 
+  IF #PAYMENT-PERIOD = 0 
+    #PAYMENT-PERIOD := 1 
+  END-IF 
+  PAY-LBL. 
+  REPEAT /* UNTIL SVC-PAYMENT-MON <= #SVC-PAID-TO-MON 
+    FOR #J 1 TO #PAYMENT-PERIOD 
+      IF #SVC-MEMBER.SVC-MONTHLY-RATE <= #EXTRA-MONEY 
+        IF #SVC-MEMBER.SVC-PAY-UP = YES 
+         IF #SVC-MEMBER.SVC-ONE-TIME-FEE >= #SVC-MEMBER.SVC-MONTHLY-RATE 
+#SVC-MEMBER.SVC-ONE-TIME-FEE := #SVC-MEMBER.SVC-ONE-TIME-FEE - #SVC-MEMBER.SVC-MONTHLY-RATE 
+          ELSE 
+            ESCAPE BOTTOM ( PAY-LBL.) 
+          END-IF 
+        END-IF 
+        #EXTRA-MONEY := #EXTRA-MONEY - #SVC-MEMBER.SVC-MONTHLY-RATE 
+        ADD #SVC-MEMBER.SVC-MONTHLY-RATE TO ACCT-REG.CREDIT-AMOUNT 
+ADD 1 TO #MM  /* #SVC-PAID-TO-MON and #MM are redefined on #SVC-PAID-TO-DATE 
+        IF #MM > 12 
+          #MM := 1 
+          ADD 1 TO #YYYY  /* #YYYY is redefined on #SVC-PAID-TO-DATE 
+        END-IF 
+      ELSE 
+        ESCAPE BOTTOM ( PAY-LBL.) 
+      END-IF 
+    END-FOR 
+  END-REPEAT 
+  #SVC-MEMBER.SVC-PAID-TO-DATE := #SVC-PAID-TO-DATE 
+END-IF 
+* 
+* Create an entry in the A-ACCOUNTING-REGISTER file using the DUEP transaction code. 
+* We will need to use a 2 digit abbreviation in the SG-CATEGORY-1 field to indicate this was 
+* a payment for Premier Services - preferably something related to PLAN code we use. 
+* The program for general ledger number control is ATHS03P2. A good place to look for creating 
+* A-ACCOUNTING-REGISTER entries is C2520SAM. 
+* 
+ACCT-REG.ID-NUMBER    :=  PARM-SVC.SVC-MEMBER-ID 
+IF #USER-COMPANY SPECIFIED 
+  ACCT-REG.USER-COMPANY := #USER-COMPANY 
+END-IF 
+* CASH-CODE --- This is specific to the process and should be passed to 
+* the module that creates the entry. 
+* For credit cards, it's a 'C', for allotment, its a 'G', for EZPay, its a 'E', etc 
+* G  GOVT ALLOTMENT (MONTHLY) 1 
+* E  E-Z PAY (MONTHLY)        1 
+* Q  QUARTERLY CHECK          3 
+* S  SEMI-ANNUAL CHECK        6 
+* A  ANNUAL CHECK            12 
+* M  MONTHLY CHECK            1 
+* 0  Monthly Credit Card      1 
+* 4  Quarterly Credit Card    3 
+* 2  Semi-Annual Credit Card  6 
+* 1  Annual Credit Card      12 
+IF PARM-SVC.CASH-MODE NE BLANK 
+  ACCT-REG.CASH-CODE := PARM-SVC.CASH-MODE 
+ELSE 
+  DECIDE FOR FIRST CONDITION 
+    WHEN #SVC-MEMBER.SVC-MODE = '0' OR= '1' OR= '2' OR= '4' 
+      ACCT-REG.CASH-CODE := 'C' 
+    WHEN #SVC-MEMBER.SVC-MODE = 'G' 
+      ACCT-REG.CASH-CODE := 'G' 
+    WHEN #SVC-MEMBER.SVC-MODE = 'E' 
+      ACCT-REG.CASH-CODE := 'E' 
+    WHEN NONE IGNORE 
+  END-DECIDE 
+END-IF 
+ACCT-REG.TRANSACTION-DATN := PARM-SVC.TRANSACTION-DATN 
+ACCT-REG.TRANSACTION-TIMN := PARM-SVC.TRANSACTION-TIMN 
+ACCT-REG.POLICY-NUMBER    := #SVC-MEMBER.SVC-CONTRACT-NUMBER 
+ACCT-REG.PROCESS-IND      := 'I' 
+* 
+IF ACCT-REG.CREDIT-AMOUNT > 0 
+  IF #SVC-MEMBER.SVC-PLAN = 'SAS' 
+    ACCT-REG.DESCRIPTION := 'Def Rev-AM&SB-SAS' 
+    ACCT-REG.SG-CATEGORY-1 (1) := 'SS' 
+  END-IF 
+  CALLNAT 'OBJNAR01' ACCT-REG  #MSG  /* Accounting register 
+  IF #MSG = BLANK 
+    RESET #SYNCH 
+    DECIDE ON FIRST VALUE OF #SVC-MEMBER.SVC-STATUS 
+      VALUE 'P' 
+        IF #SVC-MEMBER.SVC-ONE-TIME-FEE > 0 
+          #SVC-MEMBER.SVC-STATUS := 'F' 
+        ELSE 
+          #SVC-MEMBER.SVC-STATUS := 'A' 
+        END-IF 
+        #SYNCH := TRUE 
+      VALUE 'F' 
+        IF #SVC-MEMBER.SVC-ONE-TIME-FEE > 0 
+          IGNORE 
+        ELSE 
+          #SVC-MEMBER.SVC-STATUS := 'A' 
+          #SYNCH := TRUE 
+        END-IF 
+      NONE VALUE IGNORE 
+    END-DECIDE 
+CALLNAT 'OBJNMB01' #UPDATE #MSG #SVC-MEMBER   /* Apply member service record changes 
+    IF #SYNCH           /* NG1   \/\/ 
+      CALLNAT 'TESTENV' 
+        #ONLINE 
+        #RECORD 
+WRITE WORK 19 #SVC-MEMBER.SVC-ID-NUMBER #SVC-MEMBER.SVC-PLAN ' : ' #RECORD 
+      IF #ONLINE 
+        CALLNAT 'MBRSVCY' #SVC-MEMBER.SVC-ID-NUMBER #MSG 
+          #SVC-MEMBER.SVC-PLAN 
+      END-IF            /*       /\/\ 
+    END-IF 
+  END-IF 
+END-IF 
+* 
+IF #EXTRA-MONEY > 0 
+    AND #MSG = BLANK 
+* DEBIT-CREDIT-AMT := DEBIT-CREDIT-AMT - EXTRA-MONEY 
+* Another Account Register transaction 
+  FIND STATUS WITH ID-NUMBER = PARM-SVC.SVC-MEMBER-ID 
+    DEBIT-CREDIT-AMT := DEBIT-CREDIT-AMT - #EXTRA-MONEY 
+    UPDATE (0456) 
+  END-FIND 
+  MOVE 450    TO ACCT-REG.TXN-ACCT-NUMBER    /* Not important 
+  MOVE 'ADCR' TO ACCT-REG.TXN-CODE 
+  MOVE #EXTRA-MONEY TO ACCT-REG.CREDIT-AMOUNT 
+  CALLNAT 'OBJNAR01' ACCT-REG #MSG   /* Accounting register 
+  IF ST-V_DEBIT-CREDIT-AMT SPECIFIED 
+    ST-V_DEBIT-CREDIT-AMT := STATUS.DEBIT-CREDIT-AMT 
+  END-IF 
+END-IF 
+* 
+AFTER_IMAGE.SVC-ISSUE-DATE       := #SVC-MEMBER.LAST-UPD-DATE 
+AFTER_IMAGE.SVC-MODE             := #SVC-MEMBER.SVC-MODE 
+AFTER_IMAGE.SVC-STATUS           := #SVC-MEMBER.SVC-STATUS 
+AFTER_IMAGE.SVC-ISSUED-BY        := #SVC-MEMBER.LAST-UPD-USER 
+* 
+TR_ID_NUMBER  := #SVC-MEMBER.SVC-ID-NUMBER 
+TR_CLERK      := ACCT-REG.CLERK-ID 
+TR_NAME       := FUNCTION-MEMBER-NAME (< ACCT-REG.ID-NUMBER >) 
+CALLNAT 'GPRNTR01' TR_FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE 
+* 
+END-SUBROUTINE 
+* 
+DEFINE REVERSE-PAYMENT 
+/*     ============= 
+#EXTRA-MONEY := SVC-PAY-AMOUNT    /* The amount user like to "reverse" 
+IF SVC-PAY-AMOUNT = 0 
+  #MSG := 'No funds for reverse payment' 
+  ESCAPE ROUTINE 
+END-IF 
+* 
+* If a plan has an outstanding 1-time fee, we should keep the reverse amount as 1-time fee 
+* 
+IF #SVC-MEMBER.SVC-PAY-UP = 'Y' 
+  ADD #EXTRA-MONEY TO #SVC-MEMBER.SVC-ONE-TIME-FEE 
+  ACCT-REG.DEBIT-AMOUNT := #EXTRA-MONEY 
+  RESET #EXTRA-MONEY 
+END-IF 
+* 
+* Reverse any payment funds from the plan. Reversals can only be made in monthly rate multiples -- 
+* meaning we will only allow them to reverse full months (no extra money). 
+* Reduce the plans SVC-PAID-TO-DATE by the number of months paid (until we reach the plans issue date). 
+* 
+IF #SVC-MEMBER.SVC-MONTHLY-RATE > 0 
+    AND #EXTRA-MONEY > 0 
+    AND #SVC-MEMBER.SVC-PAY-UP NE 'Y' 
+* 
+  #SVC-PAID-TO-DATE := #SVC-MEMBER.SVC-PAID-TO-DATE 
+  #PAYMENT-PERIOD := F-PAY-MONTHS (< #SVC-MEMBER.SVC-MODE >) 
+  IF #PAYMENT-PERIOD = 0 
+    #PAYMENT-PERIOD := 1 
+  END-IF 
+  REV-LBL. 
+  REPEAT 
+    FOR #J 1 TO #PAYMENT-PERIOD 
+      IF #SVC-MEMBER.SVC-MONTHLY-RATE <= #EXTRA-MONEY 
+          AND #SVC-PAID-TO-DATE GT #SVC-MEMBER.SVC-ISSUE-DATE 
+        #EXTRA-MONEY := #EXTRA-MONEY - #SVC-MEMBER.SVC-MONTHLY-RATE 
+        ADD #SVC-MEMBER.SVC-MONTHLY-RATE TO ACCT-REG.DEBIT-AMOUNT 
+        SUBTRACT 1 FROM #MM 
+        IF #MM LE 0 
+          #MM := 12 
+          SUBTRACT 1 FROM #YYYY 
+        END-IF 
+      ELSE 
+        ESCAPE BOTTOM ( REV-LBL.) 
+      END-IF 
+    END-FOR 
+  END-REPEAT 
+  #SVC-MEMBER.SVC-PAID-TO-DATE := #SVC-PAID-TO-DATE 
+END-IF 
+* 
+* If there is any reversal funds left, assume it was a reactivation fee. 
+* 
+IF #EXTRA-MONEY > 0 
+  ADD #EXTRA-MONEY TO #SVC-MEMBER.SVC-REACTIVATION-FEE 
+  ADD #EXTRA-MONEY TO ACCT-REG.DEBIT-AMOUNT 
+  RESET #EXTRA-MONEY 
+END-IF 
+* 
+* Create an entry in the A-ACCOUNTING-REGISTER file using the DUER transaction code. 
+* 
+ACCT-REG.ID-NUMBER    :=  PARM-SVC.SVC-MEMBER-ID 
+IF #USER-COMPANY SPECIFIED 
+  ACCT-REG.USER-COMPANY := #USER-COMPANY 
+END-IF 
+IF PARM-SVC.CASH-MODE NE BLANK 
+  ACCT-REG.CASH-CODE := PARM-SVC.CASH-MODE 
+ELSE 
+  DECIDE FOR FIRST CONDITION 
+    WHEN #SVC-MEMBER.SVC-MODE = '0' OR= '1' OR= '2' OR= '4' 
+      ACCT-REG.CASH-CODE := 'C' 
+    WHEN #SVC-MEMBER.SVC-MODE = 'G' 
+      ACCT-REG.CASH-CODE := 'G' 
+    WHEN #SVC-MEMBER.SVC-MODE = 'E' 
+      ACCT-REG.CASH-CODE := 'E' 
+    WHEN NONE IGNORE 
+  END-DECIDE 
+END-IF 
+ACCT-REG.TRANSACTION-DATN := PARM-SVC.TRANSACTION-DATN 
+ACCT-REG.TRANSACTION-TIMN := PARM-SVC.TRANSACTION-TIMN 
+ACCT-REG.POLICY-NUMBER    := #SVC-MEMBER.SVC-CONTRACT-NUMBER 
+ACCT-REG.PROCESS-IND      := 'I' 
+ACCT-REG.TXN-CODE         := 'DUER' 
+ACCT-REG.ACTIVITY-TYPE    := PARM-SVC.SVC-ACTIVITY-TYPE      /* YK5 
+ACCT-REG.STATUS-TYPE      := PARM-SVC.SVC-STATUS-TYPE        /* YK5 
+* 
+CALLNAT 'OBJNAR01' ACCT-REG  #MSG  /* Accounting register 
+IF #MSG = BLANK 
+CALLNAT 'OBJNMB01' #UPDATE #MSG #SVC-MEMBER   /* Apply member service record changes 
+END-IF 
+* 
+END-SUBROUTINE 
+* 
+DEFINE ONEMONTH-PAYMENT 
+/*     ================ 
+MOVE BY NAME #SVC-MEMBER TO PARM-SVC 
+IF PARM-SVC.CASH-MODE NE #SVC-MEMBER.SVC-MODE 
+  #MSG := #MODE-MISMATCH  /* Payment mode missmatch 
+  ESCAPE ROUTINE 
+END-IF 
+#EXTRA-MONEY := SVC-PAY-AMOUNT    /* The amount available 
+IF #SVC-MEMBER.SVC-MONTHLY-RATE > 0 
+    AND #EXTRA-MONEY >= #SVC-MEMBER.SVC-MONTHLY-RATE 
+    AND #SVC-MEMBER.SVC-PAY-UP NE 'Y' 
+  IF #SVC-MEMBER.SVC-PAID-TO-DATE = 0 
+    #SVC-PAID-TO-DATE := *DATN 
+  ELSE 
+    #SVC-PAID-TO-DATE := #SVC-MEMBER.SVC-PAID-TO-DATE 
+  END-IF 
+* we always want to apply a 1 month payment - regardless of what the PAID-TO-DATE is. 
+*  IF TRAN-MONTH > #SVC-PAID-TO-MON 
+  IF #PAYMENT-PERIOD = 0 
+    #PAYMENT-PERIOD := 1 
+  END-IF 
+  #EXTRA-MONEY := #EXTRA-MONEY - #SVC-MEMBER.SVC-MONTHLY-RATE 
+  ADD #SVC-MEMBER.SVC-MONTHLY-RATE TO ACCT-REG.CREDIT-AMOUNT 
+  ADD 1 TO #MM 
+  IF #MM > 12 
+    #MM := 1 
+    ADD 1 TO #YYYY 
+  END-IF 
+  #SVC-MEMBER.SVC-PAID-TO-DATE := #SVC-PAID-TO-DATE 
+  ACCT-REG.ID-NUMBER    :=  PARM-SVC.SVC-MEMBER-ID 
+  IF PARM-SVC.CASH-MODE NE BLANK 
+    ACCT-REG.CASH-CODE := PARM-SVC.CASH-MODE 
+  ELSE 
+    DECIDE FOR FIRST CONDITION 
+      WHEN #SVC-MEMBER.SVC-MODE = '0' OR= '1' OR= '2' OR= '4' 
+        ACCT-REG.CASH-CODE := 'C' 
+      WHEN #SVC-MEMBER.SVC-MODE = 'G' 
+        ACCT-REG.CASH-CODE := 'G' 
+      WHEN #SVC-MEMBER.SVC-MODE = 'E' 
+        ACCT-REG.CASH-CODE := 'E' 
+      WHEN NONE IGNORE 
+    END-DECIDE 
+  END-IF 
+  ACCT-REG.TRANSACTION-DATN := PARM-SVC.TRANSACTION-DATN 
+  ACCT-REG.TRANSACTION-TIMN := PARM-SVC.TRANSACTION-TIMN 
+  ACCT-REG.POLICY-NUMBER    := #SVC-MEMBER.SVC-CONTRACT-NUMBER 
+  ACCT-REG.PROCESS-IND      := 'I' 
+  ACCT-REG.MONTH-END        := YES 
+* 
+  CALLNAT 'OBJNAR01' ACCT-REG  #MSG  /* Accounting register 
+  IF #MSG = BLANK 
+CALLNAT 'OBJNMB01' #UPDATE #MSG #SVC-MEMBER   /* Apply member service record changes 
+  END-IF 
+ELSE 
+  #MSG := #NOT-ALLOTMENT 
+END-IF 
+* 
+END-SUBROUTINE 
+* 
+ON ERROR 
+*  BACKOUT TRANSACTION 
+  COMPRESS *PROGRAM *ERROR-NR *ERROR-LINE INTO #MSG 
+  ESCAPE ROUTINE 
+END-ERROR 
+* 
+END 

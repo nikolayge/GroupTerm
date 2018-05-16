@@ -1,0 +1,213 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* C4127SMK - MK Statistics
+* Display Month to date Application Status by user
+* Replaces current PROSPECTIVE POLICIES BY USER
+* statistics stored on the notes file
+* Program is reading live data from
+* A-APPL-TRACKING file by superdescriptor S2
+*****************************************************************
+* Modification Log                                              *
+*****************************************************************
+* Date        User     Description                              *
+*****************************************************************
+* 05/02/2007  YAK      Initial Creation                         *
+* 08/09/2017  YF1      Added columns for S7, R*, and Withdrawal *
+*****************************************************************
+*
+DEFINE DATA
+PARAMETER
+*
+1 #CGA-ISN          (P8)
+1 #CGA-SCR-COMMAND  (A2)
+1 #CGA-SCR-ID       (N9)
+1 #CGA-SCR-SUFFIX   (A3)
+1 #CGA-CLERK        (A3)
+*
+LOCAL
+*
+1 T-USER VIEW OF A-TERMINALS
+  2 CLERK-ID
+  2 SECURITY-CODE
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER      (N6)
+  2 DATE-RECEIVED  (N8)
+  2 ACTION-DATE    (N8)
+  2 REDEFINE ACTION-DATE
+    3 YEAR         (N4)
+    3 MONTH        (N2)
+    3 DAY          (N2)
+  2 ACTION-FLAG    (A1)
+  2 AT-STATUS      (A2)
+  2 REDEFINE AT-STATUS
+    3 AT-STATUS-1  (A1)
+    3 AT-STATUS-2  (A1)
+  2 USER-SOURCE    (A3)
+  2 USER-DATE-STATUS
+*
+1 #SCR              (85)   /* 85 possible users of prosp system
+  2 #USER-ID        (A3)   /* who initiated it
+  2 #USER-QUOTES    (N5)   /* how many he initiated
+  2 #USER-PENDING   (N5)   /* how many in pending status except PX
+  2 #USER-UNWR      (N5)   /* how many in underwriting except U6
+  2 #USER-U6        (N5)   /* how many in U6
+  2 #USER-APPROVED  (N5)   /* how many approved
+  2 #USER-SALES     (N5)   /* how many in S7                      /* YF1
+  2 #USER-REQUESTS  (N5)   /* how many in R*                      /* YF1
+  2 #USER-WITHDRAW  (N5)   /* how many withdrawn                  /* YF1
+  2 #USER-TOTAL     (N5)   /* total for Pending + Underwriting
+/* + Approved (except PX)
+*
+1 #USER-COUNTERS
+  2 #C-QUOTES       (P5)
+  2 #C-PENDING      (P5)
+  2 #C-UNDERWRITING (P5)
+  2 #C-U6           (P5)
+  2 #C-A            (P5)
+  2 #C-SALES        (P5)                                          /* YF1
+  2 #C-REQUESTS     (P5)                                          /* YF1
+  2 #C-WITHDRAW     (P5)                                          /* YF1
+*
+1 #TOTAL-COUNTERS
+  2 #TOTAL-QUOTES   (N5)
+  2 #TOTAL-PENDING  (N5)
+  2 #TOTAL-UNWR     (N5)
+  2 #TOTAL-U6       (N5)
+  2 #TOTAL-APPROVED (N5)
+  2 #TOTAL-ACTIVE   (N5)
+  2 #TOTAL-SALES    (N5)                                          /* YF1
+  2 #TOTAL-REQUESTS (N5)                                          /* YF1
+  2 #TOTAL-WITHDRAW (N5)                                          /* YF1
+*
+1 #STATUS           (A2)
+1 REDEFINE #STATUS
+  2 #ST-1           (A1)
+1 I                 (P5)
+1 #DOTTED           (A75)
+*
+1 #START-READ (A13)
+1 REDEFINE #START-READ
+  2 #USER-INIT   (A3)
+  2 #START-DATE  (N8)
+  2 REDEFINE #START-DATE
+    3 #START-YYYY (N4)
+    3 #START-MM   (N2)
+    3 #START-DD   (N2)
+  2 #AT-ST-START (A2)
+1 #END-READ    (A13)
+1 REDEFINE #END-READ
+  2 #USER-INIT (A3)
+  2 #END-DATE  (N8)
+  2 REDEFINE #END-DATE
+    3 #END-YYYY (N4)
+    3 #END-MM   (N2)
+    3 #END-DD   (N2)
+  2 #AT-ST-END (A2)
+*
+END-DEFINE
+*
+I := 0
+MOVE ALL '-' TO #DOTTED
+#END-DATE := *DATN
+*
+RESET #TOTAL-COUNTERS
+*
+READ T-USER BY CLERK-ID
+  ACCEPT IF SECURITY-CODE = 6
+  #START-READ.#USER-INIT := #END-READ.#USER-INIT := CLERK-ID
+  RESET #USER-COUNTERS
+  I := I + 1
+*
+  #START-DATE := *DATN
+  #START-DD := 1
+  #AT-ST-START := '  '
+  #AT-ST-END   := 'ZZ'
+  READ AT-V BY USER-DATE-STATUS = #START-READ THRU #END-READ
+    IF USER-SOURCE NE #START-READ.#USER-INIT
+      ESCAPE BOTTOM
+    END-IF
+    IF DATE-RECEIVED GE #START-DATE
+      #C-QUOTES := #C-QUOTES + 1
+    END-IF
+    #STATUS := AT-STATUS
+    #ST-1 := SUBSTRING(#STATUS,1,1)
+    IF #ST-1 = 'A'
+      ADD 1 TO #C-A
+    END-IF
+    IF #ST-1 = 'W'           /* YF1
+      ADD 1 TO #C-WITHDRAW   /* YF1
+    END-IF                   /* YF1
+  END-READ
+*
+  #START-YYYY := #START-YYYY - 1
+  #AT-ST-START := 'P1'
+  #AT-ST-END   := 'UZ'
+  READ AT-V BY USER-DATE-STATUS = #START-READ THRU #END-READ
+
+    IF USER-SOURCE NE #START-READ.#USER-INIT
+      ESCAPE BOTTOM
+    END-IF
+    IF AT-STATUS = 'PX'
+      ESCAPE TOP
+    END-IF
+    #STATUS := AT-STATUS
+    #ST-1 := SUBSTRING(#STATUS,1,1)
+    DECIDE ON FIRST VALUE #ST-1
+      VALUE 'P'
+        ADD 1 TO #C-PENDING
+      VALUE 'U'
+        IF #STATUS = 'U6'
+          ADD 1 TO #C-U6
+        ELSE
+          ADD 1 TO #C-UNDERWRITING
+        END-IF
+      VALUE 'R'                   /* YF1 BEGIN
+        ADD 1 TO #C-REQUESTS
+      VALUE 'S'
+        IF #STATUS = 'S7'
+          ADD 1 TO #C-SALES
+        ELSE
+          IGNORE
+        END-IF                    /* YF1 END
+      NONE
+        IGNORE
+    END-DECIDE
+  END-READ
+*
+  #USER-QUOTES(I)  := #C-QUOTES
+  #USER-ID(I)      := #START-READ.#USER-INIT
+  #USER-PENDING(I) := #C-PENDING
+  #USER-U6(I)      := #C-U6
+  #USER-UNWR(I)    := #C-UNDERWRITING
+  #USER-APPROVED(I):= #C-A
+  #USER-SALES(I)   := #C-SALES                             /* YF1
+  #USER-REQUESTS(I):= #C-REQUESTS                          /* YF1
+  #USER-WITHDRAW(I):= #C-WITHDRAW                          /* YF1
+  #USER-TOTAL(I)   := #USER-PENDING(I) + #USER-U6(I) + #USER-UNWR(I) + #USER-APPROVED(I)
+    + #USER-SALES(I) + #USER-REQUESTS(I)                   /* YF1
+*
+  #TOTAL-QUOTES   := #TOTAL-QUOTES + #USER-QUOTES(I)
+  #TOTAL-PENDING  := #TOTAL-PENDING + #USER-PENDING(I)
+  #TOTAL-UNWR     := #TOTAL-UNWR + #USER-UNWR(I)
+  #TOTAL-U6       := #TOTAL-U6   + #USER-U6(I)
+  #TOTAL-APPROVED := #TOTAL-APPROVED + #USER-APPROVED(I)
+  #TOTAL-SALES    := #TOTAL-SALES + #USER-SALES(I)         /* YF1
+  #TOTAL-REQUESTS := #TOTAL-REQUESTS + #USER-REQUESTS(I)   /* YF1
+  #TOTAL-WITHDRAW := #TOTAL-WITHDRAW + #USER-WITHDRAW(I)   /* YF1
+  #TOTAL-ACTIVE   := #TOTAL-ACTIVE + #USER-TOTAL(I)
+*
+END-READ
+*
+RESET #CGA-SCR-SUFFIX
+INPUT USING MAP 'G4127MMK'
+*
+IF #CGA-SCR-COMMAND ='*'
+  MOVE 'MK' TO #CGA-SCR-COMMAND
+END-IF
+FETCH 'G1000PXX'
+*
+END

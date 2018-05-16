@@ -1,0 +1,249 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center 'ApplyExtPayerPayments' function - called via EntireX
+* MBCNCC2A - Accepts Request Data from Member Center/Payment Center
+* Called from    - NATSERV0 (EntireX NATURAL server)
+*
+***********************************************************
+*        MODIFICATION LOG
+***********************************************************
+* USER   DATE      TAG  REASON
+* YAK    02232012       Initial Creation
+***********************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+LOCAL USING MBCLCC1A
+LOCAL USING WCCA0021
+LOCAL USING PARSER-X
+LOCAL USING OBJLERRQ
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+*
+LOCAL
+1 ERROR-MESSAGE   (A100)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 #I              (I2)
+1 #LINE-LENGTH    (N3) CONST <250>
+1 #LENGTH-PLUS1   (N3) CONST <251>
+1 #value          (A) DYNAMIC
+*
+1 XML              (A) DYNAMIC
+1 #ERROR           (L)
+1 #ErrorCode       (A3)
+1 #FATAL-ERROR     (A4)  CONST <'101'>
+1 #SUCCESS-CODE    (A4)  CONST <'0'>
+1 #SUCCESS-MESSAGE (A50) CONST <'Request processed successfully'>
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+* INCLUDE THE PARSER
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to repesent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of founld element
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+PERFORM APPLY-PAYMENTS
+PERFORM COMPOSE-XML
+PERFORM COMPOSE-RESPONSE-DATA
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+*  1 ExternalPayer
+*    2 CN (N6)
+*    2 InsuredName (A) DYNAMIC
+*    2 PolicyNumber (A) DYNAMIC
+*    2 FirstDueDate (A) DYNAMIC
+*    2 TotalAmount (A) DYNAMIC
+*    2 PaymentMethod (A) DYNAMIC
+*    2 ErrorCode (A) DYNAMIC
+*    2 ErrorDescription (A) DYNAMIC
+*    2 Payments
+*      3 C@Payment (I4)
+*      3 Payment (1:10)
+*        4 ID (N4.0)
+*        4 PaymentType (A) DYNAMIC
+*        4 DueDate (A) DYNAMIC
+*        4 Amount (A) DYNAMIC
+*
+DECIDE ON FIRST VALUE XML_PARSER_XPATH
+  VALUE 'ExternalPayer/CN/$'
+    #value := XML_PARSER_CONTENT
+    IF #value IS (N6)
+      ExternalPayer.CN := VAL(#value)
+    END-IF
+  VALUE 'ExternalPayer/User/$'
+    ExternalPayer.User := XML_PARSER_CONTENT
+  VALUE 'ExternalPayer/PaymentMethod/$'
+    ExternalPayer.PaymentMethod := XML_PARSER_CONTENT    
+  VALUE 'ExternalPayer/PolicyNumber/$'
+    ExternalPayer.PolicyNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'ExternalPayer/Payments/Payment'
+    ExternalPayer.C@Payment := ExternalPayer.C@Payment + 1
+    EXPAND ARRAY ExternalPayer.Payment TO (1:ExternalPayer.C@Payment)
+  VALUE 'ExternalPayer/Payments/Payment/PaymentType/$'
+    #I := ExternalPayer.C@Payment
+    ExternalPayer.PaymentType(#I) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'ExternalPayer/Payments/Payment/Amount/$'
+    #I := ExternalPayer.C@Payment
+    ExternalPayer.Amount(#I) := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET XML
+#ErrorCode       := XML_PARSER_RESPONSE
+ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+ESCAPE MODULE
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE APPLY-PAYMENTS
+********************************
+*
+*  1 CC-PAYMENT /*
+*    2 USER (A) DYNAMIC
+*    2 ID-NUMBER (N6.0) /*
+*    2 C@PAY-POLICY (N2.0) /*
+*    2 PAY-POLICY (1:9)
+*      3 POLICY-NBR (A) DYNAMIC
+*      3 C@APPLIED-PAYMENT (N2)
+*      3 APPLIED-PAYMENT (1:10)
+*        4 RESULT-MESSAGE (A) DYNAMIC
+*        4 TRAN-TYPE (A6) /*
+*        4 DUE-AMOUNT (N5.2) /*
+*        4 PLAN-TYPE (A3)
+*    2 CASH-CODE (A1)
+*
+RESET CC-PAYMENT
+CC-PAYMENT.ID-NUMBER := ExternalPayer.CN
+CC-PAYMENT.USER      := ExternalPayer.User
+* YK2 <
+DECIDE ON FIRST VALUE ExternalPayer.PaymentMethod
+  VALUE 'check'
+    CC-PAYMENT.CASH-CODE := 'H'
+  NONE VALUE
+    IGNORE
+END-DECIDE
+* > YK2 
+CC-PAYMENT.POLICY-NBR(1) := ExternalPayer.PolicyNumber
+C@PAY-POLICY := 1
+C@APPLIED-PAYMENT(1) := C@PAYMENT
+FOR #I = 1 C@Payment
+  CC-PAYMENT.TRAN-TYPE(1,#I) := ExternalPayer.PaymentType(#I)
+  EXAMINE ExternalPayer.Amount(#I) FOR ',' DELETE
+  IF ExternalPayer.Amount(#I)IS (N5.2) THEN
+    CC-PAYMENT.DUE-AMOUNT(1,#I):= VAL(ExternalPayer.Amount(#I))
+  ELSE
+    WRITE WORK FILE 1 VARIABLE 'INCORRECT VALUE FOR AMOUNT' ExternalPayer.Amount(#I)
+    ErrorCode := #ErrorCode := #INCORRECT-AMOUNT-VALUE
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+    PERFORM COMPOSE-RESPONSE-DATA
+    ESCAPE MODULE
+  END-IF
+END-FOR
+*
+CALLNAT 'WCCNCC21' CC-PAYMENT ERROR-MESSAGE
+IF SUBSTR(ERROR-MESSAGE,1,4) = #FATAL-ERROR
+  ErrorCode        := #FATAL-ERROR
+  ErrorDescription := SUBSTR(ERROR-MESSAGE,5)
+  PERFORM COMPOSE-RESPONSE-DATA
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+* Create Response to Client
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+* Sample:
+* <line>FAILED: 12345-1 * Policy Premium * $27.00</line>
+*
+RESET XML
+FOR #I = 1 TO C@APPLIED-PAYMENT(1)
+  IF RESULT-MESSAGE(1,#I) NE ' '
+    WRITE WORK FILE 1 VARIABLE RESULT-MESSAGE(1,#I)
+    COMPRESS XML '<Line>' RESULT-MESSAGE(1,#I) '</Line>' INTO XML LEAVING NO
+  END-IF
+END-FOR
+*
+IF #ERROR
+  ErrorCode := #ErrorCode := #PAYMENT-APPLY-ERROR
+  ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  PERFORM COMPOSE-RESPONSE-DATA
+  PERFORM LOG-PROCESS-ERROR
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE LOG-PROCESS-ERROR
+***********************************
+*
+REPEAT
+  #I := #I + 1
+  REQUEST-LINE(#I) := REQUEST-DATA
+  IF *LENGTH(REQUEST-DATA) > #LINE-LENGTH
+    REQUEST-DATA := SUBSTR(REQUEST-DATA,#LENGTH-PLUS1)
+  ELSE
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+IF RESPONSE-DATA NE ' '
+  RESET #I
+  REPEAT
+    #I := #I + 1
+    RESPONSE-LINE(#I) := RESPONSE-DATA
+    IF *LENGTH(RESPONSE-DATA) > #LINE-LENGTH
+      RESPONSE-DATA := SUBSTR(RESPONSE-DATA,#LENGTH-PLUS1)
+    ELSE
+      ESCAPE BOTTOM
+    END-IF
+  END-REPEAT
+END-IF
+
+STORE ERROR-QUEUE-V
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+IF ErrorCode = ' '
+  RESET XML
+  ErrorCode        :=  #SUCCESS-CODE
+  ErrorDescription :=  #SUCCESS-MESSAGE
+END-IF
+*
+COMPRESS
+  '<ExternalPayer>' XML '<ErrorCode>' ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' ErrorDescription '</ErrorDescription>'
+  '</ExternalPayer>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

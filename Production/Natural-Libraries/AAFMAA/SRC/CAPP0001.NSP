@@ -1,0 +1,131 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+*                       MODIFICATION LOG                               *
+* This runs after ATHP05P0 to update loan history file with paid off   *
+*    statuses.                                                         *
+*                                                                      *
+* USER     DATE        TAG     REASON                                  *
+* Ttinger  06-19-2017  none    Initial creation                        *
+************************************************************************
+*
+DEFINE DATA
+* LOCAL USING CAPL0001
+LOCAL
+1 LNS-V VIEW OF A-LOANS
+  2 ADD-USER (A8)
+  2 ADD-DATE (N8)
+  2 ADD-TIME (N7)
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8)
+  2 LAST-UPD-TIME (N7)
+  2 LOAN-POLICY-NUMBER (A16)
+  2 LOAN-ISSUE-DATE (N8)
+  2 LOAN-INITIAL-AMOUNT (N7.2)
+  2 LOAN-PAYOFF-DATE (N8)
+  2 LOAN-INTEREST-RATE (N2.3)
+  2 LOAN-NUMBER (N2)
+  2 LOAN-STATUS (A1)
+  2 LOAN-TYPE (A1)
+  2 CONTACT-ID (N8)
+  2 ID-NUMBER (N6)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 POLICY-ID (9)
+  2 X-LOAN-INFO (1:9) /*PE
+    3 X-LOAN-AMOUNT (P5.2)
+    3 X-LOAN-DATE (N8.0)
+    3 X-ALT-LP-AMT (P5.2)
+*
+1 I  (I4)
+1 J  (I4)
+1 K  (I4)
+1 #NUM-PAID-OFF-CAPS (I4)
+1 #ACTION-TYPE (I4)
+1 #CLERK-ID (A3)
+1 #CN (N6)
+1 #CAP-NUM (N2)
+1 #CAP-STATUS (A1)
+1 #LOAN-ISSUE-DATE(N8)
+*
+*
+1 #TAB (A1)CONSTANT <H'09'>
+*
+1 #FILE (A) DYNAMIC CONSTANT <'/usr/SAG/tmp/Month_End/PAID_OFF_CAPS.TXT'>
+1 #OUTPUT (A200)
+1 #DATN(N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY (A4)
+  2 #DATN-MM  (A2)
+  2 #DATN-DD  (A2)
+1 #FIRST-OF-MONTH (N8)
+1 REDEFINE #FIRST-OF-MONTH
+  2 #FOM-YYYYMMDD (A8)
+END-DEFINE
+*
+#DATN := *DATN
+COMPRESS #DATN-YYYY #DATN-MM '01' INTO #FOM-YYYYMMDD LEAVING NO
+#DATN           := #DATN  /* FOR TESTING
+#FIRST-OF-MONTH := #FIRST-OF-MONTH /* FOR TESTING
+*
+DEFINE WORK FILE 1 #FILE TYPE 'ASCII-COMPRESSED'
+*
+READ ST-V BY ID-NUMBER STARTING FROM 1900
+  MEMBER.
+  FOR I 1 TO 9
+    IF (X-LOAN-DATE(I) = #DATN OR = #FIRST-OF-MONTH) AND X-LOAN-AMOUNT(I) <= 0
+      ADD 1 TO K
+      LNS.
+      FIND LNS-V WITH LNS-V.LOAN-POLICY-NUMBER = ST-V.POLICY-ID(I)
+          WHERE LOAN-STATUS = 'C'
+        IF NO RECORDS FOUND
+          ESCAPE BOTTOM
+        END-NOREC
+        LNS-V.LOAN-STATUS      := 'Q'
+        LNS-V.LOAN-PAYOFF-DATE := *DATN
+        UPDATE(LNS.)
+        #ACTION-TYPE     := 1
+        #CLERK-ID        := 'EDS'
+        #CN              := ST-V.ID-NUMBER
+        #CAP-STATUS      := 'Q'
+        #CAP-NUM         := LNS-V.LOAN-NUMBER
+        CALLNAT 'CAPN0002'
+          #ACTION-TYPE
+          #CLERK-ID
+          #CN
+          #CAP-NUM
+          #CAP-STATUS
+        PERFORM WRITE-REPORT
+        END TRANSACTION
+        ADD 1 TO #NUM-PAID-OFF-CAPS
+        ESCAPE BOTTOM (MEMBER.)
+      END-FIND
+    END-IF
+  END-FOR
+END-READ
+*
+#OUTPUT := ' '
+WRITE WORK 1 #OUTPUT
+COMPRESS 'Total number of CAP loans paid off is: ' #NUM-PAID-OFF-CAPS INTO #OUTPUT
+WRITE WORK 1 #OUTPUT
+*
+DISPLAY K
+
+******************************
+DEFINE SUBROUTINE WRITE-REPORT
+******************************
+COMPRESS LNS-V.ID-NUMBER
+  LNS-V.LOAN-POLICY-NUMBER
+  LNS-V.LOAN-PAYOFF-DATE
+  INTO #OUTPUT WITH DELIMITER #TAB
+WRITE WORK 1 #OUTPUT
+**************
+END-SUBROUTINE
+**************
+
+END

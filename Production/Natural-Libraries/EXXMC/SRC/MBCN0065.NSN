@@ -1,0 +1,133 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online/AUC 
+* Contact Information - Syncronize Dependent fields with FIR File
+* MBCN0065
+*************************************************************************************
+*        MODIFICATION LOG
+*************************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    05112012       Initial Creation - Restrucutured (moved from MBCN0061) 
+*************************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0065
+LOCAL USING OBJLFIR
+LOCAL
+1 #DEP-CONTACT-ID           (N8)
+1 REDEFINE #DEP-CONTACT-ID
+  2 #DEP-CONTACT-ID_A       (A8)
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #FIR-ISN          (P9)
+1 #I                (I2)
+1 #II               (I2)
+1 #I1               (I2)
+1 #LAST-FM-DATE     (N8)
+1 #UPDATE           (A) DYNAMIC CONST <'UPDATE'>
+1 #DELETE           (A) DYNAMIC CONST <'DELETE'> 
+1 ST-V VIEW OF A-STATUS
+  2 WIDOW-FLAG
+  2 MEMBER-FLAG       
+  2 ID-NUMBER         
+  2 MEMBER-CONTACT-ID
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+DECIDE ON FIRST VALUE ActionType
+  VALUE #UPDATE
+    PERFORM SYNC-WITH-FIR
+  VALUE #DELETE
+    PERFORM DELETE-FIR-DEPENDENT
+  NONE
+    IGNORE
+END-DECIDE
+*
+**=============================
+DEFINE SUBROUTINE SYNC-WITH-FIR
+**=============================
+FIND (1) FIR-V WITH ID-NUMBER = Fir_Sync.CN
+  IF NO RECORDS FOUND
+    PERFORM ADD-NEW-RECORD
+    ESCAPE BOTTOM
+  END-NOREC
+  #FIR-ISN := *ISN
+END-FIND
+*
+GT.
+GET FIR-V #FIR-ISN
+#DEP-CONTACT-ID := Fir_Sync.ContactID
+EXAMINE DEPN-CI_A(*) FOR #DEP-CONTACT-ID_A GIVING INDEX #I
+IF #I = 0
+  #I := C*DEPENDENT-TABLE + 1
+END-IF
+*
+#LAST-FM-DATE                := FIR-V.DP-LAST-FM-DATE
+FIR-V.DEPN-CONTACT-ID(#I)    := Fir_Sync.ContactID
+* FIR file has only First/Middle name
+RESET Fir_Sync.LastName
+FIR-V.DEPN-NAME(#I)          := EDIT_NAME_FMLS(<Fir_Sync.FullName>)
+FIR-V.DEPN-DATE-OF-BIRTH(#I) := Fir_Sync.DateOfBirth
+FIR-V.DEPN-SSN(#I)           := Fir_Sync.SSN
+DECIDE ON FIRST VALUE SystemSource
+  VALUE 'AUC'
+    FIR-V.DEPN-STATUS-CD(#I) := Fir_Sync.DependentStatusCode
+*     FIR-V.DEPN-BIRTH-CD(#I)  :=       
+*     FIR-V.DEPN-REMARKS       := 
+  VALUE 'MC'
+    IF RelationshipCode = 'G'
+      FIR-V.DEPN-STATUS-CD(#I) := 'G'
+    END-IF
+  NONE VALUE
+    IGNORE
+END-DECIDE      
+FIR-V.DTS-DATN               := #DATN
+FIR-V.DTS-TIMN               := #TIMN
+FIR-V.DP-LAST-FM-DATE        := #DATN
+UPDATE (GT.)
+END-SUBROUTINE
+*
+**==============================
+DEFINE SUBROUTINE ADD-NEW-RECORD
+**==============================
+RESET FIR-V
+FIND(1) ST-V WITH ID-NUMBER = Fir_Sync.CN
+  FIR-V.WIDOW-FLAG        := ST-V.WIDOW-FLAG
+  FIR-V.MEMBER-FLAG       := ST-V.MEMBER-FLAG
+  FIR-V.ID-NUMBER         := ST-V.ID-NUMBER
+  FIR-V.CONTACT-ID-NUMBER := ST-V.MEMBER-CONTACT-ID
+END-FIND
+ST. STORE FIR-V
+#FIR-ISN := *ISN(ST.)
+END-SUBROUTINE
+*
+**====================================
+DEFINE SUBROUTINE DELETE-FIR-DEPENDENT
+**====================================
+*
+FF.
+FIND(1) FIR-V WITH ID-NUMBER = Fir_Sync.CN
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  #DEP-CONTACT-ID := Fir_Sync.ContactID
+  EXAMINE DEPN-CI_A(*) FOR #DEP-CONTACT-ID_A GIVING INDEX #I
+  IF #I = 0
+    ESCAPE ROUTINE
+  END-IF
+  #II := C*DEPENDENT-TABLE - 1
+  FOR #I1 = #I TO #II
+    MOVE BY NAME DEPENDENT-TABLE(#I1+1) TO DEPENDENT-TABLE(#I1)
+  END-FOR
+  RESET DEPENDENT-TABLE(#II+1)
+  UPDATE (FF.)
+END-FIND
+END-SUBROUTINE
+*
+END

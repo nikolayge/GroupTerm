@@ -1,0 +1,307 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* ----------------------------------------------------------------------
+* Generated from NFN XML TOOLKIT
+*
+*   'CRMNSUP1'
+*
+* DESCRIPTION
+*   XML Parser implementationfor file:
+*   C:\Users\nguentchev\workspace90\MembershipUAT\Natural-Libraries\UAT\ServiceRequest.xsd
+*   using PARSE XML statement and datastructure 'CRMASR01'
+*
+* YAK    06/01/2016  YK1  Add Mortgage and Wealth Management                          
+* YAK    12/01/2016  YK2  Add Group Term Life Insurance and Complimentary Membership
+* ----------------------------------------------------------------------
+*
+DEFINE DATA PARAMETER
+1 #XML_INPUT             (A) DYNAMIC BY VALUE
+1 XML_SERIALZE_OUTPUT    (A) DYNAMIC        /* Out
+LOCAL USING CRMASR01
+LOCAL USING OBJAMB01     /* SERVICE MEMBER structure
+LOCAL USING ERROR_L
+LOCAL USING GPRATR01     /* Transaction register
+LOCAL USING PARSER-X
+LOCAL
+1 #XML_PATH             (A) DYNAMIC
+1 #XML_VALUE            (A) DYNAMIC
+1 #XML_NAME             (A) DYNAMIC
+1 #PREV_PARSE-TYPE      (A1)
+1 XML_PARSER_XPATH_TYPE (A1)
+1 XML_PARSER_ERROR_TEXT (A253)
+1 XML_PARSER_RESPONSE   (I4)
+1 XML_PARSER_CONTENT_IS_EMPTY (L)
+*
+LOCAL
+1 #LEN              (I4)
+1 #MSG              (A)  DYNAMIC
+1 #DATX             (D)
+1 #DATE              (N8)
+1 REDEFINE #DATE
+  2 #DATE-N6         (N6)
+1 REDEFINE #DATE
+  2 #DATE-A          (A8)
+1 REDEFINE #DATE
+  2 #DATE-YYYY       (N4)
+  2 #DATE-MM         (N2)
+  2 #DATE-DD         (N2)
+1 #DATN              (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY (N4)
+  2 #DATN-MM   (N2)
+  2 #DATN-DD   (N2)
+1 REDEFINE #DATN
+  2 #DATN-CC       (N2)
+  2 #DATN-YYMM     (N4)
+1 REDEFINE #DATN
+  2 #DATN-YYYYMM   (N6)
+1 #PARSE-ERROR-1      (I4) CONST <-7>
+1 #NATURAL-ERROR    (I4) CONST <-3>
+1 #ERROR-LOG        (I4) CONST <3>
+1 BLANK             (A1) CONST <' '>
+1 #GET              (A)  DYNAMIC CONST <'GET'>
+1 #UPDATE           (A)  DYNAMIC CONST <'UPDATE'>
+1 #SERVICE-STATUS   (I4) CONST <8>  /* CODE OF THE CRM FUNCTION
+1 TR_FUNCTION_CODE  (A) DYNAMIC CONST <'Service'>
+*
+1 CONTACT VIEW OF A-CONTACTS
+  2 ID-NUMBER
+1 #UPDATED          (L)
+1 #ERR-N            (A3)
+END-DEFINE
+*
+ASSIGN #LEN := *LENGTH (#XML_INPUT)
+IF #LEN <= 0
+  ErrorCode := #PARSE-ERROR-1
+  ESCAPE ROUTINE
+END-IF
+RESET ServiceRequest
+*
+INCLUDE PARSER_X '#XML_INPUT'       /* XML file to be parsed
+  '#XML_PATH'                       /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  '#XML_VALUE'                      /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+DEFINE SUBROUTINE PARSER_ERROR
+/*                ============
+ErrorCode := #PARSE-ERROR-1
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE CALLBACK
+/*                ========
+IF XML_PARSER_CONTENT_IS_EMPTY THEN
+  IGNORE
+ELSE
+  #XML_VALUE := *TRIM (#XML_VALUE)
+  MOVE *TRANSLATE(#XML_VALUE, UPPER) TO #XML_VALUE
+  PERFORM PARSE-DOCUMENT
+END-IF
+END-SUBROUTINE
+*
+*    Process service update
+*
+RESET #SVC-MEMBER
+IF ServiceRequest.ContactID > 0
+  FIND (1) CONTACT WITH CONTACT-ID = ServiceRequest.ContactID
+    IF NO RECORDS FOUND
+      ServiceRequest.ErrorCode := 1
+    END-NOREC
+  END-FIND
+  #SVC-MEMBER.SVC-PLAN      := ServiceRequest.Type
+  #SVC-MEMBER.SVC-ID-NUMBER := CONTACT.ID-NUMBER
+  ServiceRequest.CN         := CONTACT.ID-NUMBER
+  IF ServiceRequest.CN <= 0
+    ServiceRequest.ErrorCode := 1
+  END-IF
+ELSE
+  ServiceRequest.ErrorCode := 1
+END-IF
+IF ServiceRequest.ErrorCode > 0
+  CALLNAT 'CRMNSRS1' XML_SERIALZE_OUTPUT ServiceRequest
+  ESCAPE ROUTINE
+END-IF
+*
+*    Get member service record
+*
+CALLNAT 'OBJNMB01' #GET #MSG #SVC-MEMBER
+#MSG := *TRIM(#MSG)
+IF *LENGTH (#MSG) = 0 OR #MSG = BLANK
+  BEFORE_IMAGE.SVC-ISSUE-DATE       := #SVC-MEMBER.LAST-UPD-DATE
+  BEFORE_IMAGE.SVC-MODE             := #SVC-MEMBER.SVC-MODE
+  BEFORE_IMAGE.SVC-STATUS           := #SVC-MEMBER.SVC-STATUS
+  BEFORE_IMAGE.SVC-ISSUED-BY        := #SVC-MEMBER.LAST-UPD-USER
+*
+  IF ServiceRequest.Status NE BLANK
+      AND #SVC-MEMBER.SVC-STATUS  NE ServiceRequest.Status
+    RESET #UPDATED
+    DECIDE FOR FIRST CONDITION
+      WHEN ServiceRequest.Type = 'WMT' OR ServiceRequest.Type = 'MTG' OR = 'GTI' OR = 'CMS'    /* YK1 YK2
+        IGNORE
+      WHEN #SVC-MEMBER.SVC-STATUS  = 'S'
+          AND ServiceRequest.Status = 'P'     /* NG1
+          AND ServiceRequest.Type = 'PSM'
+        IGNORE
+      WHEN #SVC-MEMBER.SVC-STATUS  = 'N' AND ServiceRequest.Status = 'P'
+        IGNORE
+      WHEN #SVC-MEMBER.SVC-STATUS  = 'P' AND ServiceRequest.Status = 'C'
+        IGNORE
+      WHEN #SVC-MEMBER.SVC-STATUS  = 'R' AND ServiceRequest.Status = 'N'
+        IGNORE
+      WHEN #SVC-MEMBER.SVC-STATUS  = 'R' AND ServiceRequest.Status = 'P'
+        IGNORE
+      WHEN #SVC-MEMBER.SVC-STATUS  = 'A' AND ServiceRequest.Status = 'C'
+          AND ServiceRequest.Type = 'PSM'
+        IGNORE
+      WHEN #SVC-MEMBER.SVC-STATUS  = 'F' AND ServiceRequest.Status = 'C'
+          AND ServiceRequest.Type = 'SAS'
+        IGNORE
+      WHEN ANY
+        IF *LENGTH (#MSG) = 0 OR #MSG = BLANK
+          #SVC-MEMBER.SVC-STATUS := ServiceRequest.Status
+          #UPDATED := TRUE
+        END-IF
+      WHEN NONE
+        #MSG := 'Service status change is not supported'
+    END-DECIDE
+  END-IF
+  IF *LENGTH (#MSG) = 0 OR #MSG = BLANK
+    IF #SVC-MEMBER.SVC-MODE NE ServiceRequest.PaymentMode
+      IF ServiceRequest.PaymentMode EQ '0' OR= '1' OR= '2' OR= '4'
+          OR ACTIVE-INSURANCE (< #SVC-MEMBER.SVC-ID-NUMBER >)
+        #SVC-MEMBER.SVC-MODE := ServiceRequest.PaymentMode
+        #UPDATED := TRUE
+      ELSE
+        #MSG := 'Service Supports Credit Card Only'
+        RESET #UPDATED
+      END-IF
+    END-IF
+  END-IF
+  IF #UPDATED
+    CALLNAT 'OBJNMB01' #UPDATE #MSG #SVC-MEMBER
+    PERFORM TR-IMAGE
+  END-IF
+END-IF
+*
+IF #MSG = BLANK
+  END TRANSACTION
+  RESET ServiceRequest.ErrorCode
+  ServiceRequest.ErrorDescription := BLANK
+ELSE
+  BACKOUT TRANSACTION
+  IF *LENGTH(#MSG) GE 3
+    #ERR-N := SUBSTR(#MSG,1,3)
+    IF #ERR-N IS (N3)
+      #MSG := F-ERROR-DESCRIPTION (< #ERR-N >)
+    END-IF
+  END-IF
+  IF #ERR-N EQ #NOT-EXIST
+    ServiceRequest.ErrorCode := 1
+  ELSE
+    ServiceRequest.ErrorCode := 8
+  END-IF
+  ServiceRequest.ErrorDescription := #MSG
+END-IF
+CALLNAT 'CRMNSRS1' XML_SERIALZE_OUTPUT ServiceRequest
+*
+**************************
+DEFINE SUBROUTINE TR-IMAGE
+**************************
+AFTER_IMAGE.SVC-ISSUE-DATE       := #SVC-MEMBER.LAST-UPD-DATE
+AFTER_IMAGE.SVC-MODE             := #SVC-MEMBER.SVC-MODE
+AFTER_IMAGE.SVC-STATUS           := #SVC-MEMBER.SVC-STATUS
+AFTER_IMAGE.SVC-ISSUED-BY        := #SVC-MEMBER.LAST-UPD-USER
+*
+TR_ID_NUMBER  := #SVC-MEMBER.SVC-ID-NUMBER
+TR_CLERK      := FUNCTION-CLERK (< #SVC-MEMBER.LAST-UPD-USER >)
+TR_NAME       := FUNCTION-MEMBER-NAME (< #SVC-MEMBER.SVC-ID-NUMBER >)
+CALLNAT 'GPRNTR01' TR_FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CHECK-CREDIT-CARD
+***********************************
+*
+IF FUNCTION-CC-NUMBER (<ServiceRequest.CN>) <> ' '
+#DATE-A := FUNCTION-CC-DATE(<ServiceRequest.CN>)     /* Returns in format MMYY
+  MOVE EDITED #DATE-A TO #DATX (EM=MMYY)
+  #DATX := #DATX - 1
+  MOVE EDITED #DATX (EM=YYMM) TO #DATE-A
+  IF #DATN-YYMM > #DATE-N6
+    #MSG := 'Credit card on file is expired. Please, update it first'
+  END-IF
+ELSE
+  #MSG := 'Credit card information should be entered in CA CC screen'
+END-IF
+END-SUBROUTINE
+
+* ------------------------------------------------- CALL THE PARSER
+DEFINE PARSE-DOCUMENT
+/*     ==============
+**PARSE XML #XML_INPUT INTO PATH #XML_PATH NAME #XML_NAME VALUE #XML_VALUE
+*
+DECIDE ON FIRST #XML_PATH
+  VALUE 'ServiceRequest//'
+    IGNORE
+  VALUE 'ServiceRequest'
+    RESET INITIAL ServiceRequest
+  VALUE 'ServiceRequest/ErrorCode//'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorCode'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorCode/$'
+    ServiceRequest.ErrorCode := VAL(#XML_VALUE)
+  VALUE 'ServiceRequest/ErrorDescription//'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorDescription'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorDescription/$'
+    ServiceRequest.ErrorDescription := #XML_VALUE
+  VALUE 'ServiceRequest/Id//'
+    IGNORE
+  VALUE 'ServiceRequest/Id'
+    IGNORE
+  VALUE 'ServiceRequest/Id/$'
+    ServiceRequest.Id := #XML_VALUE
+  VALUE 'ServiceRequest/User//'
+    IGNORE
+  VALUE 'ServiceRequest/User'
+    IGNORE
+  VALUE 'ServiceRequest/User/$'
+    ServiceRequest.User := #XML_VALUE
+  VALUE 'ServiceRequest/Status//'
+    IGNORE
+  VALUE 'ServiceRequest/Status'
+    IGNORE
+  VALUE 'ServiceRequest/Status/$'
+    ServiceRequest.Status := #XML_VALUE
+  VALUE 'ServiceRequest/PaymentMode//'
+    IGNORE
+  VALUE 'ServiceRequest/PaymentMode'
+    IGNORE
+  VALUE 'ServiceRequest/PaymentMode/$'
+    ServiceRequest.PaymentMode := #XML_VALUE
+  VALUE 'ServiceRequest/Type//'
+    IGNORE
+  VALUE 'ServiceRequest/Type'
+    IGNORE
+  VALUE 'ServiceRequest/Type/$'
+    ServiceRequest.Type := #XML_VALUE
+  VALUE 'ServiceRequest/ContactID//'
+    IGNORE
+  VALUE 'ServiceRequest/ContactID'
+    IGNORE
+  VALUE 'ServiceRequest/ContactID/$'
+    ServiceRequest.ContactId := VAL(#XML_VALUE)
+  NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+END

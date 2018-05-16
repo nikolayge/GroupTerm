@@ -1,0 +1,479 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online / Payment Center/Member Center
+* Get/Update ECheckInfo - called from GetPayments/ApplyPayments
+*
+* Can be used as a direct eCheck Add/Update module if needed
+* being called from "ManageBankAccounts" function via MBCNEC50 interface
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    08012014       Initial Creation
+* YAK    05102017  YK1  Changes for EB&P Phase III
+* YAK    08082017  YK2  Correct logic for checking error code
+************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEC51
+PARAMETER
+1 #ErrorCode  (A3)
+LOCAL USING OBJABA01
+LOCAL USING GPRATR06
+LOCAL USING ERROR_L
+LOCAL
+1 #MEMBER          (A) DYNAMIC INIT <'MEMBER'>
+1 #MEMBER-CENTER-CLERK  (A) DYNAMIC INIT <'MBR'>
+1 #AUC             (A) DYNAMIC INIT <'AUC'>         /* YK1
+1 #GET             (A) DYNAMIC CONST <'GET'>
+1 #GET-BY-ISN      (A) DYNAMIC CONST <'GET-BY-ISN'>
+1 #GET-EZPAY       (A) DYNAMIC CONST <'GET-EZPAY'>
+1 #ADD             (A) DYNAMIC CONST <'ADD'>
+1 #UPDATE          (A) DYNAMIC CONST <'UPDATE'>
+1 #DELETE          (A) DYNAMIC CONST <'DELETE'>
+1 #ADD-EZPAY       (A) DYNAMIC CONST <'ADD-EZPAY'>
+1 #REPLACE-EZPAY   (A) DYNAMIC CONST <'REPLACE-EZPAY'>
+1 #UPDATE-EZPAY    (A) DYNAMIC CONST <'UPDATE-EZPAY'>
+1 #DELETE-EZPAY    (A) DYNAMIC CONST <'DELETE-EZPAY'>
+1 #CHECK           (A) DYNAMIC CONST <'CHECK'>
+1 #SAVE            (A) DYNAMIC CONST <'SAVE'>
+1 #FIND            (A) DYNAMIC CONST <'FIND'>
+1 FUNCTION_CODE    (A) DYNAMIC INIT  <'ECheckInfo'>
+1 FUNCTION_CODE_1  (A) DYNAMIC CONST <'EZPayInfo'>
+1 #DISCLAIMER      (A) DYNAMIC CONST <'Disclaimer'>
+1 #True            (A) DYNAMIC CONST <'true'>
+1 #Checking        (A) DYNAMIC CONST <'Checking'>
+1 #Saving          (A) DYNAMIC CONST <'Saving'>
+1 #DDA             (A) DYNAMIC CONST <'DDA'>
+1 #SAV             (A) DYNAMIC CONST <'SAV'>
+1 #WORK-FIELD      (A) DYNAMIC
+1 #TRAN-CN         (N6)
+1 #TRAN-CONTACT-ID (N8)
+1 #DATN            (N8)
+1 #TIMN            (N7)
+1 #CheckId         (N2)
+1 #N               (N1) CONST <5>
+1 #SAVE-EZPAY-DATA (L)
+1 #ST-DATE-ACCT-UPDATE (N8)
+1 #ST-ISN          (P9)
+*
+1 p_Parms
+  2 p_RN   (A9)
+  2 p_Name (A)  DYNAMIC
+  2 p_RC   (I4)
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+IF BankAccount.UserID <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<BankAccount.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<BankAccount.UserID>)(2)
+END-IF
+*
+* Input verify
+DECIDE FOR FIRST CONDITION
+  WHEN BankAccount.AccountCN = 0
+    #ErrorCode  := #MISSING-CN
+    ESCAPE MODULE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+#TRAN-CN         := BankAccount.AccountCN
+#TRAN-CONTACT-ID := F-GET-CONTACT-ID(<#TRAN-CN>)
+IF #TRAN-CONTACT-ID = 0
+  #ErrorCode  := #CN-NOT-FOUND
+  ESCAPE MODULE
+END-IF
+*
+DECIDE ON FIRST VALUE BankAccount.ActionType
+  VALUE #GET, #GET-EZPAY
+    PERFORM GET-ECHECK-DATA
+    ESCAPE MODULE
+  VALUE #ADD, #UPDATE, #SAVE
+    PERFORM ADD-UPDATE-ECHECK-DATA
+  VALUE #DELETE
+    IF BankAccount.CheckType = 'EZ-Pay'
+      PERFORM DELETE-EZPAY-DATA
+      PERFORM WRITE-TRANSACTION-LOG
+      RESET PARM-BA-DATA.#ISN
+    END-IF
+    PERFORM DELETE-ECHECK-DATA
+    IF BankAccount.CheckType = 'EZ-Pay' AND #ErrorCode = #NO-ECHECK-DATA-EXIST
+      #ErrorCode := '0'
+      ESCAPE ROUTINE
+    END-IF
+  VALUE #ADD-EZPAY
+    PERFORM ADD-EZPAY-DATA
+  VALUE #REPLACE-EZPAY
+    PERFORM REPLACE-EZPAY-DATA
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+IF #RESPONSE-CODE = ' '              /* YK2
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+* Write disclaimer note to transaction log
+IF BankAccount.BankAccountDisclaimerConfirmed = #True
+  RESET BEFORE_IMAGE AFTER_IMAGE
+  AFTER_IMAGE.BA-DISCLAIMER := BankAccount.BankAccountDisclaimerConfirmed
+  FUNCTION_CODE := #DISCLAIMER
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+*********************************
+DEFINE SUBROUTINE GET-ECHECK-DATA
+*********************************
+* Check eCheck or EZ-Pay account
+#PARM-ID-NUMBER := BankAccount.AccountCN
+#ACTION         := BankAccount.ActionType
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+IF #ISN = 0
+  DECIDE ON FIRST VALUE BankAccount.ActionType
+    VALUE #GET
+      #ErrorCode  := #NO-ECHECK-DATA-EXIST
+    VALUE #GET-EZPAY
+      #ErrorCode  := #NO-EZPAY-DATA-EXIST
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+ELSE
+  BankAccount.RoutingNumber       := PARM-BA-INFO.ROUTING-NUMBER
+  BankAccount.AccountNumber       := PARM-BA-INFO.ACCOUNT-NUMBER
+  BankAccount.AccountType         := PARM-BA-INFO.ACCOUNT-TYPE
+  BankAccount.AccountStreet       := PARM-BA-INFO.ACCOUNT-STREET
+  BankAccount.AccountCity         := PARM-BA-INFO.ACCOUNT-CITY
+  BankAccount.AccountState        := PARM-BA-INFO.ACCOUNT-STATE
+  RESET BankAccount.AccountZipCode
+  IF PARM-BA-INFO.ACCOUNT-ZIP-CODE <> 0
+    MOVE EDITED PARM-BA-INFO.ACCOUNT-ZIP-CODE (EM=99999-9999) TO BankAccount.AccountZipCode
+    EXAMINE BankAccount.AccountZipCode FOR '-0000' DELETE
+  END-IF
+  BankAccount.AccountHolderFirstName := PARM-BA-INFO.ACCOUNT-HOLDER-FIRST-NAME
+  BankAccount.AccountHolderLastName  := PARM-BA-INFO.ACCOUNT-HOLDER-LAST-NAME
+  PERFORM GET-BANK-NAME
+*
+  BankAccount.LastUpdatedDate := PARM-BA-INFO.LAST-UPDATE-DATE
+  BankAccount.LastUpdatedTime := PARM-BA-INFO.LAST-UPDATE-TIME
+  BankAccount.LastUpdatedUser := PARM-BA-INFO.LAST-UPDATE-USER
+*
+END-IF
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE GET-BANK-NAME
+*******************************
+*
+*  p_RN  - ABA Routing Number
+*  p_Name - Bank Name (blank if not found)
+*  p_Mod  - "C": Invoke confirmation (A1)
+*  p_RC   - 1: Access error, 2: Wrong ABA  3: Not confirmed 0: Returns Bank name
+*
+RESET p_Parms
+p_RN := BankAccount.RoutingNumber
+CALLNAT 'GPRN0ABA' p_RN p_Name p_RC
+BankAccount.BankName := p_Name
+*
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE ADD-UPDATE-ECHECK-DATA
+****************************************
+*
+#ACTION := #CHECK
+#PARM-ID-NUMBER := BankAccount.AccountCN
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+DECIDE FOR FIRST CONDITION
+  WHEN #NUMBER-OF-RECORDS = 0 AND BankAccount.ActionType = #UPDATE
+    RESET BEFORE_IMAGE
+    #ACTION := #ADD
+    #CheckId := 1
+  WHEN #NUMBER-OF-RECORDS = 0 AND (BankAccount.ActionType = #ADD OR BankAccount.ActionType = #SAVE)
+    RESET BEFORE_IMAGE
+    #ACTION := #ADD
+    #CheckId := 1
+  WHEN #NUMBER-OF-RECORDS = 0 AND BankAccount.ActionType = #ADD-EZPAY
+    #SAVE-EZPAY-DATA := true
+    #ACTION := #ADD
+    #CheckId := 1
+  WHEN #NUMBER-OF-RECORDS <> 0
+    PERFORM FIND-RECORD
+    IF #ISN = 0
+      RESET BEFORE_IMAGE
+      #ACTION := #ADD
+      #CheckId := #NUMBER-OF-RECORDS
+    ELSE
+      IF BankAccount.ActionType = #ADD OR BankAccount.ActionType = #ADD-EZPAY
+        #ErrorCode := #ECHECK-DATA-EXIST
+        ESCAPE ROUTINE
+      END-IF
+      PERFORM POPULATE-BEFORE-IMAGE
+      #ACTION := #UPDATE
+    END-IF
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF #ACTION = #ADD
+  BankAccount.CheckId  := PARM-BA-INFO.CHECK-ID := #CheckId
+END-IF
+IF NOT #SAVE-EZPAY-DATA
+  PARM-BA-INFO.ID-NUMBER               := BankAccount.AccountCN
+  PARM-BA-INFO.ROUTING-NUMBER          := BankAccount.RoutingNumber
+  PARM-BA-INFO.ACCOUNT-NUMBER          := BankAccount.AccountNumber
+  PARM-BA-INFO.ACCOUNT-TYPE            := BankAccount.AccountType
+  PARM-BA-INFO.ACCOUNT-HOLDER-FIRST-NAME := *TRANSLATE(BankAccount.AccountHolderFirstName,UPPER)
+  PARM-BA-INFO.ACCOUNT-HOLDER-LAST-NAME  := *TRANSLATE(BankAccount.AccountHolderLastName,UPPER)
+  PARM-BA-INFO.ACCOUNT-STREET          := *TRANSLATE(BankAccount.AccountStreet,UPPER)
+  PARM-BA-INFO.ACCOUNT-CITY            := *TRANSLATE(BankAccount.AccountCity,UPPER)
+  IF BankAccount.AccountState = ' ' AND BankAccount.AccountZipCode = ' '
+    RESET PARM-BA-INFO.ACCOUNT-STATE PARM-BA-INFO.ACCOUNT-ZIP-CODE
+  ELSE
+    PARM-BA-INFO.ACCOUNT-STATE           := *TRANSLATE(BankAccount.AccountState,UPPER)
+    EXAMINE BankAccount.AccountZipCode FOR '-' DELETE
+    BankAccount.AccountZipCode := *TRIM(BankAccount.AccountZipCode)
+    IF *length(BankAccount.AccountZipCode) = 5 AND BankAccount.AccountZipCode IS (N5)
+      COMPRESS BankAccount.AccountZipCode '0000' INTO BankAccount.AccountZipCode LEAVING NO
+      PARM-BA-INFO.ACCOUNT-ZIP-CODE := VAL(BankAccount.AccountZipCode)
+    ELSE
+      IF BankAccount.AccountZipCode IS (N9)
+        PARM-BA-INFO.ACCOUNT-ZIP-CODE := VAL(BankAccount.AccountZipCode)
+      END-IF
+    END-IF
+  END-IF
+  PERFORM POPULATE-AFTER-IMAGE
+END-IF
+*
+PARM-BA-INFO.LAST-UPDATE-USER := #MEMBER-CENTER-CLERK
+PARM-BA-INFO.LAST-UPDATE-DATE := #DATN
+PARM-BA-INFO.LAST-UPDATE-TIME := #TIMN
+*
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE ADD-EZPAY-DATA
+********************************
+*
+PARM-BA-DATA.#PARM-ID-NUMBER := BankAccount.AccountCN
+* Get old EZ-Pay data
+PERFORM POPULATE-BEFORE-IMAGE
+#ST-ISN := PARM-BA-DATA.#ISN
+#ST-DATE-ACCT-UPDATE := PARM-BA-INFO.LAST-UPDATE-DATE
+IF PARM-BA-INFO.ROUTING-NUMBER = ' ' AND PARM-BA-INFO.ACCOUNT-NUMBER = ' '
+  RESET BEFORE_IMAGE
+ELSE
+* Add as eCheck to BANK-ACCOUNT file
+  RESET PARM-BA-DATA.#ISN
+  MOVE BY NAME BEFORE_IMAGE TO AFTER_IMAGE
+  RESET BEFORE_IMAGE
+  PERFORM ADD-UPDATE-ECHECK-DATA
+  IF #ErrorCode = #ECHECK-DATA-EXIST
+    #ErrorCode := '0'
+    RESET PARM-BA-DATA PARM-BA-INFO
+  ELSE
+    PERFORM WRITE-TRANSACTION-LOG
+    MOVE BY NAME  AFTER_IMAGE TO BEFORE_IMAGE
+    BEFORE_IMAGE.DATE-LAST-UPDATE := #ST-DATE-ACCT-UPDATE
+    RESET AFTER_IMAGE
+  END-IF
+END-IF
+*
+PARM-BA-DATA.#ISN                    := #ST-ISN
+PARM-BA-INFO.ID-NUMBER               := BankAccount.AccountCN
+PARM-BA-INFO.ROUTING-NUMBER          := BankAccount.RoutingNumber
+PARM-BA-INFO.ACCOUNT-NUMBER          := BankAccount.AccountNumber
+PARM-BA-INFO.ACCOUNT-TYPE            := BankAccount.AccountType
+*
+PARM-BA-INFO.LAST-UPDATE-USER := #MEMBER-CENTER-CLERK
+PARM-BA-INFO.LAST-UPDATE-DATE := #DATN
+PARM-BA-INFO.LAST-UPDATE-TIME := #TIMN
+*
+#ACTION := BankAccount.ActionType
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+PERFORM POPULATE-AFTER-IMAGE
+FUNCTION_CODE := FUNCTION_CODE_1
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE REPLACE-EZPAY-DATA
+************************************
+*
+PARM-BA-DATA.#PARM-ID-NUMBER := BankAccount.AccountCN
+* Get old EZ-Pay data
+PERFORM POPULATE-BEFORE-IMAGE
+* Check if this account is already on the BANK-ACCOUNT file
+#ST-ISN := PARM-BA-DATA.#ISN
+#ST-DATE-ACCT-UPDATE := PARM-BA-INFO.LAST-UPDATE-DATE
+RESET PARM-BA-DATA.#ISN
+PARM-BA-DATA.#ACTION := #FIND
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+*
+IF #ISN = 0
+  #CheckId := #NUMBER-OF-RECORDS
+  MOVE BY NAME BEFORE_IMAGE TO AFTER_IMAGE
+  RESET BEFORE_IMAGE
+  PARM-BA-DATA.#ACTION := #ADD
+  PARM-BA-INFO.CHECK-ID := #CheckId
+*
+  PARM-BA-INFO.LAST-UPDATE-USER := #MEMBER-CENTER-CLERK
+  PARM-BA-INFO.LAST-UPDATE-DATE := #DATN
+  PARM-BA-INFO.LAST-UPDATE-TIME := #TIMN
+*
+  CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+  PERFORM WRITE-TRANSACTION-LOG
+  MOVE BY NAME  AFTER_IMAGE TO BEFORE_IMAGE
+END-IF
+*
+* MOVE BY NAME  AFTER_IMAGE TO BEFORE_IMAGE
+BEFORE_IMAGE.DATE-LAST-UPDATE := #ST-DATE-ACCT-UPDATE
+RESET AFTER_IMAGE
+PARM-BA-INFO.ID-NUMBER               := BankAccount.AccountCN
+PARM-BA-INFO.ROUTING-NUMBER          := BankAccount.RoutingNumber
+PARM-BA-INFO.ACCOUNT-NUMBER          := BankAccount.AccountNumber
+PARM-BA-INFO.ACCOUNT-TYPE            := BankAccount.AccountType
+*
+PARM-BA-INFO.LAST-UPDATE-USER := #MEMBER-CENTER-CLERK
+PARM-BA-INFO.LAST-UPDATE-DATE := #DATN
+PARM-BA-INFO.LAST-UPDATE-TIME := #TIMN
+*
+#ACTION := #UPDATE-EZPAY
+PARM-BA-DATA.#ISN := #ST-ISN
+
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+PERFORM POPULATE-AFTER-IMAGE
+FUNCTION_CODE := FUNCTION_CODE_1
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE DELETE-EZPAY-DATA
+***********************************
+*
+PARM-BA-DATA.#PARM-ID-NUMBER := BankAccount.AccountCN
+* Get old EZ-Pay data
+PERFORM POPULATE-BEFORE-IMAGE
+#ST-ISN := PARM-BA-DATA.#ISN
+*
+PARM-BA-DATA.#ISN                    := #ST-ISN
+PARM-BA-INFO.ID-NUMBER               := BankAccount.AccountCN
+PARM-BA-INFO.ROUTING-NUMBER          := BankAccount.RoutingNumber
+PARM-BA-INFO.ACCOUNT-NUMBER          := BankAccount.AccountNumber
+PARM-BA-INFO.ACCOUNT-TYPE            := BankAccount.AccountType
+*
+PARM-BA-INFO.LAST-UPDATE-USER := #MEMBER-CENTER-CLERK
+PARM-BA-INFO.LAST-UPDATE-DATE := #DATN
+PARM-BA-INFO.LAST-UPDATE-TIME := #TIMN
+*
+#ACTION := #DELETE-EZPAY
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+RESET AFTER_IMAGE
+FUNCTION_CODE := FUNCTION_CODE_1
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE DELETE-ECHECK-DATA
+************************************
+*
+PERFORM FIND-RECORD
+DECIDE FOR FIRST CONDITION
+  WHEN #ISN = 0
+    #ErrorCode := #NO-ECHECK-DATA-EXIST
+    ESCAPE ROUTINE
+  WHEN #ISN <> 0
+    PERFORM POPULATE-BEFORE-IMAGE
+    #ACTION := #DELETE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+RESET AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE FIND-RECORD
+*****************************
+*
+PARM-BA-DATA.#ACTION         := #FIND
+PARM-BA-DATA.#PARM-ID-NUMBER := BankAccount.AccountCN
+IF BankAccount.CheckId <> ' '
+  PARM-BA-INFO.CHECK-ID        := VAL(BankAccount.CheckId)
+END-IF
+PARM-BA-INFO.ID-NUMBER       := BankAccount.AccountCN
+PARM-BA-INFO.ROUTING-NUMBER  := BankAccount.RoutingNumber
+PARM-BA-INFO.ACCOUNT-NUMBER  := BankAccount.AccountNumber
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-BEFORE-IMAGE
+***************************************
+*
+IF PARM-BA-DATA.#ISN = 0
+  #ACTION := #GET-EZPAY
+ELSE
+  #ACTION := #GET-BY-ISN
+END-IF
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+* YK1 >
+* Compare date/time of the last update
+IF BankAccount.SystemSource = #AUC
+  IF BankAccount.ActionType = #UPDATE AND PARM-BA-INFO.LAST-UPDATE-DATE = #DATN
+      AND BankAccount.LastUpdatedTime <> 0 AND PARM-BA-INFO.LAST-UPDATE-TIME > BankAccount.LastUpdatedTime 
+    #ErrorCode := #NOT-LATEST-INFO
+    ESCAPE MODULE
+  END-IF
+END-IF
+* < YK1
+*
+BEFORE_IMAGE.DATE-LAST-UPDATE        := PARM-BA-INFO.LAST-UPDATE-DATE
+#WORK-FIELD                          := PARM-BA-INFO.ACCOUNT-NUMBER
+BEFORE_IMAGE.ACCOUNT-NUMBER          := FUNCTION-MASK(<#WORK-FIELD,'*',#N>)
+BEFORE_IMAGE.ROUTING-NUMBER          := PARM-BA-INFO.ROUTING-NUMBER
+BEFORE_IMAGE.ACCOUNT-TYPE            := PARM-BA-INFO.ACCOUNT-TYPE
+COMPRESS PARM-BA-INFO.ACCOUNT-HOLDER-FIRST-NAME PARM-BA-INFO.ACCOUNT-HOLDER-LAST-NAME
+  INTO BEFORE_IMAGE.ACCOUNT-HOLDER-NAME
+BEFORE_IMAGE.ACCOUNT-ADDRESS-1       := PARM-BA-INFO.ACCOUNT-STREET
+COMPRESS PARM-BA-INFO.ACCOUNT-CITY PARM-BA-INFO.ACCOUNT-STATE INTO BEFORE_IMAGE.ACCOUNT-ADDRESS-2
+BEFORE_IMAGE.ACCOUNT-ADDRESS-3       := PARM-BA-INFO.ACCOUNT-ZIP-CODE
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE POPULATE-AFTER-IMAGE
+**************************************
+*
+#WORK-FIELD                         := PARM-BA-INFO.ACCOUNT-NUMBER
+AFTER_IMAGE.ACCOUNT-NUMBER          := FUNCTION-MASK(<#WORK-FIELD,'*',#N>)
+AFTER_IMAGE.ROUTING-NUMBER          := PARM-BA-INFO.ROUTING-NUMBER
+AFTER_IMAGE.ACCOUNT-TYPE            := PARM-BA-INFO.ACCOUNT-TYPE
+COMPRESS PARM-BA-INFO.ACCOUNT-HOLDER-FIRST-NAME PARM-BA-INFO.ACCOUNT-HOLDER-LAST-NAME
+  INTO AFTER_IMAGE.ACCOUNT-HOLDER-NAME
+AFTER_IMAGE.ACCOUNT-ADDRESS-1       := PARM-BA-INFO.ACCOUNT-STREET
+COMPRESS PARM-BA-INFO.ACCOUNT-CITY PARM-BA-INFO.ACCOUNT-STATE INTO AFTER_IMAGE.ACCOUNT-ADDRESS-2
+AFTER_IMAGE.ACCOUNT-ADDRESS-3       := PARM-BA-INFO.ACCOUNT-ZIP-CODE
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+TR_ID_NUMBER  := #TRAN-CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<#TRAN-CONTACT-ID>)
+TR_CLERK      := #MEMBER-CENTER-CLERK
+CALLNAT 'GPRNTR06' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+END

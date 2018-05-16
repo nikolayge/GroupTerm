@@ -1,0 +1,121 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM GPBPCC05 (create batch file for reprocessing)
+* work file 1 - Declined transaction file
+* work file 2 - Combined charges to be send to CC company
+*               file sorted by cc number, full cc number included
+* work file 3 - Combined charges to be send to CC company
+*               file sorted by cc number, masked cc number included
+*               (for viewing by user)
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* YAK    06012009  YK1 Build a record from declined file               *
+* YAK    04012015  YK2 Recompile with new PDA for CC file              *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJACC01  /* YK2   parameter data area for CC-INFO object module
+LOCAL
+*
+1 #input-record  (a100)
+1 #CC-IAS-INFO   (A) DYNAMIC
+1 #CC-MESSAGES   (A) DYNAMIC
+1 #CC-AMT        (A) DYNAMIC
+*
+1 #cc-output-record   (a150)
+1 redefine #cc-output-record
+  2 CardNumber        (A16)
+  2 expMonth          (A2)
+  2 expYear           (A2)
+  2 transactionAmount (A8)
+  2 fullNameOnCard    (A25)
+  2 zipCode           (A9)
+  2 Address           (A50)
+  2 unicAafmaaNumber  (A21)
+*
+1 #cc-name            (a35)       /* YK1
+1 #full-name          (a)  DYNAMIC /* YK2
+1 #split              (a1) init <'S'>
+1 #street             (a25)
+1 #street-2           (a25)
+1 #city               (a22)
+1 #state              (a2)
+1 #err-msg            (A60)
+1 #ZIP                (A9)
+1 #cc-record-out      (A1000)
+1 #TAB                (A1) init <H'09'>
+1 #MASK-CC-NUM        (A) DYNAMIC
+*
+1 #CC-ID-NUMBER       (A6)
+1 #TOT-AMT            (N5.2)
+*
+1 #RECS-READ        (P5)
+1 #RECS-OUT         (P5)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/AAFMAAReprocess_20090603.txt'
+DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/AafmaaIn_20090603.TXT'
+     TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 3 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/CC_TRAN_20090603.TXT'
+     TYPE 'ASCII-COMPRESSED'
+*
+* Read file with declined transactions
+READ WORK 1 RECORD #input-record
+  SEPARATE #INPUT-RECORD INTO #CC-IAS-INFO #CC-MESSAGES #CC-AMT
+        IGNORE WITH DELIMITER #TAB
+*
+  #RECS-READ := #RECS-READ + 1
+  PERFORM BUILD-PAYWARE-REC
+END-WORK
+*
+WRITE 'Recs Read    =' #RECS-READ
+WRITE 'Recs Written =' #RECS-OUT
+*
+***********************************
+DEFINE SUBROUTINE BUILD-PAYWARE-REC         /* YK1
+***********************************
+*
+RESET #cc-output-record PARM-CC-DATA PARM-CC-INFO
+unicAafmaaNumber  := *TRIM(#CC-IAS-INFO)
+#CC-ID-NUMBER     := SUBSTR(unicAafmaaNumber,1,6)
+transactionAmount := #CC-AMT
+*
+* Get credit card information from the credit card file   /* YK2
+*
+#ACTION := 'GET'
+#PARM-ID-NUMBER := VAL(#CC-ID-NUMBER)
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+  CardNumber := CC-NUMBER
+  expMonth   := CC-EXPIRATION-MONTH
+  expYear    := substr(CC-EXPIRATION-YEAR,3,2)
+  IF CC-ADDR-VALIDATION-CODE = 'Y'
+     #FULL-NAME        := CCHOLDER-NAME
+     #FULL-NAME        := FUNCTION-FORM-NAME(<#FULL-NAME,'C'>)
+     fullNameOnCard    := #FULL-NAME
+     Address           := CCHOLDER-STREET-ADDR
+     zipCode           := CCHOLDER-ZIP-CODE
+  END-IF
+*
+COMPRESS CardNumber #TAB expMonth #TAB expYear #TAB transactionAmount #TAB
+     fullNameOnCard #TAB zipCode #TAB Address #TAB unicAafmaaNumber 
+        into #cc-record-out leaving no
+WRITE WORK 2 #cc-record-out
+*
+#MASK-CC-NUM := CardNumber
+#MASK-CC-NUM := FUNCTION-MASK(<#MASK-CC-NUM,'*'>)
+COMPRESS #MASK-CC-NUM #TAB expMonth #TAB expYear #TAB transactionAmount #TAB
+     fullNameOnCard #TAB zipCode #TAB Address #TAB unicAafmaaNumber 
+        into #cc-record-out leaving no
+WRITE WORK 3 #cc-record-out
+*
+#RECS-OUT := #RECS-OUT + 1
+END-SUBROUTINE
+*
+END

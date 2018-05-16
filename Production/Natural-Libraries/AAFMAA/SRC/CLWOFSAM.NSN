@@ -1,0 +1,380 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: CLWOFSAM    *** Loan Write-off - Fixed Loans
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    12272006  None    Program written.                            *
+* PAM    04242008  PM1     Added LWOF logical to create balancing tran *
+* YAK    10152012  YK1     Use function to identify Level Term II plans*
+************************************************************************
+*
+* *****    NO LONGER USED  <<<<<<<<<<<<<<<<<<<<<<<<<
+*
+DEFINE DATA
+PARAMETER USING C2500AAM
+PARAMETER
+*
+1 #LWOF-AMOUNT               (P7.2/15)                            /* PM1
+LOCAL USING GETMBLXX
+LOCAL USING CVALULXX
+LOCAL USING G1099PXC
+*
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER                 (N6)
+ 2 SSN                       (N9)
+ 2 NAME                      (A25)
+ 2 ISSUE-DATE                (N8/9)
+ 2 REDEFINE ISSUE-DATE
+  3 ISSUE-DATE-OCC           (9)
+   4 ISSUE-DATE-YYYY         (N4)
+   4 ISSUE-DATE-MM           (N2)
+   4 ISSUE-DATE-DD           (N2)
+ 2 PLAN                      (9)
+ 2 STATUS                    (9)
+ 2 CONV-DURATION             (9)
+*
+1 #TERM                      (L)
+1 #I1                        (I2)
+1 #I2                        (I2)
+1 #I3                        (I2)
+1 #I4                        (I2)
+1 #LINE-CNT                  (I2)
+1 #POLICY                    (I2)
+1 #DATN                      (N8)
+1 REDEFINE #DATN
+ 2 #DATN-YYYY                (N4)
+ 2 #DATN-MM                  (N2)
+ 2 #DATN-DD                  (N2)
+1 #MSG                       (A60)
+1 #MINUS                     (A1)  INIT <'-'>
+1 #WL                        (A1)  INIT <'W'>
+1 #T                         (A1)  INIT <'T'>
+1 #ACTIVE                    (A1)  INIT <'D'>
+* 1 #TERM-BEGIN              (A1)  INIT <'U'>      /* YK1
+* 1 #TERM-END                (A1)  INIT <'Z'>      /* YK1
+* 1 #LT                      (A2)  INIT <'LT'>     /* YK1 
+* 1 #RT                      (A2)  INIT <'RT'>     /* YK1
+1 #LOAN-WRITE-OFF            (A3)  INIT <'LWO'>
+1 #LOAN-WRITE-OFF-FIXED      (A4)  INIT <'LWOF'>
+1 #LOAN-WRITE-OFF-VARIABLE   (A4)  INIT <'LWOV'>
+1 #LOAN-INT-ADJ-FIXED        (A4)  INIT <'AIAF'>
+1 #LOAN-INT-ADJ-VARIABLE     (A4)  INIT <'AIAV'>
+1 #LOAN-PRN-ADJ-FIXED        (A4)  INIT <'PADF'>
+1 #LOAN-PRN-ADJ-VARIABLE     (A4)  INIT <'PADV'>
+1 #LOAN-FINAL-FIXED          (A4)  INIT <'FLNF'>
+1 #LOAN-FINAL-VARIABLE       (A4)  INIT <'FLNV'>
+*
+1 #POLICY-TABLE
+ 2 #TABLE-OCC                (9)
+  3 #PLAN                    (A3)
+  3 REDEFINE #PLAN
+   4 #PLAN-A-1               (A1)
+   4 #PLAN-A-2               (A2)
+  3 #SEGMENT                 (I2)
+*
+END-DEFINE
+************************************************************************
+*
+FOR #I1 1 TO 15
+  IF #SCR-TR-CD-3 (#I1) = #LOAN-WRITE-OFF
+    PERFORM SCREEN-EDITS
+    PERFORM GET-POLICY
+    PERFORM POPULATE-SCREEN
+  END-IF
+END-FOR
+*
+************************************************************************
+DEFINE SUBROUTINE SCREEN-EDITS
+************************************************************************
+*
+RESET #LINE-CNT
+FOR #I2 #I1 TO 15
+  IF   #SCR-TRAN-CODE (#I2) = ' ' AND #SCR-ID-SSN (#I2) = 0
+   AND #SCR-EFF-DT (#I2)    = ' ' AND #SCR-ISS-DT (#I2) = ' '
+   AND #SCR-TRAN-AMT (#I2)  = 0   AND #SCR-NAME   (#I2) = ' '
+    ADD +1 TO #LINE-CNT
+    IF #LINE-CNT GT 1
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+END-FOR
+*
+IF #LINE-CNT LT 2
+  REINPUT 'Loan write-offs require at least 2 available lines on screen'
+  MARK *#SCR-TRAN-CODE (#I1)
+END-IF
+*
+IF #SCR-ID-SSN (#I1) = 0
+  REINPUT 'SSN or Member Number is required'
+  MARK *#SCR-ID-SSN (#I1)
+END-IF
+*
+#MEMBER-ID := #SCR-ID-SSN (#I1)
+CALLNAT 'GETMBSXX'
+  #PDA-GET-MBR
+*
+IF #ISN = 0
+  REINPUT 'Member not found'
+  MARK *#SCR-ID-SSN (#I1)
+END-IF
+*
+IF #SCR-ISS-DT (#I1) = ' '
+  REINPUT 'Please enter a policy issue date'
+  MARK *#SCR-ISS-DT (#I1)
+END-IF
+*
+#DATN := *DATN
+IF ((#SCR-EFF-DT (#I1) = '@')
+ OR (#SCR-EFF-DT-YYYY (#I1) = #DATN-YYYY
+     AND #SCR-EFF-DT-MM   (#I1) = #DATN-MM))
+  IGNORE
+ELSE
+  REINPUT 'Loan Write Off must be in current month for correct interest'
+  MARK *#SCR-EFF-DT (#I1)
+END-IF
+*
+GET ST-V #ISN
+*
+RESET #I4
+FOR #I3 1 TO 9
+  IF   ST-V.ISSUE-DATE-MM   (#I3) = #SCR-ISS-DT-MM   (#I1)
+   AND ST-V.ISSUE-DATE-DD   (#I3) = #SCR-ISS-DT-DD   (#I1)
+   AND ST-V.ISSUE-DATE-YYYY (#I3) = #SCR-ISS-DT-YYYY (#I1)
+   AND ST-V.STATUS (#I3) = #ACTIVE
+    ADD +1 TO #I4
+    #PLAN    (#I4)  := ST-V.PLAN (#I3)
+    #SEGMENT (#I4)  := #I3
+  END-IF
+END-FOR
+*
+IF #I4 = 0
+  REINPUT 'Policy issue date not found'
+  MARK *#SCR-ISS-DT (#I1)
+END-IF
+*
+IF #I4 GT 1 AND NOT #SCR-ALP-CODE (#I1) = #WL OR = #T
+  REINPUT 'Please enter "W" or "T" for Whole Life or Term'
+  MARK *#SCR-ALP-CODE (#I1)
+END-IF
+*
+IF ST-V.NAME NE MASK (XXX) #SCR-NAME (#I1)
+  COMPRESS 'Name verification error - NAME =' ST-V.NAME INTO #MSG
+  REINPUT #MSG
+  MARK *#SCR-NAME (#I1)
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE GET-POLICY
+************************************************************************
+*
+PERFORM CALL-CVALUSXX
+*
+FOR #I3 1 TO #I4
+  RESET #TERM
+* IF #PLAN (#I3) = #LT OR = #RT                                          /* YK1
+*  OR (#PLAN-A-1 (#I1) GE #TERM-BEGIN AND #PLAN-A-1 (#I1) LE #TERM-END)  /* YK1
+  IF FUNCTION-TERM-POLICY(<#PLAN(#I3)>)                                  /* YK1
+    #TERM := TRUE
+  END-IF
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN #SCR-ALP-CODE (#I1) = ' '
+      MOVE #SEGMENT (#I3) TO #POLICY
+      ESCAPE BOTTOM
+    WHEN #SCR-ALP-CODE (#I1) = #WL AND NOT #TERM
+      MOVE #SEGMENT (#I3) TO #POLICY
+      ESCAPE BOTTOM
+    WHEN #SCR-ALP-CODE (#I1) = #T AND #TERM
+      MOVE #SEGMENT (#I3) TO #POLICY
+      ESCAPE BOTTOM
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+*
+IF #POLICY = 0
+  REINPUT 'Error - policy not found. Please try again'
+  MARK *#SCR-ISS-DT (#I1)
+END-IF
+*
+IF #SCR-TRAN-CODE (#I1) = #LOAN-WRITE-OFF-FIXED
+ AND #LOAN-BAL (#POLICY) = 0
+ AND #ACC-INT  (#POLICY) = 0
+  REINPUT 'Fixed loan does not exist for this policy. Please try again'
+  MARK *#SCR-ISS-DT (#I1)
+END-IF
+*
+IF #SCR-TRAN-CODE (#I1) = #LOAN-WRITE-OFF-VARIABLE
+ AND #LOAN-BAL-2 (#POLICY) = 0
+ AND #ACC-INT-2  (#POLICY) = 0
+  REINPUT 'Variable loan does not exist for this policy. Try again'
+  MARK *#SCR-ISS-DT (#I1)
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE POPULATE-SCREEN
+************************************************************************
+*
+#I3 := #I2
+SUBTRACT 1 FROM #I2
+*
+RESET #SCR-ALP-CODE (#I1) #SCR-ALP-CODE (#I2) #SCR-ALP-CODE (#I3)
+#SCR-ID-SSN       (#I2)  := #SCR-ID-SSN       (#I1)
+#SCR-ID-SSN-CV    (#I2)  := #SCR-ID-SSN-CV    (#I1)
+#SCR-EFF-DT       (#I2)  := #SCR-EFF-DT       (#I1)
+#SCR-ISS-DT       (#I2)  := #SCR-ISS-DT       (#I1)
+#SCR-TRAN-CODE-CV (#I2)  := #SCR-TRAN-CODE-CV (#I1)
+#SCR-NAME         (#I2)  := #SCR-NAME         (#I1)
+#SCR-NAME-CV      (#I2)  := #SCR-NAME-CV      (#I1)
+#SCR-ADJ          (#I2)  := #SCR-ADJ          (#I1)
+#SCR-ADJ-CV       (#I2)  := #SCR-ADJ-CV       (#I1)
+#SCR-ALP-CODE-CV  (#I2)  := #SCR-ALP-CODE-CV  (#I1)
+#SCR-AMT-FLAG     (#I2)  := #SCR-AMT-FLAG     (#I1)
+#SCR-AMT-FLAG-CV  (#I2)  := #SCR-AMT-FLAG-CV  (#I1)
+#SCR-CASH-CODE    (#I2)  := #SCR-CASH-CODE    (#I1)
+#SCR-CASH-CODE-CV (#I2)  := #SCR-CASH-CODE-CV (#I1)
+*
+#SCR-ID-SSN       (#I3)  := #SCR-ID-SSN       (#I1)
+#SCR-ID-SSN-CV    (#I3)  := #SCR-ID-SSN-CV    (#I1)
+#SCR-EFF-DT       (#I3)  := #SCR-EFF-DT       (#I1)
+#SCR-ISS-DT       (#I3)  := #SCR-ISS-DT       (#I1)
+#SCR-TRAN-CODE-CV (#I3)  := #SCR-TRAN-CODE-CV (#I1)
+#SCR-NAME         (#I3)  := #SCR-NAME         (#I1)
+#SCR-NAME-CV      (#I3)  := #SCR-NAME-CV      (#I1)
+#SCR-ADJ          (#I3)  := #SCR-ADJ          (#I1)
+#SCR-ADJ-CV       (#I3)  := #SCR-ADJ-CV       (#I1)
+#SCR-ALP-CODE     (#I3)  := #SCR-ALP-CODE     (#I1)
+#SCR-ALP-CODE-CV  (#I3)  := #SCR-ALP-CODE-CV  (#I1)
+#SCR-AMT-FLAG     (#I3)  := #SCR-AMT-FLAG     (#I1)
+#SCR-AMT-FLAG-CV  (#I3)  := #SCR-AMT-FLAG-CV  (#I1)
+#SCR-CASH-CODE    (#I3)  := #SCR-CASH-CODE    (#I1)
+#SCR-CASH-CODE-CV (#I3)  := #SCR-CASH-CODE-CV (#I1)
+*
+IF #SCR-TRAN-CODE (#I1) = #LOAN-WRITE-OFF-FIXED
+  PERFORM PROCESS-FIXED-LOAN
+ELSE
+  PERFORM PROCESS-VARIABLE-LOAN
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-FIXED-LOAN
+************************************************************************
+*
+IF #LOAN-BAL (#POLICY) = 0
+  PERFORM RESET-FIELDS
+  #I2 := #I1
+ELSE
+  #SCR-TRAN-CODE (#I1) := #LOAN-PRN-ADJ-FIXED
+  #SCR-TRAN-AMT  (#I1) := #LOAN-BAL (#POLICY)
+  #SCR-ADJ       (#I1) := #MINUS
+  ADD #LOAN-BAL  (#POLICY) TO #LWOF-AMOUNT (#I3)                 /* PM1
+END-IF
+*
+IF #ACC-INT (#POLICY) = 0
+  PERFORM RESET-FIELDS
+ELSE
+  #SCR-TRAN-CODE (#I2) := #LOAN-INT-ADJ-FIXED
+  #SCR-TRAN-AMT  (#I2) := #ACC-INT (#POLICY)
+  #SCR-ADJ       (#I2) := #MINUS
+  ADD #ACC-INT   (#POLICY) TO #LWOF-AMOUNT (#I3)                 /* PM1
+END-IF
+*
+#SCR-TRAN-CODE   (#I3) := #LOAN-FINAL-FIXED
+*
+PERFORM PROCESS-1099C
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-VARIABLE-LOAN
+************************************************************************
+*
+IF #LOAN-BAL-2 (#POLICY) = 0
+  PERFORM RESET-FIELDS
+  #I2 := #I1
+ELSE
+  #SCR-TRAN-CODE (#I1) := #LOAN-PRN-ADJ-VARIABLE
+  #SCR-TRAN-AMT  (#I1) := #LOAN-BAL-2 (#POLICY)
+  #SCR-ADJ       (#I1) := #MINUS
+  ADD #LOAN-BAL-2(#POLICY) TO #LWOF-AMOUNT (#I3)                /* PM1
+END-IF
+*
+IF #ACC-INT-2 (#POLICY) = 0
+  PERFORM RESET-FIELDS
+ELSE
+  #SCR-TRAN-CODE (#I2) := #LOAN-INT-ADJ-VARIABLE
+  #SCR-TRAN-AMT  (#I2) := #ACC-INT-2 (#POLICY)
+  #SCR-ADJ       (#I2) := #MINUS
+  ADD #ACC-INT-2 (#POLICY) TO #LWOF-AMOUNT (#I3)               /* PM1
+END-IF
+*
+#SCR-TRAN-CODE   (#I3) := #LOAN-FINAL-VARIABLE
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE RESET-FIELDS
+************************************************************************
+*
+RESET #SCR-ID-SSN       (#I2) #SCR-ID-SSN-CV    (#I2)
+      #SCR-EFF-DT       (#I2) #SCR-ISS-DT       (#I2)
+      #SCR-TRAN-CODE-CV (#I2) #SCR-NAME         (#I2)
+      #SCR-NAME-CV      (#I2) #SCR-ADJ          (#I2)
+      #SCR-ADJ-CV       (#I2) #SCR-ALP-CODE     (#I2)
+      #SCR-ALP-CODE-CV  (#I2) #SCR-AMT-FLAG     (#I2)
+      #SCR-AMT-FLAG-CV  (#I2) #SCR-CASH-CODE    (#I2)
+      #SCR-CASH-CODE-CV (#I2)
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALL-CVALUSXX
+************************************************************************
+*
+IF  #SCR-EFF-DT (#I1) = ' ' OR = '@'
+ OR #SCR-EFF-DT (#I1) NE MASK (MMDDYYYY)
+  #AS-OF-YYYYMMDD  := *DATN
+ELSE
+  #AS-OF-YYYY      := #SCR-EFF-DT-YYYY (#I1)
+  #AS-OF-MM        := #SCR-EFF-DT-MM   (#I1)
+  #AS-OF-DD        := #SCR-EFF-DT-DD   (#I1)
+END-IF
+*
+#CN := ST-V.ID-NUMBER
+*
+CALLNAT 'CVALUSXX'
+    #PDA-CVALUE
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-1099C
+************************************************************************
+*
+IF ST-V.CONV-DURATION (#POLICY) = 999
+  #RELATED-ID-NUMBER  := ST-V.ID-NUMBER
+  #INDEX              := #POLICY
+  #TYPE-1099          := 'C'
+  #AMOUNT             := #LOAN-BAL (#POLICY) + #ACC-INT (#POLICY)
+  #GROSS-AMOUNT       := #ACC-INT (#POLICY)
+*
+  CALLNAT 'G1099SXC'
+    #PDA-1099
+END-IF
+*
+END-SUBROUTINE
+*
+END

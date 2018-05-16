@@ -1,0 +1,200 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPRP006A - Create E-mail/Autodialer request
+* for MEMBERS/Policy Owners with non-zero Term Refund balance
+* and Undeliverable Addresses
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG  REASON                                         *
+* YAK   07/13/2012      Initial creation                               *
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital    
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRA0005        /* Fields to be passed to Email Creator
+LOCAL USING GPRL0001        /* Init properties
+LOCAL USING OBJLSTAT        /* Status file structure
+LOCAL USING OBJAADRL        /* Address Relations
+LOCAL USING GPRA0003        /* Error Log
+LOCAL
+*
+1 #INPUT        (A50)
+1 #MEMBER-CN    (N6)
+1 #OWNER-CN     (N6)
+1 #CONTACT-ID   (N8)
+1 #CONTACT-ID-M (N8)
+1 #POL-SEG      (P1)
+1 #TAB          (A1) INIT <H'09'>
+1 #ACTIVE       (A1) INIT <'D'>
+1 #DEL          (A1) INIT <'-'>
+1 #TERM-REFUND-UNDELIVERABLE-ADDRESS (A3) INIT <'TRU'>
+1 #OWNER-EMAIL  (A) DYNAMIC
+*** Owner Information
+1 #PARAMETER-OWNER
+  2 #CN               (N6)
+  2 #NON-INS-OWNER    (L)
+  2 #MULTIPLE-OWNER   (L)
+  2 #OWNER-OCC-9 (9)
+    3 #OWNER-FLAG (A1)
+    3 #OWNER-CN-ARRAY  (N6/10)
+    3 #OWNER-CN-BY-POL (N6)
+    3 #OWNER-CN-SEG    (I2/9)
+    3 #POL-ISSUE-DATE  (N8/9)
+    3 #ISSUE-DATE-DISP (A10/9)
+    3 #BN-TYPE       (A1/2)
+    3 #BN-TEXT       (A60/10)
+1 #RUN-DATE   (N8)
+1 REDEFINE #RUN-DATE
+  2 #RUN-DATE-A (A8)
+*
+1 #MONTHLY-RUN       (A3) CONST <'TRU'>
+1 #READ              (A1) CONST <'R'>
+1 #WRITE             (A1) CONST <'W'>
+1 #DATN              (N8)
+1 #PHONE             (A) DYNAMIC
+1 #MEMBER-NAME       (A) DYNAMIC
+1 #PHONE-10          (A10)
+1 #DIAL-PHONE        (N10)
+1 #AUTO-DIALER-CONST (A8) INIT <'0004.wav'>
+1 #TR-AUTODIALER-FILE (A) DYNAMIC CONST <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/TR-AUTODIALER.TXT'>
+1 #TR-AUTODIALER-FILE-BACKUP (A) DYNAMIC CONST <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/TR-AUTODIALER-BCK.TXT'>
+1 #I                 (I2)
+1 #FOUND             (L)
+*
+END-DEFINE
+*
+#DATN := *DATN
+#RUN-DATE := FUNCTION-EXEC-DATE(<#DATN,#MONTHLY-RUN,#READ>)
+*
+IF #DATN < #RUN-DATE
+  ESCAPE ROUTINE
+END-IF
+*
+* Define E-mail information file
+DEFINE WORK FILE 1 #EMAIL-REQUEST-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 2 #TR-AUTODIALER-FILE TYPE 'ASCII-COMPRESSED'         /* Auto-dialer file
+DEFINE WORK FILE 3 #TR-AUTODIALER-FILE-BACKUP TYPE 'ASCII-COMPRESSED'  /* backup file with ID numbers
+*
+READ ST-V WITH ID-NUMBER = 1900
+  RESET #FOUND #POL-SEG #CONTACT-ID #CONTACT-ID-M #OWNER-CN #MEMBER-CN
+  IF C*OUT-TERM-REF-GROUP <> 0
+    #CONTACT-ID-M := ST-V.MEMBER-CONTACT-ID
+    DECIDE FOR FIRST CONDITION
+      WHEN NUMBER-MEMBERSHIPS = 0
+        #MEMBER-CN  := #OWNER-CN := ST-V.ID-NUMBER
+        #CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+      WHEN NUMBER-MEMBERSHIPS = 1
+        EXAMINE STATUS(*) FOR #ACTIVE INDEX #POL-SEG
+        #MEMBER-CN := ST-V.ID-NUMBER
+        PERFORM GET-OWNER-INFORMATION
+      WHEN NUMBER-MEMBERSHIPS > 1
+        PERFORM FIND-REFUNDABLE-POLICY
+        PERFORM GET-OWNER-INFORMATION
+      WHEN ANY
+        IF #FOUND OR F-UNDEL-ADDRESS(<#CONTACT-ID>)
+          PERFORM CREATE-EMAIL-INFO
+          PERFORM CREATE-AUTODIALER-REQUEST
+        END-IF
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-IF
+END-READ
+*
+#RUN-DATE-A := FUNCTION-CALENDAR(<#RUN-DATE,'O'>)
+  FUNCTION-EXEC-DATE(<#RUN-DATE,#MONTHLY-RUN,#WRITE>)
+* 
+***********************************
+DEFINE SUBROUTINE CREATE-EMAIL-INFO
+***********************************
+*
+* TEMPLATE-TYPE
+* DAL-CN
+* PENDING-CN
+* POLICY-NUMBER
+* OWNER-EMAIL
+*
+RESET EMAIL-INFORMATION #MEMBER-NAME
+EMAIL-INFORMATION.TEMPLATE-TYPE  := #TERM-REFUND-UNDELIVERABLE-ADDRESS
+EMAIL-INFORMATION.DAL-CN := EMAIL-INFORMATION.PENDING-CN := #MEMBER-CN
+EMAIL-INFORMATION.POLICY-NUMBER  := #MEMBER-CN
+EMAIL-INFORMATION.OWNER-EMAIL := F-PREF-EMAIL(<#CONTACT-ID>)
+IF EMAIL-INFORMATION.OWNER-EMAIL = ' '
+  EMAIL-INFORMATION.OWNER-EMAIL := F-PREF-EMAIL(<#CONTACT-ID-M>)
+END-IF
+#MEMBER-NAME := '!L'                              /* bz-Name-C
+CALLNAT 'GPRS0CNT' #CONTACT-ID-M #MEMBER-NAME
+EMAIL-INFORMATION.MEMBER-NAME := #MEMBER-NAME
+*
+IF EMAIL-INFORMATION.OWNER-EMAIL <> ' '
+  WRITE WORK FILE 1 EMAIL-INFORMATION
+END-IF
+END-SUBROUTINE
+*
+*******************************************
+DEFINE SUBROUTINE CREATE-AUTODIALER-REQUEST
+*******************************************
+*
+RESET #PHONE #PHONE-10 #DIAL-PHONE 
+#PHONE := F-PREF-PHONE(<#CONTACT-ID>)
+IF #PHONE <> ' '
+  EXAMINE #PHONE FOR #DEL DELETE
+  EXAMINE #PHONE FOR 'Ext.' POSITION #I
+  IF #I <> 0
+    #I := #I - 2
+    #PHONE := SUBSTR(#PHONE,1,#I)
+  END-IF
+END-IF
+IF #PHONE <> ' '
+  #PHONE-10   := #PHONE
+  #DIAL-PHONE := VAL(#PHONE-10)
+END-IF
+IF #DIAL-PHONE <> 0 AND #DIAL-PHONE > 2000000000
+  WRITE WORK FILE 2 VARIABLE #DIAL-PHONE ',' #AUTO-DIALER-CONST
+ELSE
+  COMPRESS 'Invalid telephone number on file for ' #OWNER-CN
+    INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-IF
+WRITE WORK FILE 3 VARIABLE #DIAL-PHONE #TAB #OWNER-CN
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE GET-OWNER-INFORMATION
+***************************************
+*
+RESET #PARAMETER-OWNER
+#PARAMETER-OWNER.#CN := #MEMBER-CN
+CALLNAT 'GOWNRSXX' #PARAMETER-OWNER
+IF #OWNER-CN-ARRAY(#POL-SEG,1) <> 0
+  #OWNER-CN := #OWNER-CN-ARRAY(#POL-SEG,1)
+ELSE
+  #OWNER-CN := #MEMBER-CN
+END-IF
+if #OWNER-CN = 0               /* test
+  write #member-cn             /* TEST
+end-if                         /* TEST
+#CONTACT-ID := F-GET-CONTACT-ID(<#OWNER-CN>)
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE FIND-REFUNDABLE-POLICY
+****************************************
+*
+FOR #I = 1 TO C*ACTIVE-SEGMENTS
+  IF ST-V.PLAN(#I) = 'RT' OR = 'LT'
+    #POL-SEG := #I
+    PERFORM GET-OWNER-INFORMATION
+    IF F-UNDEL-ADDRESS(<#CONTACT-ID>)
+      #FOUND := TRUE
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+END

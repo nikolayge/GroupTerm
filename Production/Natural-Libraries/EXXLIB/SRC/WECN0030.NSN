@@ -1,0 +1,189 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* WECN0030 - E-Check request to SAGE
+* Accepts Request Data from IAS and calls WebService that communicates with SAG
+* Called from -
+*
+**********************************************************
+*        MODIFICATION LOG
+* YAK    07082016  YK1  Add timestamp for request/response
+* bz-1777 01/06/2016 Set and process TimeOut
+**********************************************************
+DEFINE DATA
+PARAMETER USING WECA0030
+LOCAL
+*
+1 #REQUEST        (A)  DYNAMIC
+1 #WEBCHARGE-LOG  (A500)
+1 D1              (A) DYNAMIC
+1 D2              (A) DYNAMIC
+*
+1 v_Env           (A) DYNAMIC
+1 v_Res           (A) DYNAMIC
+1 v_RC            (I4)
+1 v_Error         (I4)              /* bz-1777
+* ---------------------------
+1  RQTOUT         (I4)   INIT <5>   /* bz-1777
+1  RQTOUT_RC      (I4)              /* bz-1777 
+1  RQTOUT_Msg     (A) DYNAMIC       /* bz-1777   
+* ---------------------------
+*
+1 #DATN           (A) DYNAMIC
+1 #TIMN           (A) DYNAMIC
+1 #ACCEPTED       (A) DYNAMIC CONST <'ACCEPTED'> 
+1 URL_wsIAS       (A)  DYNAMIC
+1 URL_Test        (A)  DYNAMIC  INIT <"http://sagewebapiv2.testing.local/api/checksale/PostCheckSaleIAS">
+1 URL_Prod        (A)  DYNAMIC  INIT <"https://sagewebapiservice.aafmaa.com/api/checksale/PostCheckSaleIAS">
+*
+1 ParsedResult            (A150)
+1 REDEFINE ParsedResult
+  2 Field1                (A21)
+  2 ApprovalIndicator     (A1)
+  2 Field2                (A13)
+  2 Message               (A32)
+  2 Field3                (A10)
+  2 Code                  (A6)
+  2 Field4                (A15)
+  2 Reference             (A10)
+  2 Field5                (A19)
+  2 RiskIndicator         (A2)
+  2 Field6                (A13)
+  2 Invoice               (A6)
+1 #ERROR-CODE             (A3)
+* 
+END-DEFINE
+*
+* ON ERROR
+*   PRINT  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+* END-ERROR
+*
+PERFORM CREATE-REQUEST
+
+MOVE EDITED F-IS-DEV(<>) (EM=Prod/Test) TO v_Env
+*
+DECIDE ON FIRST VALUE v_Env
+  VALUE 'Test'
+    URL_wsIAS   :=  URL_Test
+  VALUE 'Prod'
+    URL_wsIAS   :=  URL_Prod
+  NONE
+    ResultCode := 1
+    COMPRESS 'Unknown environment' v_Env INTO #WEBCHARGE-LOG
+    WRITE WORK FILE 3 #WEBCHARGE-LOG
+    CLOSE WORK 3
+    ESCAPE ROUTINE
+END-DECIDE
+PERFORM CALL-SERVICE
+*
+********************************
+DEFINE SUBROUTINE CREATE-REQUEST
+********************************
+* Create request in Jason Format for Web API
+D1 := '":"'
+D2 := '","'
+COMPRESS
+  '={"'
+  'FirstName' D1 FirstName D2
+  'LastName' D1 LastName D2
+  'AccountNumber' D1 AccountNumber D2
+  'AccountType' D1 AccountType D2
+  'RoutingNumber' D1 RoutingNumber D2
+  'Street' D1 Street D2
+  'City' D1 City D2
+  'State' D1 State D2
+  'ZipCode' D1 ZipCode D2
+  'CNumber' D1 CNumber D2
+  'Amount' D1 Amount D2
+  'ApplicationSource' D1 ApplicationSource D2
+  'UserLoginName' D1 User
+  '"}'
+  INTO #REQUEST LEAVING NO
+*
+#DATN := *DAT4I      /* YK1
+#TIMN := *TIMX       /* YK1
+COMPRESS #DATN #TIMN 'Member CN =' CNumber #REQUEST INTO #WEBCHARGE-LOG
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE CALL-SERVICE
+******************************
+*
+CALLNAT 'USR6307N' 'S' RQTOUT RQTOUT_RC RQTOUT_Msg   /* bz-1777 S
+IF RQTOUT_RC <> 0
+ COMPRESS #DATN #TIMN 'Member CN =' CNumber 'Error set TimeOut'  INTO #WEBCHARGE-LOG
+ WRITE WORK FILE 3 #WEBCHARGE-LOG
+END-IF                                               /* bz-1777 E
+
+REQUEST DOCUMENT FROM URL_wsIAS
+  WITH DATA
+      NAME ' ' VALUE #REQUEST
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+GIVING   v_Error                                      /* bz-1777  S
+IF v_RC <> 200                                       
+  IF v_ERROR = 8304                                   
+       ResultMessage := "TimeOut"                     
+       ResultCode    := "1"                           
+  ELSE                                                
+       COMPRESS "RC=" v_RC INTO ResultMessage         
+       ResultCode    := "1"                           
+  END-IF                                              
+  ESCAPE ROUTINE                                      
+END-IF                                                /* bz-1777 E
+*
+#DATN := *DAT4I          /* YK1
+#TIMN := *TIMX           /* YK1
+COMPRESS #DATN #TIMN 'Member CN =' CNumber 'Response Code = ' v_RC v_Res INTO #WEBCHARGE-LOG
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+* Parse Response
+EXAMINE v_Res FOR '{' DELETE
+EXAMINE v_Res FOR '}' DELETE
+ParsedResult := v_Res
+* write Field1
+* write EApprovalIndicator 
+* write Field2
+* write  EMessage
+* write Field3
+* write  Code 
+* write Field4                 
+* write  Reference
+* write Field5
+* write  RiskIndicator
+* write Field6
+* write  Invoice
+*
+IF ApprovalIndicator = 'A' AND Message = #ACCEPTED   
+  ResultCode := 0                                                     /* OK        
+  ResultMessage := #ACCEPTED
+ELSE                                                                  /* Card Error:    
+  ResultCode := v_RC                                                         
+    DECIDE ON FIRST VALUE Code   
+      VALUE '900016'
+        ResultMessage := 'Invalid Routing Number'
+      VALUE '900005'
+        ResultMessage := 'Invalid Account Number'
+      NONE VALUE
+        ResultMessage := 'Unknown Error'
+    END-DECIDE
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE Test_wsIAS
+REQUEST DOCUMENT FROM URL_Test
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+GIVING v_Error            /* bz 0I-4625 
+END-SUBROUTINE
+*
+END

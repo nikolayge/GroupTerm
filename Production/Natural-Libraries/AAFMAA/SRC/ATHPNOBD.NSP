@@ -1,0 +1,163 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*****************************************************************************
+*   Program : ATHPNOBD                                                        *
+*                                                                             *
+* FUNCTION : Generates report for 3 month old policies without BD             *
+*                  MODIFICATION LOG                                           *
+* USER   DATE        DESCRIPTION                                              *
+* VXT    05/09/2016  Initial creation                                         *
+*******************************************************************************
+DEFINE DATA LOCAL
+
+*
+1 STATUS  VIEW OF A-STATUS
+  2 ID-NUMBER (N6)
+  2 ACTIVE-SEGMENTS (1:9)
+    3 STATUS
+    3 PLAN
+    3 ISSUE-DATE
+    3 redefine issue-date
+      4 issue-date-yyyy  (n4)
+      4 issue-date-mm    (n2)
+      4 issue-date-dd    (n2)
+    3 policy-id
+*
+1 POL-CNTCT view of a-policy-contacts
+  2 policy-number
+  2 designation-id
+  2 relation
+*
+1 dsgn view of a-designation
+  2 designation-id
+  2 BENE-SHOW (24)
+*
+1 #i                          (i2)
+1 #TAB                        (A1)   INIT<H'09'>
+*
+1 #start-month-d               (d)
+1 #start-month-ago             (n8)
+1 redefine #start-month-ago
+  2 #start-month-ago-yyyy-a    (a4)
+  2 #start-month-ago-mm-a      (a2)
+  2 #start-month-ago-dd-a      (a2)
+1 redefine #start-month-ago
+  2 #start-month-ago-yyyy      (n4)
+  2 #start-month-ago-mm        (n2)
+  2 #start-month-ago-dd        (n2)
+*
+1 #end-month                   (n8)
+1 redefine #end-month
+  2 #end-month-yyyy-a          (a4)
+  2 #end-month-mm-a            (a2)
+  2 #end-month-dd-a            (a2)
+1 redefine #end-month
+  2 #end-month-yyyy            (n4)
+  2 #end-month-mm              (n2)
+  2 #end-month-dd              (n2)
+*
+1 #start-month-ago-a           (a10)
+1 #end-month-a                 (a10)
+1 #issue-date-a                (a10)
+1 #cnt                         (n7)
+1 #cnt-no-dsgn                 (n7)
+1 #no-bd                       (a1)
+1 #tot-cnt                     (n7)
+1 #out-file                    (a80)
+1 #leap-year                   (l)
+*
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/POL-NO-BD.224.TXT' TYPE 'ASCII'
+*
+move *datn to #start-month-ago
+move *datn to #end-month
+#start-month-ago-dd := 01
+#start-month-ago-mm := #start-month-ago-mm - 1
+#end-month-mm := #start-month-ago-mm
+if #start-month-ago-mm = 0
+  move 12 to #start-month-ago-mm
+  move 12 to  #end-month-mm
+  subtract 1 from #start-month-ago-yyyy
+end-if
+compress #start-month-ago-mm-a '/' #start-month-ago-dd-a '/' #start-month-ago-yyyy-a into #start-month-ago-a leaving no
+decide on first value of #end-month-mm
+  value 01 , 03 , 05 , 07 , 08 , 10 , 12
+    #end-month-dd := 31
+  value 02
+    #leap-year := f-is-leap-year(<#end-month-yyyy>)
+    if #leap-year
+      #end-month-dd := 29
+    else
+      #end-month-dd := 28
+    end-if
+  value 04 , 06 , 09 , 11
+    #end-month-dd := 30
+  none value
+    ignore
+end-decide
+compress #end-month-mm-a '/' #end-month-dd-a '/' #end-month-yyyy-a into #end-month-a leaving no
+*
+compress 'CN' #tab 'Policy Number' #tab 'Issue Date' #tab 'Plan' into #out-file leaving no
+write work  1  #out-file
+*
+read  status by id-number starting from 29775
+  for1. for #i 1 9
+    if issue-date(#i) ge #start-month-ago and issue-date(#i) le #end-month
+      add 1 to #tot-cnt
+      #no-bd := 'Y'
+      f2.      find     pol-cntct with policy-number = policy-id(#i)
+        if no
+          write 'no policy-contact record for policy ' policy-id(#i)
+          escape bottom
+        end-norec
+        accept if pol-cntct.relation = 5 or = 6 or = 7 or = 11
+        if pol-cntct.designation-id ne 0
+          find   dsgn with designation-id = pol-cntct.designation-id
+            if no
+              write 'no designation record for designation'  pol-cntct.designation-id
+              escape bottom
+            end-norec
+            if bene-show(1) = ' '
+              write 'no bene' id-number
+              move  'Y' to #no-bd
+            else
+              reset #no-bd
+            end-if
+            escape bottom
+          end-find
+        else
+          write 'Policy' policy-id(#i) 'does not have designation'
+          #no-bd := 'Y'
+          add 1 to #cnt-no-dsgn
+        end-if
+      end-find   /* (f2.)
+*
+      if #no-bd = 'Y'
+        compress issue-date-mm(#i)'/'  issue-date-dd(#i) '/'  issue-date-yyyy(#i) into #issue-date-a leaving no
+        compress id-number #tab
+          policy-id(#i) #tab
+          #issue-date-a #tab
+          Plan(#i)
+          into #out-file leaving no
+        write work 1 #out-file
+        add 1 to #cnt
+      end-if
+    end-if
+  end-for
+*
+  at end of data
+    write 'Total issue policies:' #tot-cnt  /
+      'Total policies without designation ' #cnt-no-dsgn
+    if #cnt gt 0
+      write 'Total policies  without BD data :' #cnt
+    else
+      write 'no policies with missing BD data'
+    end-if
+  end-enddata
+*
+end-read
+end

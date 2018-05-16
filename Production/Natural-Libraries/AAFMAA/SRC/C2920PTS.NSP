@@ -1,0 +1,776 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C2920PTS - Process the TS (1099-INT/R) Cross Reference Sheet
+*
+*********************************************************************************************************
+*                       MODIFICATION LOG                                                                *
+* USER     DATE      TAG     REASON                                                                     *
+*                                                                                                       *
+* DRW    09/14/3007  DW1     Create Tab delimited file if in batch                                      *
+* DRW    09/2/52007  DW2     Add Type "L" to TYPE list                                                  *
+* DRW    11/20/2007  DW3     Add 1099-c Processing                                                      *
+* DRW    12/09/2008  DW4     Add Parm date processing in Batch                                          *
+* PAM    01/28/2008  PM5     Include ALL 1099 types                                                     *
+* PAM    01/20/2010  PM6     Revised for 2009 batch procesing                                           *
+* NG     09/25/2013  NG1     Address normalization                                                      *
+* vxt    01/15/2013  vt1     modify search for deaths - to be based on the date settled./Ticket 2463/   *
+* vxt    01/09/2015  vt2     Ticket 3072 - remove city state and zip fields and include addr3 column.   *
+* TMT    12/24/2015  TT1     1099 PROJECT                                                               *
+* vxt    11/29/2016  vt3     Ticket 4335 - add policy number to the report                              *
+* bz     12/14/2016  bz-2124 Restore Online functionality - distorted bay Batch changes                 *
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital                                                 *
+* vxt    01/17/2018  vt4     /Ticket HD-7256/ Add Distribution column                                   *
+* vxt    03/06/2018  vt5     /Ticket HD-7980/ Include the last record on the file  into processing loop.*
+*********************************************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX        /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+LOCAL
+1 #SCR-ID (A12/1:18)                          /* vt1 \/
+1 #SCR-YEAR (A4/1:18)
+1 #SCR-NAME (A25/1:18)
+1 #SCR-AMOUNT (A14/1:18)
+1 #SCR-TYPE (A1/1:18)
+1 #SCR-TYPE-IND (A3/1:18)
+*
+1 INT-1099-V VIEW OF A-INT-1099
+  2 SSN (N9)
+  2 YEAR (N4)
+  2 AMOUNT (P9.2)
+  2 SSN-TAX-ID-IND (A1)
+  2 RELATED-ID-NUMBER (N6)
+  2 INT-TYPE (A1)
+  2 GROSS-AMT (P9.2)
+  2 INSURED (A25)
+  2 TYPE-1099 (A4)
+  2 DATE-ENTERED (N8)
+  2 redefine date-entered               /* vt4 \/
+    3 date-entered-yyyymm (n6)
+    3 date-entered-dd     (n2)          /* vt4 /\
+  2 BANKRUPTCY-IND (A1)
+  2 CONTACT-ID (N8)
+  2 CLAIMANT-ID (N8)
+  2 NAME-2 (A25)
+  2 FINAL-PAYMENT-DATE (N8)           /*  vt1 \/
+  2 redefine final-payment-date
+    3 #year-paid-yyyy   (n4)
+    3 #year-paid-mm     (n2)
+    3 #year-paid-dd     (n2)
+  2 year-paid-int-type                   /* vt1  /\ /*  vt1
+  2 policy-number                 /* vt3
+*
+LOCAL
+1 #JCL-DATE       (A10)                /* DW4
+1 REDEFINE #JCL-DATE
+  2 #JCL-MM            (A2)   /* DATE PARM 03/01/1999
+  2 #JCL-X1            (A1)
+  2 #JCL-DD            (A2)
+  2 #JCL-X2            (A1)
+  2 #JCL-YYYY          (A4)
+*
+1 #PARM-YYYYMMDD  (N8)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYYMMDD-A  (A8)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYY      (N4)
+  2 #PARM-MM        (N2)
+  2 #PARM-DD        (N2)
+*
+1 #S-KEY           (A14)
+1 REDEFINE #S-KEY
+  2 #S-YEAR     (N4)
+  2 #S-INT-TYPE (A1)
+  2 #S-ID       (N9)
+  2 REDEFINE #S-ID
+    3 #S-ID-A    (A9)
+*
+1 #YEAR-PAID-INT-TYPE  (A5)                        /* VT1 \/
+1 REDEFINE #YEAR-PAID-INT-TYPE
+  2 #YEAR-PAID (N4)
+  2 #INT-TYPE  (A1)                                /* VT1 /\
+*
+1 #1099-C-KEY    (A17)   /* No longer Used  DW3
+1 REDEFINE #1099-C-KEY
+  2 #C-YEAR   (N4)
+  2 #C-TYPE   (A4)
+  2 #C-ID     (N9)
+  2 REDEFINE #C-ID
+    3 #C-ID-A  (A9)
+*
+1 #ZIP-CODE    (N9)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-CODE-5A    (A5)
+  2 #ZIP-CODE-4A    (A4)
+*
+1 #ZIP-CODE-DISP   (A10)
+1 I            (I2)
+*
+1 #TODAY-YYYYMMDD   (N8)
+1 REDEFINE #TODAY-YYYYMMDD
+  2 #TODAY-CENT      (N2)
+  2 #TODAY-YY        (A2)
+  2 #TODAY-MM        (N2)
+  2 #TODAY-DD        (N2)
+*
+1 #YYYYMMDD      (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A    (A4)
+  2 #MM-A      (A2)
+  2 #DD-A      (A2)
+*
+1 #PROCESS-YYYY  (N4)
+1 REDEFINE #PROCESS-YYYY
+  2 #PROCESS-CENT   (N2)
+  2 #PROCESS-YY     (A2)
+*
+1 #SCR-MSG     (A60)
+1 #I1          (I2)
+*
+1 #EXTRACT-RECORD  (A250)               /* DW1
+1 #TAB       (A1) INIT <H'09'>
+*
+1 #GROSS-AMT (A15)
+1 #NET-AMT   (A15)
+1 #TAX-AMT   (A15)
+1 #WORK-NET-AMT       (N7.2)
+1 #DATE-ENT-DISP      (A10)
+1 #WORK-TAX-AMT       (N7.2)
+1 #DOING-PRIOR-YEAR   (L)              /* DW1
+1 #PRIOR-YEAR         (N4)
+1 #DISPLAY-NAME       (A) DYNAMIC      /* PM9
+1 #FORMATTED-NAME     (A) DYNAMIC      /* PM9
+1 #SPLIT              (A1) INIT <'S'>  /* PM9
+1 #STREET             (A25)            /* PM9
+1 #STREET-2           (A25)            /* PM9
+1 #CITY               (A22)            /* PM9
+1 #STATE              (A2)             /* PM9
+1 #ERR-MSG            (A60)            /* PM9
+*                                      /* NG1 Start
+1 #SCREEN          (A6) CONST <'SCREEN'>
+1 PRIMARY          (A1) CONST <'P'>
+1 ScreenName       (A) DYNAMIC
+1 CURRENT-RECORD-ISN (P8)
+1 CT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 ssn
+1 A-INT-1099-OLD VIEW OF A-INT-1099-OLD
+  2 SSN (N9)
+  2 YEAR (N4)
+  2 SSN-TAX-ID-IND (A1)
+  2 NAME (A25)
+  2 ADDR-1 (A25)
+  2 ADDR-1-A (A25)
+  2 ADDR-2 (A25)
+  2 ZIP-CODE (N9)
+  2 AMOUNT (P9.2)
+  2 RELATED-ID-NUMBER (N6)
+  2 CONTACT-ID (N8)
+  2 INT-TYPE (A1)
+  2 GROSS-AMT (P9.2)
+  2 INSURED (A25)
+  2 TYPE-1099 (A4)
+  2 DATE-ENTERED (N8)
+  2 BANKRUPTCY-IND (A1)
+  2 NAME-2 (A25)
+1 L             (I2)
+1 #STREET-L     (A) DYNAMIC
+1 #SSN          (A11)
+1 #PREVIOUS-CLAIMANT    (N8)                /* TT1 BEGIN
+1 #PREVIOUS-RELATED-CN  (N6)
+1 #PREVIOUS-GROSS       (N10.2)
+1 #PREVIOUS-TAX-AMT     (N10.2)
+1 #PREVIOUS-NET-AMT     (N10.2)            /* TT1 END
+*
+
+LOCAL USING ADDA0001
+local
+1 letter   (a)  dynamic                     /* vt1
+*
+1 contact view of a-contacts                 /* vt4 \/
+  2 contact-id
+  2 date-of-birth
+*
+1 #claimant-dob (n8)
+1 redefine #claimant-dob
+  2 #claimant-dob-yyyymm   (n6)
+  2 #claimant-dob-dd       (n2)
+*
+1 #distribution (a1)
+1 #claimant-age (n6)                         /* vt4 /\
+END-DEFINE
+************************************************************************
+*
+INCLUDE GONERCXX             /* NATURAL ERROR ROUTINE
+
+IF *DEVICE = 'BATCH'      /* DW4
+  READ WORK 3 ONCE RECORD #JCL-DATE
+  COMPRESS #JCL-YYYY #JCL-MM #JCL-DD INTO #PARM-YYYYMMDD-A LEAVING NO
+  MOVE #PARM-YYYY TO #S-YEAR #year-paid         /* vt1
+  MOVE #PARM-YYYYMMDD TO #TODAY-YYYYMMDD
+  WRITE 'parm-date =' #PARM-YYYYMMDD
+ELSE
+  MOVE *DATN TO #TODAY-YYYYMMDD
+  IF #CGA-SCR-SUFFIX = MASK (NN)
+    MOVE #CGA-SCR-SUFFIX TO #PROCESS-YY
+  ELSE
+    MOVE #TODAY-YY TO #PROCESS-YY
+  END-IF
+*
+  IF #PROCESS-YY GT '50'
+    ADD 1900 TO #PROCESS-YYYY
+  ELSE
+    ADD 2000 TO #PROCESS-YYYY
+  END-IF
+  MOVE #PROCESS-YYYY TO #S-YEAR
+  move #process-yyyy to #year-paid                /* vt1
+END-IF
+*
+IF #CGA-SCR-ID NE 0
+  MOVE #CGA-SCR-ID TO #S-ID-A
+END-IF
+*
+IF #CGA-SCR-SUFFIX = 'ALL'    /* USER WANTS ALL TYPES
+  MOVE 'A' TO #S-INT-TYPE        /* START AT LOWEST
+ELSE
+  IF #CGA-SECURITY-CODE = 04  /* ACCOUNTING TERMINAL
+    MOVE 'C' TO #S-INT-TYPE      /* START AT CASH VALUES
+  ELSE
+    MOVE 'A' TO #S-INT-TYPE      /* START AT DEATHS
+  END-IF
+END-IF
+*
+IF *DEVICE ='BATCH'           /* PM5
+  RESET #S-INT-TYPE             /* PM5
+END-IF                          /* PM5
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+RESET #CGA-SCR-ID
+*
+IF *DEVICE ='BATCH'                         /* DW1
+  COMPRESS 'YEAR'
+    #TAB  'SSN-ID'
+    #TAB  'TAX-IND'
+    #TAB  'CN'
+    #tab  'Policy Number'                         /* vt3
+    #TAB  'TAX-CODE'
+    #TAB  'TAX-CODE-DESC'
+    #TAB  'NAME'
+    #TAB  'Insured'
+    #TAB  'Name-2'
+    #TAB  'GROSS-AMT'
+    #TAB  'TAXABLE-AMT'
+    #TAB  'Net-Calced-Amt'
+    #TAB  'Bankrupt-Ind'
+    #TAB  'Date-Ent'
+    #TAB  'Addr-1'
+    #TAB  'Addr-2'
+    #TAB  'Addr-3'                          /* PM9   /* vt2 \/
+*    #TAB  'City'                            /* PM9
+*    #TAB  'State'                           /* PM9
+*    #TAB  'Zip-Code'                                /* vt2 /\
+    #tab 'Distribution'                     /* vt4
+    INTO #EXTRACT-RECORD LEAVING NO
+*
+  WRITE WORK 1 #EXTRACT-RECORD    /* Current Year
+  WRITE WORK 2 #EXTRACT-RECORD    /* Prior Year
+END-IF
+*
+PERFORM TS-PROCESSING                 /* DW1
+*
+IF *DEVICE ='BATCH' /* Create prior year's file            /* DW1
+  MOVE #PARM-YYYY TO #S-YEAR                         /* DW4
+  SUBTRACT 1 FROM #S-YEAR
+  MOVE #S-YEAR TO #PRIOR-YEAR
+  move #s-year to #year-paid                           /* vt1
+  RESET #S-ID #S-INT-TYPE                   /* PM5
+  MOVE '*' TO #CGA-SCR-COMMAND
+  MOVE TRUE TO #DOING-PRIOR-YEAR
+  MOVE '*' TO #CGA-SCR-COMMAND             /* DW4
+  RESET #CGA-SCR-ID
+*
+  PERFORM TS-PROCESSING               /* DW1
+  STOP
+END-IF
+*
+FETCH 'G1000PXX'
+*
+************************************************************************
+DEFINE SUBROUTINE TS-PROCESSING   /* DW1
+************************************************************************
+*
+perform get-death-records                              /* vt1
+*
+REPEAT
+  IF #CGA-SCR-COMMAND NE '*'
+    ESCAPE ROUTINE    /* Processing is complete
+  END-IF
+*
+  RESET I
+*
+  READ INT-1099-V WITH YEAR-INT-TYPE-ID-KEY STARTING FROM #S-KEY
+    if int-type = 'A'                                                /* vt1 \/
+      escape top
+    end-if                                                           /* vt1 /\
+    IF   (*DEVICE ='BATCH')      /* DW1
+        AND (#DOING-PRIOR-YEAR)
+        AND (YEAR GT #PRIOR-YEAR)
+      ESCAPE BOTTOM
+    END-IF
+    CURRENT-RECORD-ISN := *ISN (0314)
+    FOR #I1 1 TO 2
+      IF   (#I1 = 2)
+        IF  (INT-TYPE NE  'E')
+            OR ((#I1 = 2) AND (GROSS-AMT = 0))
+          ESCAPE BOTTOM
+        END-IF
+      END-IF
+*
+      ADD 1 TO I
+*
+      IF I GT 18
+        ESCAPE BOTTOM
+      END-IF
+*
+      IF SSN-TAX-ID-IND = 'S'
+        MOVE EDITED SSN (EM=999-99-9999) TO #SCR-ID(I)
+      ELSE
+        IF SSN-TAX-ID-IND = 'T'
+          MOVE EDITED SSN (EM=99-9999999) TO #SCR-ID(I)
+        ELSE
+          MOVE EDITED SSN (EM=999999999) TO #SCR-ID(I)
+        END-IF
+      END-IF
+*
+      PERFORM GET-ADDR-NAME
+*
+      MOVE YEAR TO #SCR-YEAR(I)
+      IF #I1 = 2
+          OR (INT-TYPE =  'N')
+        MOVE EDITED GROSS-AMT (EM=ZZZZZZZZ9.99) TO #SCR-AMOUNT(I)
+      ELSE
+        MOVE EDITED AMOUNT (EM=ZZZZZZZZ9.99) TO #SCR-AMOUNT(I)
+      END-IF
+*
+      MOVE INT-TYPE TO #SCR-TYPE (I)
+      DECIDE ON FIRST VALUE OF INT-TYPE
+        VALUE 'M'
+          MOVE 'MEC' TO #SCR-TYPE-IND (I)
+          perform determine-M-distribution              /* vt4
+        VALUE 'A'
+          MOVE 'DTH' TO #SCR-TYPE-IND (I)
+          #distribution   := ' '                        /* vt4
+        VALUE 'I'
+          MOVE 'INT' TO #SCR-TYPE-IND (I)
+        VALUE 'C'
+          MOVE 'CSH' TO #SCR-TYPE-IND (I)
+          #distribution   := '7'                        /* vt4
+        VALUE '2'
+          MOVE 'EXC' TO #SCR-TYPE-IND (I)
+          #distribution   := '6'                        /* vt4
+        VALUE 'E'
+          MOVE 'ESC' TO #SCR-TYPE-IND (I)
+        VALUE 'D'
+          MOVE 'ANN' TO #SCR-TYPE-IND (I)
+        VALUE 'N'
+          MOVE 'ANR' TO #SCR-TYPE-IND (I)
+        VALUE 'P'
+          MOVE 'PEN' TO #SCR-TYPE-IND (I)
+        VALUE 'L'
+          MOVE 'LON' TO #SCR-TYPE-IND (I)
+          #distribution   := 'L'                        /* vt4
+        VALUE 'W'
+          MOVE 'LWO' TO #SCR-TYPE-IND (I)
+          #distribution   := ' '                        /* vt4
+        NONE VALUE
+          MOVE 'UNK' TO #SCR-TYPE-IND (I)
+          WRITE SSN-TAX-ID-IND 'Invalid type=' INT-TYPE
+      END-DECIDE
+*
+      IF   (I LE 18)                      /* DW1
+          AND (*DEVICE ='BATCH')
+        COMPUTE #WORK-NET-AMT = GROSS-AMT - AMOUNT
+        MOVE EDITED GROSS-AMT     (EM=ZZZZZZ9.99) TO #GROSS-AMT
+        MOVE EDITED AMOUNT        (EM=ZZZZZZ9.99) TO #TAX-AMT
+        MOVE EDITED #WORK-NET-AMT (EM=ZZZZZZ9.99) TO #NET-AMT
+*
+        MOVE LEFT #GROSS-AMT TO #GROSS-AMT
+        MOVE LEFT #NET-AMT   TO #NET-AMT
+        MOVE LEFT #TAX-AMT   TO #TAX-AMT
+*
+        IF (DATE-ENTERED = 0 )
+            and ( int-1099-v.int-type ne 'A'  )                    /* vt1
+          RESET #DATE-ENT-DISP
+        ELSE
+          if INT-1099-V.int-type = 'A'                             /* vt1 \/
+            move int-1099-v.FINAL-PAYMENT-DATE to #YYYYMMDD
+          else                                                     /* vt1 /\
+            MOVE DATE-ENTERED TO #YYYYMMDD
+          end-if                                                   /* vt1
+          COMPRESS #MM-A #DD-A #YYYY-A INTO #DATE-ENT-DISP WITH '/'
+        END-IF
+        IF BANKRUPTCY-IND = 'Y'
+          WRITE INT-1099-V.SSN '1099c with bankruptcy ind'
+        END-IF
+*
+        IF BANKRUPTCY-IND = 'Y'
+          WRITE INT-1099-V.SSN '1099c with bankruptcy ind'
+        END-IF
+*
+        COMPRESS YEAR
+          #TAB   SSN
+          #TAB   SSN-TAX-ID-IND
+          #TAB   RELATED-ID-NUMBER
+          #tab   int-1099-v.Policy-number             /* vt3
+          #TAB   INT-TYPE
+          #TAB   #SCR-TYPE-IND (I)
+          #TAB   #DISPLAY-NAME                       /* PM9      /* TT1 Deleted some commented lines
+          #TAB   INSURED
+          #TAB   NAME-2
+          #TAB   #GROSS-AMT
+          #TAB   #TAX-AMT
+          #TAB   #NET-AMT
+          #TAB   BANKRUPTCY-IND
+          #TAB   #DATE-ENT-DISP
+          #tab #Add-line-1      /* vt2
+          #tab #add-line-2      /* vt2
+          #tab #add-line-3      /* vt2
+          #tab #distribution    /* vt4
+          INTO #EXTRACT-RECORD LEAVING NO
+*
+        IF #DOING-PRIOR-YEAR
+          WRITE WORK 2 #EXTRACT-RECORD               /* DW1
+        ELSE
+          WRITE WORK 1 #EXTRACT-RECORD               /* DW1
+        END-IF
+      END-IF
+    END-FOR
+*
+    IF I GT 18
+      ESCAPE BOTTOM
+    END-IF
+  END-READ /* (0244)
+*
+  IF I LE 18
+    MOVE 'TS' TO #CGA-SCR-COMMAND
+    MOVE '** END OF DATA **' TO #SCR-MSG
+*
+    IF I LT 18
+      MOVE '** END OF DATA **' TO #SCR-NAME (I + 1)
+    END-IF
+  ELSE
+    MOVE 'PRESS ENTER FOR MORE TAX BENEFICIARIES' TO #SCR-MSG
+  END-IF
+*
+  MOVE INT-1099-V.YEAR      TO #S-YEAR
+  MOVE INT-1099-V.INT-TYPE  TO #S-INT-TYPE
+  IF INT-1099-V.SSN = #S-ID                           /* NG99
+    #S-ID := INT-1099-V.SSN + 1
+  ELSE
+    MOVE INT-1099-V.SSN TO #S-ID
+  END-IF
+*
+  IF *DEVICE NE 'BATCH'                                /* DW1
+    INPUT TEXT #SCR-MSG MARK *#S-KEY USING MAP 'C2920MTS'
+  END-IF
+
+  RESET #SCR-ID          (*)
+  RESET #SCR-NAME        (*)
+  RESET #SCR-YEAR        (*)
+  RESET #SCR-AMOUNT      (*)
+  RESET #SCR-TYPE-IND    (*)
+  RESET #SCR-TYPE        (*)
+  reset #distribution             /* vt4
+END-REPEAT /* (0312)
+*
+END-SUBROUTINE
+*
+DEFINE GET-ADDR-NAME
+/*     =============
+if int-1099-v.int-type = 'A'                                        /* vt1 \/
+  find (1) ct-v with contact-id = INT-1099-V.CLAIMANT-ID
+    if no escape bottom end-norec
+    move ct-v.ssn to #ssn
+  end-find
+
+  move '!Letter' to Letter                               /* bz-Name-C
+  CALLNAT 'GPRS0CNT' INT-1099-V.CLAIMANT-ID Letter
+
+  #display-name := letter
+  RESET #PDA-ADDRESS
+  #ADD-CONTACT-ID := int-1099-v.claimant-id
+  #ADD-TYPE       := PRIMARY
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+  #ZIP-CODE-DISP := DISPLAY-ZIP (< #ADD-ZIP-CODE >)
+  #CITY := #ADD-CITY
+  #STATE := #ADD-STATE
+  #STREET-L := #ADD-LINE-1
+  L := *LENGTH (#STREET-L)
+  IF L > 25
+    MOVE SUBSTR(#STREET-L,1,25) TO #STREET
+    L := L - 25
+    IF L > 25 L := 25 END-IF
+    MOVE SUBSTR ( #STREET-L,26,L) TO #STREET-2
+  ELSE
+    RESET #STREET-2
+    #STREET := #STREET-L
+  END-IF
+*
+  escape routine
+end-if                                                          /* vt1 /\
+*
+FIND (1) CT-V WITH SSN = INT-1099-V.SSN
+  IF NO RECORDS FOUND
+    GET A-INT-1099-OLD CURRENT-RECORD-ISN
+    #ZIP-CODE-DISP := DISPLAY-ZIP (< A-INT-1099-OLD.ZIP-CODE >)
+*
+    IF INT-1099-V.INT-TYPE = '2' OR = 'C' OR = 'L' OR = 'M' OR = 'W'
+      #FORMATTED-NAME := A-INT-1099-OLD.NAME
+      #DISPLAY-NAME   := FUNCTION-FORM-NAME(<#FORMATTED-NAME,' '>)
+    ELSE
+      if int-1099-v.int-type ne 'A'                               /* vt1
+        #DISPLAY-NAME   := A-INT-1099-OLD.NAME
+      end-if                                                      /* vt1
+    END-IF
+    #SCR-NAME(I)    := #DISPLAY-NAME
+*
+    #SPLIT := 'S'
+    CALLNAT 'GCTSTSXX'
+      #SPLIT
+      A-INT-1099-OLD.ADDR-1
+      A-INT-1099-OLD.ADDR-1-A
+      A-INT-1099-OLD.ADDR-2
+      #STREET
+      #STREET-2
+      #CITY
+      #STATE
+      #ERR-MSG
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  RESET #PDA-ADDRESS
+  #ADD-CONTACT-ID := CT-V.CONTACT-ID
+  #ADD-TYPE       := PRIMARY
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+  #ZIP-CODE-DISP := DISPLAY-ZIP (< #ADD-ZIP-CODE >)
+  #CITY := #ADD-CITY
+  #STATE := #ADD-STATE
+  #STREET-L := #ADD-LINE-1
+  L := *LENGTH (#STREET-L)
+  IF L > 25
+    MOVE SUBSTR(#STREET-L,1,25) TO #STREET
+    L := L - 25
+    IF L > 25 L := 25 END-IF
+    MOVE SUBSTR ( #STREET-L,26,L) TO #STREET-2
+  ELSE
+    RESET #STREET-2
+    #STREET := #STREET-L
+  END-IF
+*
+  IF INT-1099-V.INT-TYPE = '2' OR = 'C' OR = 'L' OR = 'M' OR = 'W' /* PM9
+    #FORMATTED-NAME := FUNCTION-CONTACT-NAME-3 (< CT-V.CONTACT-ID >)
+    #DISPLAY-NAME   := FUNCTION-FORM-NAME(<#FORMATTED-NAME,' '>)   /* PM9
+    #SCR-NAME(I)    := #DISPLAY-NAME
+  ELSE
+    if int-1099-v.int-type ne 'A'                               /* vt1                                                           /* PM9
+      #DISPLAY-NAME   := FUNCTION-CONTACT-NAME-3 (< CT-V.CONTACT-ID >)
+    end-if                                                    /* vt1
+  END-IF                                                          /* PM9
+
+END-FIND
+END-SUBROUTINE
+*
+*****************
+define subroutine get-death-records                       /* vt1 \/
+*****************
+RESET I
+#INT-TYPE := 'A'
+FIND INT-1099-V WITH YEAR-PAID-INT-TYPE = #YEAR-PAID-INT-TYPE
+    SORTED BY CLAIMANT-ID
+  IF INT-1099-V.CLAIMANT-ID = #PREVIOUS-CLAIMANT AND                   /* TT1 BEGIN
+      INT-1099-V.RELATED-ID-NUMBER = #PREVIOUS-RELATED-CN
+    ADD #PREVIOUS-GROSS   TO GROSS-AMT
+    ADD #PREVIOUS-TAX-AMT TO AMOUNT
+    ADD #PREVIOUS-NET-AMT TO #WORK-NET-AMT
+  ELSE
+    IF *DEVICE = 'BATCH'                             /* bz-2124
+      IF #PREVIOUS-RELATED-CN <> 0
+        IF #DOING-PRIOR-YEAR
+          WRITE WORK 2 #EXTRACT-RECORD
+        ELSE
+          WRITE WORK 1 #EXTRACT-RECORD
+        END-IF
+      END-IF
+    END-IF                                            /* bz-2124
+  END-IF                                                               /* TT1 END
+*
+  IF SSN-TAX-ID-IND = 'S'
+    MOVE EDITED SSN (EM=999-99-9999) TO #SSN
+  ELSE
+    IF SSN-TAX-ID-IND = 'T'
+      MOVE EDITED SSN (EM=99-9999999) TO #SSN
+    ELSE
+      if int-1099-v.int-type ne 'A'
+        MOVE EDITED SSN (EM=999999999) TO #SSN
+      end-if
+    END-IF
+  END-IF
+*
+  CURRENT-RECORD-ISN := *ISN (0591)
+  PERFORM GET-ADDR-NAME             /* #DISPLAY-NAME
+*
+  COMPUTE #WORK-NET-AMT = GROSS-AMT - AMOUNT
+  MOVE EDITED GROSS-AMT     (EM=ZZZZZZ9.99) TO #GROSS-AMT
+  MOVE EDITED AMOUNT        (EM=ZZZZZZ9.99) TO #TAX-AMT
+  MOVE EDITED #WORK-NET-AMT (EM=ZZZZZZ9.99) TO #NET-AMT
+  #PREVIOUS-GROSS   := GROSS-AMT                                    /* TT1
+  #PREVIOUS-TAX-AMT := AMOUNT                                       /* TT1
+  #PREVIOUS-NET-AMT := #WORK-NET-AMT                                /* TT1
+*
+  MOVE LEFT #GROSS-AMT TO #GROSS-AMT
+  MOVE LEFT #NET-AMT   TO #NET-AMT
+  MOVE LEFT #TAX-AMT   TO #TAX-AMT
+*
+  IF (DATE-ENTERED = 0 )
+      and ( int-1099-v.int-type ne 'A'  )                                 /* vt1
+    RESET #DATE-ENT-DISP
+  ELSE
+    if int-1099-v.int-type = 'A'
+      move int-1099-v.FINAL-PAYMENT-DATE to #yyyymmdd                     /* vt1
+    else
+      MOVE DATE-ENTERED TO #YYYYMMDD
+    end-if                                                                /* vt1
+    COMPRESS FULL #MM-A #DD-A #YYYY-A INTO #DATE-ENT-DISP WITH '/'  /* TT1
+  END-IF
+  IF BANKRUPTCY-IND = 'Y'
+    WRITE INT-1099-V.SSN '1099c with bankruptcy ind'
+  END-IF
+*
+*   IF INT-1099-V.CLAIMANT-ID = #PREVIOUS-CLAIMANT AND                 /* TT1 BEGIN
+*       INT-1099-V.RELATED-ID-NUMBER = #PREVIOUS-RELATED-CN
+*     ADD VAL(#GROSS-AMT) TO GROSS-AMT
+*     ADD VAL(#TAX-AMT) TO AMOUNT
+*     ADD VAL(#NET-AMT) TO #WORK-NET-AMT
+*   ELSE
+  #PREVIOUS-CLAIMANT    := INT-1099-V.CLAIMANT-ID
+  #PREVIOUS-RELATED-CN  := INT-1099-V.RELATED-ID-NUMBER
+  PERFORM WRITE-LINE
+*   IF *DEVICE NE 'BATCH'
+*     PERFORM TYPE-A-SHOW
+*     IF #CGA-SCR-COMMAND NE '*'
+*       ESCAPE ROUTINE    /* Processing is complete
+*     END-IF
+*   ELSE
+*   COMPRESS #YEAR-PAID
+*     #TAB   #SSN
+*     #TAB   SSN-TAX-ID-IND
+*     #TAB   RELATED-ID-NUMBER
+*     #TAB   INT-TYPE
+*     #TAB   'DTH'
+*     #TAB   #DISPLAY-NAME
+*     #TAB   INSURED
+*     #TAB   NAME-2
+*     #TAB   #GROSS-AMT
+*     #TAB   #TAX-AMT
+*     #TAB   #NET-AMT
+*     #TAB   BANKRUPTCY-IND
+*     #TAB   #DATE-ENT-DISP
+*     #tab   #add-line-1        /* vt2
+*     #tab   #add-line-2        /* vt2
+*     #tab   #add-line-3        /* vt2
+*     INTO #EXTRACT-RECORD LEAVING NO
+*   IF #DOING-PRIOR-YEAR
+*     WRITE WORK 2 #EXTRACT-RECORD
+*   ELSE
+*     WRITE WORK 1 #EXTRACT-RECORD
+*   END-IF
+*
+  at end of data                                    /* vt5 \/
+    IF #DOING-PRIOR-YEAR
+      WRITE WORK 2 #EXTRACT-RECORD
+    ELSE
+      WRITE WORK 1 #EXTRACT-RECORD
+    END-IF
+  end-enddata                                      /* vt5 /\
+*
+END-FIND
+*
+END-SUBROUTINE                                                    /* TT1 END
+*
+*****************
+DEFINE SUBROUTINE TYPE-A-SHOW
+*****************
+IF I GE 18
+  MOVE 'PRESS ENTER FOR MORE TAX BENEFICIARIES' TO #SCR-MSG
+  INPUT TEXT #SCR-MSG MARK *#S-KEY USING MAP 'C2920MTS'
+  RESET I
+    #SCR-ID          (*)
+    #SCR-NAME        (*)
+    #SCR-YEAR        (*)
+    #SCR-AMOUNT      (*)
+    #SCR-TYPE-IND    (*)
+    #SCR-TYPE        (*)
+    #distribution              /* vt4
+END-IF
+ADD 1 TO I
+MOVE #YEAR-PAID-YYYY TO #SCR-YEAR(I)
+MOVE EDITED INT-1099-V.AMOUNT (EM=ZZZZZZZZ9.99) TO #SCR-AMOUNT(I)
+MOVE INT-1099-V.INT-TYPE TO #SCR-TYPE (I)
+MOVE 'DTH'    TO #SCR-TYPE-IND (I)
+MOVE #DISPLAY-NAME TO #SCR-NAME(I)
+MOVE 'PRESS ENTER FOR MORE TAX BENEFICIARIES' TO #SCR-MSG
+*
+END-SUBROUTINE
+*
+****************************                      /* TT1 BEGIN
+DEFINE SUBROUTINE WRITE-LINE
+****************************
+COMPRESS #YEAR-PAID
+  #TAB   #SSN
+  #TAB   INT-1099-V.SSN-TAX-ID-IND
+  #TAB   INT-1099-V.RELATED-ID-NUMBER
+  #tab   int-1099-v.policy-number                    /* vt3
+  #TAB   INT-1099-V.INT-TYPE
+  #TAB   'DTH'
+  #TAB   #DISPLAY-NAME
+  #TAB   INT-1099-V.INSURED
+  #TAB   INT-1099-V.NAME-2
+  #TAB   #GROSS-AMT
+  #TAB   #TAX-AMT
+  #TAB   #NET-AMT
+  #TAB   INT-1099-V.BANKRUPTCY-IND
+  #TAB   #DATE-ENT-DISP
+  #tab   #add-line-1        /* vt2
+  #tab   #add-line-2        /* vt2
+  #tab   #add-line-3        /* vt2
+  #tab   #distribution      /* vt4
+  INTO #EXTRACT-RECORD LEAVING NO                 /* TT1 END
+**************
+END-SUBROUTINE
+**************
+*
+*****************
+DEFINE SUBROUTINE determine-M-distribution                    /* vt4 \/
+* *****************
+* *
+if INT-1099-V.claimant-id ne 0
+  find contact with contact-id = INT-1099-V.claimant-id
+    if no
+      escape bottom
+    end-norec
+    #claimant-dob := contact.date-of-birth
+  end-find
+  #claimant-age := INT-1099-V.date-entered-yyyymm - #claimant-dob-yyyymm
+  if #claimant-age  gt 5906
+    #distribution := '7'
+  else
+    #distribution := '1'
+  end-if
+end-if
+* *
+END-SUBROUTINE                                              /* vt4 /\
+*
+END

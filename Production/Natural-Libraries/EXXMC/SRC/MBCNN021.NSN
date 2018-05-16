@@ -1,0 +1,260 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center/ 'GetMemberProfilePayment' function - Part of MC-II Landing Page
+* Object name - MBCNN021 (No updates, View only)*
+* Returns: the earliest payment due-date/due-amount/policy number or "No payments due"
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11152010       Initial Creation for MC-II
+* YAK    03292017  YK1  EB&P III (Payor Project)
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+*
+LOCAL USING MBCLN021
+LOCAL USING WCCA0011
+LOCAL USING PARSER-X
+LOCAL USING GPRA006N
+LOCAL USING OBJLMB01
+LOCAL USING ERROR_L
+LOCAL
+1 ERROR-MESSAGE     (A100)
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML               (A) DYNAMIC
+1 #I                (I2)
+1 #II               (I2)
+1 #J                (I2)
+1 #JJ               (I2)
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value            (A) DYNAMIC
+*
+1 #TARGET-POLICY    (L)
+1 C@Own_Polices     (N2)
+1 #PREV-ID-NUMBER   (N6)
+1 #DUE-DATE         (N8)
+1 #AMOUNT           (N7.2)
+1 #PAST-DUE-DATE    (N8)
+1 REDEFINE #PAST-DUE-DATE
+  2 #PAST-DUE-YYYYMM     (N6)
+  2 #PAST-DUE-DD         (N2)
+*
+1 #TRUE            (A4) INIT <'true'>
+1 #FALSE           (A5) INIT <'false'>
+1 #ACTIVE          (A1) CONST <'A'>
+1 #ALOT            (A1) CONST <'G'>
+1 #SERVICE         (A) DYNAMIC CONST <'Service Plan'>
+1 #PAYABLE         (A3/2) CONST <'PSM','SAS'>
+1 #AMOUNT-DUE-TRAN (A4/6) CONST <'PREP','DUEP','FPFP','FPRP','PRNC','RIDP'>
+1 #AUTO-PAY        (A1/6) CONST <'0','1','2','4','E','G'>
+1 #TOTAL           (N7.2)
+1 #ServiceOnly     (L)
+1 #AutoPay         (L)
+1 #Owner          (N2) CONST <2>    /* YK1
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberProfilePayment'
+    Ignore
+  VALUE 'MemberProfilePayment/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      MemberProfilePayment.CN := VAL(#value)
+    END-IF
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS '<MemberProfilePayment>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '<CN>' MemberProfilePayment.CN '</CN>'
+  '<PaymentInformation>'
+  '<PolicyNumber>' MemberProfilePayment.PolicyNumber '</PolicyNumber>'
+  '<DueDate>' MemberProfilePayment.DueDate '</DueDate>'
+  '<DueAmount>' MemberProfilePayment.DueAmount '</DueAmount>'
+  '<PastDue>' MemberProfilePayment.PastDue '</PastDue>'
+  '</PaymentInformation>'
+  '</MemberProfilePayment>' INTO XML LEAVING NO
+RESPONSE-DATA := XML
+*
+END-SUBROUTINE
+*
+* calculate when payment considered past-due    YK1
+#PAST-DUE-DATE := *DATN
+#PAST-DUE-DD   := 1
+*
+* Business Logic
+PERFORM GET-POLICIES
+FOR #J = 1 TO C@Own_Polices
+  IF PARM-POLICIES.ID-NUMBER(#J) = #PREV-ID-NUMBER
+    ESCAPE TOP
+  END-IF
+  #PREV-ID-NUMBER := PARM-POLICIES.ID-NUMBER(#J)
+  PERFORM GET-PAYMENTS
+  PERFORM POPULATE-PAYMENT-DATA
+END-FOR
+PERFORM COMPOSE-XML
+*
+******************************
+DEFINE SUBROUTINE GET-POLICIES
+******************************
+* Call subprogram that returns all policy numbers this member owns
+PARM-CN := MemberProfilePayment.CN
+CALLNAT 'GPRN006N' PARM-CN PARM-MEMBER-CN PARM-POLICIES(*) #Owner             /* YK1
+C@Own_Polices := *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+*
+IF C@Own_Polices = 0 AND PARM-CN = PARM-MEMBER-CN
+  #ServiceOnly := true
+  PERFORM CHECK-SERVICES
+END-IF
+*
+IF C@Own_Polices = 0
+  #ErrorCode := #NO-POLICIES-OWN
+  PERFORM COMPOSE-XML
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CHECK-SERVICES
+********************************
+*
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = PARM-CN
+  ACCEPT IF SVC-MEMBER-V.SVC-PLAN = #PAYABLE(*)
+  IF SVC-STATUS = #ACTIVE
+    C@Own_Polices := C@Own_Polices + 1
+    EXPAND ARRAY PARM-POLICIES TO (*:C@Own_Polices)
+    PARM-POLICIES.ID-NUMBER(C@Own_Polices)     := PARM-CN
+    PARM-POLICIES.POLICY-NUMBER(C@Own_Polices) := #SERVICE
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE GET-PAYMENTS
+******************************
+* Get payments for the CN
+RESET CC-PAYMENT
+CC-PAYMENT.PARM-DATE := *DATN
+CC-PAYMENT.ID-NUMBER := PARM-POLICIES.ID-NUMBER(#J)
+CALLNAT 'WCCNCC11' CC-PAYMENT ERROR-MESSAGE
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-PAYMENT-DATA
+***************************************
+*
+FOR #I = 1 TO C@PAY-POLICY
+* Filter by owner
+  RESET #TARGET-POLICY
+  FOR #JJ = 1 TO C@Own_Polices
+    IF PARM-POLICIES.POLICY-NUMBER(#JJ) = CC-PAYMENT.POLICY-NBR(#I)
+        OR (CC-PAYMENT.POLICY-NBR(#I) = 'Service Plan'
+        AND CC-PAYMENT.ID-NUMBER = PARM-MEMBER-CN
+        AND PARM-MEMBER-CN = PARM-CN AND #ServiceOnly )
+      #TARGET-POLICY := TRUE
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+  IF NOT #TARGET-POLICY
+    ESCAPE TOP
+  END-IF
+*
+  IF MemberProfilePayment.PolicyNumber = ' '
+    MemberProfilePayment.PolicyNumber := POLICY-NBR(#I)
+  END-IF
+  FOR #II = 1 TO C@AVAILABLE-PAYMENT(#I)
+    IF (CC-PAYMENT.CC-PAYABLE(#I,#II)= 'T' OR (CC-PAYMENT.PAYMENT-MODE(#I,#II) = #ALOT AND CC-PAYMENT.DEFAULT-AMOUNT(#I,#II) <> 0))
+        AND (CC-PAYMENT.TRAN-TYPE(#I,#II) = #AMOUNT-DUE-TRAN(*))
+      #TOTAL := #TOTAL + CC-PAYMENT.DEFAULT-AMOUNT(#I,#II)
+      DECIDE FOR FIRST CONDITION
+        WHEN #DUE-DATE = CC-PAYMENT.PAID-TO-DATE(#I,#II) AND CC-PAYMENT.TRAN-TYPE(#I,#II) = 'PRNC'
+          #AMOUNT := #AMOUNT + CC-PAYMENT.DUE-AMOUNT(#I,#II)
+        WHEN (#DUE-DATE > CC-PAYMENT.PAID-TO-DATE(#I,#II) OR #DUE-DATE = 0) AND CC-PAYMENT.PAID-TO-DATE(#I,#II) <> 0
+          #DUE-DATE := CC-PAYMENT.PAID-TO-DATE(#I,#II)
+          #AMOUNT := CC-PAYMENT.DEFAULT-AMOUNT(#I,#II)
+        WHEN ANY
+          RESET #AutoPay
+          MemberProfilePayment.PolicyNumber := CC-PAYMENT.POLICY-NBR(#I)
+          IF CC-PAYMENT.PAYMENT-MODE(#I,#II) = #AUTO-PAY(*)
+            #AutoPay := true
+          END-IF
+        WHEN NONE
+          IGNORE
+      END-DECIDE
+    END-IF
+  END-FOR
+END-FOR
+IF #TOTAL <= 0
+  RESET MemberProfilePayment.PaymentInformation
+*  RESET MemberProfile.DueDate MemberProfilePayment.DueAmount MemberProfilePayment.PolicyNumber
+ELSE
+  IF #DUE-DATE <> 0
+    MemberProfilePayment.DueDate := FUNCTION-CALENDAR(<#DUE-DATE,'V'>)
+    COMPRESS 'Paid thru' MemberProfilePayment.DueDate INTO MemberProfilePayment.DueDate
+  END-IF
+  MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO MemberProfilePayment.DueAmount
+  MemberProfilePayment.DueAmount := *TRIM(MemberProfilePayment.DueAmount)
+  COMPRESS '$' MemberProfilePayment.DueAmount INTO MemberProfilePayment.DueAmount LEAVING NO
+  IF #AutoPay
+    COMPRESS MemberProfilePayment.DueDate 'Automatic Payment Scheduled' INTO MemberProfilePayment.DueDate
+  END-IF
+END-IF
+IF #DUE-DATE <> 0 AND #DUE-DATE < #PAST-DUE-DATE
+  MemberProfilePayment.PastDue := #TRUE
+ELSE
+  MemberProfilePayment.PastDue := #FALSE
+END-IF
+END-SUBROUTINE
+*
+END

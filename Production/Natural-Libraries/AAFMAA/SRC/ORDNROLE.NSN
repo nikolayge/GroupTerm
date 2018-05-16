@@ -1,0 +1,328 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram ORDNROLE.
+/**
+/** :author nguentchev
+*     <PrimaryBD><![CDATA[]]></PrimaryBD>       --> DesignationUpdate.PrimaryBD
+*     <ContingentBD><![CDATA[]]></ContingentBD> --> DesignationUpdate.ContingentBD
+*     <PrimaryBDType></PrimaryBDType>           --> DesignationUpdate.PrimaryType        : BENE-TYPE
+*     <PrimaryBDShare></PrimaryBDShare>         --> DesignationUpdate.PrimaryShareType   : BENE-SHARE-TYPE
+*     <ContingentBDType></ContingentBDType>     --> DesignationUpdate.ContingentType     : BENE-TYPE
+*     <ContingentBDShare></ContingentBDShare>   --> DesignationUpdate.ContingentShareType: BENE-SHARE-TYPE
+DEFINE DATA
+PARAMETER
+1 #AT-NUMBER     (N6)
+1 #POLICY-NUMBER (A16)
+1 #CONTACT-ID    (N8)
+1 #CGA-CLERK     (A3)
+1 #ISSUE-DATE    (N8)
+1 #ID-NUMBER     (N6)
+
+LOCAL USING POSADSGN
+LOCAL USING POSL0002
+LOCAL USING POSLROLE
+LOCAL USING OBJLGENT
+LOCAL USING OBJLUSER
+LOCAL
+1 BLANK  (A1) CONST <' '>
+1 APPLCTN-REQ (I4) CONST  <15>
+1 CONTACT-REL VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+1 APR-V VIEW OF A-APPL-ROLES
+  2 ADD-USER (A8)
+  2 ADD-DATE (N8.0)
+  2 ADD-TIME (N7.0)
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8.0)
+  2 LAST-UPD-TIME (N7.0)
+  2 AT-GUID (A50)
+  2 CONTACT-GUID (A50)
+  2 CC-GUID      (A50)
+  2 RELATION-ROLE (N2.0)
+  2 BENE-RESTRICTED (A1)
+  2 BENE-PERCENT (A10)
+  2 BENE-SETTLEMENT (A1)
+  2 SETTLEMENT-TYPE (A1)
+  2 ALL-CHILDREN (A1)
+  2 CONTACT-ID   (N8)
+  2 RELATION-INSURED (A20)
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 INTRO-FLAG
+  2 AT-GUID (A50)
+1 CNT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID  (N8)
+  2 ID-NUMBER   (N6)
+1 #CLERK-KEY       (A7) INIT <'WEBU'>
+1 #ADD             (I4) CONST <1>
+1 #MSG             (A) DYNAMIC
+1 #DESIGNATION-ISN (N8)
+1 PDNumber         (i4)
+1 CDNumber         (i4)
+1 #relationship    (a1)
+1 OWNER-CONTACT-ID   (N8)
+1 OWNER-CN           (N6)
+1 PAYER-CONTACT-ID   (N8)
+1 PAYER-CN           (N6)
+1 INSURED-CONTACT-ID (N8)
+1 #FOUND             (L)
+
+1 #DESIGNATION-ID (N8)
+1 #INSURED-CI     (N8)
+1 #POLICY-ID      (A16)
+
+1 CCSageGuid     (A32)
+1 #CC-MODE       (A1/4) CONST <'0','4','2','1'>
+1 J   (I2)
+1 ST-V VIEW OF A-STATUS
+  2 LINKED-CN (9)
+  2 C*ACTIVE-SEGMENTS (I2)
+  2 POLICY-ID (9)
+  2 MODE      (9)
+END-DEFINE
+/*
+RESET PC-V
+PC-V.ADD-DATE := PC-V.LAST-UPD-DATE := #ISSUE-DATE
+PC-V.ADD-TIME := PC-V.LAST-UPD-TIME := *TIMN
+PC-V.POLICY-NUMBER := #POLICY-NUMBER
+
+RESET INITIAL #CLERK-KEY
+COMPRESS #CLERK-KEY #CGA-CLERK INTO #CLERK-KEY LEAVING NO
+FIND(1) GEN-TABLE-V WITH SEC-KEY = #CLERK-KEY
+  FIND(1) USER-V WITH CLERK-ID = GEN-SUB-KEY
+    PC-V.ADD-USER := PC-V.LAST-UPD-USER := USER-V.TERMINAL-ID
+  END-FIND
+END-FIND
+/*
+FIND (1) AT-V WITH ID-NUMBER = #AT-NUMBER
+/* Pass Approved status to CRM
+  CALLNAT 'LWSNSRV' APPLCTN-REQ
+    #INSURED-CI
+    #POLICY-ID
+    #AT-NUMBER
+    #DESIGNATION-ID
+    #MSG
+/* Check if it is an old Application
+  FIND (1) APR-V WITH AT-GUID = AT-V.AT-GUID
+    IF NO RECORDS FOUND
+      PC-V.REFERENCE-NUMBER   := #ID-NUMBER
+      PC-V.CONTACT-ID := #CONTACT-ID
+      PC-V.RELATION := InsuredRole
+      STORE PC-V
+
+      IF AT-V.INTRO-FLAG = 'S' OR ='K' OR = 'G'
+        FIND (1) ST-V WITH ID-NUMBER = #ID-NUMBER
+          PC-V.REFERENCE-NUMBER   := ST-V.LINKED-CN(1)
+          PC-V.CONTACT-ID := F-GET-CONTACT-ID(<PC-V.REFERENCE-NUMBER>)
+          PC-V.RELATION := LinkedMember
+        END-FIND
+      ELSE
+        PC-V.REFERENCE-NUMBER   := #ID-NUMBER
+        PC-V.CONTACT-ID := #CONTACT-ID
+        PC-V.RELATION := MemberRole
+      END-IF
+      STORE PC-V
+      ESCAPE ROUTINE
+    END-NOREC
+  END-FIND
+
+END-FIND
+/*
+RESET #DSGN
+  PDNumber
+  CDNumber
+#DSGN.STATUS-CODE  := 'N' /* 'F'
+#DSGN.ALL-CHILDREN := 'N'
+#DSGN.DESIGNATION-ID := GET-DSGN-ID (< >)
+MOVE 'CRM' TO #DSGN.ADD-USER /*  Last update data
+/* Create Designation
+CALLNAT 'POSN0011' #ADD #MSG #DESIGNATION-ISN #DSGN
+/*
+RESET
+  OWNER-CONTACT-ID
+  PAYER-CONTACT-ID
+  INSURED-CONTACT-ID
+FIND APR-V WITH AT-GUID = AT-V.AT-GUID  /* CRM application roles
+  IF APR-V.CONTACT-ID > 0
+    FIND (1) CNT-V WITH CONTACT-ID = APR-V.CONTACT-ID
+      IF NO RECORDS FOUND
+        ESCAPE BOTTOM
+      END-NOREC
+      PERFORM CREATE-ROLE
+      PERFORM CONTACT-ROLE
+    END-FIND
+  ELSE
+    FIND (1) CNT-V WITH CRM-CONTACT-GUI = APR-V.CONTACT-GUID
+      IF NO RECORDS FOUND
+        ESCAPE BOTTOM
+      END-NOREC
+      PERFORM CREATE-ROLE
+      PERFORM CONTACT-ROLE
+    END-FIND
+  END-IF
+END-FIND
+
+IF PAYER-CONTACT-ID = 0  /* Create Payer = Owner
+    AND OWNER-CONTACT-ID > 0
+  PC-V.RELATION := PayorRole
+  PC-V.CONTACT-ID := OWNER-CONTACT-ID
+  PC-V.REFERENCE-NUMBER := OWNER-CN
+  reset PC-V.DESIGNATION-ID
+  STORE PC-V
+  PAYER-CONTACT-ID := OWNER-CONTACT-ID
+  PAYER-CN := OWNER-CN
+END-IF
+*
+IF PAYER-CONTACT-ID NE INSURED-CONTACT-ID
+/* Copy CC from insured to Payer
+  FIND (1) ST-V WITH ID-NUMBER = #ID-NUMBER
+    FOR J 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.POLICY-ID (J) = #POLICY-NUMBER
+          AND ST-V.MODE (J) = #CC-MODE (*)
+        CALLNAT 'ORDNCPCC'
+          #ID-NUMBER
+          PAYER-CN
+          #POLICY-NUMBER
+          CCSageGuid
+          #MSG
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+END-IF
+
+IF CDNumber = 0 AND PDNumber = 0  /* No bene ESTATE option
+/* Create Unformated Bene (Relation code = 6) and Bene-Type = F
+  PC-V.DESIGNATION-ID := #DSGN.DESIGNATION-ID
+  PC-V.RELATION       := 6 /* Primary unformated
+  PC-V.BENE-TYPE      := 'F'
+  PC-V.REFERENCE-NUMBER := #ID-NUMBER
+  RESET PC-V.CONTACT-ID
+  STORE PC-V
+END-IF
+/*     -----------
+DEFINE CREATE-ROLE
+/*     -----------
+PC-V.RELATION         := APR-V.RELATION-ROLE
+PC-V.REFERENCE-NUMBER := #ID-NUMBER
+PC-V.SETTLEMENT-TYPE  := APR-V.SETTLEMENT-TYPE
+PC-V.BENE-FRACTION    := APR-V.BENE-PERCENT
+
+IF PC-V.RELATION EQ InsuredRole
+  INSURED-CONTACT-ID := CNT-V.CONTACT-ID
+END-IF
+
+IF PC-V.RELATION EQ PrimaryBene OR= ContingentBene
+  PC-V.DESIGNATION-ID := #DSGN.DESIGNATION-ID
+ELSE
+  RESET PC-V.DESIGNATION-ID
+END-IF
+IF PC-V.RELATION EQ PrimaryBene
+  ADD 1 TO PDNumber
+  PC-V.BENE-TYPE := 'B'
+  PC-V.BENE-SHARE-TYPE := 'S'
+  PC-V.BENE-FRACTION := APR-V.BENE-PERCENT
+  IF PC-V.BENE-FRACTION = BLANK
+    PC-V.BENE-FRACTION := '100%'
+  END-IF
+END-IF
+IF PC-V.RELATION EQ ContingentBene
+  ADD 1 TO CDNumber
+  PC-V.BENE-TYPE := 'B'
+  PC-V.BENE-SHARE-TYPE := 'S'
+  IF PC-V.BENE-FRACTION = BLANK
+    PC-V.BENE-FRACTION := '100%'
+  END-IF
+END-IF
+
+IF PC-V.RELATION EQ PrimaryOwner
+  OWNER-CONTACT-ID := CNT-V.CONTACT-ID
+  OWNER-CN := CNT-V.ID-NUMBER
+  IF OWNER-CONTACT-ID > 0 /* Create owner CN
+      AND OWNER-CONTACT-ID NE INSURED-CONTACT-ID
+      AND OWNER-CN = 0
+    CALLNAT 'C2002NNM'
+      OWNER-CONTACT-ID
+      OWNER-CN
+      #MSG
+  END-IF
+  PC-V.REFERENCE-NUMBER := OWNER-CN
+END-IF
+
+IF PC-V.RELATION EQ PayorRole
+  PAYER-CONTACT-ID := CNT-V.CONTACT-ID
+  PAYER-CN := CNT-V.ID-NUMBER
+  PC-V.REFERENCE-NUMBER := PAYER-CN
+END-IF
+
+IF PC-V.RELATION EQ MemberRole
+  PC-V.REFERENCE-NUMBER := CNT-V.ID-NUMBER
+END-IF
+
+IF PC-V.RELATION EQ InsuredRole
+  CCSageGuid := APR-V.CC-GUID
+end-if
+
+PC-V.CONTACT-ID := CNT-V.CONTACT-ID
+STORE PC-V
+
+END-SUBROUTINE
+/*     ------------
+DEFINE CONTACT-ROLE
+/*     ------------
+*   Spouse = 'S',
+*   Grandchild = 'G',
+*   Relative = 'R',
+*   Parent = 'P',
+
+reset #relationship
+  #FOUND
+DECIDE ON FIRST VALUE OF APR-V.RELATION-INSURED
+  VALUE 'Child' #relationship := 'K'
+  VALUE 'Stepchild' #relationship := 'D'
+  VALUE 'Sibling' #relationship := 'B'
+  VALUE 'Grandparent' #relationship := 'H'
+  VALUE 'Former Spouse' #relationship := 'X'
+  VALUE 'Self' reset #relationship
+  none value
+    move substr(APR-V.RELATION-INSURED,1,1) to #relationship
+END-DECIDE
+
+IF #relationship NE BLANK
+  FIND CONTACT-REL with CONTACT-2-ID = CNT-V.CONTACT-ID
+      AND CONTACT-1-ID = INSURED-CONTACT-ID
+*    IF CONTACT-REL.ROLE-2-CD = #relationship
+    #FOUND := TRUE
+    ESCAPE BOTTOM
+*    END-IF
+  END-FIND
+ELSE
+  ESCAPE ROUTINE
+END-IF
+
+IF NOT #FOUND
+  CONTACT-REL.CONTACT-1-ID := INSURED-CONTACT-ID
+  CONTACT-REL.CONTACT-2-ID := CNT-V.CONTACT-ID
+  CONTACT-REL.ROLE-2-CD := #relationship
+  DECIDE ON FIRST VALUE OF #relationship
+    VALUE 'S' CONTACT-REL.ROLE-1-CD := 'S'
+    VALUE 'K' CONTACT-REL.ROLE-1-CD := 'P'
+    VALUE 'D' CONTACT-REL.ROLE-1-CD := 'P'
+    VALUE 'G' CONTACT-REL.ROLE-1-CD := 'H'
+    VALUE 'B' CONTACT-REL.ROLE-1-CD := 'M'
+    VALUE 'R' CONTACT-REL.ROLE-1-CD := 'M'
+    VALUE 'H' CONTACT-REL.ROLE-1-CD := 'G'
+    VALUE 'P' CONTACT-REL.ROLE-1-CD := 'K'
+    none value
+      CONTACT-REL.ROLE-1-CD := 'M'
+  END-DECIDE
+  STORE CONTACT-REL
+END-IF
+END-SUBROUTINE
+
+END

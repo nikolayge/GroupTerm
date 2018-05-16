@@ -1,0 +1,2837 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 2
+* <Natural Source Header
+* PGM-ID: C2320PCI * PAYMENT CALCULATIONS *
+*****************************************************************************
+*            MODIFICATION LOG
+* USER DATE     TAG  REASON
+* PAM  03112005 PM1  Reset display fields for GRANKSXX
+* DRW  04202005 DW2  Use best of CSV & TPP on each line
+* DRW  05162005 DW3  Use correct sign for pron * int on a lapo
+* PAM  06292005 PM4  Use CSV when FPF is GT $0
+* PAM  09232005 PM5  Added replacement policy resignations
+* DRW  12212005 DW6  No Aggregate if only 1 policy (later removed)
+* DRW  03052007 DW7  Modify Death Prem ADJUST for old/new policies (MBW)
+* DRW  11172007 DW8  Storage field for TOT EARNED-INT
+* DRW 11/23/2007 DW9 Fix Index's for BY-POL Accums
+* YAK 12/05/2007 YK1   Remove hardcording for interest rates
+*                        (Read GEN-TABLE through OBJNGENT)
+* YAK 02/05/2008 YK2  Change code to use FUNCTION-INT-RATE
+*                         to get rate from GEN-TABLE
+* DRW 02/20/2008 DW10 Add ANNU Processing
+* DRW 04/07/2008 DW11 Add #LAPO indicator to linkage to C2316PCI
+* DRW 05/21/2008 DW12 Add Addl linkage to C2316PCI used in AM CMB5
+* DRW 05/28/2008 DW13 Fix call to RE Suffix NC and AD NUR
+* DRW 06/05/2008 DW14 Add #DID-REIN to C2316PCI linkage
+* DRW 06/13/2008 DW15 Fix Acc Int calc on Deads with multiple loans
+* PAM 08/24/2009 PM16 Replaced LAPC letter text with function
+* PAM 08/16/2010 PM17 Added calculation date to RE screen
+* BZ  09/16/2010 bz1  (--db) Print death claims report  ( cont.  09/29 )
+* PAM 10/06/2010 PM18 Adjusted escape logic
+* VXT 10/28/2011 vt1  Remove the $1.01 rule for accrued interest in
+*                      CALC-TOTAL-CHECK subroutine.
+* vxt 02/29/2012 vt2  add #did-coll when make a call to c2316PCI program
+* YAK 10/03/2012 YK3  Use function to identify Level Term II plans
+* YAK 10/03/2012 YK4  Add Accelerated Death benefit processing
+* YAK 05/13/2013 YK5  Add #DID-DEAD when calling C2316PCI
+*                     Eliminate multiple calls to *DATN - use #DATN variable
+* bz  06/09/2013      Rebranding (Search for AAFMAA)
+* YAK 05/10/2013 YK6  Correct calculation when resign or CSV policy:
+*                     Include and clear Debit/Credit & Term Refund with the last policy
+*                     Correct calculation for premium refund of Whole Life policies (DEAD transaction)
+*                     Include Billing Adj. & FPF when applicable
+* YAK 12/31/2013 YK7  Correct Premium refund logic for Whole Life Death benefit calculation
+* TMT 01/04/2014 TT1  1 MILLION DOLLAR STABILITY PROJECT
+* vxt 01/17/2014 vt3  /Ticket 2509/
+* TMT 06/16/2014 TT2  Contact Normalization - DOB and Sex
+* vxt 07/29/2014 vt4  /Ticket 2758/
+* TMT 10/27/2014 TT3  AL Harmonization
+* vxt 03/19/2015 vt5  fix the 1305 error in Production /Ticket 3418/
+* NGG 10/05/2015 NG1  Policy Ownership
+* vxt 10/23/2015 vt6  /Ticket 3958/
+* vxt 11/19/2015 vt7  /Ticket 4028/
+* vxt 10/19/2016 vt8  /Ticket-4335/
+* vxt 12/21/2016 vt9  /Ticket 2122/ multiple CSV
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital
+* vxt 11/17/2017 vt10 /Ticket 6515/ Fix 1305 error
+* vxt 01/05/2018 vt11 /Ticket HD-6599/ partial CSV fix
+* vxt 03/26/2018 vt12 /Ticket 8270 /
+* vxt 04/09/2018 vt13 /Ticket 8422/
+* vxt 04/27/2018 vt14 /Ticket 8750 /
+*****************************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.CI-BLOCK
+LOCAL USING G3500AAD
+LOCAL USING C2320LCI
+LOCAL USING C2500AAM /* SCREEN FIELDS    /* DW12
+LOCAL USING GONERLXX
+LOCAL USING CONTPDA1      /* TT2
+LOCAL
+1 #POLICY-NUMBER   (A16)  /* NG1
+1 #UNKNOWN         (A7) CONST <'UNKNOWN'>
+1 Salute           (A) DYNAMIC
+*
+* 1 #CURR-VAR-INT-RATE (N2.3) INIT <8.10>      /* YK1
+1 #CURR-VAR-INT-RATE (N2.3)                    /* YK1
+*
+1 #TOTAL-EARNED-INT    (N7.2)    /* DW8
+1 #LX                (I2)          /* DW12
+1 #TIME-OF-UPDATE    (N7)
+*
+1 #NUM-DEAD   (N3)
+1 #POL-X      (I2)
+1 #CSV-ON-AL  (L)
+1 #CSV-TO-USE (P7.2) /* DW2
+1 #CSV-TO-USE-2 (P7.2) /* DW2
+1 #OVERLOANED    (N7.2)    /* YK6
+1 #OWNER-SSN (N9)
+1 #COMP-1035  (A50)
+1 #NET-BENEFIT  (P7.2)
+1 #SEG-I     (I2)
+1 #NEW-WAY   (L)
+1 #DID-DB-CR (L)
+1 #DONE (L/9)
+1 #DB-BY-POL     (P9.2/9)
+1 #CSV-BY-POL    (P9.2/9)
+1 #DB-CR-BY-POL  (P9.2/9)
+1 #ISS-DT-BY-POL (N8/9)
+1 #LOAN-BY-POL   (P6.2/9)
+1 #INT-BY-POL    (P7.2/9)
+1 #PREM-ADJ-BY-POL (P6.2/9)
+1 #CAP-INT-BY-POL (P5.2/9)
+1 #CK-BY-POL     (P7.2/9)
+*
+1 #TOT-BADJ     (P5.2)
+1 #TOT-PREMS-PAID-CVEX  (P7.2)
+1 #TOT-TAXABLE-INC-CVEX (P7.2)
+1 #CAP-LOAN-MONS   (N3)
+1 #CAP-CSV-MONS    (N3)
+1 #CAP-REMAIN-MONS (N3)
+1 #SUFFIX          (A3)
+1 #MAX-7-PAY   (P6.2)
+1 #MEC-PREMS-PAID-TO-DATE (P7.2)                   /* TT1
+1 #EXCEEDS-MEC (P7.2)                              /* TT1
+1 #1035-NX     (A60)
+1 #1035-EXCH-AMT  (P6.2)
+1 #LUMP-PMT  (P6.2) /* PM - chg from 5.2 02/10/05
+1 #CURR-COST-BASIS (P7.2)
+1 #TAXABLE-INC  (P7.2)                              /* vt10 11/17/2017 was p6.2
+*
+1 #TOT-FIX-LOAN-AMT (P5.2)
+1 #TOT-VAR-LOAN-AMT (P7.2)
+1 #TOT-CAP-AMT      (P5.2)
+1 #TOT-DB-ACC-INT   (P5.2)
+1 #INTEREST-RATE    (P2.3)
+1 #I4   (I2)
+1 #PREV-ACV  (P7.2)
+1 #NEW-ACV   (P7.2)
+1 #ACV-DIFF  (P7.2)
+1 #REAL-PREM (N6.2)
+*
+1 #WL    (L)
+1 #PLAN (A3)
+1 REDEFINE #PLAN
+  2 #PLAN-A1  (A1)
+  2 #PLAN-A2  (A2)
+*
+1 #NET-DB     (P9.2)
+1 #EARNED-INT (P9.2)
+1 #TOT-EARNED-INT (P9.2)
+1 #FINAL-DB   (P9.2)
+*
+1 #WORK-CAP-CONV-ACV (P9.2)
+1 #CAP-LOAN-END-DATE (N8)
+1 #CAP-CONV-ACV (P7.2)
+*
+1 #TERM-TEXT     (A30/8)
+1 #PREM-LBL      (A14) INIT <'PREMS OVERPAID'>
+1 #PREM-2-LBL    (A13) INIT <'PLUS PREMIUMS'>
+1 #TOT-NEW-ALOT  (P5.2)
+1 #CERTS      (A12) INIT <'Certificate'>
+1 #CHECKS     (A6)  INIT <'check'>
+1 #STUBS      (A6)  INIT <'STUB.'>
+1 #CVEX-NAME  (A50)
+1 #CVEX-X     (I2)
+1 #CVEX-SEQ   (P3)
+1 #NUM-CVEX   (P3)
+1 #HIS-HER    (A3) INIT <'his'>
+1 #TERMED-POLS   (A60)
+1 #CVEX-TERMED-POLS (A50)
+1 #CLERK-ID   (A3)
+1 #NEXT-YYYY  (N4)
+1 #RPU-NAME   (A35)
+1 #FIRST-MID  (A25)
+1 #XTRA-1     (A35)
+1 #XTRA-2     (A35)
+1 #XTRA-3     (A35)
+1 #XTRA-4     (A35)
+*
+1 #SCR-TAX-1035-LBL1   (A25)
+1 #SCR-TAX-1035-LBL2   (A15)
+1 #SCR-TAX-INC-LABEL   (A18)
+1 #WK-PREM-FIN-TOTAL   (P6.2)
+1 #WK-PREM-PD-FIN-TOTAL (P6.2)
+*
+1 #SCR-BENIFIC  (A60) INIT <'________________________________________'>
+1 #SCR-BENIFIC-2 (A60)
+1 #SCR-BENIFIC-3 (A60)
+1 #SCR-YES-NO-1 (A14) INIT <'YES ( ) NO ( )'>
+1 #SCR-CHK-NO   (A15) INIT <'#______________'>
+1 #SCR-DT-PD    (A11) INIT <'___________'>
+*
+1 #FACE-DISP   (A8)
+1 #AMT-DISP    (A11)
+1 #SPLIT       (L)
+1 #TOT-FACE-TERMED (N7.2)
+1 #NUM-POLS        (N1)
+*
+1 #SUB-CASH-VALUE (P7.2)
+1 #PREMS-PAID--   (A1)
+*****1 #cost-basis--   (a1)             /* vt13
+1 #TAXABLE-INCOME (P7.2)
+1 #TOTAL-CHECK    (P7.2)
+1 #TOTAL-CHECK--  (A1)
+1 #TOT-TI-RESET  (P6.2)
+1 #PRIN-INT       (P6.2)
+1 #PRIN-DISP      (A11)
+1 #INT-DISP       (A11)
+1 #TOT-DISP       (A11)
+*
+1 #PREM-REFUND   (P6.2)
+1 #PREM-DUE      (P6.2)
+1 #PREM-DUE--    (A1)
+1 #NET-PREM-CALC (P5.2)
+1 #NET-PREM      (P5.2)
+1 #NET-PREM--    (A1)
+1 #NET-PREM-2    (P5.2)
+1 #NET-PREM-2--  (A1)
+1 #NET-PREM-W-O-DB-CR  (P5.2)
+1 #DB-CR          (P7.2)
+1 #DB-CR--        (A1)
+1 #DEATH-BENEFIT  (P9.2)
+1 #DEATH-BENEFIT-X (P9.2)
+*
+1 #LOAN-PRIN-5     (P7.2)        /* vt5 was p5.2
+1 #LOAN-PRIN       (P7.2)
+1 #loan-prin-abs   (p7.2)        /* vt5
+1 #LOAN-PRIN--     (A1)
+1 #ACC-INT-TO-DEATH  (P5.2)
+1 #ACC-INT-TO-DEATH-- (A1)
+1 #ADDED-INT     (P7.2)
+1 #ACC-INT       (P5.2)
+1 #ACC-INT--     (A1)
+1 #CAP-INT       (P5.2)
+1 #NUM-TERMED    (P2)
+1 #RPU-MMDDYYYY  (A10)
+1 #ISS-MMDDYYYY  (A10)
+1 #TOD-MMDDYYYY  (A11)
+1 #TOD-DISP      (A15) /* "12 FEB 2001"      /* PM16
+1 #RPU-X         (I2)
+1 #RPU-TEXT     (A78/16)
+1 REDEFINE #RPU-TEXT
+  2 #RPU-TEXT-OCC     (16)
+    3 #RPU-TEXT-FILL  (A50)
+    3 #RPU-TEXT-DOL   (A1)
+    3 #RPU-TEXT-AMT   (A9)
+    3 #RPU-TEXT-REST  (A18)
+1 #MODE-G     (L)
+1 #MEC        (L)
+1 #NON-MEC    (L)
+1 #TOT-RPU-DB (P9.2)
+1 #RPU-NXT-YR (P4)
+1 #RPU-LOAN   (P7.2)
+1 #RPU-NEW-COV-DISP (A11)
+1 #RPU-LOAN-DISP   (A10)
+1 #RPU-EXCEED-DISP (A11)
+1 #RPU-1099        (A7)
+1 #CORR-MSG (A50) CONST<'This correspondence has been prepared for '
+  -'you by:'>
+1 #CLERK-ABB-PASS  (A3)
+1 #INVALID   (L)
+1 #CLERK-ABB-NAME-PASS (A20)
+1 #TOTAL-DEATH-BENEFIT (P9.2)
+1 #TOTAL-DEATH-BENE-2  (P9.2)
+1 #TOTAL-INTEREST      (P5.2)
+1 #DAILY-INT       (P3.7)
+1 #DAILY-INT-2     (P3.7)
+1 #DAYS-IN-MONTH   (P2)
+1 #ACCUM-DAYS      (P5)
+1 #ACCUM-DAYS-2    (P5)
+*
+1 #DOD-YYYYMMDD  (N8)
+1 REDEFINE #DOD-YYYYMMDD
+  2 #DOD-YYYY     (N4)
+  2 #DOD-MM       (N2)
+  2 #DOD-DD       (N2)
+1 REDEFINE #DOD-YYYYMMDD
+  2 #DOD-YYYYMM    (N6)
+  2 #DOD-FILL      (N2)
+*
+1 #FREQ           (N2)
+1 #NUM-OF-MONTHS  (N3)
+1 #WORK-MONTH     (N2)
+1 #NUM-MONS-DIFF  (N3)
+1 #NUM-MODES-DIFF (N3)
+1 #MODAL-PREM     (P5.2)
+*
+1 #TEXT      (A65)
+1 #WORK-YYYYMM (N6)
+1 REDEFINE #WORK-YYYYMM
+  2 #WORK-YYYY  (N4)
+  2 #WORK-MM    (N2)
+*
+1 #DID-DEAD  (L)
+1 #DID-CSV   (L)
+1 #DID-RSGN  (L)
+1 #DID-RPU   (L)
+1 #DID-LAPO  (L)
+1 #DID-LAPN  (L)
+1 #DID-LAPS  (L)
+1 #DID-LAPC  (L)
+1 #DID-REIN  (L)    /* DW14
+1 #DID-COLL  (L)    /* vt2
+1 #DID-ACDB  (L)    /* YK4
+1 #THIS-IS-PMT-MONTH (L)
+1 #CSV-EXCH  (L)
+1 #FND-MATCH (L)
+1 #I2        (I2)
+1 #I3        (I2)
+1 #HOLD-I2   (I2)
+1 #MATCH-X  (I2)
+*
+1 #PREM-PMT-MONTHS (N2/4)
+*
+1 #KEY-1099     (A14)
+1 REDEFINE #KEY-1099
+  2 #KEY-1099-YYYY (N4)
+  2 #KEY-1099-ID   (A1)
+  2 #KEY-1099-SSN  (N9)
+*
+1 #WYYYYMMDD-TOD  (N8)
+1 REDEFINE #WYYYYMMDD-TOD
+  2 #WYYYY-TOD (N4)
+  2 #WMM-TOD   (N2)
+  2 #WDD-TOD   (N2)
+1 REDEFINE #WYYYYMMDD-TOD
+  2 #WYYYYMM-TOD  (N6)
+  2 #W-DAY-TOD    (N2)
+*
+1 #YYYYMMDD (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY (N4)
+    3 #MM   (N2)
+  2 #DD    (N2)
+*
+1 #WYYYYMMDD-DOD  (N8)
+1 REDEFINE #WYYYYMMDD-DOD
+  2 #WYYYY-DOD  (N4)
+  2 #WMM-DOD    (N2)
+  2 #WDD-DOD    (N2)
+1 REDEFINE #WYYYYMMDD-DOD
+  2 #WYYYYMM-DOD (N6)
+  2 #W-DAY-DOD   (N2)
+*
+1 #WYYYYMMDD-ISS  (N8)
+1 REDEFINE #WYYYYMMDD-ISS
+  2 #WYYYY-ISS    (N4)
+  2 #WMM-ISS  (N2)
+  2 #WDD-ISS  (N2)
+*
+1 #START-KEY  (N15)
+1 REDEFINE #START-KEY
+  2 #START-ID        (N6)
+  2 #START-ISSUE     (N8)
+  2 #START-SPLIT-IND (N1)
+*
+1 #PASSED-INFO-G1
+  2 #PASSED-LOAN-INT-TBL   (9)
+    3 #PASSED-LOAN-PRIN (P6.2)
+1 REDEFINE #PASSED-INFO-G1
+  2 #PASSED-INFO-1   (A45)
+*
+1 #PASSED-INFO-G2
+  2 #PASSED-LOAN-INT-TBL   (9)
+    3 #PASSED-LOAN-INT  (P5.2)
+  2 #TOT-RPU-LOAN-AMT  (P6.2)
+  2 #TOT-RPU-INT-AMT   (P5.2)
+1 REDEFINE #PASSED-INFO-G2
+  2 #PASSED-INFO-2     (A45)
+* YK4
+1 #PASSED-INFO-G3
+  2 #ACC-DEATH-BENEFIT  (N6.2)
+  2 #PREM-REFUND-PASSED (N6.2)
+  2 #PREM-DUE-PASSED    (N6.2)
+  2 #DB-ADJ             (N6.2)
+1 REDEFINE #PASSED-INFO-G3
+  2 #PASSED-INFO-3 (A32)
+*
+1 #MONTHS (A36)  INIT
+  <'JANFEBMARAPRMAYJUNJULAUGSEPOCTNOVDEC'>
+1 REDEFINE #MONTHS
+  2 #MON   (A3/12)
+1 #POL-NUMBER   (A16)
+1 #HOLD-RANK-5  (A5)
+1 #EDIT-INVALID (L)
+1 #RANK-LITERAL (A23)
+1 #DISPL        (P2)
+1 #PASS-COMMAND (A2) INIT <'AD'>
+1 #W-PLAN       (A2)
+*
+* BELOW for CALC-PREMS-PAID
+1 #PP-DATE-OF-BIRTH (N8)
+1 #PP-ANNUAL-PREM   (N5.2)
+1 #PP-PAY-STATUS    (A2)
+1 #PP-TOT-PREMIUMS-PAID (N7.2)
+1 #PP-PAID-TO-DATE  (N8)
+1 #PP-ISSUE-DATE    (N8)
+1 #PP-MODE          (A1)
+1 #PP-PLAN          (A3)
+1 #PP-COST-BASIS    (N7.2)
+1 #PP-MONTH-ALLOC-AMT (N7.2)                     /* TT1
+1 #PP-INTRO-FLAG    (A1)
+1 #PP-FIRST-PLACE-FEE (N7.2)
+1 #PREMS-PAID       (P7.2)
+1 #cost-basis       (p7.2)               /* vt13
+1 #premiums-paid    (p7.2)               /* vt13
+1 #SUB-PREMS-PAID   (P7.2)
+1 #PP-BADJ          (P5.2)
+* ABOVE for CALC-PREMS-PAID
+*
+1 #DAT4U    (A10)
+1 #TIME     (A8)
+*
+1 #MSG              (A50)     /* PM17
+1 #DATE             (N8)      /* PM17
+1 #DISP-DATE        (N8)      /* PM17
+1 V_UPD             (L)      INIT <FALSE>         /*  bz1
+1 V_PRI             (N2)     INIT <0>
+1 #ISSUE-DATE       (A10)                         /* YK4
+1 #REQUEST-DATE     (A10)                         /* YK4
+1 #OWNER-NAME       (A50)                         /* YK4    /* vt14 was a25
+1 #OWNER-NAME-1     (A25)                         /* YK4
+1 #INSURED-NAME     (A25)                         /* YK4
+1 #Work-f           (A) DYNAMIC                   /* YK4
+1 #PolicyNumber     (A) DYNAMIC                   /* YK4
+1 #PolicySegment    (A) DYNAMIC                   /* YK4
+1 #OWNER-CN         (N6)                          /* YK4
+1 #OWNER-CONTACT-ID (N8)                          /* YK4
+1 #DATN             (N8)                          /* YK5
+1 #MM-REF           (N2)                          /* YK6
+1 #TOT-PREM-REFUND  (N7.2)                        /* YK6
+1 #TERM-REF         (N7.2)                        /* YK6
+*
+1 contact view of a-contacts                                    /* vt8  \/
+  2 ssn
+  2 contact-id                                                  /* vt8  /\
+  2 first-name                                                  /* vt9 \/
+  2 middle-name
+  2 last-name
+  2 contact-type
+  2 firm-organization-name                                      /* vt9 /\
+  2 suffix                                                      /* vt14
+*
+1 #csv-to-use-by-pol      (N7.2/9)                              /* vt9 \/
+1 #scr-policy-number      (a16/9)
+1 #sub-prems-paid-by-pol  (n7.2/9)
+1 #prems-paid-by-pol      (p7.2/9)
+1 #premiums-paid-by-pol   (p7.2/9)                      /* vt13
+1 #taxable-inc-by-pol     (n7.2/9)
+1 #sub-cash-value-by-pol  (n7.2/9)
+1 #taxable-income-by-pol  (n7.2/9)
+1 #curr-cost-basis-by-pol (n7.2/9)
+1 #l                      (i2)
+1 #owner-name-tc          (a50)                           /* vt14 was a25
+1 #total-check-all-pol    (n7.2)
+1 #csv-to-use-all-pol     (n7.2)
+1 #prems-paid-all-pol     (n7.2)
+1 #cost-basis-all-pol     (n7.2)                           /* vt13
+1 #premiums-paid-all-pol  (n7.2)                           /* vt13
+1 #loan-prin-by-pol       (n7.2/9)
+1 #loan-prin-all-pol      (n7.2)
+1 #acc-int-by-pol         (n7.2/9)
+1 #acc-int-all-pol        (n7.2)
+1 #tot-badj-by-pol        (n7.2/9)
+1 #tot-prem-refund-by-pol (n7.2/9)
+1 #db-cr-all-pol          (n7.2)
+1 #tot-cap-amt-by-pol     (n7.2/9)
+1 #cap-int-all-pol        (n7.2)
+1 #taxable-income-all-pol (n7.2)
+1 #csv-found              (l)
+1 #issued-lbl             (a8)
+1 #cnt                    (n3)                                  /* vt9  /\
+1 #kk                     (i2)                                  /* vt11
+1 #index-to-use           (i2)                                  /* vt11
+1 #idx                    (i2)                                  /* vt13
+1 #issue-date-area        (a8/9)                                /* vt13
+1 #SCR-EFF-DTE-YYYYMMDD-a (a8)                                  /* vt13
+END-DEFINE
+*****************************************************************************
+*   WRITE "Top of" *PROGRAM *LINE "stack=" *DATA /
+* '=' #passed-info-2 /* vt
+#DATN := *DATN                                                 /* YK5
+INPUT #CLERK-ID #DID-DEAD #DID-CSV #DID-RPU #DID-LAPO
+  #DID-RSGN #DID-LAPN #DID-LAPS #DID-LAPC #DID-REIN #DID-ACDB  /* YK4
+  #PASSED-INFO-1 #PASSED-INFO-2                                /* DW14
+  #PASSED-INFO-3 #TIME-OF-UPDATE                               /* YK4 YK6 - add Time of update
+  #scr-policy-number(*)                                        /* vt9
+*
+INCLUDE GONERCXX
+DEFINE WINDOW DATE               /* PM17
+  SIZE 10 * 50                   /* PM17
+  BASE TOP LEFT                  /* PM17
+  FRAMED ON POSITION SYMBOL AUTO /* PM17
+*
+MOVE #DATN TO #WYYYYMMDD-TOD     /* YK5
+MOVE *DAT4U TO #DAT4U
+* MOVE *TIME TO #TIME            /* YK
+COMPRESS #WDD-TOD #MON (#WMM-TOD) #WYYYY-TOD INTO #TOD-DISP
+COMPUTE #NEXT-YYYY = #WYYYY-TOD + 1
+*
+#CURR-VAR-INT-RATE := FUNCTION-INT-RATE(<'RATE5AB'>)  /* YK2
+*
+GET ST-V #CGA-ISN
+*
+* print #CI-CGA-STORAGE-AREA
+*   / st-v.POLICY-ID (1:5)
+IF #IFL = 0
+    AND #CGA-SCR-COMMAND = 'CI'
+    and *DEVICE ne 'BATCH'                 /* vt6
+  INPUT TEXT 'Please refresh CI screen'
+    USING MAP 'G1000MXX'
+  FETCH 'G1000PXX'
+END-IF
+IF #IFL NE 0 and #ifl lt 10  /* ng1 /* vt7
+  #POLICY-NUMBER := ST-V.POLICY-ID ( #IFL )
+ELSE
+  #POLICY-NUMBER := #UNKNOWN
+END-IF
+*
+MOVE CI-V.SSN TO #OWNER-SSN
+*
+* FOR #I1 1 TO 9
+FOR #I1 1 TO C*ACTIVE-SEGMENTS
+  ADD ST-V.X-LOAN-AMOUNT   (#I1) TO #TOT-FIX-LOAN-AMT
+  ADD ST-V.X-LOAN-AMOUNT-2 (#I1) TO #TOT-VAR-LOAN-AMT
+  ADD ST-V.X-CAP-AMT       (#I1) TO #TOT-CAP-AMT
+  ADD ST-V.X-CAP-AMT-2     (#I1) TO #TOT-CAP-AMT
+  add st-v.x-cap-amt       (#i1) to #tot-cap-amt-by-pol (#i1)                 /* vt9
+  add st-v.x-cap-amt-2     (#i1) to #tot-cap-amt-by-pol (#i1)                 /* vt9
+  ADD ST-V.X-ACCUM-INTEREST    (#I1) TO #TOT-DB-ACC-INT
+  ADD ST-V.X-ACCUM-INTEREST-2  (#I1) TO #TOT-DB-ACC-INT
+  ADD ST-V.X-NXT-YR-ACCUM-INT  (#I1) TO #TOT-DB-ACC-INT
+  ADD ST-V.X-NXT-YR-ACCUM-INT-2(#I1) TO #TOT-DB-ACC-INT
+*
+  IF X-LOAN-AMOUNT (#I1) NE 0
+    MOVE X-INTEREST-RATE (#I1) TO #INTEREST-RATE
+  END-IF
+END-FOR
+*
+RESET PDA-CONTACT                                 /* NG1 Start
+IF #POLICY-NUMBER NE #UNKNOWN
+  P-CONTACT-ID := GET-POL-OWNER-CI (< #POLICY-NUMBER >) (1)
+  IF NOT PRIMARY-ADDR-EXIST (< P-CONTACT-ID >)
+    #TEXT := 'Owner doesn''t have primary address'
+  END-IF
+ELSE
+  P-CONTACT-ID := CI-V.MEMBER-CONTACT-ID          /* NG1 End
+END-IF
+Salute := '!TOWHOM'                               /* bz-Name-C
+CALLNAT 'GPRS0CNT' P-CONTACT-ID Salute
+#RPU-NAME := Salute
+CALLNAT 'CONTS001' PDA-CONTACT                    /* TT2
+*
+RESET #DISPL #RANK-LITERAL #HOLD-RANK-5 /* PM1
+*
+* CALLNAT 'GRANKSXX' #PASS-COMMAND ST-V.RANK
+*   CI-V.MILITARY-SERVICE #EDIT-INVALID #DISPL #RANK-LITERAL
+*   #HOLD-RANK-5
+* SEPARATE CI-V.NAME LEFT INTO #LAST-NAME #FIRST-MID #XTRA-1 #XTRA-2
+*   #XTRA-3 #XTRA-4 WITH DELIMITER ','
+* COMPRESS #FIRST-MID #LAST-NAME #XTRA-1 #XTRA-2 #XTRA-3 #XTRA-4
+*   INTO #NAME
+* IF (P-GENDER NE ' ') AND (#RANK-LITERAL = ' ')          /* TT2
+*   IF P-GENDER = 'M'                                     /* TT2
+*     MOVE 'Mr' TO #RANK-LITERAL
+*   ELSE
+*     MOVE 'Ms' TO #RANK-LITERAL
+*   END-IF
+* END-IF
+* COMPRESS #RANK-LITERAL #LAST-NAME INTO #RPU-NAME
+*
+COMPRESS #RPU-NAME ':' INTO #RPU-NAME LEAVING NO
+*
+MOVE 'TAXABLE INCOME*' TO #SCR-TAX-INC-LABEL
+*
+IF #CGA-ORIG-COMMAND = 'RE'
+*
+*  WRITE *PROGRAM *LINE "- is RE -"                                  /* --db
+*    "SC:" #CGA-SCR-COMMAND "SOC:" #CGA-ORIG-COMMAND                   /* --db
+*    "sf:" #CGA-SCR-SUFFIX "osf:" #CGA-ORIG-SUFFIX  "DD" #DID-DEAD     /* --db
+  PERFORM RECAP-PMT-INFO
+*
+  IF #DID-ACDB                                        /* YK4
+    PERFORM FORMAT-ACDB-CALC-SCREEN                   /* YK4
+    INPUT TEXT #TEXT USING MAP 'C2329MCI'             /* YK4
+    PERFORM CHECK-AST                                 /* YK4
+    MOVE 'CI' TO #CGA-SCR-COMMAND                     /* YK4
+    FETCH 'G1000PXX'                                  /* YK4
+  END-IF
+*
+  IF #DID-DEAD
+    IF #CGA-ORIG-SUFFIX = 'NC'  /* just did CI UPD and RE XXXXX NC (!)
+      MOVE 'PUR' TO #CGA-SCR-SUFFIX
+      MOVE 'NC' TO #CGA-SCR-COMMAND
+      FETCH 'G1000PXX'
+    END-IF
+  ELSE
+    IF #DID-LAPC
+      MOVE 'Press ENTER for LAPC letter' TO #TEXT
+    END-IF
+*
+    IF #CGA-SCR-SUFFIX = 'P22'  ESCAPE ROUTINE END-IF       /* bz1
+    reset #issued-lbl                                                       /* vt9
+    INPUT TEXT #TEXT USING MAP 'C2321MCI'                   /* Surender
+*
+    IF #DID-LAPC
+      PERFORM LAPC-LETTER
+*
+      INPUT TEXT #TEXT USING MAP 'C2326MCI'
+      PERFORM CHECK-AST
+      MOVE 'AD'  TO #CGA-SCR-COMMAND
+      MOVE 'NUL' TO #CGA-SCR-SUFFIX /* no-update-lap
+      MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+    END-IF
+  END-IF
+ELSE
+  GET ST-V #CGA-ISN
+
+  IF #CGA-ORIG-COMMAND = 'CI'
+    MOVE 'CI' TO #CGA-SCR-COMMAND
+*
+    IF #DID-DEAD
+      MOVE 'TTL ADJUSTMENT' TO #PREM-LBL
+      PERFORM FORMAT-DEAD-CALC-SCREEN
+    ELSE
+      IF #DID-CSV
+        PERFORM FORMAT-CSV-CALC-SCREEN
+      ELSE
+        IF #DID-RPU OR #DID-LAPO OR #DID-LAPN OR #DID-LAPS
+          PERFORM FORMAT-RPU-CALC-SCREEN
+        ELSE
+          IF #DID-RSGN
+            PERFORM FORMAT-RSGN-CALC-SCREEN
+          ELSE
+            IF #DID-ACDB                            /* YK4
+              PERFORM FORMAT-ACDB-CALC-SCREEN       /* YK4
+            ELSE                                    /* YK4
+              IF #DID-LAPC
+*               FOR #I1 1 TO 9
+                FOR #I1 1 TO C*ACTIVE-SEGMENTS      /* YK6
+                  IF #SCR-TRAN (#I1) = 'LAPC'
+                    MOVE #SCR-EFF-DTE-YYYYMMDD (#I1) TO #WYYYYMMDD-ISS
+                    COMPRESS #WMM-ISS #WDD-ISS #WYYYY-ISS
+                      INTO #ISS-MMDDYYYY WITH '/'
+                    MOVE #PASSED-LOAN-PRIN (#I1) TO #LOAN-PRIN
+                    MOVE #PASSED-LOAN-INT  (#I1) TO #ACC-INT
+*
+                    IF   (#ACC-INT LT 1.01)
+                        AND (#ACC-INT GT 0)
+                      RESET #ACC-INT
+                    END-IF
+                    ESCAPE BOTTOM
+                  END-IF
+                END-FOR
+*
+                COMPRESS #WMM-TOD #WDD-TOD #WYYYY-TOD
+                  INTO #TOD-MMDDYYYY WITH '/'
+                COMPRESS #TOD-MMDDYYYY '.' INTO #TOD-MMDDYYYY LEAVING NO
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF                                       /* YK4
+    END-IF
+*
+    IF (#CGA-ORIG-SUFFIX = 'PUU' OR = 'UPD') AND #DID-REIN         /* DW14
+*   to create CVAL trans on TR file
+      FETCH RETURN 'C2316PCI' #CURR-VAR-INT-RATE #DID-LAPO /*payoff loans
+        #SCR-TRAN-CODE (1) #LX #TIME-OF-UPDATE #SCR-CASH-CODE (1)
+        #DID-REIN                                /* DW14
+        #did-coll                                /* vt2
+        #DID-DEAD                                /* YK5
+        #did-csv                                             /* vt9
+      MOVE 'GM' TO #CGA-SCR-COMMAND
+      FETCH 'G1000PXX'
+    END-IF
+*
+    MOVE '*' TO #CGA-SCR-COMMAND
+    IF #CGA-ORIG-SUFFIX = 'UPD'
+        AND (NOT (#DID-RPU OR #DID-LAPN OR #DID-LAPS))
+      MOVE #WK-PREM-FIN-TOTAL TO ST-V.TERM-PREM-REF-DUE
+      IF #DID-RSGN
+* Premium refund only calculated for RSGN - resign term policy
+        ST-V.TERM-PREM-REF-DUE := #TOT-PREM-REFUND * -1                /* YK6
+        ST-V.TERM-DEBIT-CREDIT := #DB-CR                               /* YK6
+*         PERFORM GET-BADJ                                             /* YK6
+*           COMPUTE ST-V.TERM-DEBIT-CREDIT =  (ST-V.DEBIT-CREDIT-AMT   /* YK6
+*             + #TOT-BADJ) * -1                                        /* YK6
+*         END-IF                                                       /* YK6
+      ELSE                                                             /* YK6
+        IF #DB-CR GT 99999.99
+          MOVE 99999.99 TO ST-V.TERM-DEBIT-CREDIT
+        ELSE
+          MOVE  #DB-CR TO ST-V.TERM-DEBIT-CREDIT
+        END-IF
+      END-IF
+*
+*        #loan-prin-abs  := #loan-prin * -1                   /* vt5 \/
+*       if #loan-prin-abs gt 99999.99
+*         st-v.term-loan-prin := 99999.99 * -1
+*       else                                                  /* vt5 /\
+      MOVE  #LOAN-PRIN   TO ST-V.TERM-LOAN-PRIN
+*      end-if                                                /* vt5
+      MOVE  #ACC-INT     TO ST-V.TERM-ACC-INT
+      MOVE  #TOT-CAP-AMT TO ST-V.TERM-CAP-INT
+*     MOVE  #PREMS-PAID  TO ST-V.TERM-PREM-PAID                       /* YK6
+*
+      IF NOT #DID-RSGN   /* SO SUNGARD ACCTS/PAY WORKS
+        MOVE  #CSV-TO-USE TO ST-V.TERM-CASH-VALUE   /* DW2
+        MOVE  #PREMS-PAID  TO ST-V.TERM-PREM-PAID                     /* YK6
+      END-IF
+*
+      IF #DID-DEAD    /* ACV ADJ COULDN'T BE RESET IN C2300PCI
+*       FOR #I1 1 TO 9     /* SINCE IT IS NEEDED IN C2320PCI
+        FOR #I1 1 TO C*ACTIVE-SEGMENTS                                /* YK6
+          IF   (MTD-ACV-PREM-ADJ (#I1) NE 9999999.99)
+              AND (MTD-ACV-PREM-ADJ (#I1) NE 0)
+            MOVE 9999999.99 TO MTD-ACV-PREM-ADJ (#I1)
+          END-IF
+*
+          IF   (MTD-ACV-INT-ADJ (#I1) NE 99999.99)
+              AND (MTD-ACV-INT-ADJ (#I1) NE 0)
+            MOVE 99999.99 TO MTD-ACV-INT-ADJ (#I1)
+          END-IF
+*
+          IF   (MTD-ACV-COI-ADJ (#I1) NE 99999.99)
+              AND (MTD-ACV-COI-ADJ (#I1) NE 0)
+            MOVE 99999.99 TO MTD-ACV-COI-ADJ (#I1)
+          END-IF
+        END-FOR
+      END-IF
+* YK4 start
+      IF #DID-ACDB
+        ST-V.TERM-PREM-REF-DUE := #PREM-REFUND
+        ST-V.TERM-DEBIT-CREDIT := #DB-CR
+        ST-V.TERM-LOAN-PRIN    := #LOAN-PRIN
+        ST-V.TERM-ACC-INT      := #ACC-INT
+        ST-V.TERM-CAP-INT      := #CAP-INT
+        ST-V.TERM-CASH-VALUE   := #ACC-DEATH-BENEFIT
+      END-IF
+    END-IF
+* YK4 end
+    IF #CGA-ORIG-SUFFIX = 'UPD'
+      UPDATE RECORD (0610)
+      IF *DEVICE NE 'BATCH'
+*      WRITE *PROGRAM *LINE "END of Trnsaction"    /*  --db! real
+        END TRANSACTION
+      END-IF
+*
+      IF (#DID-CSV OR #DID-LAPO OR #DID-LAPS OR #DID-LAPC OR #DID-LAPN
+          OR #DID-RSGN OR #DID-DEAD OR #DID-RPU)
+        FETCH RETURN 'C2316PCI' #CURR-VAR-INT-RATE #DID-LAPO /*payoff loans   /* DW11
+          #SCR-TRAN-CODE (1) #LX #TIME-OF-UPDATE #SCR-CASH-CODE (1) /* DW12
+          #DID-REIN                                /* DW14
+          #did-coll                                /* vt2
+          #DID-DEAD                                /* YK5
+          #did-csv                                             /* vt9
+*    #scr-fields & #lx not used by C2316PCI here
+      END-IF
+    END-IF
+*
+    MOVE '*' TO #CGA-SCR-COMMAND
+*
+    IF #DID-DEAD
+      IGNORE
+    ELSE
+      IF #DID-CSV
+****        INPUT TEXT #TEXT USING MAP 'C2321MCI'       /* vt9
+        PERFORM CHECK-AST
+*
+        IF #CSV-ON-AL
+          MOVE 'AD'  TO #CGA-SCR-COMMAND
+          MOVE 'AL' TO #CGA-SCR-SUFFIX
+          MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+        END-IF
+      ELSE
+        IF #DID-RPU
+          INPUT TEXT #TEXT USING MAP 'C2323MCI'
+          PERFORM CHECK-AST
+          IF #CGA-SCR-SUFFIX = 'LTR' OR = 'UPD'
+            INPUT TEXT #TEXT USING MAP 'C2326MCI'
+            PERFORM CHECK-AST
+            MOVE 'AD'  TO #CGA-SCR-COMMAND
+            MOVE 'NUR' TO #CGA-SCR-SUFFIX /* no-update-rpu
+            MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+          END-IF
+        ELSE
+          IF #DID-ACDB                                     /* YK4
+            INPUT TEXT #TEXT USING MAP 'C2329MCI'          /* YK4
+            PERFORM CHECK-AST                              /* YK4
+            IF #CGA-SCR-SUFFIX = 'LTR' OR = 'UPD'          /* YK4
+              MOVE 'AD'  TO #CGA-SCR-COMMAND               /* YK4
+              MOVE 'ADB' TO #CGA-SCR-SUFFIX                /* YK4
+              MOVE #CGA-ORIG-ID TO #CGA-SCR-ID             /* YK4
+            END-IF                                         /* YK4
+          ELSE                                             /* YK4
+            IF #DID-LAPO
+              COMPUTE #OVERLOANED = #LOAN-PRIN + #ACC-INT - #CSV-TO-USE
+              IF *DEVICE = 'BATCH'
+                IF #POL-X NE 0
+                  CALLNAT 'GPLNMSXX' #POL-NUMBER CI-V.ID-NUMBER #POL-X
+                END-IF
+                NEWPAGE (8)
+                MOVE 'CI' TO #CGA-SCR-COMMAND
+                MOVE 'LAP' TO #CGA-SCR-SUFFIX
+                WRITE (8) NOTITLE USING FORM 'C2324FCI'
+                ESCAPE ROUTINE   /* RETURN TO ATHPLAPS
+              ELSE
+                INPUT TEXT #TEXT USING MAP 'C2324MCI'
+                PERFORM CHECK-AST
+              END-IF
+*
+              IF #CGA-SCR-SUFFIX = 'LTR' OR = 'UPD'
+                INPUT TEXT #TEXT USING MAP 'C2326MCI'
+                PERFORM CHECK-AST
+                MOVE 'AD'  TO #CGA-SCR-COMMAND
+                MOVE 'NUL' TO #CGA-SCR-SUFFIX /* no-update-lap
+                MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+              END-IF
+            ELSE
+              IF #DID-LAPN OR #DID-LAPS
+                INPUT TEXT #TEXT USING MAP 'C2326MCI'
+                PERFORM CHECK-AST
+                MOVE 'AD'  TO #CGA-SCR-COMMAND
+                MOVE 'NUL' TO #CGA-SCR-SUFFIX /* no-update-lap
+                MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+              ELSE
+                IF #DID-RSGN
+                  MOVE 'AD'  TO #CGA-SCR-COMMAND
+                  IF #CGA-MF-SCR-COMMAND = 'RP'                     /* PM5
+                    MOVE 'RPL' TO #CGA-SCR-SUFFIX                   /* PM5
+                  ELSE                                              /* PM5
+                    MOVE 'RFG' TO #CGA-SCR-SUFFIX
+                  END-IF                                            /* PM5
+                  MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+                ELSE
+                  IF #DID-LAPC
+                    PERFORM LAPC-LETTER
+                  END-IF
+*
+                  INPUT TEXT #TEXT USING MAP 'C2326MCI'
+                  PERFORM CHECK-AST
+                  MOVE 'AD'  TO #CGA-SCR-COMMAND
+                  MOVE 'NUL' TO #CGA-SCR-SUFFIX
+                  MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+                END-IF
+              END-IF
+            END-IF                                               /* YK4
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+*
+    RESET #TEXT
+  END-IF
+END-IF
+*
+* WRITE *PROGRAM *LINE "END of Trnsaction" #CGA-SCR-SUFFIX  /* --db!
+IF *DEVICE NE 'BATCH'
+  IF  #CGA-SCR-SUFFIX <> 'P22'
+    END TRANSACTION
+  END-IF
+END-IF
+*
+IF #CGA-SCR-COMMAND = '*'
+  IF #DID-DEAD
+    IF #CGA-ORIG-COMMAND = 'CI'
+
+*   WRITE *PROGRAM *LINE "Part_2"                                 /* --db
+*   "SC:" #CGA-SCR-COMMAND "SOC:" #CGA-ORIG-COMMAND               /* --db
+*   "sf:" #CGA-SCR-SUFFIX "osf:" #CGA-ORIG-SUFFIX  "DD" #DID-DEAD /* --db
+
+      IF ( #CGA-SCR-SUFFIX ='UPD' )
+          AND  ( #CGA-SCR-SUFFIX <> 'P22' )
+          AND #DID-DEAD
+        #CGA-SCR-COMMAND := '22'
+        FETCH RETURN 'G0000PDR'                    /* bz1
+      END-IF
+
+      MOVE 'RE' TO #CGA-SCR-COMMAND
+      MOVE 'NC' TO #CGA-SCR-SUFFIX
+      MOVE #CGA-ORIG-ID TO #CGA-SCR-ID               /* DW13
+    ELSE
+      MOVE 'GM' TO #CGA-SCR-COMMAND
+    END-IF
+  ELSE
+    MOVE 'CI' TO #CGA-SCR-COMMAND
+  END-IF
+END-IF
+*
+IF #CGA-SCR-SUFFIX <> 'P22'               /* bz1
+  FETCH 'G1000PXX'
+END-IF
+*
+*****************************************************************************
+DEFINE SUBROUTINE FORMAT-DEAD-CALC-SCREEN
+*****************************************************************************
+*
+MOVE CI-V.DATE-OF-DEATH TO #DOD-YYYYMMDD
+MOVE #TOT-CAP-AMT TO #CAP-INT
+*
+* FOR #I1 1 TO 9
+FOR #I1 1 TO C*ACTIVE-SEGMENTS
+*
+* Get actual paid-to-date with real day
+  RESET #YYYYMMDD
+  CALLNAT 'GPDTOSXX'
+    CI-V.ISSUE-DATE (#I1)
+    CI-V.MONTH-ALLOC-AMT (#I1)
+    CI-V.PAID-TO-DATE (#I1)
+    #YYYYMMDD
+*
+  IF   NOT (CI-V.ONLINE-ACTION (#I1) = 'G' OR = 'H' OR = 'E')  /* DEAD
+*     OR (CI-V.PAID-TO-DATE (#I1) GE CI-V.PAID-UP-DATE (#I1))  /* PAID-UP
+* use real paid-to-date to compare          YK6
+      OR (#YYYYMMDD GE CI-V.PAID-UP-DATE (#I1) AND             /* PAID-UP
+      #DOD-YYYYMMDD GE CI-V.PAID-UP-DATE (#I1))            /* Died when policy was PAID-UP  YK7
+      OR ((CI-V.MODE (#I1) = 'G') AND (CI-V.ALOT-AMT = 0)
+      AND (CI-V.PAY-STATUS (#I1) GE '40'))
+      OR (CI-V.PAY-STATUS (#I1) = '47' OR = '48' OR = '42')     /* PUSP  or PUAP - add PDUP YK6
+* 42 added for paid up policies with loan where CI-V.ALOT-AMT <> 0      YK6
+    ESCAPE TOP
+  END-IF
+*
+* YK6 Start
+  MOVE #DATN TO #WYYYYMMDD-TOD
+  MOVE CI-V.DATE-OF-DEATH TO #WYYYYMMDD-DOD
+  IF FUNCTION-TERM-POLICY(<CI-V.PLAN(#I1)>)
+    #MM-REF := #MM - #WMM-DOD + 12 * (#YYYY - #WYYYY-DOD)
+    IF #DD < #WDD-DOD                                             /* YK7 remove '='
+      #MM-REF := #MM-REF - 1
+    END-IF
+    #NET-PREM-CALC := (CI-V.ANNUAL-PREM (#I1) / 12) * #MM-REF
+  ELSE
+*   MOVE CI-V.DATE-OF-DEATH    TO #WYYYYMMDD-DOD                   /* YK6
+    MOVE CI-V.ISSUE-DATE (#I1) TO #WYYYYMMDD-ISS
+    RESET #NET-PREM-CALC                                           /* YK6
+    IF ST-V.MTD-ACV-PREM-ADJ(#I1) NE 9999999.99
+      ADD ST-V.MTD-ACV-PREM-ADJ(#I1) TO #NET-PREM-CALC
+    END-IF
+* YK7 Start (remove extra logic)
+* Find starting point for premium refund
+    IF ((#WDD-ISS NE 1) AND (#WDD-DOD < #WDD-ISS))
+      #WMM-DOD := #WMM-DOD - 1
+      IF #WMM-DOD = 0
+        #WMM-DOD := 12
+        #WYYYY-DOD := #WYYYY-DOD - 1
+      END-IF
+    END-IF
+* YK7 end
+*
+    MOVE CI-V.ID-NUMBER TO #START-ID
+    MOVE CI-V.ISSUE-DATE (#I1) TO #START-ISSUE
+    MOVE CI-V.SPLIT-IND  (#I1) TO #START-SPLIT-IND
+*
+    FIND (1) VA-V WITH RECORD-KEY = #START-KEY
+      FOR #I2 1 TO 13
+        IF VA-V.YEAR-MONTH-M (#I2) GE #WYYYYMM-DOD
+          IF #I2 = 1  /* must have died over 13 months ago
+            ESCAPE BOTTOM
+          END-IF
+*
+          MOVE ACCUM-CASH-VALUE-M (#I2 - 1) TO #PREV-ACV
+          COMPUTE #NEW-ACV = #PREV-ACV + PREMIUM-M  (#I2)
+            + INTEREST-M       (#I2)
+            - COST-OF-INSURANCE-M (#I2)
+*
+          IF   (#I1 LE 9)
+              AND (ISSUE-DATE (#I1) GE 19970101) /* 1997 pol
+              AND (MONTH-ALLOC-AMT (#I1) NE 999.99) /* not FORCED 96 PREMS
+            SUBTRACT PRORAT-LOAN-BAL-M   (#I2) FROM #NEW-ACV
+            SUBTRACT PRORAT-LN-ACC-INT-M (#I2) FROM #NEW-ACV
+          END-IF
+*
+          IF #NEW-ACV GT ACCUM-CASH-VALUE-M (#I2)
+            COMPUTE #ACV-DIFF = #NEW-ACV - ACCUM-CASH-VALUE-M(#I2)
+          ELSE
+            COMPUTE #ACV-DIFF = ACCUM-CASH-VALUE-M(#I2) - #NEW-ACV
+          END-IF
+*
+          MOVE PREMIUM-M (#I2) TO #REAL-PREM
+*
+          IF #ACV-DIFF NE 0
+            PERFORM CALC-REAL-PREM
+          END-IF
+          ADD #REAL-PREM TO #NET-PREM-CALC
+        END-IF
+      END-FOR
+    END-FIND
+  END-IF
+*
+  IF #NET-PREM-CALC LT 0
+    ADD #NET-PREM-CALC TO #PREM-DUE
+  ELSE
+    ADD #NET-PREM-CALC TO #PREM-REFUND
+  END-IF
+*
+  ADD #NET-PREM-CALC TO #NET-PREM
+  ADD #NET-PREM-CALC TO #PREM-ADJ-BY-POL (#I1)
+END-FOR
+*
+MOVE #NET-PREM   TO #WK-PREM-FIN-TOTAL
+*
+* YK6  BADJ transactions already created in C2301PCI for DEAD
+* get amount to correctly populate RE/CA screens
+PERFORM GET-BADJ
+COMPUTE #DB-CR = (CI-V.DEBIT-CREDIT-AMT + #TOT-BADJ) * -1
+FOR #I1 = 1 TO C*OUT-TERM-REF-GROUP                          /* YK6
+  #TERM-REF := #TERM-REF + ST-V.OUT-TERM-REF-AMOUNT(#I1)     /* YK6
+END-FOR                                                      /* YK6
+#DB-CR := #DB-CR + #TERM-REF                                 /* YK6
+*
+* use X-BILL-DOLLAR field to pass prem refund amount to C2316PCI
+* to create PREP/PRER transactions
+ST-V.X-BILL-DOLLAR(*) := #PREM-ADJ-BY-POL(*) * (-1)    /* YK6
+*
+* ST-V.X-FIRST-PLACE-FEE (?) removed 1/7/2003
+MOVE #NET-PREM TO #NET-PREM-W-O-DB-CR
+ADD #DB-CR TO #NET-PREM
+*
+MOVE #TOT-FIX-LOAN-AMT TO #LOAN-PRIN
+ADD  #TOT-VAR-LOAN-AMT TO #LOAN-PRIN
+*
+RESET #DID-DB-CR
+* FOR #I1 1 TO 9
+FOR #I1 1 TO C*ACTIVE-SEGMENTS                                             /* YK6
+  IF STATUS(#I1) <> 'E'                                                    /* YK6
+    ESCAPE TOP                                                             /* YK6
+  END-IF                                                                   /* YK6
+  IF NOT #DID-DB-CR
+    MOVE TRUE TO #DID-DB-CR
+    SUBTRACT ST-V.DEBIT-CREDIT-AMT FROM #DB-CR-BY-POL (#I1)
+    ADD #TERM-REF TO #DB-CR-BY-POL(#I1)                                    /* YK6
+  END-IF
+*
+* SUBTRACT ST-V.X-BILL-ADJUST   (#I1) FROM #PREM-ADJ-BY-POL (#I1)          /* YK6
+  SUBTRACT ST-V.X-BILL-ADJUST   (#I1) FROM #DB-CR-BY-POL(#I1)              /* YK6
+  SUBTRACT ST-V.X-LOAN-AMOUNT   (#I1) FROM #LOAN-BY-POL(#I1)
+  SUBTRACT ST-V.X-LOAN-AMOUNT-2 (#I1) FROM #LOAN-BY-POL(#I1)
+  ADD ST-V.X-CAP-AMT   (#I1) TO #CAP-INT-BY-POL (#I1)
+  ADD ST-V.X-CAP-AMT-2 (#I1) TO #CAP-INT-BY-POL (#I1)
+  COMPUTE ROUNDED #DAILY-INT =
+    ST-V.X-LOAN-AMOUNT (#I1) * (#INTEREST-RATE / 365) / 100
+  COMPUTE ROUNDED #DAILY-INT-2 =
+    ST-V.X-LOAN-AMOUNT-2 (#I1) * (#CURR-VAR-INT-RATE / 365) / 100
+*
+  IF   (#DOD-YYYY = #TODAY-YYYY)
+      AND (#DOD-MM = #TODAY-MM)
+    COMPUTE #ACCUM-DAYS = #DOD-DD - 1
+    COMPUTE ROUNDED #ADDED-INT = (#ACCUM-DAYS * #DAILY-INT)
+      + (#ACCUM-DAYS * #DAILY-INT-2)
+    COMPUTE ROUNDED #INT-BY-POL (#I1) = #ADDED-INT
+      + ST-V.X-ACCUM-INTEREST (#I1) + ST-V.X-ACCUM-INTEREST-2 (#I1)
+      + ST-V.X-NXT-YR-ACCUM-INT (#I1)
+      + ST-V.X-NXT-YR-ACCUM-INT-2 (#I1)
+  ELSE
+    MOVE #TODAY-YYYY TO #WORK-YYYY
+    MOVE #TODAY-MM   TO #WORK-MM
+    RESET #ACCUM-DAYS /* To fix int calcs when 2nd policy has a loan  DW15
+*   problem on CN28188 dead with 2 loans found on 6/12/2008
+    REPEAT
+      SUBTRACT 1 FROM #WORK-MM
+*
+      IF #WORK-MM LT 1
+        MOVE 12 TO #WORK-MM
+        SUBTRACT 1 FROM #WORK-YYYY
+      END-IF
+*
+      IF #WORK-MM = 04 OR = 06 OR = 09 OR = 11
+        MOVE 30 TO #DAYS-IN-MONTH
+      ELSE
+        IF #WORK-MM = 02
+          MOVE 28 TO #DAYS-IN-MONTH
+        ELSE
+          MOVE 31 TO #DAYS-IN-MONTH
+        END-IF
+      END-IF
+*
+      IF   (#WORK-YYYY = #DOD-YYYY)
+          AND (#WORK-MM   = #DOD-MM)
+        COMPUTE ROUNDED #ACCUM-DAYS = #ACCUM-DAYS
+          + ((#DAYS-IN-MONTH - #DOD-DD) + 1)
+        COMPUTE ROUNDED #ADDED-INT = (#ACCUM-DAYS * #DAILY-INT)
+          + (#ACCUM-DAYS * #DAILY-INT-2)
+        COMPUTE ROUNDED #INT-BY-POL (#I1) = (ST-V.X-ACCUM-INTEREST (#I1)
+          + ST-V.X-ACCUM-INTEREST-2 (#I1)
+          + ST-V.X-NXT-YR-ACCUM-INT (#I1)
+          + ST-V.X-NXT-YR-ACCUM-INT-2 (#I1))
+          - #ADDED-INT
+        ESCAPE BOTTOM
+      ELSE
+        ADD #DAYS-IN-MONTH TO #ACCUM-DAYS
+      END-IF
+    END-REPEAT
+  END-IF
+*
+  ADD #INT-BY-POL (#I1) TO #ACC-INT
+  MULTIPLY #INT-BY-POL (#I1) BY -1
+END-FOR
+*
+RESET ST-V.X-BILL-ADJUST(*)              /* YK6
+COMPUTE #LOAN-PRIN = #LOAN-PRIN * -1
+MOVE #ACC-INT TO #ACC-INT-TO-DEATH
+COMPUTE #ACC-INT = #ACC-INT * -1
+COMPUTE #TOTAL-INTEREST = #TOT-CAP-AMT + #ACC-INT-TO-DEATH
+*
+IF   (#ACC-INT LT 1.01)
+    AND (#ACC-INT GT 0)
+  RESET #ACC-INT
+END-IF
+*
+FIND (1) FR-V WITH WIDOW-KEY = #CGA-ID-G
+  IF NO RECORDS FOUND
+    WRITE 'NO RECS FOUND - CALL EDS'
+  END-NOREC
+*
+  RESET #I2 #DB-BY-POL (*) #ISS-DT-BY-POL (*)
+* FOR #I1 1 TO 9
+  FOR #I1 1 TO C*ACTIVE-SEGMENTS                                          /* YK6
+    IF POL-NAME (#I1) = 'AAFMAA' OR = 'AMAA'
+*     FOR #I2 1 TO 9    /* Get Index of Matching Status Segment (I2)
+      FOR #I2 1 TO C*ACTIVE-SEGMENTS                                      /* YK6
+        IF   (ISSUE-DATE (#I2) = POL-DATE (#I1))      /* DW9
+            AND (PLAN       (#I2) = POL-TYPE (#I1))
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+*
+      IF #I2 GT 9
+        WRITE 'No matching segment on the STATUS flle for' POL-DATE(#I1) POL-TYPE(#I1)
+        ESCAPE TOP
+      END-IF
+*
+*     #I1 is FIRS index and #I2 is STATUS index
+      ADD POL-AMT-PAID (#I1) TO #DEATH-BENEFIT
+      MOVE POL-AMT-PAID (#I1) TO #DB-BY-POL     (#I1)                    /* DW9
+      MOVE POL-DATE     (#I1) TO #ISS-DT-BY-POL (#I1)                   /* DW9
+*
+      IF (ISSUE-DATE-DD (#I2) = 01) OR (#WDD-TOD GE ISSUE-DATE-DD (#I2))  /* DW9
+        MOVE CI-V.CASH-VALUE (#I2) TO #CSV-BY-POL (#I1)                  /* DW9
+      ELSE
+        MOVE CI-V.NXT-MON-CASH-VALUE (#I2) TO #CSV-BY-POL(#I1)           /* DW9
+      END-IF
+*
+      COMPUTE #CK-BY-POL (#I1) = #DB-BY-POL (#I1) + #INT-BY-POL (#I2)    /* DW9
+        + #LOAN-BY-POL(#I2) + #PREM-ADJ-BY-POL(#I2) + #DB-CR-BY-POL(#I2)  /* DW9
+      MOVE #DB-BY-POL  (#I1) TO DEAD-GROSS-DB (#I1)
+      MOVE #LOAN-BY-POL(#I2) TO DEAD-LOAN-PRIN(#I1)                      /* DW9
+      MOVE #INT-BY-POL (#I2) TO DEAD-LOAN-INT (#I1)                      /* DW9
+      MOVE #PREM-ADJ-BY-POL(#I2) TO DEAD-PREM-ADJ (#I1)                  /* DW9
+      MOVE #DB-CR-BY-POL(#I2) TO DEAD-DB-CR (#I1)                        /* DW9
+      MOVE #CAP-INT-BY-POL(#I2) TO DEAD-CAP-INT (#I1)                    /* Dw9
+    END-IF
+  END-FOR
+*
+  IF #CGA-ORIG-SUFFIX = 'UPD'
+    UPDATE (1105)
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE FORMAT-CSV-CALC-SCREEN
+*****************************************************************************
+*
+MOVE #TOT-CAP-AMT TO #CAP-INT
+move #tot-cap-amt-by-pol(*) to #cap-int-by-pol(*)                      /* vt9
+*
+RESET #TOT-NEW-ALOT
+FOR #I1 1 TO 9                                           /* YK6
+*  FOR #I1 = 1 TO C*ACTIVE-SEGMENTS                           /* YK6
+  IF   (CI-V.STATUS (#I1) = 'D')
+      AND (CI-V.MODE (#I1) = 'G')
+      AND (CI-V.PAY-STATUS (#I1) = '20' OR = '22')
+    COMPUTE #TOT-NEW-ALOT = #TOT-NEW-ALOT +
+      (CI-V.ANNUAL-PREM (#I1) / 12)
+  END-IF
+*
+  IF CI-V.ISSUE-DATE (#I1) NE 0
+    ADD 1 TO #NUM-POLS
+*
+    IF CI-V.SPLIT-IND (#I1) NE 0   /* must have split
+      MOVE TRUE TO #SPLIT
+    END-IF
+*
+    IF CI-V.ONLINE-ACTION (#I1) = 'J'
+      FOR #I2 1 TO 9
+*       FOR #I2 1 TO C*ACTIVE-SEGMENTS
+        IF (#SCR-TRAN (#I2) = 'CVEX') AND (#COMP-1035 = ' ')
+          INPUT /// 'Enter 1035 Exchange Company:' #COMP-1035
+        END-IF
+        IF   (#SCR-TRAN (#I2) = 'CSV' OR = 'CVEX' OR = 'ANNU')     /* DW10
+            AND  (#SCR-EFF-DTE-YYYYMMDD (#I2) = CI-V.ISSUE-DATE (#I1))
+          ADD 1 TO #NUM-CVEX
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-IF
+  END-IF
+END-FOR
+*
+FOR #CVEX-X 1 TO 10  /* 1 extra for combination cvex pass
+  RESET #PREMS-PAID #TERMED-POLS #RPU-X #CSV-TO-USE /* DW2
+  RESET #TOT-FACE-TERMED #NUM-TERMED #CVEX-SEQ
+  RESET #MEC #NON-MEC #LOAN-PRIN #ACC-INT
+*  reset #csv-to-use-by-pol(*)                                       /* vt9   12/21/2016
+*
+  RESET #DONE (*)
+  FOR #I1 1 TO 9                                               /* YK6
+*   FOR #I1 = 1 TO C*ACTIVE-SEGMENTS                             /* YK6
+    IF NOT (CI-V.ONLINE-ACTION (#I1) = 'J' OR = '5' OR = 'T')  /* CSV
+      ESCAPE TOP
+    END-IF
+*
+    RESET #FND-MATCH
+*
+    FOR #I2 1 TO 9                                             /* YK6
+*     FOR #I2 1 TO C*ACTIVE-SEGMENTS                             /* YK6
+      IF   (#SCR-TRAN (#I2) = 'CSV' OR = 'CVEX' OR = 'ANNU')   /* DW10
+          AND (#SCR-EFF-DTE-YYYYMMDD (#I2) = CI-V.ISSUE-DATE (#I1))
+          AND (NOT #DONE (#I1))   /* to handle splits
+        MOVE TRUE TO #DONE (#I1)
+        MOVE #I1 TO #MATCH-X
+        MOVE TRUE TO #FND-MATCH
+        MOVE #I2 TO #HOLD-I2
+*
+        IF IS-ANNUITY-LIFE(<CI-V.PLAN (#I1)>)     /* vt3  was CI-plan(#i2) /* TT3
+            AND (#SCR-TRAN (#I2) = 'ANNU')            /* DW10
+          MOVE TRUE TO #CSV-ON-AL
+        END-IF
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    IF NOT #FND-MATCH
+      MOVE #HOLD-I2 TO #I2
+      ESCAPE TOP
+    END-IF
+*
+    ADD 1 TO #CVEX-SEQ
+*
+    IF   (#NUM-CVEX GT 1)        /* multiple cvex's
+        AND (#CVEX-SEQ LT #CVEX-X)  /* bypass previous
+        AND (#CVEX-X NE 10)   /* was 8
+      ESCAPE TOP
+    END-IF
+*
+    ADD #PASSED-LOAN-PRIN (#I2) TO #LOAN-PRIN   /* had been #i1
+    ADD #PASSED-LOAN-INT  (#I2) TO #ACC-INT
+    move #passed-loan-prin(#i2)  to #loan-prin-by-pol(#i1)            /* vt9
+    move #passed-loan-int (#i2)  to #acc-int-by-pol(#i1)              /* vt9
+*
+    IF (ST-V.MEC-IND (#I1) = 'Y')
+      MOVE TRUE TO #MEC
+    ELSE
+      MOVE TRUE TO #NON-MEC
+    END-IF
+*
+    ADD 1 TO #NUM-TERMED
+    PERFORM DATE-TERM-LIST
+    ADD CI-V.FACE-AMOUNT (#I1) TO #TOT-FACE-TERMED
+    RESET #SCR-TAX-1035-LBL2
+*
+    IF CI-V.ONLINE-ACTION (#I1) = 'J'
+      MOVE TRUE TO #CSV-EXCH
+      MOVE 'REPORTABLE INCOME*'   TO #SCR-TAX-INC-LABEL
+      MOVE 'FOR A 1035 EXCHANGE WITH:' TO #SCR-TAX-1035-LBL1
+      move 'ISSUED:'                   to #issued-lbl                                                      /* vt9
+*
+      IF #NUM-POLS NE 1
+        MOVE 'FOR POL NUMBER' TO #SCR-TAX-1035-LBL2
+        CALLNAT 'GPLNMSXX' #POL-NUMBER CI-V.ID-NUMBER #I1
+        #ISSUE-DATE    := FUNCTION-CALENDAR(<CI-V.ISSUE-DATE(#I1),'D'>)     /* MM/DD/YYYY format            /* vt9
+      END-IF
+    ELSE
+      RESET #POL-NUMBER #issue-date #issued-lbl                                                              /* vt9
+    END-IF
+*
+    RESET #SUB-CASH-VALUE
+    IF  (CI-V.LAST-DURATION (#I1) GT 0)
+        OR (CI-V.PAY-STATUS (#I1) = '47' OR = '48')
+        OR ((CI-V.ISSUE-DATE (#I1) GE 19970101)
+        AND (CI-V.MONTH-ALLOC-AMT (#I1) NE 999.99))
+      IF  (CI-V.ISSUE-DATE-DD (#I1) = 01)
+          OR (#TODAY-DD GE CI-V.ISSUE-DATE-DD (#I1))
+        MOVE CI-V.CASH-VALUE (#I1) TO #SUB-CASH-VALUE
+        move CI-v.cash-value(#i1) to #sub-cash-value-by-pol (#i1)                      /* VT9
+      ELSE
+        MOVE CI-V.NXT-MON-CASH-VALUE (#I1) TO #SUB-CASH-VALUE /* last CSV
+        move CI-v.NXT-MON-CASH-VALUE (#I1) to #sub-cash-value-by-pol (#i1)             /* VT9
+        PERFORM ADD-CURR-PREM
+      END-IF
+    END-IF
+*
+    IF  (CI-V.PAID-TO-DATE (#I1) GE CI-V.PAID-UP-DATE (#I1))  /* PAID-UP
+        OR ((CI-V.MODE (#I1) = 'G') AND (CI-V.ALOT-AMT = 0)
+        AND (CI-V.PAY-STATUS (#I1) GE '40'))
+        OR (CI-V.PAY-STATUS (#I1) = '47' OR = '48')    /* PUSP OR PUAP
+      PERFORM CALC-PREMS-PAID-SETUP
+*
+      IF   (#NUM-CVEX GT 1)        /* multiple cvex's
+          AND (#CVEX-X GE #CVEX-SEQ)  /* at the current cvex
+        ESCAPE BOTTOM
+      END-IF
+*
+      ESCAPE TOP
+    END-IF
+*
+    RESET #NET-PREM-CALC
+    PERFORM CALC-PREMS-PAID-SETUP
+*
+    IF   (#NUM-CVEX GT 1)        /* multiple cvex's
+        AND (#CVEX-X GE #CVEX-SEQ)  /* at the current cvex
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+* YK6  BADJ transactions already created in C2302PCI for CSV
+* get amount to correctly populate RE/CA screens
+  PERFORM GET-BADJ
+* YK6 - When CSV the last policy on the account - check Term Refund bucket
+* when calculating full debit/credit to refund
+  IF STATUS(*) = 'D'                                             /* YK6
+    COMPUTE #DB-CR = #TOT-BADJ * -1                              /* YK6
+  ELSE                                                           /* YK6
+    IF NOT #DID-DB-CR                                            /* YK6
+      COMPUTE #DB-CR = (CI-V.DEBIT-CREDIT-AMT + #TOT-BADJ) * -1  /* YK6
+      FOR #I1 = 1 TO C*OUT-TERM-REF-GROUP                        /* YK6
+        #DB-CR := #DB-CR + ST-V.OUT-TERM-REF-AMOUNT(#I1)         /* YK6
+      END-FOR                                                    /* YK6
+      #DID-DB-CR := TRUE                                         /* YK6
+    END-IF                                                       /* YK6
+  END-IF                                                         /* YK6
+*
+  MOVE #NET-PREM   TO #WK-PREM-FIN-TOTAL
+  MOVE #PREMS-PAID TO #WK-PREM-PD-FIN-TOTAL
+*
+*     MULTIPLY #PREMS-PAID BY -1                             /* vt9 12/21/2016
+*      MOVE #CSV-TO-USE TO #CSV-TO-USE-2  /* DW2             /* vt9 12/21/2016
+
+*
+  PERFORM CALC-TOTAL-CHECK
+*
+  IF  (#NUM-CVEX LE 1)
+      OR (#CVEX-X = 10)  /* was 8
+    ESCAPE BOTTOM
+  ELSE
+    PERFORM SET-DASHES
+    IF #TOTAL-CHECK LT 0
+      RESET #TOTAL-CHECK
+    END-IF
+*
+    MOVE '*' TO #CGA-SCR-COMMAND
+    COMPRESS #CVEX-SEQ 'of' #NUM-CVEX 'individual CVEX work screens'
+      INTO #TEXT
+**********    INPUT TEXT #TEXT USING MAP 'C2321MCI'                      /* vt9 12/21/2016
+*
+    ADD #PREMS-PAID TO #TOT-PREMS-PAID-CVEX
+    ADD #TAXABLE-INCOME TO #TOT-TAXABLE-INC-CVEX
+    RESET #TEXT
+    PERFORM CHECK-AST
+*
+    IF #CVEX-SEQ = #NUM-CVEX
+      MOVE 1 TO #NUM-CVEX      /* to force the final combination
+      MOVE 9 TO #CVEX-X   /* was 7
+      ESCAPE TOP
+    END-IF
+  END-IF
+END-FOR  /*(1196)
+*
+IF #NUM-CVEX GT 1
+  MOVE #TOT-PREMS-PAID-CVEX TO #PREMS-PAID
+  MOVE #TOT-TAXABLE-INC-CVEX TO #TAXABLE-INCOME
+END-IF
+*
+IF #CVEX-X = 10  /* multiple cvex   /* was 8
+  SUBTRACT #TOT-TI-RESET FROM #TAXABLE-INCOME
+END-IF
+*
+RESET #I2
+ADD 1 TO #I2
+#RPU-TEXT (#I2) := #RPU-NAME
+**COMPRESS 'Dear' #RPU-NAME INTO #RPU-TEXT (#I2)
+*
+IF #DID-CSV
+  ADD 2 TO #I2
+*
+  IF NUMBER-MEMBERSHIPS = 0
+    COMPRESS 'While we sincerely regret losing you as a member,'
+      'in accordance with your' INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'request, we have discontinued your membership and'
+      'insurance in AAFMAA'    INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'under the Certificate'
+      'issued on'         INTO #RPU-TEXT (#I2)
+  ELSE
+    MOVE EDITED #TOT-FACE-TERMED (EM=ZZZ,ZZZ) TO #FACE-DISP
+    COMPRESS '$' #FACE-DISP INTO #FACE-DISP LEAVING NO
+    COMPRESS '  In accordance with your request, we have discontinued'
+      INTO #RPU-TEXT (#I2)
+    IF #SPLIT
+      COMPRESS #RPU-TEXT (#I2) #FACE-DISP 'face value'
+        INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      COMPRESS 'of your insurance in AAFMAA'
+        'under' INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      MOVE 'the Certificate issued on' TO #RPU-TEXT (#I2)
+    ELSE
+      COMPRESS #RPU-TEXT (#I2) 'your insurance in'
+        INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      COMPRESS 'AAFMAA'
+        'under the Certificate issued' INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      MOVE 'on' TO #RPU-TEXT (#I2)
+    END-IF
+  END-IF
+*
+  IF  ((NUMBER-MEMBERSHIPS = 0) AND (#NUM-TERMED LT 2)) /* only 1
+      OR (#SPLIT AND (#NUM-TERMED LT 4))                   /* 1/2/3
+      OR ((NUMBER-MEMBERSHIPS NE 0) AND (NOT #SPLIT)       /* 1/2/3/4/5
+      AND (#NUM-TERMED LT 6))
+    COMPRESS #RPU-TEXT (#I2) #TERMED-POLS INTO #RPU-TEXT (#I2)
+  ELSE
+    ADD 1 TO #I2
+    MOVE #TERMED-POLS TO #RPU-TEXT (#I2)
+  END-IF
+*
+  MOVE EDITED #TOTAL-CHECK (EM=ZZZ,ZZZ.99) TO #AMT-DISP
+  COMPRESS '$' #AMT-DISP INTO #AMT-DISP LEAVING NO
+*
+  IF #CSV-EXCH
+    ADD 1 TO #I2
+    MOVE 'and forwarded the proceeds to *' TO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'The proceeds totaled' #AMT-DISP INTO #RPU-TEXT (#I2)
+  ELSE
+    COMPRESS #RPU-TEXT (#I2) '.' INTO #RPU-TEXT (#I2) LEAVING NO
+    ADD 1 TO #I2
+    COMPRESS 'Enclosed is a check for' #AMT-DISP 'covering payment'
+      'in full of the cash' INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    MOVE 'surrender value' TO #RPU-TEXT (#I2)
+*
+    IF NUMBER-MEMBERSHIPS NE 0
+      COMPRESS #RPU-TEXT (#I2) 'of that portion of your insurance'
+        INTO #RPU-TEXT (#I2)
+    END-IF
+  END-IF
+*
+  IF (#LOAN-PRIN = 0) AND (#ACC-INT = 0)
+    COMPRESS #RPU-TEXT (#I2) '.' INTO #RPU-TEXT (#I2) LEAVING NO
+  ELSE
+    COMPRESS #RPU-TEXT (#I2) ', calculated as follows:'
+      INTO #RPU-TEXT (#I2) LEAVING NO
+    ADD 1 TO #I2
+    MOVE '    Cash surrender value'    TO #RPU-TEXT (#I2)
+    MOVE '$' TO #RPU-TEXT-DOL (#I2)
+    MOVE EDITED #CSV-TO-USE (EM=ZZ,ZZZ.99) TO #RPU-TEXT-AMT (#I2)
+    ADD 1 TO #I2
+    MOVE '    Less outstanding loan'   TO #RPU-TEXT (#I2)
+    MOVE EDITED #LOAN-PRIN (EM=ZZ,ZZZ.99) TO #RPU-TEXT-AMT (#I2)
+*
+    IF #ACC-INT NE 0
+      ADD 1 TO #I2
+      MOVE '    Less accrued interest'   TO #RPU-TEXT (#I2)
+      MOVE EDITED #ACC-INT (EM=ZZ,ZZZ.99) TO #RPU-TEXT-AMT (#I2)
+    END-IF
+*
+    ADD 1 TO #I2
+    MOVE '    Total Cash Value'        TO #RPU-TEXT (#I2)
+    MOVE '$' TO #RPU-TEXT-DOL (#I2)
+    MOVE EDITED #TOTAL-CHECK (EM=ZZ,ZZZ.99) TO #RPU-TEXT-AMT (#I2)
+  END-IF
+*
+  IF #TAXABLE-INCOME NE 0
+    ADD 1 TO #I2
+    MOVE EDITED #TAXABLE-INCOME (EM=ZZZ,ZZZ.99) TO #AMT-DISP
+    COMPRESS 'Your cash surrender value exceeds premiums paid by $'
+      #AMT-DISP '. Under present' INTO #RPU-TEXT (#I2) LEAVING NO
+    ADD 1 TO #I2
+    MOVE 'Internal Revenue regulations,' TO #RPU-TEXT (#I2)
+*
+    IF #CSV-EXCH
+      COMPRESS #RPU-TEXT (#I2) 'we are required to report this amount'
+        'to the'                     INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      MOVE 'Internal Revenue Service.' TO #RPU-TEXT (#I2)
+    ELSE
+      COMPRESS #RPU-TEXT (#I2) 'this amount should be'
+        'reported on your Federal'   INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      COMPRESS 'tax return for the year' #WYYYY-TOD 'as ordinary'
+        'income. A form 1099 reflecting'  INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      COMPRESS 'this taxable income will be mailed to you in January'
+        #NEXT-YYYY          INTO #RPU-TEXT (#I2)
+      COMPRESS #RPU-TEXT (#I2) '.' INTO #RPU-TEXT (#I2) LEAVING NO
+    END-IF
+  END-IF
+END-IF
+*
+reset #total-check-all-pol #csv-to-use-all-pol #prems-paid-all-pol   /* vt9
+  #csv-found                                                         /* vt9
+  #premiums-paid-all-pol #cost-basis-all-pol                         /* vt13
+FOR #I3 1 TO C*ACTIVE-SEGMENTS                                       /* vt9 \/
+  IF (#SCR-TRAN (#I3) = 'CSV' or = 'CVEX' or = 'CVEI' )    /* CSV
+    move TRUE to #csv-found
+    MOVE #FILE-MATCHING-INDX (#I3) TO #IFL
+    add 1 to #cnt
+    #did-csv := TRUE
+    reset #term-ref #db-cr
+    if #cnt = 1
+
+      if ci-v.split-ind(#ifl) = 1               /* vt11 \/
+        for #kk 1 9
+          if #done(#kk)
+            move #kk to #index-to-use
+          end-if
+        end-for
+        move #prems-paid-by-pol(#index-to-use) to #prems-paid-by-pol(#ifl)
+        move #csv-to-use-by-pol(#index-to-use) to #csv-to-use-by-pol(#ifl)
+        move #loan-prin-by-pol(#index-to-use)  to #loan-prin-by-pol(#ifl)
+        move #acc-int-by-pol (#index-to-use)   to #acc-int-by-pol (#Ifl)
+        move #db-cr-by-pol(#index-to-use)      to #db-cr-by-pol(#ifl)
+        move #cap-int-by-pol(#index-to-use)    to #cap-int-by-pol(#ifl)
+      end-if                                   /* vt11  /\
+
+      reset #term-ref #db-cr
+      COMPUTE #DB-CR-by-pol(#ifl) = (CI-V.DEBIT-CREDIT-AMT + #TOT-BADJ) * -1
+      FOR #I1 = 1 TO C*OUT-TERM-REF-GROUP
+        #TERM-REF := #TERM-REF + ST-V.OUT-TERM-REF-AMOUNT(#I1)
+      END-FOR
+      #DB-CR-by-pol(#ifl) := #DB-CR-by-pol(#ifl) + #TERM-REF
+    else
+      reset #db-cr-by-pol(#ifl)
+    end-if
+    move #scr-policy-number(#ifl) to #policy-number
+    compress #scr-eff-dte-mm(#i3) '/' #scr-eff-dte-dd(#i3) '/' #scr-eff-dte-yyyy(#i3) into #issue-date  leaving no
+*
+    reset #work-f
+    #PolicyNumber  := #policy-number
+    #PolicySegment := #ifl
+    #work-f        := st-v.id-number
+    #Work-f := F-OWNER-CN(<#PolicyNumber,#Work-f,#PolicySegment>)
+    IF #Work-f IS (N6)
+      #OWNER-CN := VAL(#Work-f)
+    end-if
+    reset #owner-name-tc
+    find contact with id-number = #owner-cn
+      if no
+        escape bottom
+      end-norec
+      if contact.contact-type = 'O'
+        move contact.firm-organization-name to #owner-name-tc
+      else
+        move contact.contact-id      to in-v.claimant-id
+        move contact.ssn             to in-v.owner-ssn
+        compress contact.first-name contact.middle-name contact.last-name into #owner-name-tc
+        if contact.suffix ne ' '                                                    /* vt14  \/
+          compress #owner-name-tc ',' contact.suffix into #owner-name-tc
+        end-if                                                                      /* vt14  /\
+      end-if
+    end-find
+*
+    move #csv-to-use-by-pol(#ifl) to #csv-to-use
+    move #csv-to-use to #csv-to-use-2
+    move #prems-paid-by-pol(#ifl) to #prems-paid
+    move #premiums-paid-by-pol(#ifl) to #premiums-paid                                                   /* vt13
+    move #curr-cost-basis-by-pol(#ifl) to #cost-basis
+*     write '=' #premiums-paid '=' #cost-basis /
+*     '=' #premiums-paid-by-pol(#ifl) '=' #curr-cost-basis-by-pol(#ifl)  '=' #ifl  /
+*     '='  #taxable-inc-by-pol(#ifl)   /
+*     '=' #prems-paid-by-pol(#ifl) '=' #prems-paid                                                                    /* vt13
+    if #cost-basis gt #premiums-paid                                                                     /* vt13
+      compute #curr-cost-basis-by-pol(#ifl):= #curr-cost-basis-by-pol(#ifl) * (-1)                       /* vt13
+      compute #taxable-inc-by-pol(#ifl) = #csv-to-use-by-pol(#ifl) + #curr-cost-basis-by-pol(#ifl)       /* vt13
+      move #cost-basis to #prems-paid                                                                    /* vt13
+    else                                                                                                 /* vt13
+      compute #taxable-inc-by-pol(#ifl) = #csv-to-use-by-pol(#ifl) - #premiums-paid                      /* vt13 #prems-paid-by-pol(#ifl)
+      move #premiums-paid to #prems-paid                                                                 /* vt13
+    end-if                                                                                               /* vt13
+    if #taxable-inc-by-pol(#ifl) lt 0                                                                    /* vt13
+      reset #taxable-inc-by-pol(#ifl)  #taxable-income                                                   /* vt13
+    else                                                                                                 /* vt13
+      move #taxable-inc-by-pol(#ifl) to #taxable-income                                                  /* vt13
+    end-if                                                                                               /* vt13
+    move #loan-prin-by-pol(#ifl) to #loan-prin
+    #loan-prin := #loan-prin * -1
+    move #acc-int-by-pol (#Ifl)  to #acc-int
+    #acc-int := #acc-int * -1
+    move #db-cr-by-pol (#ifl) to #db-cr                          /* vt 12/21/2016
+    #cap-int := #cap-int-by-pol(#ifl)
+    PERFORM WRITE-TC-REC
+*
+    reset #total-check
+    COMPUTE #TOTAL-CHECK = #CSV-TO-USE + #NET-PREM
+      + #LOAN-PRIN  + #ACC-INT + #DB-CR
+    IF #TOTAL-CHECK LT 0
+      IF (#LOAN-PRIN * -1) GT (#CSV-TO-USE + #NET-PREM)
+        RESET #TOTAL-CHECK
+      ELSE
+        RESET #TOTAL-CHECK
+      END-IF
+    END-IF
+*
+    IF #TOTAL-CHECK LT 1.01
+      RESET #TOTAL-CHECK
+    END-IF
+    perform set-dashes
+    input using map 'C233DMCI'
+    add #total-check    to #total-check-all-pol
+    add #csv-to-use     to #csv-to-use-all-pol
+    add #prems-paid     to #prems-paid-all-pol
+    add #cost-basis     to #cost-basis-all-pol                 /* vt13
+    add #premiums-paid  to #premiums-paid-all-pol              /* vt13
+    add #loan-prin      to #loan-prin-all-pol
+    add #acc-int        to #acc-int-all-pol
+    add #db-cr          to #db-cr-all-pol
+    add #cap-int        to #cap-int-all-pol
+    add #taxable-income to #taxable-income-all-pol
+  end-if
+end-for
+*
+* reset #term-ref #db-cr
+* COMPUTE #DB-CR = (CI-V.DEBIT-CREDIT-AMT + #TOT-BADJ) * -1
+* FOR #I1 = 1 TO C*OUT-TERM-REF-GROUP
+*   #TERM-REF := #TERM-REF + ST-V.OUT-TERM-REF-AMOUNT(#I1)
+* END-FOR
+* #DB-CR := #DB-CR + #TERM-REF
+*
+#total-check    := #total-check-all-pol
+#csv-to-use     := #csv-to-use-2 := #csv-to-use-all-pol
+#prems-paid     := #prems-paid-all-pol
+#premiums-paid  := #premiums-paid-all-pol                       /* vt13
+#cost-basis     := #cost-basis-all-pol                          /* vt13
+#loan-prin      := #loan-prin-all-pol
+#acc-int        := #acc-int-all-pol
+#db-cr          := #db-cr-all-pol
+#cap-int        := #cap-int-all-pol
+#taxable-income := #taxable-income-all-pol                        /*  vt9 /\
+*
+IF #TOTAL-CHECK LT 0
+  IF (#LOAN-PRIN * -1) GT (#CSV-TO-USE + #NET-PREM) /* DW2
+    RESET #TOTAL-CHECK
+  ELSE
+    RESET #TOTAL-CHECK
+  END-IF
+END-IF
+*
+IF #TOTAL-CHECK LT 1.01
+  RESET #TOTAL-CHECK
+END-IF
+*
+PERFORM SET-DASHES
+*
+if #csv-found                                  /* vt9 \/
+  move #owner-name-tc to #owner-name           /* vt14
+  input using map 'C233EMCI'
+end-if                                         /* vt9 /\
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE FORMAT-RSGN-CALC-SCREEN
+*****************************************************************************
+*
+RESET #LOAN-PRIN #ACC-INT #SUB-CASH-VALUE
+* FOR #I1 1 TO 9                                                        /* YK6
+FOR #I1 = 1 TO C*ACTIVE-SEGMENTS                                        /* YK6
+  RESET #FND-MATCH
+* FOR #I2 1 TO 9                                                        /* YK6
+  FOR #I2 1 TO C*ACTIVE-SEGMENTS                                        /* YK6
+    IF   (#SCR-TRAN (#I2) = 'RSGN')
+        AND  (#SCR-EFF-DTE-YYYYMMDD (#I2) = CI-V.ISSUE-DATE (#I1))
+        AND  (#SCR-PLN (#I2) = CI-V.PLAN (#I1))
+        AND (NOT FUNCTION-TERM-POLICY(<#SCR-PLN(#I2)>))                  /* YK3
+*       AND  (NOT #SCR-PLN (#I2) = 'LT' OR = 'RT')                       /* YK3
+*       AND ((#SCR-PLN-A1 (#I2) LT 'U') OR  (#SCR-PLN-A1 (#I2) GT 'Z'))  /* YK3
+      MOVE #I1 TO #MATCH-X
+      MOVE TRUE TO #FND-MATCH
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF NOT #FND-MATCH
+    ESCAPE TOP
+  END-IF
+*
+  ADD #PASSED-LOAN-PRIN (#I2) TO #LOAN-PRIN  /* had been #i1
+  ADD #PASSED-LOAN-INT  (#I2) TO #ACC-INT
+*
+  IF  (CI-V.LAST-DURATION (#I1) GT 0)
+      OR ((CI-V.ISSUE-DATE (#I1) GE 19970101)
+      AND (CI-V.MONTH-ALLOC-AMT (#I1) NE 999.99))
+      OR (CI-V.PAY-STATUS (#I1) = '47' OR = '48')
+    IF  (CI-V.ISSUE-DATE-DD (#I1) = 01)
+        OR (#TODAY-DD GE CI-V.ISSUE-DATE-DD (#I1))
+      MOVE CI-V.CASH-VALUE (#I1) TO #SUB-CASH-VALUE
+      move ci-v.cash-value (#i1) to #sub-cash-value-by-pol(#i1)                  /* vt9
+    ELSE
+      MOVE CI-V.NXT-MON-CASH-VALUE (#I1) TO #SUB-CASH-VALUE
+      move ci-v.nxt-mon-cash-value(#i1)  to #sub-cash-value-by-pol(#i1)          /* vt9
+      PERFORM ADD-CURR-PREM
+    END-IF
+  END-IF
+*
+  IF  (CI-V.PAID-TO-DATE (#I1) GE CI-V.PAID-UP-DATE (#I1))  /* PAID-UP
+      OR ((CI-V.MODE (#I1) = 'G') AND (CI-V.ALOT-AMT = 0)
+      AND (CI-V.PAY-STATUS (#I1) GE '40'))
+      OR (CI-V.PAY-STATUS (#I1) = '47' OR = '48')    /* PUSP OR PUAP
+    PERFORM CALC-PREMS-PAID-SETUP
+    ESCAPE TOP
+  END-IF
+*
+  RESET #NET-PREM-CALC
+  PERFORM CALC-PREMS-PAID-SETUP
+END-FOR
+*
+* YK6  BADJ transactions already created in C2302PCI for CSV
+* get amount to correctly populate RE/CA screens
+PERFORM GET-BADJ
+* YK6 - When resigning the last policy on the account - check Term Refund bucket
+* when calculating full debit/credit to refund
+IF STATUS(*) = 'D'                                             /* YK6
+  COMPUTE #DB-CR = #TOT-BADJ * -1                              /* YK6
+ELSE                                                           /* YK6
+  IF NOT #DID-DB-CR                                            /* YK6
+    COMPUTE #DB-CR = (CI-V.DEBIT-CREDIT-AMT + #TOT-BADJ) * -1  /* YK6
+    FOR #I1 = 1 TO C*OUT-TERM-REF-GROUP                        /* YK6
+      #DB-CR := #DB-CR + ST-V.OUT-TERM-REF-AMOUNT(#I1)         /* YK6
+    END-FOR                                                    /* YK6
+    #DID-DB-CR := TRUE                                         /* YK6
+  END-IF                                                       /* YK6
+END-IF                                                         /* YK6
+*
+IF #MATCH-X = 0
+  ESCAPE ROUTINE
+END-IF
+* * * *  SAVE PREMIUMS REF/DUE AMTS & PREMS PAID FOR WORK SCREEN
+*
+MOVE #CSV-TO-USE TO #WK-PREM-FIN-TOTAL #WK-PREM-PD-FIN-TOTAL /* DW2
+*
+MULTIPLY #PREMS-PAID BY -1
+MOVE #CSV-TO-USE TO #CSV-TO-USE-2  /* DW2
+*
+PERFORM CALC-TOTAL-CHECK
+*
+MOVE #PREMS-PAID TO #PREM-REFUND
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE FORMAT-RPU-CALC-SCREEN
+*****************************************************************************
+*
+MOVE #TOT-CAP-AMT TO #CAP-INT
+*
+RESET #WL
+* FOR #I1 1 TO 9
+FOR #I1 1 TO C*ACTIVE-SEGMENTS                                /* YK6
+  MOVE CI-V.PLAN (#I1) TO #PLAN
+  IF  CI-V.STATUS (#I1) = 'E'
+*   IF   (#PLAN = 'RT' OR = 'LT' OR = 'SO' OR = 'FSO')        /* YK3
+*       OR ((#PLAN-A1 GT 'U') AND  (#PLAN-A1 LE 'Z'))         /* YK3
+    IF (#PLAN = 'SO' OR = 'FSO')                              /* YK3
+        OR (FUNCTION-TERM-POLICY(<#PLAN>))                    /* YK3
+      IGNORE
+    ELSE
+      MOVE TRUE TO #WL
+    END-IF
+  END-IF
+*
+  IF CI-V.ISSUE-DATE (#I1) NE 0
+    ADD 1 TO #NUM-POLS
+    IF CI-V.ONLINE-ACTION(#I1) = 'A' OR = 'L' OR = '6' OR = 'M' OR = 'S'
+      ADD 1 TO #NUM-TERMED
+    END-IF
+*
+    IF CI-V.MODE (#I1) = 'G'
+      MOVE TRUE TO #MODE-G
+    END-IF
+  END-IF
+END-FOR
+*
+RESET #SUB-CASH-VALUE
+* FOR #I1 1 TO 9 /* rpu/ lapo/ or eti
+FOR #I1 1 TO C*ACTIVE-SEGMENTS
+  IF NOT (CI-V.ONLINE-ACTION (#I1) = 'A' OR = 'M' OR = '9'
+      OR = 'L' OR = '6' OR = 'S')
+    ESCAPE TOP
+  END-IF
+*
+  PERFORM DATE-TERM-LIST
+*
+  RESET #FND-MATCH #LOAN-PRIN #ACC-INT
+* FOR #I2 1 TO 9
+  FOR #I2 1 TO C*ACTIVE-SEGMENTS                                      /* YK6
+    IF   (#SCR-TRAN (#I2) = 'RPU' OR = 'LAPO' OR = 'ETI' OR = 'LAPC')
+        AND  (#SCR-EFF-DTE-YYYYMMDD (#I2) = CI-V.ISSUE-DATE (#I1))
+      MOVE TRUE TO #FND-MATCH
+      ADD #PASSED-LOAN-PRIN (#I2) TO #LOAN-PRIN
+      ADD #PASSED-LOAN-INT  (#I2) TO #ACC-INT
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF NOT #FND-MATCH
+    ESCAPE TOP
+  END-IF
+  MOVE #I1 TO #POL-X
+*
+  MOVE 'TAXABLE INCOME*'      TO #SCR-TAX-INC-LABEL
+  IF CI-V.ONLINE-ACTION (#I1) = 'A'
+    MOVE 'FOR A REDUCED PD-UP' TO #SCR-TAX-1035-LBL1
+  ELSE
+    IF CI-V.ONLINE-ACTION (#I1) = '9'
+      MOVE 'FOR AN ETI' TO #SCR-TAX-1035-LBL1
+    ELSE
+      MOVE 'FOR A LAPSE OVER-LN' TO #SCR-TAX-1035-LBL1
+    END-IF
+  END-IF
+*
+  RESET  #SCR-TAX-1035-LBL2 #POL-NUMBER
+  IF #NUM-POLS NE 1
+    MOVE 'FOR POL NUMBER' TO #SCR-TAX-1035-LBL2
+*
+    CALLNAT 'GPLNMSXX' #POL-NUMBER CI-V.ID-NUMBER #I1
+  END-IF
+*
+  IF  (CI-V.LAST-DURATION (#I1) GT 0)
+      OR (CI-V.PAY-STATUS (#I1) = '47' OR = '48')
+    IF   (CI-V.ISSUE-DATE-DD (#I1) NE 01)
+        AND (CI-V.ISSUE-DATE-DD (#I1) GT #TODAY-DD)
+      MOVE CI-V.NXT-MON-CASH-VALUE (#I1) TO #SUB-CASH-VALUE
+      PERFORM ADD-CURR-PREM
+    ELSE
+      MOVE CI-V.CASH-VALUE (#I1) TO #SUB-CASH-VALUE
+    END-IF
+  END-IF
+*
+  RESET #PREMS-PAID
+  IF  (CI-V.PAID-TO-DATE (#I1) GE CI-V.PAID-UP-DATE (#I1))  /* PAID-UP
+      OR ((CI-V.MODE (#I1) = 'G') AND (CI-V.ALOT-AMT = 0)
+      AND (CI-V.PAY-STATUS (#I1) GE '40'))
+      OR (CI-V.PAY-STATUS (#I1) = '47' OR = '48')    /* PUSP OR PUAP
+    PERFORM CALC-PREMS-PAID-SETUP
+    ESCAPE TOP
+  END-IF
+*
+  RESET #NET-PREM-CALC
+  PERFORM CALC-PREMS-PAID-SETUP
+END-FOR
+*
+MOVE #NET-PREM   TO #WK-PREM-FIN-TOTAL
+MOVE #PREMS-PAID TO #WK-PREM-PD-FIN-TOTAL
+*
+MULTIPLY #PREMS-PAID BY -1
+MOVE #CSV-TO-USE TO #CSV-TO-USE-2  /* DW2
+*
+IF   (#ACC-INT LT 1.01)
+    AND (#ACC-INT GT 0)
+  RESET #ACC-INT
+END-IF
+*
+MOVE #ACC-INT TO #ACC-INT-TO-DEATH
+COMPUTE #TOTAL-INTEREST = #TOT-CAP-AMT + #ACC-INT
+*
+* * * CHECK FOR NEG TOTAL-CHECK
+*
+COMPUTE #TOTAL-CHECK = #CSV-TO-USE + #NET-PREM /* DW2
+  - #LOAN-PRIN  - #ACC-INT    /* DW3
+*
+IF #DID-LAPO
+  COMPUTE #TAXABLE-INCOME = #CSV-TO-USE + #PREMS-PAID  /* DW2
+ELSE
+  COMPUTE #TAXABLE-INCOME = #LOAN-PRIN + #ACC-INT + #PREMS-PAID
+END-IF
+*
+IF #TAXABLE-INCOME LT 10.00   /* negetive or under #10
+  ADD #TAXABLE-INCOME TO #TOT-TI-RESET
+  RESET #TAXABLE-INCOME
+END-IF
+*
+COMPUTE #RPU-LOAN = #LOAN-PRIN + #ACC-INT
+MOVE EDITED #TOT-RPU-DB (EM=ZZ,ZZZ.99) TO #RPU-NEW-COV-DISP
+COMPRESS '$' #RPU-NEW-COV-DISP '.' INTO #RPU-NEW-COV-DISP LEAVING NO
+MOVE EDITED #RPU-LOAN   (EM=ZZ,ZZZ.99) TO #RPU-LOAN-DISP
+COMPRESS '$' #RPU-LOAN-DISP INTO #RPU-LOAN-DISP LEAVING NO
+MOVE EDITED #TAXABLE-INCOME (EM=ZZ,ZZZ.99) TO #RPU-EXCEED-DISP
+COMPRESS '$' #RPU-EXCEED-DISP '.' INTO #RPU-EXCEED-DISP LEAVING NO
+COMPUTE #RPU-NXT-YR = #TODAY-YYYY + 1
+COMPRESS '1/' #RPU-NXT-YR '.' INTO #RPU-1099 LEAVING NO
+*
+RESET #I2
+ADD 1 TO #I2
+#RPU-TEXT (#I2) := #RPU-NAME
+**COMPRESS 'Dear' #RPU-NAME INTO #RPU-TEXT (#I2)
+*
+IF #DID-LAPC
+  ESCAPE ROUTINE
+END-IF
+*
+IF #DID-LAPN OR #DID-LAPS OR #DID-LAPO
+*    text below is also in g3510pad   ******
+  ADD 1 TO #I2
+  COMPRESS '  I regret to have to inform you that your life'
+    'insurance with the Army'     TO #RPU-TEXT (#I2)
+  ADD 1 TO #I2
+  COMPRESS 'and Air Force Mutual Aid Association issued on'
+    INTO #RPU-TEXT (#I2)
+*
+  IF #NUM-TERMED LE 2
+    COMPRESS #RPU-TEXT (#I2) #TERMED-POLS INTO #RPU-TEXT (#I2)
+  ELSE
+    ADD 1 TO #I2
+    MOVE #TERMED-POLS TO #RPU-TEXT (#I2)
+  END-IF
+*
+  ADD 1 TO #I2
+  COMPRESS 'lapsed on' #WMM-TOD       INTO #RPU-TEXT (#I2)
+  COMPRESS #RPU-TEXT (#I2) '/' #WDD-TOD '/' #WYYYY-TOD  ' due to'
+    INTO #RPU-TEXT (#I2) LEAVING NO
+*
+  IF #DID-LAPN OR #DID-LAPS
+    COMPRESS #RPU-TEXT (#I2) 'non-payment of premiums and/or dues.'
+      INTO #RPU-TEXT (#I2)
+*
+    IF   (CI-V.NUMBER-MEMBERSHIPS = 0)
+        AND (NOT ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+      COMPRESS #RPU-TEXT (#I2) 'As a result,'    INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      MOVE 'your membership has also been terminated.' TO #RPU-TEXT(#I2)
+    END-IF
+  ELSE
+    COMPRESS #RPU-TEXT (#I2) 'being overloaned. Your total'
+      'indebtedness, (out-'  INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'standing loan plus accrued interest to date of lapse)'
+      'has exceeded the cash'   INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    MOVE 'value of your insurance.' TO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS ' A portion of the total indebtedness outstanding'
+      'exceeded the premiums you'    INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'paid by' #RPU-EXCEED-DISP 'Under present Internal'
+      'Revenue regulations, this amount'  INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'should be reported on your Federal Tax Return for'
+      'the year' #WYYYY-TOD 'as ordinary'   INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'income. A form 1099 reflecting this taxable income'
+      'will be mailed to you in' INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'January' #NEXT-YYYY INTO #RPU-TEXT (#I2)
+    COMPRESS #RPU-TEXT (#I2) '.' INTO #RPU-TEXT (#I2) LEAVING NO
+  END-IF
+*
+  IF #WL
+    ADD 1 TO #I2
+    COMPRESS '  If you wish to reinstate your certificate, please'
+      'let us know.'  INTO #RPU-TEXT (#I2)
+  END-IF
+*
+  PERFORM CORR-MSG-FORMAT
+*
+  IF #NUM-TERMED LE 2
+    ADD 2 TO #I2
+  ELSE
+    ADD 1 TO #I2
+  END-IF
+*
+* MOVE 'CERTIFIED MAIL' TO #RPU-TEXT (#I2) /* removed 8/2001 elb
+ELSE
+  ADD 1 TO #I2
+  COMPRESS '  Per your request, your AAFMAA insurance has been'
+    'converted to a Reduced'       INTO #RPU-TEXT (#I2)
+  ADD 1 TO #I2
+  COMPRESS 'Paid-Up status. Your new coverage amount is'
+    #RPU-NEW-COV-DISP 'This insurance was' INTO #RPU-TEXT (#I2)
+  ADD 1 TO #I2
+  COMPRESS 'issued on' #TERMED-POLS TO #RPU-TEXT (#I2)
+*
+  IF #TAXABLE-INCOME GT 0
+    ADD 1 TO #I2
+    COMPRESS ' Your total loan of' #RPU-LOAN-DISP 'was liquidated and'
+      'has exceeded your'     INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'premiums and/or dues paid by' #RPU-EXCEED-DISP 'Under IRS'
+      'regulations, this amount'  INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'should be reported on your Federal Income Tax Return as'
+      'ordinary income.'     INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'A form 1099 will be mailed to you in' #RPU-1099
+      INTO #RPU-TEXT (#I2)
+  ELSE
+    ADD 1 TO #I2
+    IF #RPU-LOAN GT 0
+      ADD 1 TO #I2
+      COMPRESS ' Your total loan of' #RPU-LOAN-DISP 'was liquidated.'
+        INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+    END-IF
+  END-IF
+*
+  IF CI-V.FIRS-LOCATION-CODE (1) = '*'
+    ADD 2 TO #I2
+*
+    IF #NUM-TERMED GT 1
+      COMPRESS '  Enclosed are copies of the original data sheets, the'
+        'originals are attached' INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      COMPRESS 'to your certificates of membership and insurance on'
+        'file.'            INTO #RPU-TEXT (#I2)
+    ELSE
+      COMPRESS '  Enclosed is a copy of the original data sheet, the'
+        'original is attached' INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      COMPRESS 'to your certificate of membership and insurance on'
+        'file.'   INTO #RPU-TEXT (#I2)
+    END-IF
+  ELSE
+    ADD 2 TO #I2
+    IF #NUM-TERMED GT 1
+      COMPRESS '  Enclosed are amended data sheets to be attached'
+        'to your original' INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      MOVE 'certificates of membership and insurance.' TO #RPU-TEXT(#I2)
+    ELSE
+      COMPRESS '  Enclosed is an amended data sheet to be attached'
+        'to your original' INTO #RPU-TEXT (#I2)
+      ADD 1 TO #I2
+      MOVE 'certificate of membership and insurance.' TO #RPU-TEXT(#I2)
+    END-IF
+  END-IF
+*
+  IF #MODE-G
+    ADD 2 TO #I2
+    COMPRESS '  A form to assist you in stopping your allotment is'
+      'also enclosed. Any' INTO #RPU-TEXT (#I2)
+    ADD 1 TO #I2
+    COMPRESS 'excess allotment will be refunded when the allotment'
+      'stops.'  INTO #RPU-TEXT (#I2)
+  END-IF
+*
+  PERFORM CORR-MSG-FORMAT
+END-IF
+*
+PERFORM WRITE-TC-REC
+*
+IF #TOTAL-CHECK LT 0
+  IF #LOAN-PRIN GT (#CSV-TO-USE + #NET-PREM) /* DW2
+    COMPUTE #LOAN-PRIN = (#CSV-TO-USE + #NET-PREM)  /* DW2
+    RESET #ACC-INT
+    RESET #TOTAL-CHECK
+  ELSE
+    COMPUTE #ACC-INT = ((#CSV-TO-USE + #NET-PREM)    /* DW2
+      - #LOAN-PRIN)
+    RESET #TOTAL-CHECK
+  END-IF
+END-IF
+*
+IF #TOTAL-CHECK LT 1.01
+  RESET #TOTAL-CHECK
+END-IF
+*
+PERFORM SET-DASHES
+MULTIPLY #LOAN-PRIN BY -1    /* DW3  so ca has proper signs
+MULTIPLY #ACC-INT   BY -1    /* DW3
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE RECAP-PMT-INFO
+*****************************************************************************
+*
+RESET #DATE                                                       /* PM17
+*
+IF #CGA-SCR-SUFFIX = 'PRO' OR = 'PRF'                             /* PM17
+  #MSG := 'Please Enter the Expected Date Settled'                /* PM17
+*
+  REPEAT                                                          /* PM17
+    INPUT WINDOW='DATE' WITH TEXT #MSG                            /* PM17
+      '                                             '                              /* vt 03/21/2016
+      '---------- PROJECTED DATE SETTLED -----------' (AD=I)  /   /* PM17
+      '             (MMDDYYYY) FORMAT               '         /   /* PM17
+      '                                             '         /   /* PM17
+      1X 'DATE = ' #DISP-DATE                                   /   /* PM17
+      '                                             '         /   /* PM17
+      '                                             '         /   /* PM17
+      '---------------------------------------------' (AD=I)  /   /* PM17
+*
+    RESET #MSG                                                    /* PM17
+*
+    IF #DISP-DATE NE MASK (MMDDYYYY)                              /* PM17
+      #MSG := 'Incorrect Date Format. Please try again'           /* PM17
+      ESCAPE TOP                                                  /* PM17
+    END-IF                                                        /* PM17
+*
+    #DATE := FUNCTION-DATE(<#DISP-DATE>)                          /* PM17
+    IF #DATE LT #DATN                                             /* PM17    YK5
+      #MSG := 'DATE Must be in the Future'                        /* PM17
+      ESCAPE TOP                                                  /* PM17
+    END-IF                                                        /* PM17
+*
+    SET WINDOW OFF                                                /* PM17
+    ESCAPE BOTTOM                                                 /* PM17
+  END-REPEAT                                                      /* PM17
+*
+  IF #CGA-SCR-SUFFIX = 'PRF'                                      /* PM17
+    #CGA-SCR-SUFFIX := 'PDF'                                      /* PM17
+  END-IF                                                          /* PM17
+END-IF                                                            /* PM17
+*
+IF ST-V.TERM-PREM-REF-DUE LT 0
+  MOVE ST-V.TERM-PREM-REF-DUE TO #PREM-DUE
+ELSE
+  MOVE ST-V.TERM-PREM-REF-DUE TO #PREM-REFUND
+END-IF
+*
+MOVE ST-V.TERM-DEBIT-CREDIT TO #DB-CR
+MOVE ST-V.TERM-LOAN-PRIN    TO #LOAN-PRIN
+MOVE ST-V.TERM-ACC-INT      TO #ACC-INT
+MOVE ST-V.TERM-CAP-INT      TO #CAP-INT
+MOVE ST-V.TERM-PREM-REF-DUE TO #NET-PREM
+MOVE ST-V.TERM-PREM-REF-DUE TO #NET-PREM-W-O-DB-CR
+ADD #DB-CR TO #NET-PREM
+MOVE #NET-PREM TO #NET-PREM-2
+IF #DID-ACDB                                         /* YK4
+  #DEATH-BENEFIT := ST-V.TERM-CASH-VALUE             /* YK4
+  #TOTAL-CHECK   := #DEATH-BENEFIT + #NET-PREM       /* YK4
+  #TOTAL-DEATH-BENEFIT := #TOTAL-CHECK               /* YK4
+END-IF                                               /* YK4
+*
+RESET #NEW-WAY
+IF CI-V.DATE-OF-DEATH NE 0
+  MOVE TRUE TO #DID-DEAD
+  MOVE CI-V.DATE-OF-DEATH TO #DOD-YYYYMMDD
+*
+  FIND (1) FR-V WITH WIDOW-KEY = #CGA-ID-G
+    IF NO RECORDS FOUND
+      WRITE 'NO RECs FOUND - CALL EDS'
+    END-NOREC
+*
+    RESET #I2 #DB-BY-POL (*) #ISS-DT-BY-POL (*)
+    FOR #I1 1 TO 9
+*******************************    FOR #I1 1 TO C*ACTIVE-SEGMENTS                           /* YK6
+      IF POL-NAME (#I1) = 'AAFMAA' OR = 'AMAA'
+        IF DEAD-GROSS-DB (1) NE 0 /* death done new way
+          ADD 1 TO #NUM-DEAD    /* DW6
+          MOVE TRUE TO #NEW-WAY
+          MOVE #I1 TO #SEG-I
+*
+          PERFORM CALL-C2328SCI /* show calc screen
+          V_PRI := V_PRI + 1
+          ESCAPE TOP  /* below only needed for old-wau
+        END-IF
+*
+        ADD POL-AMT-PAID (#I1) TO #DEATH-BENEFIT
+        ADD 1 TO #I2
+        MOVE POL-AMT-PAID (#I1) TO #DB-BY-POL     (#I2)
+        MOVE POL-DATE     (#I1) TO #ISS-DT-BY-POL (#I2)
+*
+        MOVE CI-V.ID-NUMBER TO #START-ID
+        MOVE POL-DATE        (#I1) TO #START-ISSUE
+*
+        IF CI-V.STATUS (#I1) = 'D'
+          MOVE CI-V.ISSUE-DATE (#I1) TO #START-ISSUE
+          MOVE CI-V.SPLIT-IND  (#I1) TO #START-SPLIT-IND
+        ELSE
+          MOVE POL-DATE        (#I1) TO #START-ISSUE
+        END-IF
+*
+        FIND (1) VA-V WITH RECORD-KEY = #START-KEY
+          MOVE VA-V.CASH-VALUE-M (13) TO #CSV-BY-POL (#I2)
+        END-FIND
+      END-IF
+    END-FOR
+*
+    RESET #SEG-I   /* get composite Screen
+    PERFORM CALL-C2328SCI
+    ESCAPE ROUTINE
+  END-FIND
+ELSE
+  IF NOT #DID-ACDB
+    MOVE TRUE TO #DID-CSV
+    MOVE ST-V.TERM-CASH-VALUE TO #CSV-TO-USE #CSV-TO-USE-2 /* DW2
+    MOVE ST-V.TERM-PREM-PAID  TO #PREMS-PAID
+* below was uncommented 5/21/2003
+    COMPUTE #TAXABLE-INCOME = #CSV-TO-USE + #PREMS-PAID
+*
+    IF #TAXABLE-INCOME LT 10.00   /* negetive or under #10
+      ADD #TAXABLE-INCOME TO #TOT-TI-RESET
+      RESET #TAXABLE-INCOME
+    END-IF
+*
+    COMPUTE #TOTAL-CHECK = #CSV-TO-USE + #NET-PREM
+      + #LOAN-PRIN  + #ACC-INT
+  END-IF
+END-IF
+*
+PERFORM SET-DASHES
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE SET-DASHES
+*****************************************************************************
+*
+IF #DB-CR LT 0
+  MOVE '-' TO #DB-CR--
+END-IF
+*
+IF #LOAN-PRIN LT 0
+  MOVE '-' TO #LOAN-PRIN--
+END-IF
+*
+IF #PREM-DUE LT 0
+  MOVE '-' TO #PREM-DUE--
+  MOVE 'PREMS DUE' TO #PREM-LBL
+END-IF
+*
+IF #NET-PREM LT 0
+  MOVE '-' TO #NET-PREM--
+  MOVE '-' TO #NET-PREM-2--
+  MOVE 'LESS PREMIUMS' TO #PREM-2-LBL
+END-IF
+*
+IF #ACC-INT LT 0
+  MOVE '-' TO #ACC-INT--
+END-IF
+*
+IF #ACC-INT-TO-DEATH LT 0
+  MOVE '-' TO #ACC-INT-TO-DEATH--
+END-IF
+*
+IF #TOTAL-CHECK LT 0
+  MOVE '-' TO #TOTAL-CHECK--
+END-IF
+*
+IF #PREMS-PAID LT 0
+  MOVE '-' TO #PREMS-PAID--
+END-IF
+*
+* if #cost-basis lt 0                         /* vt13 \/
+*   move '-' to #cost-basis--
+* end-if                                      /* vt13 /\
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CALC-DEATH-BENE-INT
+*****************************************************************************
+*
+MOVE #LOAN-PRIN TO #LOAN-PRIN-5
+CALLNAT 'C2321SCI' #CGA-ID-G #SEG-I
+  CI-V.DATE-OF-DEATH
+  #NET-PREM-W-O-DB-CR
+  #DB-CR
+  #LOAN-PRIN-5
+  #ACC-INT
+  #DEATH-BENEFIT-X
+  #NET-DB
+  #EARNED-INT
+  #FINAL-DB
+  #date                                     /*  vt 11/07/2016 reconciling programs changed later
+ADD #EARNED-INT TO #TOT-EARNED-INT
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CORR-MSG-FORMAT
+*****************************************************************************
+*
+MOVE #CGA-CLERK TO #CLERK-ABB-PASS
+* MOVE 'KHB' TO #CLERK-ABB-PASS
+MOVE ' ' TO #CLERK-ABB-NAME-PASS
+CALLNAT 'GCKNMSXX' #CLERK-ABB-PASS
+  #INVALID
+  #CLERK-ABB-NAME-PASS
+*
+ADD 2 TO #I2
+COMPRESS #CORR-MSG #CLERK-ABB-NAME-PASS INTO #RPU-TEXT (#I2)
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE DATE-TERM-LIST
+*****************************************************************************
+*
+IF  (#DID-RPU  AND (CI-V.ONLINE-ACTION (#I1) = 'A'))
+    OR (#DID-LAPN AND (CI-V.ONLINE-ACTION (#I1) = 'L'))
+    OR (#DID-LAPC AND (CI-V.ONLINE-ACTION (#I1) = 'S'))
+    OR (#DID-LAPS AND (CI-V.ONLINE-ACTION (#I1) = '6'))
+    OR (#DID-LAPO AND (CI-V.ONLINE-ACTION (#I1) = 'M'))
+    OR (#DID-CSV  AND (CI-V.ONLINE-ACTION (#I1) = '5' OR = 'J' OR = 'T'))
+  ADD CI-V.DEATH-BENEFIT (#I1) TO #TOT-RPU-DB
+  COMPRESS CI-V.ISSUE-DATE-MM (#I1) CI-V.ISSUE-DATE-DD (#I1)
+    CI-V.ISSUE-DATE-YYYY (#I1) INTO #RPU-MMDDYYYY WITH '/'
+  ADD 1 TO #RPU-X
+*
+  IF #RPU-X = 1
+    MOVE #RPU-MMDDYYYY TO #TERMED-POLS
+  ELSE
+    IF #RPU-X = #NUM-TERMED
+      COMPRESS #TERMED-POLS 'and' #RPU-MMDDYYYY INTO #TERMED-POLS
+    ELSE
+      COMPRESS #TERMED-POLS ',' #RPU-MMDDYYYY
+        INTO #TERMED-POLS LEAVING NO
+    END-IF
+  END-IF
+*
+  IF #DID-RPU AND #RPU-X = #NUM-TERMED
+    COMPRESS #TERMED-POLS '.' INTO #TERMED-POLS LEAVING NO
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CALC-TOTAL-CHECK
+*****************************************************************************
+*
+MOVE #TOT-CAP-AMT TO #CAP-INT
+*
+* IF   (#ACC-INT LT 1.01)               /* vt1 \/
+*     AND (#ACC-INT GT 0)
+*   RESET #ACC-INT
+* END-IF                                /* vt1 /\
+*
+* write 'line 3816  of CALC-TOTAL-CHECK subroutine of C2320PCI - we reset the interest'
+COMPUTE #LOAN-PRIN = #LOAN-PRIN * -1
+MOVE #ACC-INT TO #ACC-INT-TO-DEATH
+COMPUTE #ACC-INT = #ACC-INT   * -1
+COMPUTE #TOTAL-INTEREST = #TOT-CAP-AMT + #ACC-INT
+*
+* * * * * CHECK FOR NEGATIVE TOTAL-CHECK
+*
+IF NOT #DID-RSGN
+  PERFORM CALL-GMECCSXX   /* calc taxable inc
+*
+  IF #TAXABLE-INCOME LT 10.00   /* negetive or under #10
+    ADD #TAXABLE-INCOME TO #TOT-TI-RESET
+    RESET #TAXABLE-INCOME
+  END-IF
+END-IF
+*
+* MPUTE #TOTAL-CHECK = #CASH-VALUE-ACT + #NET-PREM
+COMPUTE #TOTAL-CHECK = #CSV-TO-USE + #NET-PREM    /* DW2
+  + #LOAN-PRIN  + #ACC-INT + #DB-CR
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE WRITE-TC-REC
+*****************************************************************************
+*
+IF   (#CGA-ORIG-COMMAND = 'CI')       /* CAME FROM A "CI" UPDATE
+    AND (#TAXABLE-INCOME GT 0)
+    AND (#CGA-MF-SCR-COMMAND NE 'EI')  /* indicates exch internal
+*
+  IF #MEC AND #NON-MEC
+    WRITE /// 'This transaction has a combination of MEC and NON-MEC.'                     /* vt4 \/ removed LEE BIBB:
+    WRITE   'You will have to manually create the MEC TC record'
+*    WRITE   'TC record'                                                                   /* vt4 /\
+    WRITE /// 'Press ENTER to continue'
+  END-IF
+*
+  IF #MEC AND NOT #NON-MEC
+    MOVE 'M' TO #KEY-1099-ID
+  ELSE
+    IF #CSV-EXCH
+      MOVE '2' TO #KEY-1099-ID
+    ELSE
+      MOVE 'C' TO #KEY-1099-ID
+    END-IF
+  END-IF
+*
+  MOVE CI-V.ID-NUMBER TO #CGA-SCR-ID
+* FOR #ISC 1 TO 9
+*   FOR #ISC 1 TO C*ACTIVE-SEGMENTS                      /* YK6                          /* vt9  \/
+*     IF #SCR-TRAN (#ISC) NE ' '                         /* get owner of
+*       MOVE #FILE-MATCHING-INDX (#ISC) TO #CONTACT-SEG  /* this pol
+*       ESCAPE BOTTOM
+*     END-IF
+*   END-FOR                                                                              /* vt9  /\
+*
+  CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+    #POLICY-NUMBER
+*
+  IF #SSN = 0
+    WRITE 'Owner SSN is 0 - 1099 record bypassed'
+    ESCAPE ROUTINE
+  END-IF
+*
+  MOVE #TODAY-YYYY TO #KEY-1099-YYYY
+  MOVE #SSN  TO #KEY-1099-SSN /* was ci-c.ssn
+  MOVE #SSN  TO #OWNER-SSN
+*
+*   find contact with ssn = #owner-ssn                             /* vt8  \/
+  reset #work-f
+  #PolicyNumber  := #policy-number
+  #PolicySegment := #contact-seg
+  #work-f        := st-v.id-number
+  #Work-f := F-OWNER-CN(<#PolicyNumber,#Work-f,#PolicySegment>)
+  IF #Work-f IS (N6)
+    #OWNER-CN := VAL(#Work-f)
+  end-if
+  reset #owner-name-tc                                                                    /* vt9
+  find contact with id-number = #owner-cn
+    if no
+      escape bottom
+    end-norec
+    move contact.contact-id      to in-v.claimant-id
+    move contact.ssn             to in-v.owner-ssn
+    if contact.contact-type = 'O'
+      move contact.firm-organization-name to #owner-name-tc
+    else
+      compress contact.first-name contact.middle-name contact.last-name into #owner-name-tc  /* vt9
+      if contact.suffix ne ' '                                                    /* vt14  \/
+        compress #owner-name-tc ',' contact.suffix into #owner-name-tc
+      end-if                                                                      /* vt14  /\
+    end-if
+  end-find
+  move ci-v.member-contact-id    to in-v.contact-id
+  move #policy-number            to in-v.policy-number
+  move *datn                     to in-v.date-entered            /* vt8  /\
+*
+  FIND (1) IN-V WITH YEAR-INT-TYPE-ID-KEY = #KEY-1099
+    IF NO RECORD FOUND
+      MOVE #SSN                 TO IN-V.SSN
+      MOVE #TODAY-YYYY          TO IN-V.YEAR
+      MOVE 'S'                  TO IN-V.SSN-TAX-ID-IND
+*
+      MOVE #CSV-TO-USE          TO IN-V.GROSS-AMT   /* DW2
+
+*
+      MOVE #TAXABLE-INCOME      TO IN-V.AMOUNT
+      MOVE #CGA-ORIG-ID         TO IN-V.RELATED-ID-NUMBER
+      MOVE #KEY-1099-ID         TO IN-V.INT-TYPE
+*
+      reset #owner-name-tc            /* vt 12/14/2016
+      find contact with ssn = #owner-ssn                         /* vt8  \/
+        if no
+          escape bottom
+        end-norec
+        move contact.contact-id      to in-v.claimant-id
+        move contact.ssn             to in-v.owner-ssn
+        if contact.contact-type = 'O'
+          move contact.firm-organization-name to #owner-name-tc
+        else
+          compress contact.first-name contact.middle-name contact.last-name into #owner-name-tc     /* vt9
+          if contact.suffix ne ' '                                                    /* vt14 \/
+            compress #owner-name-tc ',' contact.suffix into #owner-name-tc
+          end-if                                                                      /* vt14  /\
+        end-if
+      end-find
+      move ci-v.member-contact-id    to in-v.contact-id
+      move #policy-number            to in-v.policy-number
+      move *datn                     to in-v.date-entered       /* vt8  /\
+*
+      IF #CGA-ORIG-SUFFIX = 'UPD'
+        STORE IN-V
+*       END TRANSACTION   /* removed 6/6/2001 to fix updt problem
+      END-IF
+*
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    if in-v.policy-number = #policy-number                     /* vt8
+      ADD  #TAXABLE-INCOME TO IN-V.AMOUNT
+*
+      ADD  #CSV-TO-USE TO IN-V.GROSS-AMT   /* DW2
+*
+      IF #CGA-ORIG-SUFFIX = 'UPD'
+        UPDATE
+*     END TRANSACTION /* removed 6/6/2001 to fix updt problem
+      END-IF
+    else                                                      /* vt8   \/
+      MOVE #SSN                 TO IN-V.SSN
+      MOVE #TODAY-YYYY          TO IN-V.YEAR
+      MOVE 'S'                  TO IN-V.SSN-TAX-ID-IND
+*
+      MOVE #CSV-TO-USE          TO IN-V.GROSS-AMT   /* DW2
+*
+      MOVE #TAXABLE-INCOME      TO IN-V.AMOUNT
+      MOVE #CGA-ORIG-ID         TO IN-V.RELATED-ID-NUMBER
+      MOVE #KEY-1099-ID         TO IN-V.INT-TYPE
+*
+      reset #owner-name-tc            /* vt 12/14/2016
+      find contact with id-number = #owner-cn                 /* vt8 \/
+        if no
+          escape bottom
+        end-norec
+        move contact.contact-id      to in-v.claimant-id
+        move contact.ssn             to in-v.owner-ssn
+        if contact.contact-type = 'O'
+          move contact.firm-organization-name to #owner-name-tc
+        else
+          compress contact.first-name contact.middle-name contact.last-name into #owner-name-tc     /* vt9
+          if contact.suffix ne ' '                                                    /* vt14  \/
+            compress #owner-name-tc ',' contact.suffix into #owner-name-tc
+          end-if                                                                      /* vt14  /\
+        end-if
+      end-find
+      move ci-v.member-contact-id    to in-v.contact-id
+      move #policy-number            to in-v.policy-number
+      move *datn                     to in-v.date-entered
+*
+      IF #CGA-ORIG-SUFFIX = 'UPD'
+        STORE IN-V
+      END-IF
+    end-if                                                    /* vt8  /\
+  END-FIND
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CHECK-AST
+*****************************************************************************
+*
+IF NOT ( #CGA-SCR-COMMAND = '*' OR = ' ' )
+    AND ( #CGA-SCR-SUFFIX <> 'P22')                  /* bz1 PM18
+  FETCH 'G1000PXX'
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE CALC-PREMS-PAID-SETUP
+*****************************************************************************
+*
+MOVE P-DATE-OF-BIRTH              TO #PP-DATE-OF-BIRTH                    /* TT2
+MOVE CI-V.ANNUAL-PREM (#I1)       TO #PP-ANNUAL-PREM
+MOVE CI-V.PAY-STATUS (#I1)        TO #PP-PAY-STATUS
+MOVE CI-V.TOT-PREMIUMS-PAID (#I1) TO #PP-TOT-PREMIUMS-PAID
+MOVE CI-V.PAID-TO-DATE (#I1)      TO #PP-PAID-TO-DATE
+MOVE CI-V.ISSUE-DATE (#I1)        TO #PP-ISSUE-DATE
+MOVE CI-V.MODE (#I1)              TO #PP-MODE
+MOVE CI-V.PLAN (#I1)              TO #PP-PLAN
+MOVE CI-V.COST-BASIS (#I1)        TO #PP-COST-BASIS
+MOVE CI-V.MONTH-ALLOC-AMT (#I1)   TO #PP-MONTH-ALLOC-AMT
+MOVE ST-V.INTRO-FLAG              TO #PP-INTRO-FLAG
+MOVE ST-V.X-FIRST-PLACE-FEE (#I1) TO #PP-FIRST-PLACE-FEE
+MOVE ST-V.X-BILL-ADJUST     (#I1) TO #PP-BADJ
+*
+CALLNAT 'GPRPDSCO'
+  #PP-DATE-OF-BIRTH
+  #PP-ANNUAL-PREM
+  #PP-PAY-STATUS
+  #PP-TOT-PREMIUMS-PAID
+  #PP-PAID-TO-DATE
+  #PP-ISSUE-DATE
+  #PP-MODE
+  #PP-PLAN
+  #PP-COST-BASIS
+  #PP-MONTH-ALLOC-AMT
+  #PP-INTRO-FLAG
+  #PP-FIRST-PLACE-FEE
+  #PREMS-PAID
+  #SUB-PREMS-PAID
+  #PP-BADJ
+*
+
+move #sub-prems-paid    to #prems-paid-by-pol (#i1)              /* vt9  \/
+move #prems-paid-by-pol(#i1) to #premiums-paid-by-pol(#i1)       /* vt13
+#prems-paid-by-pol(#i1) := #prems-paid-by-pol(#i1) * -1
+MOVE #sub-prems-paid    to #sub-prems-paid-by-pol (#i1)          /* vt9  /\
+PERFORM CHECK-TOT-PRM-PD
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CHECK-TOT-PRM-PD
+*****************************************************************************
+*
+RESET #TERM-TEXT (*)
+reset #csv-to-use-by-pol(#i1)                /* vt 12/21/2016
+IF CI-V.PAY-STATUS (#I1) = '45' /*RPUs do not get TPP a/o 5/6/04 RLB
+    OR ST-V.X-FIRST-PLACE-FEE (#I1) NE 0 /* PM4
+  ADD #SUB-CASH-VALUE TO #CSV-TO-USE   /* DW2
+  add #sub-cash-value-by-pol(#i1)  to #csv-to-use-by-pol(#i1)              /* vt9
+  ESCAPE ROUTINE
+END-IF
+*
+IF #SUB-PREMS-PAID GT #SUB-CASH-VALUE   /* DW2
+  ADD #SUB-PREMS-PAID TO #CSV-TO-USE   /* DW2
+  add  #sub-prems-paid-by-pol(#i1) to #csv-to-use-by-pol(#i1)              /* vt9
+*
+  MOVE 'The premiums paid in to date'   TO #TERM-TEXT (1)
+  MOVE 'of Cash Surr/1035 Exch were'    TO #TERM-TEXT (2)
+  MOVE 'gtr than the CV at the date of' TO #TERM-TEXT (3)
+  MOVE 'Surr/Exch, therefore the prems' TO #TERM-TEXT (4)
+  MOVE 'paid are being returned. No   ' TO #TERM-TEXT (5)
+  MOVE 'taxable income is incurred.   ' TO #TERM-TEXT (6)
+ELSE
+  ADD #SUB-CASH-VALUE  TO #CSV-TO-USE   /* DW2
+  add  #sub-cash-value-by-pol(#i1)  to #csv-to-use-by-pol(#i1)                         /* vt9
+END-IF
+*
+*** move #csv-to-use to #csv-to-use-by-pol(#i1)                                        /* vt9
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE LAPC-LETTER
+*****************************************************************************
+*
+RESET #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX
+INPUT TEXT #TEXT USING MAP 'C2341MCI'
+MOVE #CGA-ORIG-ID TO #CGA-SCR-ID
+MOVE '*' TO #CGA-SCR-COMMAND
+*
+PERFORM CHECK-AST
+*
+#RPU-TEXT (*) := FUNCTION-LAPSE-LETTER-TEXT(<#LOAN-PRIN,#ACC-INT>)(*) /* PM16
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE ADD-CURR-PREM
+*****************************************************************************
+*
+MOVE CI-V.ID-NUMBER TO #START-ID
+MOVE CI-V.ISSUE-DATE (#I1) TO #START-ISSUE
+MOVE CI-V.SPLIT-IND (#I1) TO #START-SPLIT-IND
+MOVE #DATN TO #YYYYMMDD                               /* YK5
+SUBTRACT 1 FROM #MM
+*
+IF #MM LT 1
+  MOVE 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+*
+FIND VA-V WITH RECORD-KEY = #START-KEY
+  IF   (YEAR-MONTH-M (13) = #YYYYMM)
+    MOVE ACCUM-CASH-VALUE-M (12) TO #PREV-ACV
+    COMPUTE #NEW-ACV = #PREV-ACV + PREMIUM-M  (13)
+      + INTEREST-M (13) - COST-OF-INSURANCE-M (13)
+*
+    IF   (#I1 LE 9)
+        AND (ISSUE-DATE (#I1) GE 19970101) /* 1997 pol
+        AND (MONTH-ALLOC-AMT (#I1) NE 999.99) /* not FORCED 96 PREMS
+      SUBTRACT PRORAT-LOAN-BAL-M   (13) FROM #NEW-ACV
+      SUBTRACT PRORAT-LN-ACC-INT-M (13) FROM #NEW-ACV
+    END-IF
+*
+    IF #NEW-ACV GT ACCUM-CASH-VALUE-M (13)
+      COMPUTE #ACV-DIFF = #NEW-ACV - ACCUM-CASH-VALUE-M(13)
+    ELSE
+      COMPUTE #ACV-DIFF = ACCUM-CASH-VALUE-M(13) - #NEW-ACV
+    END-IF
+*
+    MOVE PREMIUM-M (13) TO #REAL-PREM
+*
+    IF #ACV-DIFF NE 0
+      PERFORM CALC-REAL-PREM
+    END-IF
+    ADD #REAL-PREM TO #SUB-CASH-VALUE
+    add #real-prem to #sub-cash-value-by-pol(#i1)               /* vt9
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CALC-REAL-PREM
+*****************************************************************************
+*
+FOR #I4 1 TO 800
+  IF   (#ACV-DIFF GT ((#I4 * 1000) - 10))
+      AND (#ACV-DIFF LT ((#I4 * 1000) + 10))
+    IF #NEW-ACV LT ACCUM-CASH-VALUE-M (13)
+      ADD (#I4 * 1000) TO #REAL-PREM
+    ELSE
+      SUBTRACT (#I4 * 1000) FROM #REAL-PREM
+    END-IF
+*
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CALL-GMECCSXX
+*****************************************************************************
+*
+* FOR #I3 1 TO 9
+FOR #I3 1 TO C*ACTIVE-SEGMENTS
+  IF (#SCR-TRAN (#I3) = 'CSV' OR = 'CVEX' OR = 'ANNU')    /* CSV     DW10                 /* vt9
+    move ci-v.issue-date(*) to #issue-date-area (*)                                                 /* vt13 \/
+    move #SCR-EFF-DTE-YYYYMMDD (#I3) to #scr-eff-dte-yyyymmdd-a
+    examine full #issue-date-area(*) for full #scr-eff-dte-yyyymmdd-a giving index #idx             /* vt13 /\
+    if  (#SCR-EFF-DTE-YYYYMMDD (#I3) = CI-V.ISSUE-DATE (#idx))                                      /*  vt13 replace #ifl woth #idx
+      MOVE #FILE-MATCHING-INDX (#I3) TO #IFL                                               /* vt9
+*     END-IF                                                                              /* vt9
+*   END-FOR                                                                               /* vt9
+*
+      MOVE '135' TO #SUFFIX   /* #prems-paid not used
+      CALLNAT 'GMECCSXX' CI-V.ID-NUMBER
+        #SUFFIX
+        CI-V.PLAN   (#IFL)
+        ISSUE-DATE  (#IFL)
+        CI-V.PAID-TO-DATE (#IFL)
+        CI-V.PAID-UP-DATE (#IFL)
+        CI-V.ISSUE-AGE   (#IFL)
+        CI-V.ANNUAL-PREM (#IFL)
+        CI-V.SMOKER-FLAG (#IFL)
+        CI-V.FACE-AMOUNT (#IFL)
+        CI-V.DURATION    (#IFL)
+        CI-V.PAY-STATUS  (#IFL)
+        CI-V.TOT-PREMIUMS-PAID (#IFL)
+        #PREMS-PAID-by-pol (#ifl)                                                            /* vt9  was #prems-paid
+*
+        #MAX-7-PAY
+        #MEC-PREMS-PAID-TO-DATE
+        #EXCEEDS-MEC
+        #1035-NX
+        #1035-EXCH-AMT
+        #LUMP-PMT
+*
+      IF COST-BASIS (#IFL) = 0
+        COMPUTE #CURR-COST-BASIS = #PREMS-PAID * -1 /* get sign back to pos
+        compute #curr-cost-basis-by-pol(#ifl) = #prems-paid-by-pol(#ifl) * -1                            /* vt9
+      ELSE
+        COMPUTE #CURR-COST-BASIS = COST-BASIS (#IFL)
+          + ((#PREMS-PAID * -1) - TOT-PREMIUMS-PAID (#IFL))  /* AAFMAA TPP
+        compute #curr-cost-basis-by-pol(#ifl) = cost-basis(#ifl) +                                       /* vt9
+          ((#prems-paid-by-pol(#ifl) * -1) - tot-premiums-paid(#ifl))                                    /* vt9
+      END-IF
+*
+      COMPUTE #TAXABLE-INC = #CSV-TO-USE - #CURR-COST-BASIS  /* DW2
+      MOVE #TAXABLE-INC TO #TAXABLE-INCOME
+      compute #taxable-inc-by-pol (#IFL) = #csv-to-use-by-pol(#ifl) - #curr-cost-basis-by-pol(#ifl)      /* vt9
+      compute #prems-paid-by-pol (#ifl) := (#csv-to-use-by-pol(#ifl) - #taxable-inc-by-pol(#ifl))        /* vt9
+      COMPUTE #PREMS-PAID = (#CSV-TO-USE - #TAXABLE-INCOME) * -1 /* DW2
+      compute #prems-paid-by-pol (#ifl) := #prems-paid-by-pol (#ifl) * -1                                /* vt9
+*
+    end-if                                                                                               /* vt13
+  end-if                                                                                                 /* vt9
+end-for                                                                                                /* vt9
+
+
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE GET-BADJ
+*****************************************************************************
+*
+RESET #TOT-BADJ #tot-badj-by-pol(*)
+FOR #I1 1 TO C*ACTIVE-SEGMENTS
+  IF ST-V.STATUS (#I1) = 'E'
+    ADD ST-V.X-BILL-ADJUST(#I1) TO #TOT-BADJ
+    move st-v.x-bill-adjust(#i1) to #tot-badj-by-pol (#i1)                                             /* vt9
+    #TOT-PREM-REFUND := ST-V.X-BILL-DOLLAR(#I1) + #TOT-PREM-REFUND
+    #tot-prem-refund-by-pol(#i1) := st-v.x-bill-dollar(#i1) + #tot-prem-refund-by-pol(#i1)             /* vt9
+    #db-cr-by-pol (#i1) := #tot-badj-by-pol(#i1) * -1                                                  /* vt9
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE CALL-C2328SCI
+*****************************************************************************
+CALLNAT 'C2328SCI' #CGA-SCR-COMMAND
+  #CGA-SCR-ID
+  #CGA-SCR-SUFFIX
+  #CGA-CLERK
+  CI-V.NAME
+  #CGA-ID-G
+  #SEG-I
+  CI-V.DATE-OF-DEATH
+  #NET-BENEFIT
+  #TOTAL-EARNED-INT                   /* DW8
+  #DATE                               /* PM17
+  V_PRI
+*
+END-SUBROUTINE
+*
+*****************************************************************************
+DEFINE SUBROUTINE FORMAT-ACDB-CALC-SCREEN      /* YK4
+*****************************************************************************
+* #issue-date (a10)
+* #OWNER-NAME (a25)
+* #insured-name (a25)
+* #pol-number (a16)
+* #prem-refund (p6.2)
+* #prem-due (p6.2)
+* #db-cr (p7.2)
+* #net-prem #net-prem-2 (p5.2)
+* #DEATH-BENEFIT (p9.2)
+* #TOTAL-DEATH-BENEFIT #TOTAL-DEATH-BENE-2 (p9.2)
+*
+#Work-f := '!'                                         /* bz-Name-C
+CALLNAT 'GPRS0CNT' ST-V.MEMBER-CONTACT-ID #Work-f
+#INSURED-NAME := #OWNER-NAME := #Work-f
+*
+#Work-f        := ST-V.ID-NUMBER
+#PolicySegment := #IFL
+IF #IFL = 0
+  FOR #I1 = 1 TO C*ACTIVE-SEGMENTS
+    IF CI-V.ONLINE-ACTION(#I1) = 'U' OR = 'W'
+      #PolicySegment := #IFL := #I1
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-IF
+CALLNAT 'GPLNMSXX' #POL-NUMBER CI-V.ID-NUMBER #IFL
+#Work-f := F-OWNER-CN(<#PolicyNumber,#Work-f,#PolicySegment>)
+IF #Work-f IS (N6)
+  #OWNER-CN := VAL(#Work-f)
+ELSE
+  #OWNER-CN := ST-V.ID-NUMBER
+END-IF
+IF #OWNER-CN <> ST-V.ID-NUMBER
+  #OWNER-CONTACT-ID := F-GET-CONTACT-ID(<#OWNER-CN>)
+  RESET #Work-f
+  CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Work-f
+  #OWNER-NAME    := #Work-f
+END-IF
+IF #IFL <> 0
+  #ISSUE-DATE    := FUNCTION-CALENDAR(<CI-V.ISSUE-DATE(#IFL),'D'>)     /* MM/DD/YYYY format
+  #REQUEST-DATE  := FUNCTION-CALENDAR(<CI-V.ONLINE-DATE (#IFL),'D'>)
+END-IF
+*
+IF #CGA-ORIG-COMMAND <> 'RE'
+  #PREM-REFUND   := #PREM-REFUND-PASSED
+  #PREM-DUE      := #PREM-DUE-PASSED
+  #DB-CR         := #DB-ADJ
+  #NET-PREM      := #NET-PREM-2 := #PREM-REFUND + #PREM-DUE + #DB-CR
+  #DEATH-BENEFIT := #ACC-DEATH-BENEFIT
+  #TOTAL-DEATH-BENEFIT := #TOTAL-CHECK := #DEATH-BENEFIT + #NET-PREM
+  PERFORM SET-DASHES
+END-IF
+*
+END-SUBROUTINE
+*
+END

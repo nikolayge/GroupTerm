@@ -1,0 +1,222 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGGRAM ID  :  MBRSVCFP
+* AUTHOR       : Copyright: MetrostarSystems AAFMAA                    *
+* DESCRIPTION  : Premier services                                      *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG        REASON
+* NGG    20111228       Initial Creation
+* NGG    20120416  NG1  Premiere Services - Credit Card deposit  
+*
+DEFINE DATA PARAMETER
+1 XML_PARSER_INPUT             (A) DYNAMIC BY VALUE
+1 #XML_SERIALZE_OUTPUT          (A) DYNAMIC        /* Out
+*
+LOCAL
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I4)
+LOCAL USING PARSER-X           /* parser internal data - do not change
+LOCAL USING OBJAMR01
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 #MSG                         (A) DYNAMIC
+1 #ERROR-CODE                  (A2)
+1 #ERROR-DESCRIPTION           (A) DYNAMIC
+1 #PAYMENT-PERIOD              (N2)
+1 ServiceFee
+  2 Plan               (A3)
+  2 Age                (N3)
+  2 PaymentMode        (A1)
+  2 FirstPlacementFee  (P7.2)
+1 #LEN                 (I4)
+1 #Parse-error         (A2) CONST <'-7'>
+1 #ERROR-LOG           (I4) CONST <3>
+1 BLANK                (A1) CONST <' '>
+*
+END-DEFINE
+*
+ASSIGN #LEN := *LENGTH (XML_PARSER_INPUT)
+IF #LEN <= 0
+  #ERROR-CODE := #Parse-error
+  #ERROR-DESCRIPTION := 'Empty search data XML'
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-IF
+RESET  #ERROR-CODE
+  #ERROR-DESCRIPTION
+  ServiceFee
+*
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+DEFINE SUBROUTINE PARSER_ERROR
+/*                ============
+#ERROR-CODE := #Parse-error
+#ERROR-DESCRIPTION := XML_PARSER_ERROR_TEXT
+PERFORM FORMAT-ERROR
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE CALLBACK
+/*                ========
+IF XML_PARSER_CONTENT_IS_EMPTY THEN
+  IGNORE
+ELSE
+  XML_PARSER_CONTENT := *TRIM (XML_PARSER_CONTENT)
+  MOVE *TRANSLATE(XML_PARSER_CONTENT, UPPER) TO XML_PARSER_CONTENT
+  PERFORM PARSE-DOCUMENT
+END-IF
+END-SUBROUTINE
+*
+* Get First Payment Fee
+#PAYMENT-PERIOD := F-FPF-MONTHS (< PaymentMode >)    /* NG1
+IF #PAYMENT-PERIOD <= 0
+  #PAYMENT-PERIOD := 1
+END-IF
+#SVC-RATES.SVC-PLAN          := Plan
+#SVC-RATES.SVC-PLAN-AGE-FROM := Age
+#SVC-RATES.SVC-PLAN-AGE-TO   := Age
+CALLNAT 'SVCNMR01' #SVC-RATES #MSG
+IF #MSG EQ BLANK
+  FirstPlacementFee := #SVC-RATES.SVC-PLAN-RATE / 12
+  FirstPlacementFee := FirstPlacementFee * #PAYMENT-PERIOD
+ELSE
+  #ERROR-CODE := '02'
+  #ERROR-DESCRIPTION := #MSG
+END-IF
+PERFORM SERIALZE-XML
+*
+DEFINE PARSE-DOCUMENT
+/*     ==============
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'ServiceFee//'
+    IGNORE
+  VALUE 'ServiceFee'
+    RESET INITIAL ServiceFee
+  VALUE 'ServiceFee/Plan//'
+    IGNORE
+  VALUE 'ServiceFee/Plan'
+    IGNORE
+  VALUE 'ServiceFee/Plan/$'
+    ServiceFee.Plan := XML_PARSER_CONTENT
+  VALUE 'ServiceFee/Age//'
+    IGNORE
+  VALUE 'ServiceFee/Age'
+    IGNORE
+  VALUE 'ServiceFee/Age/$'
+    ServiceFee.Age := VAL(XML_PARSER_CONTENT)
+  VALUE 'ServiceFee/PaymentMode//'
+    IGNORE
+  VALUE 'ServiceFee/PaymentMode'
+    IGNORE
+  VALUE 'ServiceFee/PaymentMode/$'
+    ServiceFee.PaymentMode := XML_PARSER_CONTENT
+  VALUE 'ServiceFee/FirstPlacementFee//'
+    IGNORE
+  VALUE 'ServiceFee/FirstPlacementFee'
+    IGNORE
+  VALUE 'ServiceFee/FirstPlacementFee/$'
+    ServiceFee.FirstPlacementFee := VAL(XML_PARSER_CONTENT)
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+DEFINE SERIALZE-XML
+*      ============
+IF #ERROR-CODE = BLANK
+  #ERROR-CODE := '0'
+END-IF
+COMPRESS        '<?xml version="1.0" encoding="' *CODEPAGE '"?>'
+  INTO #XML_SERIALZE_OUTPUT LEAVING NO
+*
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<ServiceFee'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+*
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  '<ErrorCode'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  #ERROR-CODE
+  '</ErrorCode>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  '<ErrorDescription'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  #ERROR-DESCRIPTION
+  '</ErrorDescription>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+*
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<Plan'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  ServiceFee.Plan
+  '</Plan>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<Age'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  ServiceFee.Age
+  '</Age>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<PaymentMode'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  ServiceFee.PaymentMode
+  '</PaymentMode>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<FirstPlacementFee'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  ServiceFee.FirstPlacementFee
+  '</FirstPlacementFee>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '</ServiceFee>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+END-SUBROUTINE
+*
+DEFINE FORMAT-ERROR
+/*     ============
+COMPRESS '<?xml version="1.0" encoding="' *CODEPAGE '"?>'
+  INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<ServiceFee'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<ErrorCode'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  #ERROR-CODE
+  '</ErrorCode>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '<ErrorDescription'
+  '>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_SERIALZE_OUTPUT
+  #ERROR-DESCRIPTION
+  '</ErrorDescription>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL #XML_SERIALZE_OUTPUT
+  '</ServiceFee>' INTO #XML_SERIALZE_OUTPUT LEAVING NO
+END-SUBROUTINE
+*
+ON ERROR
+  RESET #ERROR-CODE #MSG
+  CALLNAT 'CRMLOG' #ERROR-CODE #ERROR-DESCRIPTION
+    #ERROR-LOG
+    #MSG
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

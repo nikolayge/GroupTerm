@@ -1,0 +1,212 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Policies teminated/reinstated for given period
+* Default 1 day = today. 
+* BZ O5/17/2017  
+*
+
+DEFINE DATA LOCAL
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER            /* D 
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER_A      (A6)
+  2 ENTRY-DATE           /* D
+  2 CODE
+  2 ISSUE-DATE
+  2 REDEFINE ISSUE-DATE
+      3 ISSUE-DATE_A   (A8)
+*
+ 1 ST-V VIEW OF A-STATUS
+  2 DATE-OF-DEATH
+  2 C*ACTIVE-SEGMENTS
+  2 ACTIVE-SEGMENTS(9)
+    3 POLICY-ID
+    3 STATUS 
+    3 ISSUE-DATE
+    3 REDEFINE ISSUE-DATE
+      4 ISSUE-DATE_A   (A8)
+*
+ 1 First_Day           (A8)
+ 1 Last_Day            (A8)
+ 1 d_First             (N8)
+ 1 d_Last              (N8)
+ 1 entr_date           (N8)
+ 1 #i                  (I2)
+ 1 #Err                (I2)
+ 1 #bp-old             (I2)
+ 1 #bp-old-d           (I2) 
+ 1 #e1                 (I2)
+ 1 #e2                 (I2)
+ 1 #inv                (I2)
+ 1 #inv-d              (I2)
+ 1 #i_N                (I2) 
+ 1 #vis                (I2)
+ 1 #i_Y                (I2)  
+ 1 #out                (I2)
+ 1 msg                 (A20)
+ 1 v_RC                (I2)
+ 1 l_call              (L)
+END-DEFINE
+ON ERROR
+  WRITE NOTITLE  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR  /
+                 'From:' d_First 'To:' d_Last 'CN:' ID-NUMBER 'iss-dt:' MD-V.ISSUE-DATE
+END-ERROR
+  IF *DEVICE = 'BATCH'
+      REPEAT UNTIL *DATA = 0
+        INPUT msg
+         IF msg = SCAN('FIRST DAY:')
+            EXAMINE msg FOR 'FIRST DAY:' DELETE
+            First_Day := *TRIM(msg)
+         END-IF            
+         IF msg = SCAN('LAST DAY:')
+            EXAMINE msg FOR 'LAST DAY:' DELETE
+            Last_Day := *TRIM(msg)
+         END-IF
+         IF msg = SCAN('UPDATE-DAL:NO')
+            l_Call := FALSE
+         ELSE
+            l_Call := TRUE   
+         END-IF
+
+       END-REPEAT
+       FORMAT PS = 220
+       DEFINE PRINTER(0) OUTPUT 'LPT9'
+   ELSE
+       First_Day := *DATN
+       Last_Day := *DATN
+       INPUT *DATX *TIMX '-- Set DAL PrntPkg visability base on DM data -- ' //
+         'First Day:' First_Day (AD=UM EM=XXXXXXXX) //
+         'Last_Day :' Last_Day  (AD=UM EM=XXXXXXXX) //
+         'Update DAL :' l_call    (AD=UM EM=N/Y)
+      FORMAT PS=23   
+   END-IF            
+
+   IF First_Day <> MASK(YYYYMMDD) 
+      First_Day := *DATN
+      WRITE 'First Day set to' *DATN
+   END-IF
+   IF Last_Day <> MASK(YYYYMMDD) 
+      Last_Day := *DATN
+      WRITE 'Last Day set to' *DATN
+   END-IF
+ 
+  d_First := 99999999 - val(First_Day)
+  d_Last  := 99999999 - val(Last_Day)
+ 
+  FMD.
+  FIND MD-V WITH  ENTRY-DATE >= d_Last 
+              AND ENTRY-DATE <= d_First
+              SORTED BY ID-NUMBER  DESCENDING
+    WHERE CODE =  'D' OR = 'L' OR = 'S' OR = 'T' OR = 'U' OR = 'V' OR = 'R'
+        IF NO RECORD FOUND
+           WRITE 'No MD records for period  ' First_Day '-' Last_Day
+           ESCAPE BOTTOM
+        END-NOREC
+       entr_Date := 99999999 - MD-V.ENTRY-DATE
+    IF    MD-V.ISSUE-DATE = MASK(YYYYMMDD) 
+       AND MD-V.ISSUE-DATE < 20120101 
+        #bp-old := #bp-old + 1
+        ESCAPE TOP
+    END-IF   
+    FIND(1) ST-V WITH ID-NUMBER = MD-V.ID-NUMBER
+         IF NO RECORD FOUND
+             msg := 'Error: Status-No CN' PERFORM sbr_Print
+             #e1 := #e1 + 1
+             ESCAPE BOTTOM
+         END-NOREC
+       IF  MD-V.CODE = 'D' 
+            FOR #i = 1 TO C*ACTIVE-SEGMENTS
+               IF ST-V.ISSUE-DATE(#i) < 20120101  /* hardcoded - no PrntPkg Before
+                        #bp-old-d := #bp-old-d + 1
+               ELSE 
+                 IF l_call  
+                    CALLNAT 'DAL-SETV' ST-V.POLICY-ID(#i) 'N' v_RC
+                    IF v_RC < 0 #Err := #Err + 1 END-IF
+                 END-IF   
+                 #i_N := #i_N + v_RC
+                 #inv-d := #inv-d + 1
+                 msg := 'Invisible dead' PERFORM sbr_Print
+               END-IF   
+            END-FOR  
+            ESCAPE BOTTOM
+       END-IF
+    
+       EXAMINE ST-V.ISSUE-DATE_A(*) FOR MD-V.ISSUE-DATE_A INDEX #i
+       IF #i = 0
+            msg := 'Error: No Segment' PERFORM sbr_Print
+            #e1 := #e1 + 1
+            ESCAPE BOTTOM
+        END-IF  
+        IF CODE = 'R'
+           IF STATUS(#i) = 'D'
+                 IF l_call  
+                    CALLNAT 'DAL-SETV' ST-V.POLICY-ID(#i) 'Y' v_RC
+                    IF v_RC < 0 #Err := #Err + 1 END-IF
+                 END-IF   
+                 #i_Y := #i_Y + v_RC
+                 #vis := #vis + 1
+                 msg := 'Visible' PERFORM sbr_Print
+            ELSE 
+               msg := 'Mismatch Reinstate'  PERFORM sbr_Print
+                 #e2 := #e2 + 1
+            END-IF  
+        ELSE
+           IF STATUS(#I) <> 'D' 
+              IF l_call  
+                 CALLNAT 'DAL-SETV' ST-V.POLICY-ID(#i) 'N' v_RC
+                 IF v_RC < 0 #Err := #Err + 1 END-IF
+              END-IF   
+              #i_N := #i_N + v_RC
+              #inv := #inv + 1
+              msg := 'Invisible' PERFORM sbr_Print
+           ELSE
+              msg := 'Mismatch Terminate' PERFORM sbr_Print
+              #e2 := #e2 + 1
+           END-IF
+        END-IF   
+        
+    END-FIND 
+  END-FIND
+*
+  NEWPAGE
+  WRITE  *DATX *TIMX  3x 'From:' First_day(EM=XXXX-XX-XX) 'To:' Last_day(EM=XXXX-XX-XX) /
+        'Rcords found in MD       '     *COUNTER(FMD.)   /
+        'Not found in STATUS      '     #e1              /
+        'Mismatch                 '     #e2              /
+        'Service Error            '     #Err             /
+        'Call Set inv             '     #inv             /
+        'Call Set inv for dead    '     #inv-d           /
+        'Set inv                  '     #i_N             /
+        'Call Set visible         '     #vis             /
+        'Set visible              '     #i_Y             /        
+        'bypass Old policy        '     #bp-old          /          
+        'bypass dead  old policy  '     #bp-old-d             
+
+DEFINE sbr_Print
+ #out := #out + 1
+ IF #out = 1 
+ WRITE *DATX *TIMX '-- Set DAL PrntPkg visability base on DM data -- ' /
+        'First Day' First_Day(EM=XXXX-XX-XX) 'Last Day' Last_Day (EM=XXXX-XX-XX) //
+        ' CN    ' 'Entry date' 'Issue date'  'CD' 'Policy     '  'ST' 'Result' 
+END-IF
+ IF msg = SCAN ('Error:')
+   WRITE ID-NUMBER entr_Date(EM=9999-99-99) MD-V.ISSUE-DATE(EM=9999-99-99) 3x MD-V.CODE 20x  msg 
+ ELSE
+   WRITE ID-NUMBER entr_Date(EM=9999-99-99) MD-V.ISSUE-DATE(EM=9999-99-99) 2x MD-V.CODE POLICY-ID(#i)(AL=12)  STATUS(#i) msg  v_RC (EM=-9)
+ END-IF 
+END-SUBROUTINE  
+END
+* 05/19/17 20:36:40   From: 2017-05-13 To: 2017-05-19 
+* Rcords found in MD                 97               
+* Not found in STATUS            0                    
+* Mismatch                       2                    
+* Call Set inv                  34                    
+* Call Set inv for dead          2                    
+* Set inv                       32                    
+* Call Set visible               7                    
+* Set visible                    7                    
+* bypass Old policy             22                    
+* bypass dead  old policy       50                    

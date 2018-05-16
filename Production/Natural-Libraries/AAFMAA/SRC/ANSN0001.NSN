@@ -1,0 +1,192 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* SUBPROGRAM-ID: ANSN0001 - Subprogram to populate
+* parameter data area with formatted data from IAS,
+* send XML to Peak-Delancey for printing Annual
+* Statements and to Dita for creating .pdf file to
+* upload to DAL
+* Term Policies
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    01212009       Initial Creation
+* TMT    10132014  TT1  ANNUITY LIFE HARMONIZATION
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING ANSA0002     /* Formatted Data from IAS
+PARAMETER USING ANSA0001     /* Final format for creating XML
+*
+LOCAL
+1 #PLAN          (A3)
+1 #N             (I2)
+1 #DATN          (N8)
+1 REDEFINE #DATN
+  2 #CURR-YEAR   (N4)
+  2 #CURR-DD-MM  (N4)
+1 #PREV-YEAR     (N4)
+END-DEFINE
+*
+#DATN := *DATN
+#PREV-YEAR := #CURR-YEAR - 1
+*
+MOVE BY NAME DATA TO DOCUMENT-DATA
+IF DOCUMENT-DATA.INSURED = ' '
+  DOCUMENT-DATA.INSURED := DOCUMENT-DATA.OWNER
+END-IF
+* The following fields must be renamed but keep the same value:
+* DOCUMENT-DATA.STR2   := STR-2
+* DOCUMENT-DATA.POL    := POL-NUM
+* DOCUMENT-DATA.ISSAGE := ISS-AGE
+* The <TYPE> field should be created using the following logic:
+#PLAN := DATA.PLAN
+IF #TERM-PLAN = 'Y' AND (#PLAN NE 'LT') AND (#PLAN NE 'RT')
+  #PLAN := 'VT'
+END-IF
+*
+IF IS-ANNUITY-LIFE(<#PLAN>)     /* TT1
+  #PLAN := 'AL'                 /* TT1
+END-IF                          /* TT1
+*
+DECIDE ON FIRST VALUE OF #PLAN
+  VALUE 'LT'
+    DOCUMENT-DATA.TYPE := 'Level Term I'
+  VALUE 'RT'
+    DOCUMENT-DATA.TYPE := 'Five-Year Renewable Term'
+  VALUE 'AL'
+    DOCUMENT-DATA.TYPE := 'ANNUITYLife'
+  VALUE 'VT'
+    COMPRESS 'Level Term II -' PLAN 'years' INTO DOCUMENT-DATA.TYPE
+  NONE VALUE
+    DOCUMENT-DATA.TYPE := 'Value-Added Whole Life'
+END-DECIDE
+IF MEC = 'Y'
+  COMPRESS DOCUMENT-DATA.TYPE '(MEC)' INTO DOCUMENT-DATA.TYPE
+END-IF
+COMPRESS ISS-DAY ISS-MON-YR INTO DOCUMENT-DATA.ISSUEDATE WITH '-'
+COMPRESS ISS-DAY 'Jan' #PREV-YEAR INTO DOCUMENT-DATA.STMTPERIOD WITH '-'
+COMPRESS DOCUMENT-DATA.STMTPERIOD 'to' ISS-DAY INTO DOCUMENT-DATA.STMTPERIOD
+COMPRESS DOCUMENT-DATA.STMTPERIOD 'Jan' #CURR-YEAR INTO DOCUMENT-DATA.STMTPERIOD WITH '-'
+*
+DOCUMENT-DATA.NETBALANCE_LABEL := 'Net balance'
+IF #TERM-PLAN = 'Y'
+  DOCUMENT-DATA.POLSUM_COL1_1     := 'N/A'
+  DOCUMENT-DATA.ACT_CV_SUM1_LABEL := 'N/A'
+  DOCUMENT-DATA.ACT_DB_SUM1_LABEL := 'N/A'
+ELSE
+  DOCUMENT-DATA.POLSUM_COL1_1     := 'Beginning balance'
+  DOCUMENT-DATA.ACT_CV_SUM1_LABEL := 'Beginning balance'
+  DOCUMENT-DATA.ACT_DB_SUM1_LABEL := 'Beginning balance'
+END-IF
+* Constants POLSUM_COL3_1 NOTES4 NOTES5 NOTES10 NOTES15 POLSUM_COL1_3 POLSUM_COL2_2
+*  are empty
+IF #TERM-PLAN NE 'Y'
+  DOCUMENT-DATA.POLSUM_COL1_2    := '+ Premiums paid'
+  DOCUMENT-DATA.POLSUM_COL1_4    := '- PolicyLoan'
+  DOCUMENT-DATA.ACT_CV_SUM2_LABEL := '+ Premiums paid'
+  DOCUMENT-DATA.ACT_CV_SUM3_LABEL := '- Administrative costs'
+  DOCUMENT-DATA.ACT_CV_SUM4_LABEL := '- Acquisition costs'
+  DOCUMENT-DATA.ACT_CV_SUM5_LABEL := '- Living Services costs'
+  DOCUMENT-DATA.ACT_CV_SUM6_LABEL := '+ Opt-out L.S. credit'
+  DOCUMENT-DATA.ACT_CV_SUM7_LABEL := '- Survivor Services costs'
+  DOCUMENT-DATA.ACT_CV_SUM8_LABEL := '- Mortality costs'
+  DOCUMENT-DATA.ACT_CV_SUM9_LABEL := '+ Reserve adjustment'
+  DOCUMENT-DATA.ACT_CV_SUM10_LABEL := '+ Interest'
+  DOCUMENT-DATA.ACT_CV_SUM11_LABEL := '- Policy loan'
+  DOCUMENT-DATA.ACT_CV_NETBALANCE_LABEL := 'Net balance'
+  DOCUMENT-DATA.ACT_DB_NETBALANCE_LABEL := 'Net balance'
+  DOCUMENT-DATA.ACT_DB_SUM3_LABEL := '- Policy loan'
+  DOCUMENT-DATA.NOTES2 := '2009 Crediting Rate:            7.00%'
+  DOCUMENT-DATA.NOTES3 := '2009 Loan Interest Rate:     8.00%'
+END-IF
+* The following non-constant fields depend only on the policy type:
+IF #TERM-PLAN = 'Y'
+  COMPRESS '$' DB-CURR INTO DOCUMENT-DATA.NETBALANCE_DB LEAVING NO
+  DOCUMENT-DATA.NETBALANCE_CV := 'N/A'
+ELSE
+  COMPRESS '$' DB-INIT INTO DOCUMENT-DATA.POLSUM_COL2_1 LEAVING NO
+    DOCUMENT-DATA.POLSUM_COL2_3 := DB-TOT-GROW
+    DOCUMENT-DATA.POLSUM_COL2_4 := LOAN-POL
+  COMPRESS '$' TOT-PREM INTO DOCUMENT-DATA.POLSUM_COL3_2 LEAVING NO
+  DOCUMENT-DATA.POLSUM_COL3_3 := CV-TOT-GROW
+  DOCUMENT-DATA.POLSUM_COL3_4 := LOAN-POL
+  COMPRESS '$' DB-NET INTO DOCUMENT-DATA.NETBALANCE_DB LEAVING NO
+  COMPRESS '$' CV-NET INTO DOCUMENT-DATA.NETBALANCE_CV LEAVING NO
+  COMPRESS '$' CV-PRIOR INTO DOCUMENT-DATA.ACT_CV_SUM1 LEAVING NO
+  DOCUMENT-DATA.ACT_CV_SUM2 := YTD-PREM
+  DOCUMENT-DATA.ACT_CV_SUM3 := YTD-ADMIN
+  DOCUMENT-DATA.ACT_CV_SUM4 := YTD-AQUIS
+  DOCUMENT-DATA.ACT_CV_SUM5 := LVS
+  DOCUMENT-DATA.ACT_CV_SUM6 := OOCR
+  DOCUMENT-DATA.ACT_CV_SUM7 := SAS
+  DOCUMENT-DATA.ACT_CV_SUM8 := YTD-MORT
+  DOCUMENT-DATA.ACT_CV_SUM9 := YTD-EQUITY
+  DOCUMENT-DATA.ACT_CV_SUM10 := YTD-INT
+  DOCUMENT-DATA.ACT_CV_SUM11 := LOAN-POL
+  COMPRESS '$' CV-NET INTO DOCUMENT-DATA.ACT_CV_NETBALANCE LEAVING NO
+  COMPRESS '$' DB-PRIOR INTO DOCUMENT-DATA.ACT_DB_SUM1 LEAVING NO
+  DOCUMENT-DATA.ACT_DB_SUM2 := DB-YTD-GROW
+  DOCUMENT-DATA.ACT_DB_SUM3 := LOAN-POL
+  COMPRESS '$' DB-NET INTO DOCUMENT-DATA.ACT_DB_NETBALANCE LEAVING NO
+END-IF
+* The <ACT_DB_SUM2_LABEL> field logic is as follows:
+IF #TERM-PLAN NE 'Y'
+  EXAMINE DB-TOT-GROW FOR '-' POSITION #N
+*  IF VAL(DB-TOT-GROW) < 0
+  IF #N NE 0
+    ACT_DB_SUM2_LABEL := '+/- Growth/Reduction'
+  ELSE
+    ACT_DB_SUM2_LABEL := '+ Growth'
+  END-IF
+  POLSUM_COL1_3 := ACT_DB_SUM2_LABEL
+END-IF
+
+* The <NOTES1> field logic is as follows:
+IF #TERM-PLAN = 'Y'
+  COMPRESS 'Annual Premium: $' ANN-PREM INTO DOCUMENT-DATA.NOTES1 LEAVING NO
+ELSE
+  DOCUMENT-DATA.NOTES1 := '2008 Crediting Rate:            7.20%'
+END-IF
+* The <NOTES2> field logic is as follows:
+IF (#TERM-PLAN NE 'Y') AND YTD-DUES NE ' '
+  COMPRESS 'Dues Paid: $' YTD-DUES INTO DOCUMENT-DATA.NOTES2 LEAVING NO
+END-IF
+* The <NOTES6> ... <NOTES9> fields are created using the following logic:
+DECIDE FOR FIRST CONDITION
+  WHEN (#TERM-PLAN NE 'Y') AND RPU = 'Y'
+    DOCUMENT-DATA.NOTES6 :=
+      'This policy is Reduced Paid-Up. Policy Growth in this policy is'
+    DOCUMENT-DATA.NOTES7 :=
+      'slower since expenses are not offset by premium payments. If you'
+    DOCUMENT-DATA.NOTES8 :=
+      'choose to surrender your Value-Added Whole Life policy at any'
+    DOCUMENT-DATA.NOTES9 :=
+      'time, you will receive the then current cash surrender amount.'
+  WHEN (#TERM-PLAN NE 'Y') AND POC = 'Y'
+    DOCUMENT-DATA.NOTES6 :=
+      'If you choose to surrender your Value-Added Whole Life policy at'
+    DOCUMENT-DATA.NOTES7 :=
+      'any time, you will receive the greater of (1) your total premiums'
+    DOCUMENT-DATA.NOTES8 :=
+      'paid, or (2) the current cash surrender value.'
+    RESET DOCUMENT-DATA.NOTES9
+  WHEN NONE
+    IGNORE
+END-DECIDE
+* The <NOTES11> ... <NOTES14> fields are created using the following logic:
+IF CAP = 'Y' Then
+  COMPRESS 'Career Assistance Program (CAP) loan balance: $' LOAN-CAP '.'
+    INTO DOCUMENT-DATA.NOTES11 LEAVING NO
+  DOCUMENT-DATA.NOTES12 :=
+    'In accordance with the CAP loan agreement, if the insured dies'
+  DOCUMENT-DATA.NOTES13 :=
+    'before the balance is repaid, the balance will be deducted from'
+  DOCUMENT-DATA.NOTES14 := 'this policy.'
+END-IF
+END
+
+

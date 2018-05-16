@@ -1,0 +1,278 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Address Information
+* XML Request Parser
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09072010       Initial Creation
+* YAK    06282012  YK1  Sync with CRM using ContactID
+* YAK    05172016  YK2  Add Undeliverable Indicator (for FIR)
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING MBCA0003
+LOCAL USING OBJAADRL
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #ErrorCode    (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #DEL          (A1) CONST <'-'>
+1 #TAB          (A1) CONST <H'09'>
+1 #Get          (A) DYNAMIC CONST <'0'>
+1 #Add          (A) DYNAMIC CONST <'1'>
+1 #Update       (A) DYNAMIC CONST <'2'>
+1 #Delete       (A) DYNAMIC CONST <'3'>
+1 #MC           (A) DYNAMIC CONST <'MC'>
+1 #Yes          (A) DYNAMIC CONST <'Y'>
+1 #US           (A) DYNAMIC CONST <'US'>
+1 #I            (I2)
+1 #I1           (I2)
+1 #value        (A) DYNAMIC
+1 FUNCTION_CODE (A) DYNAMIC CONST <'ADDRESS'>
+1 #GET-ALL      (A) DYNAMIC CONST <'GET-POOL-ID-ARRAY'>
+1 #NumberOfAddresses (N2)
+1 #FIR-REQUEST  (A50)
+1 #ContactID    (N8)
+1 #MemberAddressesCN (N6)
+1 #AddrPoolId   (N8/*)
+1 #InitialActionType (A) DYNAMIC
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic for Get
+#ContactID := F-GET-CONTACT-ID(<AddressInfo.CN>)
+IF AddressInfo.AddressValidIndicator = ' ' AND AddressInfo.CountryCode = #US
+  AddressInfo.AddressValidIndicator := #Yes
+END-IF   
+*
+DECIDE ON FIRST VALUE AddressInfo.ActionType
+  VALUE #Get
+    PERFORM GET-ADDRESSES
+  VALUE #Add, #Update, #Delete
+    PERFORM UPDATE-ADDRESSES
+  NONE VALUE
+    #ErrorCode := #ACTION-INVALID
+END-DECIDE
+PERFORM COMPOSE-XML
+*
+*******************************
+DEFINE SUBROUTINE GET-ADDRESSES
+*******************************
+*
+* Number of addresses passed in the first occurrance
+RESET PARM-ADDRESS-REL
+PARM-ADDRESS-REL.CONTACT-ID := #ContactID
+PARM-ADDRESS-REL.#ACTION    := #GET-ALL
+EXPAND ARRAY #AddrPoolId TO (*:1)
+CALLNAT 'OBJNADRL' PARM-ADDRESS-REL 3X #AddrPoolId(*)
+#NumberOfAddresses := *OCCURRENCE(#AddrPoolId)
+FOR #I1 = 1 TO #NumberOfAddresses
+  RESET AddressInfo
+  #ErrorCode := '0'
+  AddressInfo.CN := #MemberAddressesCN
+  AddressInfo.AddressPoolId := #AddrPoolId(#I1)
+  CALLNAT 'MBCN0031' AddressInfo #ErrorCode
+  IF #ErrorCode = '0' OR = ' '
+    PERFORM COMPOSE-XML-GET
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE UPDATE-ADDRESSES
+**********************************
+* Call Business Logic for Add/Update
+CALLNAT 'MBCN0032' AddressInfo #ErrorCode
+IF #ErrorCode = '0'
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+END-SUBROUTINE
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberAddresses/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      #MemberAddressesCN := AddressInfo.CN := VAL(#value)
+    END-IF
+  VALUE 'MemberAddresses/UserID/$'
+    AddressInfo.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/ActionType/$'
+    AddressInfo.ActionType := *TRIM(XML_PARSER_CONTENT)
+    #InitialActionType := AddressInfo.ActionType  
+  VALUE 'MemberAddresses/SystemSource/$'
+    AddressInfo.SystemSource := *TRIM(XML_PARSER_CONTENT)
+* Below for Address Add/Update/Delete only
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AddressPoolID/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      AddressInfo.AddressPoolID := VAL(#value)
+    END-IF
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AddressTypeCode/$'
+    AddressInfo.AddressTypeCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AddressLocationCode/$'
+    AddressInfo.AddressLocationCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AttentionLine/$'
+    AddressInfo.AttentionLine := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/Street/$'
+    EXAMINE XML_PARSER_CONTENT TRANSLATE INTO UPPER CASE
+    AddressInfo.Street := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/Unit/$'
+    EXAMINE XML_PARSER_CONTENT TRANSLATE INTO UPPER CASE
+    AddressInfo.Unit := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/City/$'
+    EXAMINE XML_PARSER_CONTENT TRANSLATE INTO UPPER CASE
+    AddressInfo.City := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/StateCode/$'
+    AddressInfo.StateCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/ZipCode/$'
+    AddressInfo.ZipCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/CountryCode/$'
+    EXAMINE XML_PARSER_CONTENT TRANSLATE INTO UPPER CASE
+    AddressInfo.CountryCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/IntlRegion/$'
+    EXAMINE XML_PARSER_CONTENT TRANSLATE INTO UPPER CASE
+    AddressInfo.IntlRegion := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/PostalCode/$'
+    EXAMINE XML_PARSER_CONTENT TRANSLATE INTO UPPER CASE
+    AddressInfo.PostalCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/Urbanization/$'
+    EXAMINE XML_PARSER_CONTENT TRANSLATE INTO UPPER CASE
+    AddressInfo.Urbanization := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AddressFormatTypeCode/$'
+    AddressInfo.AddressFormatTypeCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AddressValidIndicator/$'
+    AddressInfo.AddressValidIndicator := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/Contacts/Contact'
+    /* multiple
+    ADD 1 TO AddressInfo.C@Contact
+    EXPAND ARRAY AddressInfo.Contact TO
+      (1:AddressInfo.C@Contact)
+  VALUE 'MemberAddresses/Addresses/AddressInfo/Contacts/Contact/ContactID/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      AddressInfo.ContactID(C@Contact)      := VAL(#value)
+    END-IF
+  VALUE 'MemberAddresses/Addresses/AddressInfo/Contacts/Contact/SharingAddress/$'
+    AddressInfo.SharingAddress(C@Contact) := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-XML-GET
+*********************************
+* YK2 >
+* No address - assign false for FIR to deserialize XML
+IF AddressInfo.AddressUndeliverableInd = ' '
+  AddressInfo.AddressUndeliverableInd := 'false'
+END-IF  
+* < YK2
+COMPRESS XML '<AddressInfo>'
+  '<AddressPoolID>' AddressInfo.AddressPoolID '</AddressPoolID>'
+  '<Street><![CDATA[' AddressInfo.Street ']]></Street>'
+  '<Unit><![CDATA[' AddressInfo.Unit ']]></Unit>'
+  '<City><![CDATA[' AddressInfo.City ']]></City>'
+  '<StateCode>' AddressInfo.StateCode '</StateCode>'
+  '<ZipCode>' AddressInfo.ZipCode '</ZipCode>'
+  '<CountryCode>' AddressInfo.CountryCode '</CountryCode>'
+  '<IntlRegion><![CDATA[' AddressInfo.IntlRegion ']]></IntlRegion>'
+  '<PostalCode><![CDATA[' AddressInfo.PostalCode ']]></PostalCode>'
+  '<Urbanization><![CDATA[' AddressInfo.Urbanization ']]></Urbanization>'
+  '<AddressFormatTypeCode>' AddressInfo.AddressFormatTypeCode '</AddressFormatTypeCode>'
+  '<AddressValidIndicator>' AddressInfo.AddressValidIndicator '</AddressValidIndicator>'
+  '<AddressTypeCode>' AddressInfo.AddressTypeCode '</AddressTypeCode>'
+  '<AddressLocationCode>' AddressInfo.AddressLocationCode '</AddressLocationCode>'
+  '<AddressUndeliverableInd>' AddressInfo.AddressUndeliverableInd '</AddressUndeliverableInd>'   /* YK2
+  '<AttentionLine>' AddressInfo.AttentionLine '</AttentionLine>'
+  '<Contacts>' INTO XML LEAVING NO
+*
+FOR #I = 1 TO AddressInfo.C@Contact COMPRESS XML
+    '<Contact>'
+    '<ContactID>' AddressInfo.ContactId(#I) '</ContactID>'
+    '<SharingAddress>' AddressInfo.SharingAddress(#I) '</SharingAddress>'
+    '<FormattedName>' AddressInfo.FormattedName(#I) '</FormattedName>'
+    '</Contact>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</Contacts>' '</AddressInfo>' INTO XML LEAVING NO
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+COMPRESS
+  '<MemberAddresses>'
+  '<CN>' AddressInfo.CN '</CN>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '<Addresses>'
+  XML
+  '</Addresses>'
+  '</MemberAddresses>'
+  INTO RESPONSE-DATA LEAVING NO
+*
+IF #InitialActionType <> #Get
+  PERFORM LOG-REQUESTS
+END-IF
+*
+END-SUBROUTINE
+******************************
+DEFINE SUBROUTINE LOG-REQUESTS
+******************************
+* save FIR request
+WRITE WORK FILE 2 AddressInfo.CN
+CLOSE WORK FILE 2
+* Update "Profile Update Date" on Web User File
+F-PROFILE-UPDATE-DATE(<AddressInfo.CN>)
+* Log CRM request
+CALLNAT 'MBRCRC' #ContactID FUNCTION_CODE                 /* YK1
+END-SUBROUTINE
+*
+END

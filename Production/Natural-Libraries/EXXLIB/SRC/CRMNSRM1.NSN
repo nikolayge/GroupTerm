@@ -1,0 +1,191 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* SERVICES                                                             *
+************************************************************************
+* NAME         : CRMNSRM1                                              *
+* AUTHOR       : Copyright: MetrostarSystems AAFMAA                    *
+* DESCRIPTION  : Creates Service member record                         *
+* SVC-FIRST-PLACE-FEE (N7.2) From Rate table
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON
+* NGG    20140310      Initial Creation
+* NGG    05/07/2014  NG4  MEMBERSHIP EXPANSION
+* **********************************************************************
+*
+DEFINE DATA
+**PARAMETER USING OBJAMB01
+PARAMETER
+1 #SVC-MEMBER
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8)
+  2 LAST-UPD-TIME (N7)
+  2 SVC-STATUS (A1)
+  2 SVC-PAY-UP (A1)
+  2 SVC-MODE (A1)
+  2 SVC-ISSUE-AGE    (N3)
+  2 SVC-ISSUE-DATE   (N8)
+  2 SVC-PAID-TO-DATE (N8)
+  2 SVC-BILL-TO-DATE (N8)
+  2 SVC-DATE-ENTERED (N8)
+  2 SVC-TERMINATION-DATE (N8)
+  2 SVC-MONTHLY-RATE     (N7.2)
+  2 SVC-FIRST-PLACE-FEE  (N7.2)
+  2 SVC-CREATED-BY       (A8)
+  2 SVC-CONTRACT-NUMBER  (A20)
+  2 SVC-ID-NUMBER        (N6)
+  2 SVC-PLAN             (A3)
+  2 SVC-AT-NUMBER        (N6)
+  2 SVC-ONE-TIME-FEE     (N7.2)
+  2 SVC-REACTIVATION-FEE (N7.2)
+  2 CRM-SERVICE-ID (A50)
+1 #MSG         (A) DYNAMIC
+1 #ERROR-CODE  (I4)
+LOCAL USING OBJLMB01
+LOCAL USING OBJAMR01
+LOCAL USING GPRATR01
+LOCAL
+1 CONTACT VIEW OF A-CONTACTS
+  2 CONTACT-ID (N8)
+1 BLANK        (A1)  CONST <' '>
+1 TR_FUNCTION_CODE        (A) DYNAMIC CONST <'Service'>
+*
+1 #CGA-SCR-COMMAND (A2)  /* In NOT USED
+1 #CGA-SCR-ID      (N9)  /* In NOT USED
+1 #CGA-SCR-SUFFIX  (A3)  /* In NOT USED
+1 #PLAN-PASS       (A3)  /* In
+1 #AGE             (N2)  /* In
+1 #APREM           (N7.2) /* Out SVC-PLAN-RATE Out
+1 #ISSUE-DATE      (N8)   /* In
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-YYYY (N4)
+  2 #ISSUE-MMDD (N4)
+1 #SMOK-FLAG       (A1)   /* In NOT USED
+1 #FAC-AMT         (N7.2) /* Out SVC-ONE-TIME-FEE
+1 #PRM-SEL         (I2)   /* In NOT USED
+1 #SEX             (A1)   /* In NOT USED
+*
+
+END-DEFINE
+*
+RESET #MSG
+IF #SVC-MEMBER.SVC-ID-NUMBER = 0 OR #SVC-MEMBER.SVC-PLAN = BLANK
+  #MSG := 'ID Number and Service plan have to be provided'
+  ESCAPE ROUTINE
+END-IF
+*
+FIND CONTACT WITH ID-NUMBER = #SVC-MEMBER.SVC-ID-NUMBER
+  IF NO RECORDS FOUND
+    #MSG := 'There is no contact record with provided ID'
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+*
+IF #SVC-MEMBER.SVC-MODE IS (N1)
+  IGNORE
+ELSE
+  IF ACTIVE-INSURANCE (< #SVC-MEMBER.SVC-ID-NUMBER >)
+    IGNORE
+  ELSE
+    #MSG := 'Service Supports Credit Card Only'
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = #SVC-MEMBER.SVC-ID-NUMBER
+    AND SVC-PLAN = #SVC-MEMBER.SVC-PLAN
+  IF NO RECORDS FOUND
+    PERFORM NEW-MEMBER
+    PERFORM TR-LOG
+    ESCAPE BOTTOM
+  END-NOREC
+  IF SVC-MEMBER-V.SVC-STATUS = 'A' OR= 'P'
+    #MSG := 'The requested service is active for the member'
+    #ERROR-CODE := 1
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+DEFINE NEW-MEMBER
+/*     ==========
+RESET SVC-MEMBER-V #SVC-RATES
+MOVE BY NAME #SVC-MEMBER TO SVC-MEMBER-V
+SVC-MEMBER-V.SVC-CONTRACT-NUMBER := GET-SVCN (< >)
+#SVC-MEMBER.SVC-CONTRACT-NUMBER  := SVC-MEMBER-V.SVC-CONTRACT-NUMBER
+IF SVC-MEMBER-V.LAST-UPD-USER EQ BLANK
+  SVC-MEMBER-V.LAST-UPD-USER    := *USER
+  SVC-MEMBER-V.LAST-UPD-USER    := FUNCTION-CLERK (< SVC-MEMBER-V.LAST-UPD-USER >)
+END-IF
+SVC-MEMBER-V.LAST-UPD-DATE    := *DATN
+SVC-MEMBER-V.LAST-UPD-TIME    := *TIMN
+SVC-MEMBER-V.SVC-ISSUE-AGE    := GET-AGE (< CONTACT.CONTACT-ID >)
+SVC-MEMBER-V.SVC-DATE-ENTERED := *DATN
+*     Get Plan Rates
+#PLAN-PASS  := #SVC-MEMBER.SVC-PLAN
+#AGE        := SVC-MEMBER-V.SVC-ISSUE-AGE
+#ISSUE-DATE := #SVC-MEMBER.SVC-ISSUE-DATE
+CALLNAT 'SPRSMS97'
+  #CGA-SCR-COMMAND   /* In NOT USED
+  #CGA-SCR-ID        /* In NOT USED
+  #CGA-SCR-SUFFIX    /* In NOT USED
+  #PLAN-PASS         /* In
+  #AGE               /* In
+  #APREM             /* Out SVC-PLAN-RATE Out
+  #ISSUE-DATE        /* In
+  #SMOK-FLAG         /* In NOT USED
+  #FAC-AMT           /* Out SVC-ONE-TIME-FEE
+  #PRM-SEL           /* In NOT USED
+  #SEX               /* In NOT USED
+SVC-MEMBER-V.SVC-MONTHLY-RATE := #APREM / 12
+SVC-MEMBER-V.SVC-ONE-TIME-FEE := #FAC-AMT
+SVC-MEMBER-V.SVC-FIRST-PLACE-FEE := #FAC-AMT
+*
+IF SVC-MEMBER-V.SVC-MODE = BLANK
+  SVC-MEMBER-V.SVC-MODE := '0'
+END-IF
+*
+IF SVC-MEMBER-V.SVC-PLAN = 'SAS'
+  SVC-MEMBER-V.SVC-PAY-UP := 'Y'
+ELSE
+  RESET SVC-MEMBER-V.SVC-ONE-TIME-FEE
+    SVC-MEMBER-V.SVC-PAY-UP
+    SVC-MEMBER-V.SVC-FIRST-PLACE-FEE     /* NG1
+END-IF
+*
+STORE SVC-MEMBER-V
+*
+END-SUBROUTINE
+*************
+DEFINE TR-LOG
+*************
+BEFORE_IMAGE.SVC-ISSUE-DATE       := BLANK
+BEFORE_IMAGE.SVC-SERVICE-TYPE     := BLANK
+BEFORE_IMAGE.SVC-MODE             := BLANK
+BEFORE_IMAGE.SVC-STATUS           := BLANK
+BEFORE_IMAGE.SVC-ISSUED-BY        := BLANK
+*
+AFTER_IMAGE.SVC-ISSUE-DATE        := SVC-MEMBER-V.SVC-ISSUE-DATE
+AFTER_IMAGE.SVC-SERVICE-TYPE      := SVC-MEMBER-V.SVC-PLAN
+AFTER_IMAGE.SVC-MODE              := SVC-MEMBER-V.SVC-MODE
+AFTER_IMAGE.SVC-STATUS            := SVC-MEMBER-V.SVC-STATUS
+AFTER_IMAGE.SVC-ISSUED-BY         := 'CRM/Online Application'
+*
+TR_ID_NUMBER  := SVC-MEMBER-V.SVC-ID-NUMBER
+TR_NAME       := FUNCTION-CONTACT-NAME(<CONTACT.CONTACT-ID>)
+TR_CLERK      := SVC-MEMBER-V.LAST-UPD-USER
+CALLNAT 'GPRNTR01' TR_FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE /* bz1
+END-SUBROUTINE
+**************
+ON ERROR
+  COMPRESS *PROGRAM *ERROR-NR *ERROR-LINE
+    'Internal error'
+    INTO #MSG
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

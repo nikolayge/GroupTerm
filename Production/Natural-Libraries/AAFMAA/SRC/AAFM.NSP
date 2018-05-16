@@ -1,0 +1,98 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: AAFM   ** USER SECURITY FOR AAFMAA
+****** MODIFICATIONS ***********************************************
+* NAME     DATE   TAG   DESCRIPTION
+* SAG-AB 20060801 REH  Added call to initialize 'executing' display
+* SAG-AB 20070112 REH  Added set control to allow cursor move over protected areas
+* DRW  04/13/2009 DW1 Set USER-COMPANY in TERMINAL File
+* DRW  09/16/2009 DW2 Modify Security Code to remove "B" BOTH
+********************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL
+1 #INIT-USER (A8)
+1 #ISN       (P8)
+1 #TEXT      (A75)
+*
+1 TERM-TM01 VIEW OF A-TERMINALS   /* actually is now USERS (logon-ID)
+  2 TERMINAL-ID   (A8)
+  2 SECURITY-CODE (N2)
+  2 CLERK-ID      (A3)
+  2 INIT-USER     (A8)
+  2 USER-COMPANY  (A1)                           /* DW1
+1 #DISPLAY-EXECUTING-MSG (L) INIT <TRUE>  /* SAG-AB 20060801
+*
+END-DEFINE
+*
+/* WRITE 'TOP of AAFM'
+SET CONTROL 'T+'                          /* SAG-AB 20070112
+*
+IF *DEVICE NE 'BATCH'                     /* SAG-AB 20060801 START
+  CALLNAT 'USR1066N' #DISPLAY-EXECUTING-MSG
+END-IF                                    /* SAG-AB 20060801 END
+*
+RESET #CGA-SCR-COMMAND
+RESET #CGA-SCR-ID
+RESET #CGA-SCR-SUFFIX
+RESET #CGA-ORIG-COMMAND
+RESET #CGA-ORIG-ID
+RESET #CGA-ORIG-SUFFIX
+RESET #CGA-ISN
+RESET #CGA-ID-G
+SET KEY CLR='@R'           /* REFRESH DISPLAY
+*
+MOVE *INIT-USER TO #INIT-USER              /* EDS logon ID
+FIND (1) TERM-TM01 WITH TERMINAL-ID = #INIT-USER
+  IF NO RECORDS FOUND
+    INPUT
+      // 'Access denied in PROGRAM "AAFM"'
+      // 'EDS LOGON-ID not on AAFMAA Security File'
+      // 'or LOGON-ID has been suspended'
+      // 'or password needs reset'
+      // 'Call 1-888-263-4337 to have your password reset'
+    STACK COMMAND 'FIN'
+    STOP
+  END-NOREC
+*
+  MOVE *ISN TO #ISN
+  MOVE SECURITY-CODE TO #CGA-SECURITY-CODE
+  MOVE CLERK-ID TO #CGA-CLERK
+END-FIND
+*
+IF #CGA-SECURITY-CODE = 1 OR = 2   /* AFFL General USER  DW2
+  INPUT /// '"AAFM" is invalid for AFFL user'
+        /// '"AFSC" should be used'
+        /// 'This message is in program AAFM'
+        /// 'Press enter then enter "AFSC"'
+  STACK COMMAND 'FIN'
+  STOP
+END-IF
+*
+* IF #CGA-SECURITY-CODE = 99                 /* EDS USER   /* DW2
+*   MOVE 'B' TO #CGA-USER-COMPANY   /* both ins & svc user
+* ELSE
+  MOVE 'I' TO #CGA-USER-COMPANY   /* insurance user
+* END-IF
+*
+GET TERM-TM01 #ISN
+MOVE #INIT-USER TO INIT-USER
+MOVE 'I' TO TERM-TM01.USER-COMPANY   /* SET for IAS-USER            DW1
+*
+UPDATE (0081)
+END TRANSACTION
+*
+* below in case there are 2 records for the same user  (DZYFS6 and T4CYDRW)
+FIND (1) TERM-TM01 WITH CLERK-ID = TERM-TM01.CLERK-ID                  /* DW1
+  MOVE 'I' TO TERM-TM01.USER-COMPANY               /* SET for IAS USER
+  UPDATE (0089)
+  END TRANSACTION
+END-FIND                                                         /* END DW1
+*
+MOVE 'GM' TO #CGA-SCR-COMMAND
+FETCH 'G1000PXX'
+*
+END

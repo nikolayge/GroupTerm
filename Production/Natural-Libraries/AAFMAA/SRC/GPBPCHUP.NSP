@@ -1,0 +1,942 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPBPCHUP - Apply Uncashed Checks to customer accounts
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* YAK    09/12/2013  None    Program written                           *
+* YAK    11/29/2013  YK1     Exclude paid-up policies, exclude allot.  *
+*                            from email, add TR year for TR checks     *
+*                            correct number of lines for TR Peachtree  *
+* YAK    12/13/2013  YK2     Find 1st empty slot when adding Term Refund
+*                            (do not use C*OUT-TERM-REF-GROUP + 1)     *
+* vxt    03/17/2015  vt1     /Ticket 3405/ Add policy number to storing
+*                             the uploaded amount to term refund bucket
+* bz-Name 07/07/2017     Fine Names
+************************************************************************
+*
+DEFINE DATA
+* LOCAL USING OBJLSTAT         /* vt1
+LOCAL USING OBJLACRG
+LOCAL USING GPRA0005
+LOCAL USING GPRL0EML      /* PDA to send notification email
+LOCAL USING P_PARMS
+LOCAL USING GPRA0003
+LOCAL
+*
+1 st-v view of a-status                        /* vt1 \/
+  2 id-number
+  2 member-contact-id
+  2 c*active-segments (N2)
+  2 active-segments(1:9)
+    3 status
+    3 issue-date
+    3 mode
+    3 plan
+    3 x-bill-adjust
+    3 ezpay-start
+    3 pay-status
+  2 name
+  2 pad-code
+  2 intro-flag
+  2 process-ind
+  2 debit-credit-amt
+  2 c*out-term-ref-group (N2)
+  2 out-term-ref-group(1:10)
+    3 out-term-ref-amount
+    3 out-term-ref-year
+    3 out-term-ref-entry-date
+    3 new-pol-iss-date
+    3 new-term-pol-nbr                          /* vt1 /\
+*
+1 CONTACT VIEW OF A-CONTACTS
+  2 CONTACT-ID                        (N8)
+  2 LAST-NAME                         (A25)
+*
+1 #RUN-PARM                   (A5)
+1 #UPLOAD                     (A1)
+1 #PLAN                       (A3)
+1 #POLICY-FOUND               (L)
+1 #EZPAY-INACTIVE-STATUS      (L)
+1 #INPUT-RECORD               (A250)
+1 #RECS-READ                  (N7)
+1 #RECS-APPLIED               (N7)
+1 #CNT-1                      (N7)
+1 #CNT-2                      (N7)
+1 #I1                         (I2)
+1 #I                          (I2)
+1 #k                          (i2)                        /* vt1
+1 #L                          (I2)
+1 #DISPLAY-AMOUNT             (A20)
+1 #AMOUNT-SUBMITTED           (N11.2)
+1 #AMOUNT-APPLIED             (N11.2)
+1 #AMOUNT-REJECTED            (N11.2)
+1 #TOTAL-AMOUNT               (N11.2)
+1 #GRAND-TOTAL-AMOUNT         (N11.2)
+1 #NOTE-TEXT                  (A60/10)
+1 #INT                        (I2)
+1 #CLERK                      (A3) CONST <'EDS'>
+1 #USER-ID                    (A8)
+1 #CHECK-YEAR                 (A) DYNAMIC
+1 #TITLE                      (A) DYNAMIC
+1 #EX-TITLE                   (A) DYNAMIC
+1 #APPLIED-TO                 (A) DYNAMIC
+1 #DATE                       (A) DYNAMIC
+1 #ACCOUNT-DESCRIPTION        (A) DYNAMIC
+1 #DynamicName                (A) DYNAMIC
+1 #TAB                        (A1) CONST <H'09'>
+1 #COMMA                      (A1) CONST <','>
+1 #ALL_UC                     (A) DYNAMIC CONST <'ALL'>
+1 #TMRF                       (A) DYNAMIC CONST <'TMRF'>
+1 #TEST                       (A) DYNAMIC INIT <'Test run (reports only)'>
+1 #TEST-NAME                  (A) DYNAMIC INIT <'Test'>
+1 #UNCASHED-CHECK-TEMPLATE    (A) DYNAMIC CONST <'UCH'>
+1 #EZPAY-ACTIVE               (A1/5) CONST <'E','P','D','V','X'>
+1 #DB-CC-MODE                 (A1/8) CONST <'A','S','Q','M','1','2','4','0'>
+1 #JOB-DESCRIPTION            (A) DYNAMIC
+1 #TERM-REF-YEAR              (A) DYNAMIC
+1 #EMAIL-ADDRESS-ERROR        (A) DYNAMIC CONST <'No email address available for owner, member or insured'>
+1 #CONTACT-ID-ERROR           (A) DYNAMIC CONST <'Contact ID for the owner is zero - no information can be retrieved'>
+1 #REPORT-RECORD              (A120)
+1 #TIME                       (N7)
+1 #DATN                       (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY                (N4)
+  2 #DATN-MM                  (N2)
+  2 #DATN-DD                  (N2)
+1 #TEXT                       (A78)
+1 #WORK-FIELD                 (A6)
+1 #PROCESS-TRAN-CODE          (A6)
+1 #AMOUNT                     (N7.2)
+1 #ISSUE-DATE                 (N8)
+1 #issue-date-in              (n8)              /* vt1
+1 #OWNER-CONTACT-ID           (N8)
+1 #OWNER-CN                   (N6)
+*
+1 #PEACHTREE-DYNAMIC-FIELDS
+  2 #PEACHTREE              (A160)
+  2 #PEACH-ACCOUNT-NUMBER   (A9)
+  2 #DESCRIPTION-1          (A25)
+  2 #DESCRIPTION-2          (A35)
+  2 #PEACHTREE-AMOUNT       (A20)
+*
+1 #PEACHTREE-STATIC-FIELDS
+  2 #PEACHTREE-DATE         (A10)
+  2 #PEACHTREE-REC-CNT      (N8)
+  2 #PEACHTREE-CLERK-ID     (A3)
+*
+1 #PEACHTREE-INPUT-RECORD
+  2 #ACCOUNT-KEY             (A10)
+  2 REDEFINE #ACCOUNT-KEY
+    3 #ACCOUNT-NUMBER        (A4)
+    3 #TRAN-CODE             (A6)
+  2 #MEMBER-ID               (N6)
+  2 REDEFINE #MEMBER-ID
+    3 #CN                    (A6)
+  2 #MEMBER-NAME             (A25)
+  2 #POL-NUM                 (A16)
+  2 #PEACH-AMOUNT            (N7.2)
+*
+1 #INPUT
+  2 #INPUT-CN                  (A) DYNAMIC
+  2 #INPUT-CHECK-DATE          (A) DYNAMIC
+  2 #INPUT-CHECK-NUMBER        (A) DYNAMIC
+  2 #INPUT-AMOUNT              (A) DYNAMIC
+  2 #INPUT-TR-YEAR             (A) DYNAMIC               /* YK1
+  2 #input-issue-date          (a) dynamic               /* vt1
+* GOWNRSXX Communication area
+1 #GOWNRSXX
+  2 #OWNER-OCC-9   (9)
+    3 #OWNER-FLAG               (A1)
+    3 #OWNER-CN-ARRAY           (N6/10)
+    3 #OWNER-CN-BY-POL          (N6)
+    3 #OWNER-CN-SEG             (I2/9)
+    3 #ISS-DATE                 (N8/9)
+    3 #ISS-DATE-DISP            (A10/9)
+    3 #BENE-TYPE                (A1/2)
+    3 #BENE-TEXT                (A60/10)
+  2 #MULTIPLE-OWNER             (L)
+  2 #NON-INS-OWNER              (L)
+* variables for UNIX command
+1 v_rc             (N3)
+1 v_shcmd          (A) DYNAMIC
+* variables to send an email
+1 v_TO_user   (A) DYNAMIC INIT <'ykegeles@aafmaa.com'>
+* 1 v_TO        (A) DYNAMIC INIT <'ykegeles@aafmaa.com'>
+1 v_TO        (A) DYNAMIC INIT <'mbergstresser@aafmaa.com,gjacobs@aafmaa.com,skhan@aafmaa.com'>
+1 v_Subj      (A) DYNAMIC INIT <'Check Upload Process Notification'>
+1 v_mail_shcmd          (A) DYNAMIC
+  INIT <'cat /usr/SAG/tmp/UI/EMAIL_UI.txt | mailx -s "@Subj" -r "User_Initiated_Batch_Processes@aafmaa.com" >/dev/null 2>/dev/null'>
+* Execution status
+1 #STATUS (A) DYNAMIC
+1 #DONE   (A) DYNAMIC CONST <'DONE'>
+1 #START  (A) DYNAMIC CONST <'START'>
+* parameters to ftp script
+1 WIN_FN      (A) DYNAMIC
+1 UNIX_FN     (A50)
+1 PUT-SCRIPT-NAME   (A) DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/FTP_PUT_FILE'>
+1 MOVE-SCRIPT-NAME  (A) DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/FTP_MOVE_FILE'>
+1 WIN_DIR           (A) DYNAMIC INIT <'/ftp/UncashedChecks/Reports'>
+1 WIN_DIR_TEST      (A) DYNAMIC CONST <'/ftp/UncashedChecks/Test/Reports'>
+1 WIN_PROCESSED_FILE(A) DYNAMIC INIT <'Processed/'>
+1 WIN_FILE_DIR      (A) DYNAMIC INIT <'/ftp/UncashedChecks'>
+1 WIN_FILE_DIR_TEST (A) DYNAMIC INIT <'/ftp/UncashedChecks/Test'>
+1 UNIX_DIR          (A) DYNAMIC CONST <'/usr/SAG/tmp/UI/'>
+* Report names
+1 REPORT-1         (A) DYNAMIC INIT <"Upload_uncashed_checks_report">
+1 REPORT-2         (A) DYNAMIC INIT <"Exceptions_uncashed_checks_report">
+* Pearchtree file by account /by transaction
+1 PEACHTREE-BY-ACCOUNT (A) DYNAMIC INIT <"PeachtreeByAccount">
+1 PEACHTREE-BY-TRAN (A) DYNAMIC INIT <"PeachtreeByTransaction">
+*
+* UNIX files
+1 f_1     (A) DYNAMIC
+1 f_2     (A) DYNAMIC INIT <"/usr/SAG/tmp/UI/Upload_uncashed_checks_report">
+1 f_3     (A) DYNAMIC INIT <"/usr/SAG/tmp/UI/Exceptions_uncashed_checks_report">
+1 f_4     (A) DYNAMIC INIT <"/usr/SAG/tmp/UI/Peachtree_file.txt">
+1 f_6     (A) DYNAMIC INIT <"/usr/SAG/tmp/UI/PeachtreeByAccount">
+1 f_5     (A) DYNAMIC INIT <"/usr/SAG/tmp/UI/PeachtreeByTransaction">
+1 f_7     (A) DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/EmailRequestFile.txt">
+* error log for executing ftp command - define printer
+1 f_8     (A80) INIT <"/usr/SAG/tmp/UI/ftp_error.log">
+* error log for monitoring program execution
+1 f_9     (A80) INIT <"/usr/SAG/tmp/UI/process.log">
+1 #LOG    (A78)
+1 v_PN    (I1)
+*
+1 #idx   (i2)            /* vt1
+1 #first-active (l)      /* vt1
+END-DEFINE
+*
+ON ERROR
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  ERROR-PROGRAM := *PROGRAM
+  ERROR-OBJECT  := P_ERROR_PROGRAM
+  ERROR-LINE    := P_ERROR_LINE
+  ERROR-NUMBER  := P_ERROR_NUM
+  COMPRESS ERROR-NUMBER ERROR-LINE ERROR-PROGRAM ERROR-OBJECT *DATN *TIME INTO #LOG
+  P_TO     := 'ykegeles@aafmaa.com'
+  P_SUBJ   := '"Uncashed Checks UI Error"'
+  P_MSG(1) := 'Error uploading Uncashed Checks file'
+  P_MSG(2) := #LOG
+  CALLNAT 'GPRS0EML' p_EMAIL
+  WRITE WORK FILE 9 #LOG
+  CLOSE WORK FILE 9
+  IF #INPUT-CN <> ' '
+    COMPRESS 'Error when trying to process INPUT CN = ' #INPUT-CN INTO #LOG
+    WRITE #LOG
+  END-IF
+  ESCAPE ROUTINE
+END-ERROR
+
+IF F-IS-DEV(<>)
+  WIN_DIR := WIN_DIR_TEST
+  WIN_FILE_DIR := WIN_FILE_DIR_TEST
+END-IF
+*
+DEFINE WORK FILE 2 f_2 TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 3 f_3 TYPE 'ASCII-COMPRESSED'
+*
+* Define printer for log files
+v_PN := 8
+v_RC := PRT_FN_PUT(<v_PN, f_8>)
+IF v_RC <> 0
+  PRINT (0)  'Error in print file 1 assigment'
+  ESCAPE ROUTINE
+END-IF
+*
+INPUT #RUN-PARM #UPLOAD UNIX_FN
+RELEASE STACK
+COMPRESS UNIX_DIR UNIX_FN into f_1 LEAVING NO
+DEFINE WORK FILE 1 f_1 TYPE 'ASCII-COMPRESSED'
+*
+IF #RUN-PARM = #TMRF
+* For Term Refund apply to term refund first and then move to Billing Adjustment/Debit Credit
+  #TITLE := 'Uncashed Checks Report for Term Refund'
+  #JOB-DESCRIPTION := 'for Term Refund'
+ELSE
+  #TITLE := 'Uncashed Checks Report'
+  #JOB-DESCRIPTION := 'for ALL modes'
+END-IF
+#EX-TITLE := 'Exceptions for Uncashed Checks Report'
+*
+#TIME := *TIMN
+#DATN := *DATN
+#USER-ID := *USER
+#DATE := FUNCTION-CALENDAR(<#DATN,'W'>)
+COMPRESS FULL #TITLE '     DATE: ' #DATE INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+COMPRESS #EX-TITLE '      DATE: ' #DATE INTO #REPORT-RECORD
+WRITE WORK FILE 3 #REPORT-RECORD
+RESET #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+WRITE WORK FILE 3 #REPORT-RECORD
+COMPRESS FULL 'CNT'    'MEMBER' 'NAME  ' 'ISSUE DATE' 'PLAN' 'MODE' 'AMOUNT' INTO #REPORT-RECORD WITH DELIMITER #TAB
+WRITE WORK FILE 2 #REPORT-RECORD
+*
+DEFINE WORK FILE 4 f_4 TYPE 'ASCII-COMPRESSED'                        /* PEACHTREE-INPUT
+DEFINE WORK FILE 5 f_5 TYPE 'ASCII-COMPRESSED'                        /* PEACHTREE-BY-ACCOUNT
+DEFINE WORK FILE 6 f_6 TYPE 'ASCII-COMPRESSED'                        /* PEACHTREE-BY-TRAN
+DEFINE WORK FILE 7 f_7 TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'    /* Email Information File
+DEFINE WORK FILE 9 f_9 TYPE 'ASCII-COMPRESSED'                        /* log file
+*
+* Write Header to peachtree report files
+#PEACHTREE := '1,2,3,4,5,6'
+WRITE WORK FILE 5 #PEACHTREE
+WRITE WORK FILE 6 #PEACHTREE
+*
+READ WORK FILE 1 #INPUT-RECORD
+*
+  IF #RUN-PARM = #TMRF                                                                                           /* YK1
+    SEPARATE #INPUT-RECORD INTO #INPUT-CN #INPUT-CHECK-NUMBER #INPUT-CHECK-DATE #INPUT-AMOUNT #INPUT-TR-YEAR     /* YK1
+      #input-issue-date                                                                                          /* vt1
+    IGNORE WITH DELIMITER #TAB                                                                                   /* YK1
+  ELSE                                                                                                           /* YK1
+    SEPARATE #INPUT-RECORD INTO #INPUT-CN #INPUT-CHECK-NUMBER #INPUT-CHECK-DATE #INPUT-AMOUNT
+    IGNORE WITH DELIMITER #TAB
+  END-IF                                                                                                         /* YK1
+  IF #INPUT-CN = ' '
+    ESCAPE BOTTOM                        /* end of file
+  END-IF
+*
+  #RECS-READ := #RECS-READ + 1
+  #STATUS := #START
+  COMPRESS #RECS-READ #STATUS INTO #LOG WITH DELIMITER #TAB
+  WRITE WORK FILE 9 #LOG
+*
+  RESET #PEACHTREE-INPUT-RECORD
+  #INPUT-CN  := *TRIM(#INPUT-CN)
+  #MEMBER-ID := VAL(#INPUT-CN)
+  #INPUT-CHECK-DATE := *TRIM(#INPUT-CHECK-DATE)
+  #INPUT-CHECK-NUMBER := *TRIM(#INPUT-CHECK-NUMBER)
+  #DATE := #INPUT-CHECK-DATE
+  EXAMINE #DATE FOR '/' DELETE
+  #L := *LENGTH(#DATE)
+  #L := #L - 3
+  #CHECK-YEAR := SUBSTR(#DATE,#L,4)
+  EXAMINE #INPUT-AMOUNT FOR '$' DELETE
+  #AMOUNT := VAL(#INPUT-AMOUNT)
+  #TRAN-CODE := #PROCESS-TRAN-CODE
+  if  #run-parm = #TMRF                                                    /* vt1
+    #issue-date-in := val(#input-issue-date)                               /* vt1
+  end-if                                                                   /* vt1
+*
+  IF #AMOUNT = 0
+    COMPRESS #MEMBER-ID 'Amount = 0 - No funds applied' INTO #REPORT-RECORD WITH DELIMITER #TAB
+    WRITE WORK FILE 3 #REPORT-RECORD
+    ESCAPE TOP
+  END-IF
+*
+  ADD #AMOUNT TO #AMOUNT-SUBMITTED
+*
+  RESET #POLICY-FOUND #EZPAY-INACTIVE-STATUS
+  FIND (1) ST-V WITH ID-NUMBER = #MEMBER-ID
+    IF NO RECORDS FOUND
+      MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+      #DISPLAY-AMOUNT := *TRIM(#DISPLAY-AMOUNT)
+      COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+      COMPRESS FULL #MEMBER-ID #DISPLAY-AMOUNT ' Not found - No funds applied'
+        INTO #REPORT-RECORD WITH DELIMITER #TAB
+      WRITE WORK FILE 3 #REPORT-RECORD
+      #AMOUNT-REJECTED := #AMOUNT-REJECTED + #AMOUNT
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    IF st-v.STATUS(*) = 'D'                                                             /* vt1
+      if #RUN-PARM ne  #TMRF                                                            /* vt1
+        PERFORM FIND-POLICY
+      else                                                                              /* vt1 \/
+        for1.
+        for #k 1 c*active-segments
+          if ( st-v.status(#k) = 'D' )  and ( #issue-date-in = st-v.issue-date(#k) )
+            #issue-date := #issue-date-in
+            #i1 := #k
+            escape bottom (for1.)
+          end-if
+        end-for
+        reset #first-active
+        if #i1 ne #k
+          examine st-v.status(*) for 'D' giving index #idx
+          #i1 := #idx
+          move true to #first-active
+          MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+          #DISPLAY-AMOUNT := *TRIM(#DISPLAY-AMOUNT)
+          COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+          COMPRESS FULL #MEMBER-ID #DISPLAY-AMOUNT ' No matching policies - AMT applied to first active'
+            'Plan:' st-v.plan(#i1) ', Mode:' st-v.mode(#i1) ', Pay-status:' st-v.pay-status(#i1)
+            INTO #REPORT-RECORD WITH DELIMITER #TAB
+          WRITE WORK FILE 3 #REPORT-RECORD
+        end-if
+        move TRUE to #policy-found
+      end-if                                                                           /* vt1 /\
+      IF #POLICY-FOUND
+        CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1
+        DECIDE FOR FIRST CONDITION
+          WHEN #RUN-PARM = #TMRF AND ST-V.MODE(#I1) = 'G'
+            #PROCESS-TRAN-CODE  := 'ATRC'
+            FOR #I = 1 TO C*OUT-TERM-REF-GROUP                                /* YK2
+              IF OUT-TERM-REF-AMOUNT(#I) = 0 AND OUT-TERM-REF-YEAR(#I) = 0    /* YK2
+                  AND OUT-TERM-REF-ENTRY-DATE(#I) = 0                          /* YK2
+                ESCAPE BOTTOM                                                 /* YK2
+              END-IF                                                          /* YK2
+            END-FOR                                                           /* YK2
+            OUT-TERM-REF-AMOUNT(#I)     := #AMOUNT
+            OUT-TERM-REF-YEAR(#I)       := VAL(#INPUT-TR-YEAR)       /* YK1
+            OUT-TERM-REF-ENTRY-DATE(#I) := #DATN
+            if st-v.issue-date(#i1) = #issue-date-in                            /* vt1 \/
+              new-pol-iss-date(#i)        := val(#input-issue-date)
+              new-term-pol-nbr (#i)       := #pol-num
+            else
+              reset new-pol-iss-date(#i)
+              new-term-pol-nbr (#i)       := st-v.id-number
+            end-if                                                             /* vt1 /\
+            #APPLIED-TO := 'applied to T/Ref'
+          WHEN #RUN-PARM = #TMRF AND ST-V.MODE(#I1) <> 'G'
+            #PROCESS-TRAN-CODE  := 'ATRC'
+            ST-V.X-BILL-ADJUST(#I1) := ST-V.X-BILL-ADJUST (#I1) - #AMOUNT
+            #APPLIED-TO := 'applied to BADJ'
+            IF ST-V.MODE(#I1) = 'E'
+              ST-V.EZPAY-START(#I1) := 'Y'
+            END-IF
+          WHEN NONE      /* #RUN-PARM = #ALL_UC
+            DECIDE ON FIRST VALUE ST-V.MODE(#I1)
+              VALUE 'G'
+                ST-V.DEBIT-CREDIT-AMT := ST-V.DEBIT-CREDIT-AMT - #AMOUNT
+                #PROCESS-TRAN-CODE  := 'ADCR'
+                #APPLIED-TO := 'applied to ADCR'
+              VALUE 'E'
+                ST-V.X-BILL-ADJUST(#I1) := ST-V.X-BILL-ADJUST (#I1) - #AMOUNT
+                ST-V.EZPAY-START(#I1)   := 'Y'
+                #PROCESS-TRAN-CODE  := 'BADJ'
+                #APPLIED-TO := 'applied to BADJ'
+              NONE VALUE
+                ST-V.X-BILL-ADJUST(#I1) := ST-V.X-BILL-ADJUST (#I1) - #AMOUNT
+                #PROCESS-TRAN-CODE  := 'BADJ'
+                #APPLIED-TO := 'applied to BADJ'
+            END-DECIDE
+        END-DECIDE
+        #AMOUNT-APPLIED := #AMOUNT-APPLIED + #AMOUNT
+        #RECS-APPLIED := #RECS-APPLIED + 1
+        PERFORM WRITE-REPORT
+        PERFORM WRITE-PEACHTREE-INPUT
+        IF #UPLOAD = 'Y'
+          PERFORM ACCT-REG
+          PERFORM CREATE-NOTE
+          IF ST-V.MODE(#I1) <> 'G'                      /* YK1
+            PERFORM CREATE-EMAIL-DATA                   /* YK1
+          END-IF                                        /* YK1
+          UPDATE (0338)
+        END-IF
+      END-IF
+    ELSE
+      MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+      #DISPLAY-AMOUNT := *TRIM(#DISPLAY-AMOUNT)
+      COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+      COMPRESS FULL #MEMBER-ID #DISPLAY-AMOUNT ' No active policies - No funds applied'
+        INTO #REPORT-RECORD WITH DELIMITER #TAB
+      WRITE WORK FILE 3 #REPORT-RECORD
+      #AMOUNT-REJECTED := #AMOUNT-REJECTED + #AMOUNT
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF NOT #POLICY-FOUND
+      MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+      #DISPLAY-AMOUNT := *TRIM(#DISPLAY-AMOUNT)
+      COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+      IF #EZPAY-INACTIVE-STATUS
+        COMPRESS FULL #MEMBER-ID #DISPLAY-AMOUNT ' PAD CODE not ACTIVE - No funds applied'
+          INTO #REPORT-RECORD WITH DELIMITER #TAB
+      ELSE
+        COMPRESS FULL #MEMBER-ID #DISPLAY-AMOUNT ' Eligible Policy not found - No funds applied'
+          INTO #REPORT-RECORD WITH DELIMITER #TAB
+      END-IF
+      WRITE WORK FILE 3 #REPORT-RECORD
+      #AMOUNT-REJECTED := #AMOUNT-REJECTED + #AMOUNT
+      ESCAPE BOTTOM
+    END-IF
+  END-FIND
+*
+  END TRANSACTION
+  #STATUS := #DONE
+  COMPRESS #RECS-READ #STATUS INTO #LOG WITH DELIMITER #TAB
+  WRITE WORK FILE 9 #LOG
+END-WORK
+CLOSE WORK FILE 7
+*
+#REPORT-RECORD := '------------------------------------------------------------------------------'
+WRITE WORK FILE 2 #REPORT-RECORD
+*
+MOVE EDITED #AMOUNT-SUBMITTED (EM=ZZ,ZZZ,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+COMPRESS 'Total Submitted' #TAB #TAB #TAB #TAB #TAB #TAB #DISPLAY-AMOUNT #TAB
+  INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+*
+MOVE EDITED #AMOUNT-APPLIED (EM=ZZ,ZZZ,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+COMPRESS 'Total Applied' #TAB #TAB #TAB #TAB #TAB #TAB #DISPLAY-AMOUNT #TAB
+  INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+*
+MOVE EDITED #AMOUNT-REJECTED (EM=ZZ,ZZZ,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+COMPRESS 'Total Rejected' #TAB #TAB #TAB #TAB #TAB #TAB #DISPLAY-AMOUNT #TAB INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+COMPRESS 'Total Rejected' #TAB #DISPLAY-AMOUNT #TAB INTO #REPORT-RECORD
+WRITE WORK FILE 3 #REPORT-RECORD
+CLOSE WORK FILE 2
+CLOSE WORK FILE 3
+*
+* Send user reports to Windows server
+IF #UPLOAD = 'Y'
+  RESET #TEST #TEST-NAME
+END-IF
+COMPRESS REPORT-1 '_' #RUN-PARM '_' #TEST-NAME '_' #DATN '_' #TIME '.txt' INTO WIN_FN LEAVING NO
+COMPRESS PUT-SCRIPT-NAME WIN_DIR WIN_FN f_2 INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+*
+COMPRESS REPORT-2 '_' #RUN-PARM '_' #TEST-NAME '_' #DATN '_' #TIME '.txt' INTO WIN_FN LEAVING NO
+COMPRESS PUT-SCRIPT-NAME WIN_DIR WIN_FN f_3 INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+*
+PERFORM CREATE-PEACHTREE-FILES
+*
+COMPRESS PEACHTREE-BY-ACCOUNT '_' #RUN-PARM '_' #TEST-NAME '_' #DATN '_' #TIME '.csv' INTO WIN_FN LEAVING NO
+COMPRESS PUT-SCRIPT-NAME WIN_DIR WIN_FN f_5 INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+*
+COMPRESS PEACHTREE-BY-TRAN '_' #RUN-PARM '_' #TEST-NAME '_' #DATN '_' #TIME '.csv' INTO WIN_FN LEAVING NO
+COMPRESS PUT-SCRIPT-NAME WIN_DIR WIN_FN f_6 INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+*
+* Call e-mail programs
+PERFORM SEND-EMAIL-NOTIFICATION
+*
+* Move processed file to the "Processed" folder    ********
+IF #UPLOAD = 'Y'
+  COMPRESS WIN_PROCESSED_FILE UNIX_FN INTO WIN_PROCESSED_FILE LEAVING NO
+  COMPRESS MOVE-SCRIPT-NAME WIN_FILE_DIR UNIX_FN WIN_PROCESSED_FILE INTO v_shcmd
+  CALL 'shcmd' v_shcmd
+  v_rc:=  RET('shcmd')
+  IF v_rc <> 0
+    #TEXT := 'Error in script'
+  END-IF
+END-IF
+* Delete Input File
+COMPRESS 'rm' f_1 INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+* Remove error log file - indicates process finished successfully
+CLOSE WORK FILE 9
+COMPRESS '>' f_9 INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+*
+************************************************************************
+DEFINE SUBROUTINE FIND-POLICY
+************************************************************************
+RESET #I1
+EXAMINE STATUS(*) FOR 'D' NUMBER #I
+IF #I = 1
+  EXAMINE STATUS(*) FOR 'D' INDEX #I
+  IF ST-V.MODE(#I) = 'E'
+    IF ST-V.PAD-CODE = #EZPAY-ACTIVE(*)
+      RESET #EZPAY-INACTIVE-STATUS
+    ELSE
+      #EZPAY-INACTIVE-STATUS := TRUE
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+  IF PAY-STATUS(#I) = '22' OR (MODE(#I) = 'G' AND PAY-STATUS(#I) = '21')      /* YK1
+    #I1 := #I
+  END-IF                                                                      /* YK1
+ELSE
+* Find Direct Bill
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+    IF STATUS(#I) = 'D' AND ST-V.MODE(#I) = #DB-CC-MODE(*) AND PAY-STATUS(#I) = '22'
+      #I1 := #I
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+  IF #I1 = 0
+    FOR #I = 1 TO C*ACTIVE-SEGMENTS
+      IF STATUS(#I) <> 'D'
+        ESCAPE TOP
+      END-IF
+      IF #I1 = 0 AND PAY-STATUS(#I) = '22'
+        #I1 := #I
+        #ISSUE-DATE := ST-V.ISSUE-DATE(#I)
+      ELSE
+        ESCAPE TOP
+      END-IF
+      IF #ISSUE-DATE > ST-V.ISSUE-DATE(#I)
+        IF ST-V.MODE(#I) = 'E'
+          IF ST-V.PAD-CODE = #EZPAY-ACTIVE(*)
+            IGNORE
+          ELSE
+            ESCAPE TOP
+          END-IF
+        END-IF
+        IF PAY-STATUS(#I) = '22'
+          #ISSUE-DATE := ST-V.ISSUE-DATE(#I)
+          #I1 := #I
+        END-IF
+      END-IF
+    END-FOR
+  END-IF
+END-IF
+IF #I1 <> 0
+  #POLICY-FOUND := TRUE
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE WRITE-REPORT
+************************************************************************
+*
+MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+#DISPLAY-AMOUNT := *TRIM(#DISPLAY-AMOUNT)
+COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+*
+COMPRESS #RECS-APPLIED ST-V.ID-NUMBER ST-V.NAME ST-V.ISSUE-DATE(#I1) ST-V.PLAN(#I1) ST-V.MODE(#I1) #DISPLAY-AMOUNT #APPLIED-TO
+  INTO #REPORT-RECORD WITH DELIMITER #TAB
+*
+WRITE WORK FILE 2 #REPORT-RECORD
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE ACCT-REG
+************************************************************************
+*
+RESET ACCT-REG-V
+ACCT-REG-V.ID-NUMBER             := ST-V.ID-NUMBER
+ACCT-REG-V.PROCESS-IND           := ST-V.PROCESS-IND
+ACCT-REG-V.TRANSACTION-DATN      := #DATN
+ACCT-REG-V.TRANSACTION-TIMN      := *TIMN
+ACCT-REG-V.TERMINAL-ID           := *INIT-ID
+ACCT-REG-V.CLERK-ID              := 'EDS'
+ACCT-REG-V.NAME                  := ST-V.NAME
+ACCT-REG-V.CASH-CODE             := '$'
+ACCT-REG-V.ACCT-DATE             := #DATN
+ACCT-REG-V.POLICY-NUMBER         := #POL-NUM
+ACCT-REG-V.DATE-LAST-ACCT-UPDATE := #DATN
+ACCT-REG-V.CREDIT-AMOUNT         := #AMOUNT
+ACCT-REG-V.TXN-CODE              := #PROCESS-TRAN-CODE
+*
+COMPRESS #CHECK-YEAR 'Uncashed Check' INTO ACCT-REG-V.DESCRIPTION
+STORE ACCT-REG-V
+*
+IF #RUN-PARM = #TMRF
+  IF ST-V.MODE(#I1) = 'G'
+    ESCAPE ROUTINE
+  END-IF
+* Move to BADJ
+  ACCT-REG-V.TRANSACTION-TIMN      := *TIMN + 1000
+  ACCT-REG-V.TXN-CODE              := 'BADJ'
+  ACCT-REG-V.CREDIT-AMOUNT         := #AMOUNT
+  RESET ACCT-REG-V.DEBIT-AMOUNT
+  ACCT-REG-V.CASH-CODE             := 'A'
+  STORE ACCT-REG-V
+*
+  ACCT-REG-V.TXN-CODE              := 'RTRC'
+  ACCT-REG-V.CASH-CODE             := 'A'
+  ACCT-REG-V.DEBIT-AMOUNT          := #AMOUNT
+  RESET ACCT-REG-V.CREDIT-AMOUNT
+  STORE ACCT-REG-V
+END-IF
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-NOTE
+************************************************************************
+*
+RESET #NOTE-TEXT (1)
+COMPRESS 'Uncashed Check #' #INPUT-CHECK-NUMBER ',' INTO #NOTE-TEXT(1) LEAVING NO
+IF #RUN-PARM = #TMRF
+  COMPRESS 'TR' #NOTE-TEXT (1) INTO #NOTE-TEXT (1)
+END-IF
+COMPRESS #NOTE-TEXT(1) #INPUT-CHECK-DATE ',' INTO #NOTE-TEXT(1) LEAVING NO
+COMPRESS #NOTE-TEXT(1) #DISPLAY-AMOUNT #APPLIED-TO INTO #NOTE-TEXT(1)
+MOVE 1 TO #INT
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CLERK #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-PEACHTREE-INPUT
+***************************************
+*
+#TRAN-CODE    := #PROCESS-TRAN-CODE
+#PEACH-AMOUNT := #AMOUNT * (-1)
+#ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<#TRAN-CODE>)(1)
+FIND(1) CONTACT WITH CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+  #MEMBER-NAME := CONTACT.LAST-NAME
+END-FIND
+WRITE WORK FILE 4 #PEACHTREE-INPUT-RECORD
+IF #RUN-PARM = #TMRF
+* Move to BADJ for non-allotment
+  IF ST-V.MODE(#I1) = 'G'
+    ESCAPE ROUTINE
+  END-IF
+  #TRAN-CODE    := 'BADJ'
+  #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<#TRAN-CODE>)(1)
+  #PEACH-AMOUNT := #AMOUNT *(-1)
+  WRITE WORK FILE 4 #PEACHTREE-INPUT-RECORD
+*
+  #TRAN-CODE      := 'RTRC'
+  #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<#TRAN-CODE>)(1)
+  #PEACH-AMOUNT := #AMOUNT
+  WRITE WORK FILE 4 #PEACHTREE-INPUT-RECORD
+END-IF
+*
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE CREATE-PEACHTREE-FILES
+****************************************
+*
+CLOSE WORK FILE 4
+RESET #TOTAL-AMOUNT #PEACHTREE-INPUT-RECORD
+*
+READ WORK FILE 4 #PEACHTREE-INPUT-RECORD
+END-ALL
+*
+* Count number of rows first
+SORT BY #ACCOUNT-KEY USING #PEACH-AMOUNT                         /* YK1
+  AT BREAK OF #ACCOUNT-KEY                                       /* YK1
+    #CNT-1 := #CNT-1 + 1
+  END-BREAK
+  AT END OF DATA
+    #CNT-1 := #CNT-1 + 1                   /* Add summary line
+    #CNT-2 := COUNT(#PEACH-AMOUNT) + 1
+  END-ENDDATA
+END-SORT
+#PEACHTREE-DATE := FUNCTION-CALENDAR(<#DATN,'D'>)
+#PEACHTREE-CLERK-ID := FUNCTION-CLERK(<#USER-ID>)
+PERFORM CREATE-PEACHTREE-FILE-BY-ACCOUNT
+PERFORM CREATE-PEACHTREE-FILE-BY-TRANSACTION
+*
+CLOSE WORK FILE 5
+CLOSE WORK FILE 6
+*
+END-SUBROUTINE
+*
+**************************************************
+DEFINE SUBROUTINE CREATE-PEACHTREE-FILE-BY-ACCOUNT
+**************************************************
+*
+#PEACHTREE-REC-CNT    := #CNT-1
+READ WORK FILE 4 #PEACHTREE-INPUT-RECORD
+END-ALL
+*
+SORT BY #ACCOUNT-KEY USING #PEACH-AMOUNT #TRAN-CODE
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #PEACH-AMOUNT
+  AT BREAK OF #ACCOUNT-KEY
+    #PEACH-ACCOUNT-NUMBER := OLD(#ACCOUNT-NUMBER)
+    #WORK-FIELD := OLD(#TRAN-CODE)
+    #DESCRIPTION-1 := FUNCTION-ACCT-NUMBER(<#WORK-FIELD>)(2)
+    COMPRESS 'UCUP' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    COMPRESS #PEACH-ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 5 #PEACHTREE
+    #GRAND-TOTAL-AMOUNT := #GRAND-TOTAL-AMOUNT + #TOTAL-AMOUNT
+    RESET #TOTAL-AMOUNT #PEACHTREE-DYNAMIC-FIELDS
+  END-BREAK
+  AT END OF DATA
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<'CASH  '>)(1)
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    #DESCRIPTION-1  := FUNCTION-ACCT-NUMBER(<'CASH  '>)(2)
+    COMPRESS #PEACHTREE-DATE #DESCRIPTION-1 INTO #DESCRIPTION-1
+    COMPRESS 'Uncashed Checks Upload' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    MOVE EDITED #GRAND-TOTAL-AMOUNT (EM=ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 5 #PEACHTREE
+  END-ENDDATA
+END-SORT
+*
+END-SUBROUTINE
+******************************************************
+DEFINE SUBROUTINE CREATE-PEACHTREE-FILE-BY-TRANSACTION
+******************************************************
+*
+RESET #PEACHTREE-DYNAMIC-FIELDS
+#PEACHTREE-REC-CNT    := #CNT-2
+READ WORK FILE 4 #PEACHTREE-INPUT-RECORD
+END-ALL
+*
+SORT BY #MEMBER-ID #POL-NUM
+    USING #ACCOUNT-NUMBER #PEACH-AMOUNT #CN #MEMBER-NAME #TRAN-CODE
+  RESET #DESCRIPTION-1 #DESCRIPTION-2
+  COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+  COMPRESS #TRAN-CODE #DATN-MM #DATN-DD 'CN' #CN
+    INTO #DESCRIPTION-1 LEAVING NO
+  COMPRESS #MEMBER-NAME #POL-NUM INTO #DESCRIPTION-2
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #PEACH-AMOUNT
+  MOVE EDITED #PEACH-AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+  MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+  COMPRESS #PEACHTREE-DATE #COMMA
+    #DESCRIPTION-1  #COMMA
+    #PEACHTREE-REC-CNT #COMMA
+    #PEACH-ACCOUNT-NUMBER #COMMA
+    #DESCRIPTION-2 #COMMA
+    #PEACHTREE-CLERK-ID #COMMA
+    #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+  WRITE WORK FILE 6 #PEACHTREE
+  RESET #PEACHTREE-DYNAMIC-FIELDS
+*
+  AT END OF DATA
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<'CASH  '>)(1)
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    #DESCRIPTION-1  := FUNCTION-ACCT-NUMBER(<'CASH  '>)(2)
+    COMPRESS #PEACHTREE-DATE #DESCRIPTION-1 INTO #DESCRIPTION-1
+    RESET #DESCRIPTION-2
+    COMPRESS 'Uncashed Checks Upload' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    MOVE EDITED #TOTAL-AMOUNT (EM=ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 6 #PEACHTREE
+  END-ENDDATA
+END-SORT
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CREATE-EMAIL-DATA
+***********************************
+*
+RESET EMAIL-INFORMATION
+EMAIL-INFORMATION.DAL-CN           := ST-V.ID-NUMBER
+EMAIL-INFORMATION.POLICY-NUMBER    := #POL-NUM
+EMAIL-INFORMATION.TEMPLATE-TYPE    := #UNCASHED-CHECK-TEMPLATE
+EMAIL-INFORMATION.CREATION-DATE    := #DATN
+EMAIL-INFORMATION.TOTAL-AMOUNT-DUE := #DISPLAY-AMOUNT
+*
+PERFORM GET-OWNER-INFO
+IF #OWNER-CONTACT-ID = 0
+  COMPRESS #POL-NUM #CONTACT-ID-ERROR INTO #REPORT-RECORD WITH DELIMITER #TAB
+  WRITE WORK FILE 3 #REPORT-RECORD
+  ESCAPE ROUTINE
+END-IF
+*
+#DynamicName := 'S1'
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #DynamicName
+* #DynamicName := EDIT_NAME_LOWCASE (< #DynamicName >) /* bz-Name 
+EMAIL-INFORMATION.SALUTATION    := #DynamicName
+* find an email address
+EMAIL-INFORMATION.OWNER-EMAIL :=  F-PREF-EMAIL(<#OWNER-CONTACT-ID>)
+IF EMAIL-INFORMATION.OWNER-EMAIL = ' '                         /* Owner does not have e-mail
+  IF INTRO-FLAG = 'S' OR INTRO-FLAG = 'K' OR INTRO-FLAG = 'G'  /* Retreive member email if spouse, child or grandchild
+    EMAIL-INFORMATION.OWNER-EMAIL := FUNCTION-MEMBER-EMAIL(<EMAIL-INFORMATION.DAL-CN>)
+  END-IF
+END-IF
+IF EMAIL-INFORMATION.OWNER-EMAIL = ' '                       /* Use insured'e email address
+  EMAIL-INFORMATION.OWNER-EMAIL := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)
+END-IF
+IF EMAIL-INFORMATION.OWNER-EMAIL = ' '
+  COMPRESS EMAIL-INFORMATION.POLICY-NUMBER #EMAIL-ADDRESS-ERROR INTO #REPORT-RECORD WITH DELIMITER #TAB
+  WRITE WORK FILE 3 #REPORT-RECORD
+  ESCAPE ROUTINE
+END-IF
+*
+WRITE WORK FILE 7 EMAIL-INFORMATION
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-OWNER-INFO
+********************************
+*
+#OWNER-CN         := ST-V.ID-NUMBER
+#OWNER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+CALLNAT 'GOWNRSXX' ST-V.ID-NUMBER
+  #NON-INS-OWNER
+  #MULTIPLE-OWNER
+  #OWNER-OCC-9 (1:9)
+*
+IF #OWNER-CN-ARRAY(#I1,1) <> ST-V.ID-NUMBER
+  #OWNER-CN         := #OWNER-CN-ARRAY(#I1,1)
+  #OWNER-CONTACT-ID := F-GET-CONTACT-ID(<#OWNER-CN>)
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE SEND-EMAIL-NOTIFICATION
+*****************************************
+*
+* 1 v_TO        (A) DYNAMIC INIT <'ykegeles@aafmaa.com'>
+* 1 v_Subj      (A) DYNAMIC INIT <'Check Upload process notification'>
+* 1 v_MSG       (A) DYNAMIC INIT <'Check Upload reports are ready for your review at the following location:'>
+* 1 v_From      (A) DYNAMIC INIT <'User_Initiated_Batch_Processes@aafmaa.com'>
+*
+RESET p_EMAIL
+EXAMINE #USER-ID TRANSLATE INTO UPPER
+v_TO_user := FUNCTION-EMAIL(<#USER-ID>)
+IF v_TO_user = ' '
+  RESET INITIAL v_TO_user
+END-IF
+COMPRESS v_TO_user ','  v_TO ',' 'ykegeles@aafmaa.com' INTO v_TO LEAVING NO
+COMPRESS v_Subj '-' #TEST #JOB-DESCRIPTION into v_Subj
+*
+COMPRESS FULL v_mail_shcmd v_TO INTO v_shcmd
+EXAMINE v_shcmd for '@Subj' replace v_Subj
+*
+CALL 'shcmd' v_shcmd
+v_RC := RET('shcmd')
+IF v_RC <> 0
+  PRINT(8) 'Mailx Error. RC=' v_RC //
+    v_shcmd
+END-IF
+*
+END-SUBROUTINE
+*
+END

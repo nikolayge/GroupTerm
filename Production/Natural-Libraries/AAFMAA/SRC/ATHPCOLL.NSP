@@ -1,0 +1,403 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : ATHPCOLL                                              *
+*                                                                      *
+* FUNCTION     : Read A-REQUEST-File to get CNs which will be passed to*
+*                collections and perform CMB5 transaction for them.    *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE        TAG     REASON                                    *
+* VXT    01/30/2012  None    Program Written                           *
+* vxt    03/07/2012  vt1     add logic for updating of Term-loan-prin  *
+*                            and term-acc-int fields                   *
+* YAK    05/14/2013  YK1     Add #DID-DEAD when calling to C2316PCI    *
+* vxt    06/05/2013  vt2     ticket 2016
+* NGG    09/18/2014  NG1     NEW MS
+* TMT    05/12/2017  TT1     Multiple Cap Project                      *
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+local using ADDA0001
+LOCAL USING CAPL0001                                          /* TT1
+LOCAL
+1 PROC-REQ-V VIEW OF A-PROCESS-REQUEST
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8)
+  2 LAST-UPD-TIME (N7)
+  2 PROCESS-DESCRIPTION (A250/1:9)
+  2 PROCESS-STATUS (A1/1:9)
+  2 PROCESS-STATUS-DATE (N8/1:9)
+  2 PROCESS-MESSAGE (A250/1:9)
+  2 REQUEST-HISTORY (1:9)
+    3 REQUEST-STATUS (A1)
+    3 REQUEST-STATUS-DATE (N8)
+  2 REQUEST-DATA (A250)
+  2 redefine request-data
+    3 request-data-16   (a16)
+  2 REQUEST-FINAL-STATUS (A1)
+  2 REQUEST-FS-DATE (N8)
+  2 REQUEST-TYPE (A16)
+  2 REQUEST-KEY (A32)
+  2 ID-NUMBER (N8)
+*
+1 st-v view of a-status
+  2 id-number
+  2 member-contact-id
+  2 plan (9)
+  2 issue-date (9)
+  2 x-lpo-pmt-rcvd     (9)
+  2 lpo-prior-loan-bal (9)
+  2 lpo-prior-acc-int  (9)
+  2 mode               (9)
+  2 DATE-ACCT-UPDATE
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 process-ind
+  2 name
+  2 military-status     (a1)
+  2 military-service    (a3)
+  2 term-acc-int                                       /* vt1
+  2 term-loan-prin                                     /* vt1
+*
+1 TR-REG-V VIEW OF A-TRANSACTION-REGISTER
+  2 TRANSREG /* GROUP
+    3 ID-NUMBER (N6.0)
+    3 PROCESS-IND (A1) /*PM -06/2000 - SPLIT COMPANIE
+    3 NAME (A25)
+    3 DATE-LAST-UPDATE (N8.0)
+    3 TERMINAL-ID (A8)
+    3 CLERK-ID (A3)
+    3 TRANSACTION-DATN (P9.0)
+    3 TRANSACTION-TIMN (P7.0)
+    3 OLD-DATA (A125/1:1) /* MU-FIELD
+    3 NEW-DATA (A125/1:1) /* MU-FIELD
+*
+1 MBRSHIP-MTD-DET-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER
+  2 ENTRY-DATE
+  2 REC-ISN
+  2 CODE
+  2 ISSUE-DATE
+  2 NUM-MBRSHIPS
+*
+1 #cnt          (p7.2)
+1 #cnt-upd      (p7.2)
+1 #datn         (n8)
+1 redefine #datn
+  2 #datn-yyyy    (n4)
+  2 #datn-mm      (n2)
+  2 #datn-dd      (n2)
+1 #isn          (p10)
+1 #isn-loans    (p10)                     /* vt 09/22/2017
+1 #isn-proc     (p10)
+1 #i1           (i2)
+1 #LX           (I2)
+1 #int          (i2)
+1 #ISS-DT      (N8)
+1 redefine #iss-dt
+  2 #iss-dt-yyyy   (a4)
+  2 #iss-dt-mm     (a2)
+  2 #iss-dt-dd     (a2)
+1 #ISS-DT-X    (A10)
+1 #POL-NUM      (A16)
+1 #TOD-DISP     (A15)
+1 #DATE-OF-UPDATE    (N8)
+1 #TIME-OF-UPDATE    (N7)
+1 #LOAN-BAL   (N7.2/9)
+1 #LOAN-BAL-2 (N7.2/9)
+1 #ACC-INT    (N7.2/9)
+1 #ACC-INT-2  (N7.2/9)
+1 #CSV        (N7.2/9)
+1 #CVALUE     (N7.2/9)
+1 #LVALUE     (N7.2/9)
+1 #MCSV       (N7.2/9)
+1 #DB         (N7.2/9)
+1 #ANN-PREMIUM (N7.2/9)
+1 #FACE-AMT   (N7.2/9)
+1 #TPP        (N7.2/9)
+1 #LOAN-PRIN   (P7.2)
+1 #ACCUM-INT   (P5.2)
+1 #CURR-VAR-INT-RATE  (P2.3)
+1 #DID-LAPO      (L)  /* needed for link to C2316PCI
+1 #DID-REIN      (L)
+1 #tran-code     (a4) init<'CMB5'>
+1 #cash-code     (a1) init<'T'>
+1 #RPU-TEXT      (A78/16)
+1 #CLERK-ABB-PASS      (A3)
+1 #CLERK-ABB-NAME-PASS (A20)
+1 #INVALID-L       (L)
+1 #total-amt     (p7.2)
+*
+1 #id-number        (n6)
+1 #formatted-name   (a70)
+1 #First-address    (a70)
+1 #Second-address   (a70)
+1 #third-address    (a70)
+1 #contact-id       (n8)
+1 #letter-env       (a) dynamic
+1 #mil-status       (a1)
+1 #mil-service      (a3)
+1 #process-date     (a10)
+1 #did-coll         (l)
+1 #TAb              (a1) init<H'09'>
+1 #out-file         (a500)
+1 #note-text        (a60/10)
+1 #FORCE-A          (L)
+1 #DID-DEAD         (L)              /* YK1
+1 #PROGRAM          (A8)             /* NG1
+1 #USE-TIMX         (L) INIT <TRUE>  /* NG1
+1 #UPDATE           (I4) CONSTANT <2>       /* TT1
+1 #NOTES-TEXT   (A60/10) /* TT1
+1 #HOLD-NOTE (A) DYNAMIC
+1 #INT-2         (I2)
+
+*
+end-define
+*
+format (1) ls=80 ps=52
+*
+***** write 'beginning of program'
+move true to #did-coll
+#datn   := *datn
+*  #datn   := 20120216
+#date-of-update := *datn
+compress #datn-mm '/' #datn-dd '/' #datn-yyyy into #process-date leaving no
+*
+f1.
+find proc-req-V with PROC-REQ-V.request-final-status = 'P'
+  if proc-req-v.process-status(1) ne 'C'
+*
+
+    add 1 to #cnt
+    move *isn to #isn-proc
+*
+    f2.
+    find st-v with st-v.id-number = proc-req-V.id-number
+*
+      if no
+        WRITE ' NO REC ON STATUS FILE FOR ' proc-req-V.id-number
+        escape bottom (f2.)
+      end-norec
+*
+      FOR1.
+      for #i1 1 9
+        CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1
+        if #pol-num = proc-req-v.request-data-16
+          move #i1 to #lx
+          escape bottom (FOR1.)
+        end-if
+      end-for
+*
+      MOVE *ISN(F2.) TO #ISN
+      PERFORM CMB5-PAYOFF-LOAN                              /* VT1  \/
+*
+      IF ST-V.MODE (#LX) = 'M'                              /* vt2 \/
+        RESET TR-REG-V
+        COMPRESS 'AM-CMB5 MODE: ' ST-V.MODE (#LX)
+          INTO TR-REG-V.OLD-DATA (1)
+        ST-V.MODE (#LX) := 'Q'
+        COMPRESS 'AM-CMB5 MODE: ' ST-V.MODE (#LX)
+          INTO TR-REG-V.NEW-DATA (1)                        /* vt2 /\
+        PERFORM STORE-TR-REG-V
+      END-IF
+*
+      st-v.term-loan-prin  := #LOAN-PRIN
+      st-v.term-acc-int    := #ACCUM-INT                    /* vt1  /\
+*
+      reset st-v.x-lpo-pmt-rcvd  (#lx)
+        st-v.lpo-prior-loan-bal  (#lx)
+        st-v.lpo-prior-acc-int   (#lx)
+      MOVE #DATE-OF-UPDATE TO ST-V.DATE-ACCT-UPDATE
+      MOVE #DATE-OF-UPDATE TO ST-V.DTS-DATN
+      MOVE #TIME-OF-UPDATE TO ST-V.DTS-TIMN
+      UPDATE (F2.)
+*
+      perform update-status
+*
+    end-find
+*
+  end-if
+  at end of data
+    write
+      'number of records selected for processing        ' #cnt
+      'number of records updated on process-status file ' #cnt-upd
+  end-enddata
+*
+end-find
+*
+*****************
+DEFINE SUBROUTINE CMB5-PAYOFF-LOAN
+*****************
+*
+MOVE #ISN TO #CGA-ISN
+move 'EDS' to #cga-clerk
+*
+#TOD-DISP := *DATG
+CALLNAT 'CVALUSXX'
+  ST-V.ID-NUMBER
+  #CGA-SCR-SUFFIX
+  #DATE-OF-UPDATE
+  #LOAN-BAL     (1:9)
+  #LOAN-BAL-2   (1:9)
+  #ACC-INT      (1:9)
+  #ACC-INT-2    (1:9)
+  #CSV          (1:9)
+  #CVALUE       (1:9)
+  #LVALUE       (1:9)
+  #MCSV         (1:9)
+  #DB           (1:9)
+  #ANN-PREMIUM  (1:9)
+  #FACE-AMT     (1:9)
+  #TPP          (1:9)
+*
+COMPUTE #LOAN-PRIN = #LOAN-BAL (#LX)  + #LOAN-BAL-2 (#LX)
+COMPUTE #ACCUM-INT = #ACC-INT (#LX)  + #ACC-INT-2  (#LX)
+compute #total-amt = #loan-prin + #accum-int
+MOVE ST-V.ISSUE-DATE (#lx) TO #iss-dt
+COMPRESS #iss-dt-MM '/' #iss-dt-DD '/' #iss-dt-YYYY INTO #ISS-DT-X leaving no
+*
+* Payoff the loan
+
+FETCH RETURN 'C2316PCI' #CURR-VAR-INT-RATE #DID-LAPO      /*payoff loans
+  #TRAN-CODE  #LX #TIME-OF-UPDATE #CASH-CODE
+  #DID-REIN #did-coll #DID-DEAD                           /* YK1
+*
+/* collect data and print the letters
+#RPU-TEXT (*) := FUNCTION-LAPSE-LETTER-TEXT(<#LOAN-PRIN,#ACCUM-INT>)(*)
+*
+MOVE 'KHB' TO #CLERK-ABB-PASS #cga-clerk
+MOVE ' ' TO #CLERK-ABB-NAME-PASS
+CALLNAT 'GCKNMSXX' #CLERK-ABB-PASS
+  #INVALID-L
+  #CLERK-ABB-NAME-PASS
+COMPRESS 'This correspondence has been prepared for you by:'
+  #CLERK-ABB-NAME-PASS INTO #RPU-TEXT (16)
+*
+* get the address
+move st-v.id-number to #id-number
+reset #pda-address
+move st-v.member-contact-id to #add-contact-id #contact-id
+move 'P' to #add-type
+callnat 'ADDN0001' #pda-address
+#first-address  := #add-line-1
+#second-address := #add-line-2
+#third-address  := #add-line-3
+*
+/* get  formateted name for letter
+#LETTER-ENV := '!LETTER'                            /* bz-Name-C
+CALLNAT 'GPRS0CNT' #CONTACT-ID #LETTER-ENV
+move #letter-env to #formatted-name
+*
+#mil-status  := st-v.military-status
+#mil-service := st-v.military-service
+NEWPAGE
+WRITE  (1) notitle  USING FORM 'C2326FCI'    /* print letter
+
+/* create the note and store record on Membership-MTD-DET file
+RESET #NOTE-TEXT (*)
+#CGA-CLERK := 'EDS'
+MOVE 1 TO #INT
+COMPRESS '* POL ISS' #ISS-DT-X
+  'CAP LOAN SENT TO COLLECTIONS' INTO #NOTE-TEXT (#INT)
+*
+CALLNAT 'E4205SDM' #id-number #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+/* create the membership-detail record
+RESET MBRSHIP-MTD-DET-V
+COMPUTE MBRSHIP-MTD-DET-V.ENTRY-DATE = 99999999 - *DATN
+MOVE #ID-NUMBER         TO MBRSHIP-MTD-DET-V.ID-NUMBER
+MOVE 'V'                TO MBRSHIP-MTD-DET-V.CODE
+MOVE #ISS-DT            TO MBRSHIP-MTD-DET-V.ISSUE-DATE
+RESET MBRSHIP-MTD-DET-V.NUM-MBRSHIPS
+STORE MBRSHIP-MTD-DET-V
+*
+MOVE *PROGRAM TO #PROGRAM
+CALLNAT 'MSSNL003'           /* NG1
+  MBRSHIP-MTD-DET-V.ID-NUMBER
+  MBRSHIP-MTD-DET-V.CODE
+  #CGA-USER-COMPANY
+  MBRSHIP-MTD-DET-V.ISSUE-DATE
+  #PROGRAM
+  #USE-TIMX
+*
+CALLNAT 'GAUTHSXX' st-v.id-number             /*Set ALOT-CHG-AUTH if FA chged
+  #CGA-CLERK #FORCE-A
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE update-status
+*****************
+*
+GET1.
+get proc-req-V #ISn-proc
+proc-req-V.LAST-UPD-USER           := 'ATHPCOLL'
+proc-req-V.LAST-UPD-DATE           := *datn
+proc-req-V.LAST-UPD-TIME           := *timn
+proc-req-V.PROCESS-STATUS-DATE (1) := *datn
+proc-req-V.PROCESS-MESSAGE (1)     := 'CMB5 completed '
+proc-req-v.process-status (1)      := 'C'
+update (get1.)
+add 1 to #cnt-upd
+****** write 'I got here'
+*
+RESET LNS-V
+*
+FIND LNS-V WITH ID-NUMBER = ST-V.ID-NUMBER
+  IF LOAN-STATUS = 'C'
+    #ISN-loans := *ISN                               /* vt 09/22/2017
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+IF #ISN-loans > 0                                   /* vt 09/22/2017
+  GT1.
+  GET LNS-V #ISN-loans                              /* vt 09/22/2017
+  LNS-V.LOAN-STATUS           := 'D'
+  LNS-V.LAST-UPD-USER         := *PROGRAM
+  LNS-V.LAST-UPD-DATE         := *DATN
+  LNS-V.LAST-UPD-TIME         := *TIMN
+  UPDATE (GT1.)
+  COMPRESS '*CAP' LNS-V.LOAN-NUMBER INTO #HOLD-NOTE LEAVING NO
+  COMPRESS #HOLD-NOTE 'Sent to collections on' *DAT4U INTO #HOLD-NOTE
+  #NOTES-TEXT(1) := #HOLD-NOTE
+  #INT := 1
+  CALLNAT 'E4205SDM'
+    ST-V.ID-NUMBER
+    #INT
+    'EDS'
+    #NOTES-TEXT (*)
+END-IF
+*
+****** WRITE 'I made it through the process'
+*
+END-SUBROUTINE
+*
+********************************************************************************
+DEFINE SUBROUTINE  STORE-TR-REG-V
+********************************************************************************
+*
+
+COMPRESS TR-REG-V.NEW-DATA (1) '-- C5'
+  INTO TR-REG-V.NEW-DATA (1)
+*
+MOVE ST-V.ID-NUMBER        TO TR-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND      TO TR-REG-V.PROCESS-IND /* PM -06/2000-SPLIT
+MOVE st-v.name             TO TR-REG-V.NAME
+MOVE *DATN                 TO TR-REG-V.DATE-LAST-UPDATE
+MOVE *INIT-ID              TO TR-REG-V.TERMINAL-ID
+MOVE 'EDS'                 TO TR-REG-V.CLERK-ID
+MOVE *datn                 TO TR-REG-V.TRANSACTION-DATN
+MOVE *timn                 TO TR-REG-V.TRANSACTION-TIMN
+STORE TR-REG-V
+*
+END-SUBROUTINE
+*
+*
+end

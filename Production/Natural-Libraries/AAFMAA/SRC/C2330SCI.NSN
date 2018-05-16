@@ -1,0 +1,1898 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PGM-ID: C2330SCI   ** BENEFICIARY SPLIT AND OPTION CALCULATER
+***********************************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG  REASON
+*
+* PAM    09222004  PM1  ONLY USE BENE INFORMATION IF NOTE FOUND.
+* DRW    09242004  DW2  STOP USING EARNED INT FOR BP CALCS
+* DRW    09302004  DW3  CHG NAME FORMAT TO LAST, FIRST MIDDLE
+* DRW    10212004  DW4  WHEN AMTS ARE ENTERED SPLIT EARNED INT EVENLY
+* DRW    02242005  DW5  Call Annuity Calculator (GANNUSXX)
+* DRW    03072005  DW6  Use CVALUSXX to calc CSV for AL
+* DRW    03072005  DW7  Add CSV/AL Processing for AL (Annuity Life)
+*                       Use CSV before Termination & AL after
+* DRW    04152005  DW8  Add face Amt & TPP linkage to CVALUSXX
+* DRW    05232005  DW9  Add NN.NN% beneficiary split processing
+* PAM    06302005  PM10 Add policy selection list for AL processing
+* DRW    08222005  DW11 SYNC UP FIRS With STATUS when Inactive Pol *
+* DRW    12072005  DW12 FIX MATCHING ISS-DT CASES
+* DRW    01092006  DW13 FIX POLICY # ON BP PDF ID DUPL ISS-DATES
+* DRW    02152006  DW14 Allow overriding of Benefit Paid
+* DRW    02272006  DW15 FIX LOAN-PRIN AMT PASSING TO C2321SCI PROBLEM
+* PAM    08292007  PM16 Removed () from (#PCT / 100) - caused last 2 digits
+*                       to be truncated
+* PAM    08292007  PM17 If splitting DB evenly, ignore any previous percentages
+*                       (IE - 100% for primary beneficiaries)
+* PAM    09252007  PM18 Prorate Earned Interest Amount if Dollar Split is
+*                   used instead of percentage or fraction - eliminates DW4
+* DRW  05/28/2008  DW19 Show Death Contestability
+* DRW  06/04/2008  DW20 Stop ignoring acc int & prem adj if less that 1.00
+* DRW  07/09/2008  DW21 Correct Spelling of 'PRESS' and make PDO PDF w OVR
+* DRW  07/18/2008  DW22 Add No Longer Contestable Linkage to GCONTSXX
+* DRW  10/09/2008  DW23 Fix Index problem on BP
+* DRW 11/25/2008   DW24 Add Linkage to GCONTSXX for #CONTESTABLE-BUT-PAID
+* PAM 08/16/2010   PM25 Added DATE parameter to Death Benefit calculations
+* BZ  09/16/2010   bz1  Print ... #CGA-SCR-SUFFIX <> 'P22'
+* PAM 10/26/2010   PM26 Fix index error missed on DW23
+* PAM 12/06/2010   PM27 Adjusted field sizes
+* NGG 20120815     NG1  Changes for Settlement Options
+* NGG 20121010     NG2  Changes for Settlement Options - fix trust options
+* NGG  20121002    NG3  CN Expansion Project - New beneficiary database file
+* NGG  20130902    NG4  Address normalization
+* TMT 06/16/2014   TT1  Contact Normalization - DOB and Gender
+* NGG 11/16/2014   NG5  Annuity Life 2
+* vxt 03/19/2015   vt1  fix 1305 errror in Production  /Ticket 3418/
+* vxt 07/06/2015   vt2  Populate the bn-pol-date field with the value of issue
+*                       data of the policy when there is only one policy/Ticket 3616/
+* TMT 12/24/2015  TT2   1099 Project
+* TMT 02/24/2016  TT3   1320 FIX
+* bz  04/12/2016  bz-4377
+* vxt 06/01/2017   vt3   Group Term project
+**********************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-COMMAND  (A2)
+1 #CGA-SCR-ID       (N9)
+1 REDEFINE #CGA-SCR-ID
+  2 #CGA-SCR-ID-FILL (A3)
+  2 #CN              (A6)
+1 #CGA-SCR-SUFFIX   (A3)
+1 #CGA-CLERK        (A3)
+1 #PASSED-NAME      (A25)
+*
+1 #PASSED-TOT-DB            (P9.2)
+1 #PASSED-TOT-NET-PREM      (P5.2)
+1 #PASSED-TOT-LOAN-PRIN     (P7.2)
+1 #PASSED-TOT-ACC-INT       (P5.2)
+1 #PASSED-TOT-EARNED-INT    (P9.2)
+1 #PASSED-TOT-TOTAL-DB-PAID (P9.2)
+1 #DB-BY-POL                (P9.2/9)
+1 #ISS-DT-BY-POL            (N8/9)
+1 REDEFINE #ISS-DT-BY-POL
+  2 #ISS-DT-BY-POL-OCC      (9)
+    3 #ISS-DT       (N8)
+    3 REDEFINE #ISS-DT
+      4 #ISS-DT-YYYY  (A4)
+      4 #ISS-DT-MM    (A2)
+      4 #ISS-DT-DD    (A2)
+    3 REDEFINE #ISS-DT
+      4 #ISS-DT-CENT   (N2)
+      4 #ISS-DT-YYMMDD (N6)
+1 #CSV-BY-POL   (P9.2/9)
+1 #DATE         (N8)                      /* PM25
+*
+LOCAL USING CONTPDA1
+LOCAL USING T1099L01
+LOCAL USING T1099PD1
+LOCAL
+1 #INT-1099-UPDATE        (L)             /* NG4
+1 #HAS-CONTESTABILITY     (L)             /* DW19
+1 #NO-LONGER-CONTESTABLE  (L)             /* DW22
+1 #CONTESTABLE-BUT-PAID   (L)             /* DW24
+1 #CONTESTABLE-POL        (L)
+1 #SEG-I                  (I2)
+1 #PDF-ALREADY-USED   (L/9)               /* DW13
+1 #ALREADY-USED   (L/9)                   /* DW12
+1 #SCN-LBL  (A40)                         /* DW7
+  INIT <'DEATH BENEFIT BENEFICIARY SPLIT CALCS'>
+1 #SUFFIX     (A3)
+1 #AS-OF-DT   (N8)
+1 #LOAN-BAL   (N7.2/9)
+1 #LOAN-BAL-2 (N7.2/9)
+1 #ACC-INT-9    (N7.2/9)
+1 #ACC-INT-2-9  (N7.2/9)
+1 #CSV        (N7.2/9)
+1 #CVALUE     (N7.2/9)
+1 #LVALUE     (N7.2/9)
+1 #MCSV       (N7.2/9)
+1 #DB-9       (N7.2/9)
+1 #ANN-PREMIUM (N7.2/9)
+1 #FACE-AMT    (N7.2/9)  /* DW8
+1 #TPP         (N7.2/9)  /* DW8
+1 #CSV-P      (P7.2/9)
+*
+1 #ADD            (I4) CONST <1>
+1 #UPDATE         (I4) CONST <2>
+1 #LOAN-PRIN-5   (P7.2)                   /* vt1 was P5.2)
+1 #DEATH-BENEFIT    (P9.2)
+1 #NET-DB           (P9.2)
+1 #EARNED-INT-9     (P9.2)
+1 #FINAL-DB         (P9.2)
+1 I  (I2)
+*
+1 #USER     (A14)
+1 #DIFF    (P9.2)
+1 #NET-DEATH-BENEFIT (P7.2/9)
+1 #PCT-USED  (L)
+1 #FRAC-USED (L)
+1 #SHARE-ENTERED (L)
+1 #TEXT        (A75)
+1 #ISS-DT-SPL-IND      (N1/9)
+1 #BENE-BY-POL-OCC   (9)
+  2 #BENE-USE-NEW   (L)
+  2 #BENE-NUM-BENES (N3)
+  2 #BENE-OCC         (9) /* TO HANDLE UP TO 9 BENES PER POL
+    3 #BENE-NAME      (A25)
+    3 #BENE-SSN       (N9)
+    3 #BENE-REL       (A1)
+    3 #BENE-DOB       (A8)
+    3 #BENE-SHARE     (A10)
+    3 REDEFINE #BENE-SHARE
+      4 #BENE-SHARE-N  (N1/10)
+    3 REDEFINE #BENE-SHARE
+      4 #BENE-FILL      (A2)
+      4 #BENE-SHARE-N2  (N2)
+    3 REDEFINE #BENE-SHARE
+      4 #BENE-SHARE-A  (A1/10)
+    3 REDEFINE #BENE-SHARE
+      4 #BENE-SHARE-PCT2 (N2)
+      4 #BENE-SHARE-FILL (A1)
+      4 #BENE-SHARE-PCT2B (N2)   /* DW9
+    3 REDEFINE #BENE-SHARE
+      4 #BENE-SHARE-PCT3 (N3)
+    3 #BENE-RESTRICT  (A1)
+*
+1 #FILL-BLNKS (A78/24)
+1 #NT-FOUND   (L)
+1 #NT-ID     (N6)
+1 #NT-X-1    (I2)
+1 #PDF-BENE    (A13/5)        /* bz-4377  /* NG1
+1 #PDF-BENE-D  (A12)          /* PM27
+1 #PDF-SSN     (A11)
+*
+1 #SAVE-COMMAND (A2)
+1 #SAVE-ID      (N9)
+1 #SAVE-SUFFIX  (A3)
+1 #ID     (N6)
+1 REDEFINE #ID
+  2 #ID-A    (A6)
+1 #NAME-25   (A25)
+1 #LAST      (A25)
+1 #FIRST-20  (A20)
+1 #MI        (A1)
+1 #ERR-MSG   (A60)
+1 #INDEX     (I4)                  /* TT2
+1 #STRING    (A) DYNAMIC           /* TT2
+1 #END-INDEX (I4)                  /* TT2
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER    /* PM10
+  2 MEMBER-CONTACT-ID        /* TT1
+  2 NAME
+  2 SSN           /* DW6
+*   2 DATE-OF-BIRTH /* DW6                           /* TT1
+*   2 SEX           /* DW6                           /* TT1
+  2 DATE-OF-DEATH
+  2 TERM-DEBIT-CREDIT
+  2 TERM-PREM-REF-DUE
+  2 TERM-LOAN-PRIN
+  2 TERM-ACC-INT
+  2 TERM-CAP-INT
+  2 STATUS        (9)
+  2 ISSUE-DATE    (N8/9)
+  2 REDEFINE ISSUE-DATE   /* PM10
+    3 ISSUE-DATE-OCC     (9)
+      4 ISSUE-DATE-YYYY   (A4)
+      4 ISSUE-DATE-MM     (A2)
+      4 ISSUE-DATE-DD     (A2)
+  2 SPLIT-IND     (N1/9)
+  2 DEATH-BENEFIT  (9)
+  2 FACE-AMOUNT    (9)
+  2 CASH-VALUE     (9)
+  2 NXT-MON-CASH-VALUE (9)
+  2 PLAN           (9)
+  2 POLICY-ID      (9)                   /* TT2
+*
+1 T1099-V-2 VIEW OF A-INT-1099           /* TT2 BEGIN
+  2 SSN (N9)
+  2 YEAR (N4)
+  2 AMOUNT (P9.2)
+  2 SSN-TAX-ID-IND (A1)
+  2 RELATED-ID-NUMBER (N6)
+  2 INT-TYPE (A1)
+  2 GROSS-AMT (P9.2)
+  2 INSURED (A25)
+  2 BD-1 (A25)
+  2 TYPE-1099 (A4)
+  2 DATE-ENTERED (N8)
+  2 SHARE (A10)
+  2 BANKRUPTCY-IND (A1)
+  2 NAME-2 (A25)
+  2 CONTACT-ID (N8)
+  2 CLAIMANT-ID (N8)
+  2 FINAL-PAYMENT-AMT (P9.2)
+  2 FINAL-PAYMENT-DATE (N8)
+  2 FINAL-PAYMENT-TID (A20)
+  2 POLICY-NUMBER (A16)
+  2 SETTLEMENT-TYPE (A1)
+  2 SETTLEMENT-DATE (N8)
+  2 ADD-USER (A8)
+  2 ADD-DATE (N8)
+  2 ADD-TIME (N7)
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8)
+  2 LAST-UPD-TIME (N7)                /* TT2 END
+*
+1 FR-V VIEW OF A-FIRS
+  2 POL-NAME          (9)
+  2 POL-DATE          (N8/9)
+  2 pol-type          (a4/9)                           /* vt 02/05/2018
+  2 POL-AMT-PAID      (P7.2/9)   /* gross db
+  2 DEAD-GROSS-DB (P7.2/9)   /* gross db
+  2 DEAD-LOAN-PRIN(P7.2/9)   /* loan prin
+  2 DEAD-LOAN-INT (P5.2/9)   /* loan-interest
+  2 DEAD-PREM-ADJ (P5.2/9)   /* premium adl/fpf/badj
+  2 DEAD-DB-CR    (P7.2/9)   /* debit-credit
+  2 DEAD-CAP-INT  (P5.2/9)   /* capitalized interest
+*
+**NT-V VIEW OF A-NOTES
+1 NT-V VIEW OF A-BENE-FINAL    /* NG3
+  2 ID-NUMBER          (N6)    /* let D = bene designation (1-4)
+  2 NOTE-DATE          (N8/60) /* LET P/A = PRINCIPAL/ALTERNATE DESING
+  2 REDEFINE NOTE-DATE         /* let L = linked policies
+    3 BENE-DATES-6-POLS (6)
+      4 BENE-ISS-DT       (N6/7)   /* (D, L)
+      4 BENE-SPLIT-IND    (N1/7)   /* (D, L)
+      4 BENE-LST-UPD      (N8)     /* (D)
+      4 BENE-STRT-PEND    (N8)     /* (D)
+      4 BENE-FOL-UP-IND   (N1)     /* (D)
+      4 BENE-OWN-TRNSF-DT (N8)     /* (D)
+      4 BENE-SUC-OWN      (N1)     /* (d)
+      4 BENE-NEW-LAYOUT   (N1)     /* (d)
+      4 BENE-FIL1         (A4)
+  2 NOTE-CLERK-ID       (A3/60)
+  2 REDEFINE NOTE-CLERK-ID
+    3 BENE-MISC-6-POLS  (6)
+      4 BENE-STATUS      (A1)     /* (D)
+      4 BENE-RESTRICT    (A1)     /* (D)
+      4 BENE-MISC-PRIM-SEC (2)
+        5 BENE-TYPE        (A1)    /* (D, P/A)
+        5 BENE-SHARE-TYP   (A1)    /* (D, P/A)
+        5 BENE-MISC-FIL-2  (A12)
+  2 NOTE-TEXT          (A60/60)
+  2 REDEFINE NOTE-TEXT
+    3 BENE-TEXTS-6-POLS (6)
+      4 BENE-TEXT-PRIM-SEC (2)
+        5 BENE-TEXT-OCC    (5)
+          6 BENE-TEXT        (A60)   /* (D, P/A, text-line)
+          6 REDEFINE BENE-TEXT
+            7 BN-NAME        (A25)
+            7 BN-SSN         (N9)
+            7 BN-REL         (A1)
+            7 BN-SHARE       (A10)
+            7 BN-SET-OPT     (A1)
+            7 BN-RESTRICTION (A1)
+            7 BN-DOB         (A8)
+            7 BN-FILL-1      (A5)
+  2 LST-BD-FINALIZATION-USER (A3)
+*
+1 #TOT-DB            (P9.2)
+1 #TOT-NET-PREM      (P5.2)
+1 #TOT-LOAN-PRIN     (P7.2)
+1 #TOT-ACC-INT       (P5.2)
+1 #TOT-EARNED-INT    (P9.2)
+1 #TOT-TOTAL-DB-PAID (P9.2)
+1 #TOT-ACTUAL-TOTAL-DB-PAID (P9.2)
+1 #TOT-CSV           (P9.2)
+1 #RATIO             (P1.5)
+1 #NUM-POLS (I2)
+1 #POL-X    (I2)
+1 #I1    (I2)
+1 #I2    (I2)
+1 #I3    (I2)
+1 J      (I2)
+1 #I5    (I2)
+1 #I6    (I2)
+1 #I7    (I2)
+1 #BN-SPLIT-BY-POL (A1)  INIT <'N'>
+1 #BN-MULT-BEN     (A1)  INIT <'N'>
+1 #BN-NUM-BEN      (N2)
+1 #BN-NUM-BEN-X    (N2)             /* NG4
+1 #NUM-TO-SPLIT    (N2)
+1 #BN-EVEN-SPLIT   (A1)
+1 #BN-UNEVEN-SPLIT (A1)
+1 #BN-SPLIT-OK     (A1)
+1 #BN-POL-DATE     (A28)
+1 #BN-POL-DATE-YYYYMMDD-A   (A8)   /* DW23
+1 REDEFINE #BN-POL-DATE-YYYYMMDD-A
+  2 #BN-POL-DATE-CENT  (N2)
+  2 #BN-POL-DATE-YYMMDD  (N6)
+1 REDEFINE #BN-POL-DATE-YYYYMMDD-A
+  2 #BN-POL-DATE-N8 (N8)
+1 #BP-X          (I2)             /* DW23
+1 #BN-POL-#        (A16)
+1 #BOT-BEN-LBL     (A11)
+1 #BOT-NAME-LBL (A4)
+1 #BOT-LBLS     (A14/5)
+1 #BOT-TOT-LBL  (A10)
+1 #BN-PAGE-LBL  (A11)
+*
+1 #BOP-NAME    (A33)
+1 #BOP-DOB     (A11)
+1 #BOP-DB      (N7.2)
+1 #BOP-DB-AN   (N7.2)
+1 #BOP-SSN     (N9)
+1 #BOP-SEX     (A1)
+1 #BOP-BENE-AGE(N4)
+1 #BOP-BENE       (N7.2/5)  /* ng1
+1 #BOP-TAXBL-PCT  (N2.7/5)
+1 #BOP-TAXBL-MON  (N7.2/5)
+1 #BOP-TAXBL-AMT  (N7.2/5)
+1 #BOP-RESV-AMT   (N7.2/5)
+1 #AL-TYPE        (A1/9)
+1 #IS-FIRST-ITERATION  (L) INIT <TRUE>         /* TT2
+*
+1 #FAC  (P11.6)
+1 #TOT-PCT    (N3.2)   /* DW9
+1 #CURRENT-POL   (I4)                          /* TT2
+*
+1 #DOD-MMDDYYYY (A11)
+*
+1 #DOB-YYYYMMDD  (N8)
+1 REDEFINE #DOB-YYYYMMDD
+  2 #DOB-YYYYMMDD-A (A8)
+*
+1 #MONTHS (A36) INIT <'JanFebMarAprMayJunJulAugSepOctNovDec'>
+1 REDEFINE #MONTHS
+  2 #MON  (A3/12)
+1 #POL-NUM         (A16)
+*
+1 #COUNTERS
+  2 #POLS-PROCESSED   (P5)
+  2 #RECS-READ        (P5)
+  2 #RECS-WRITTEN     (P5)
+*
+1 #FIRST-UPDATE (I4) CONST <4>                 /* TT2
+1 #LAST-BN-TO-SPLIT   (N2)
+1 #PREM-LBL    (A13)
+1 #TOT-DB-ENT  (N7.2)
+1 #DB-TO-SPLIT  (N7.2)
+1 #HIGHEST-DB   (N9.2)
+1 #LARGEST-DENOM (N2)
+1 #TOT-FRAC-1-X (N2.3)
+1 #TOT-DB-PAID-BY-POL-SO-FAR (N7.2)
+1 #DB-SO-FAR         (N7.2)
+1 #PREM-SO-FAR       (N7.2)
+1 #PRIN-SO-FAR       (N7.2)
+1 #ACC-INT-SO-FAR    (N7.2)
+1 #EARNED-INT-SO-FAR (N7.2)
+1 #DEAD      (L)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A  (A4)
+  2 #MM-A    (A2)
+  2 #DD-A    (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY    (N4)
+  2 #MM      (N2)
+  2 #DD      (N2)
+*
+1 #BN-TBL      (12)
+  2 #BN-CV                     (C)
+  2 #NUM                       (N2)
+  2 #NAME                      (A33)
+  2 REDEFINE #NAME
+    3 #NAME-S (A33)
+  2 #PCT                       (N3.2)
+  2 REDEFINE #PCT
+    3 #PCT-A   (N3)
+    3 #PCT-B   (N2)
+  2 #PCT-PCT                   (A1)
+  2 #FRAC-1                    (N1)
+  2 #FRAC-1-X                  (N2.3)
+  2 #FRAC-/                    (A1)
+  2 #FRAC-2                    (N2)
+  2 #FRAC-2-X                  (N2)
+  2 #AMT                       (N7.2)
+  2 REDEFINE #AMT
+    3 #DOL7   (N1)
+    3 #DOL6   (N1)
+    3 #DOL5   (N1)
+    3 #DOL4   (N1)
+    3 #DOL3   (N1)
+    3 #DOL2   (N1)
+    3 #DOL1   (N1)
+    3 #CENT1  (N1)
+    3 #CENT2  (N1)
+  2 #DB                        (N7.2)
+  2 REDEFINE #DB
+    3 #DB-2       (N7.2)
+  2 #PREM                      (N5.2)
+  2 #PRIN                      (N7.2)                  /* vt1 was n5.2
+  2 #ACC-INT                   (N5.2)
+  2 #EARNED-INT                (N5.2)
+  2 #TOT-LINE                  (A11)
+  2 #TOT-DB-PAID               (N7.2)
+  2 REDEFINE #TOT-DB-PAID
+    3 #TOT-DB-PAID-2 (N7.2)
+  2 #CHK-#-DATE                (A25)
+* added for BOT
+  2 #HOLD-DB-TO-PAY            (N7.2)
+  2 #DB-TO-PAY                 (N7.2)
+  2 #DB-TO-PAY-ANNUITIZE       (N7.2)
+  2 #DOB-MMDDYYYY (A8)
+  2 REDEFINE #DOB-MMDDYYYY
+    3 #DOB-MM      (N2)
+    3 REDEFINE #DOB-MM
+      4 #DOB-MM-A   (A2)
+    3 #DOB-DD-A    (A2)
+    3 #DOB-YYYY-A  (A4)
+  2 REDEFINE #DOB-MMDDYYYY
+    3 #DOB-MMDDYYYY-A (A8)
+  2 #AGE                       (N3)
+  2 #SSN                       (N9)
+  2 #SEX                       (A1)
+  2 #CLAIMANT-ISN              (P8)      /* NG4
+  2 #CLAIMANT-CI               (N8)      /* TT2
+  2 #CLAIMANT-POLICY           (A16)     /* TT2
+*
+1 #SELECT-POL      (A1/9)   /* PM10
+1 #POL-CV          (C/9)
+1 #POL-ISS-DATE    (A10/9)
+1 #POL-NUMBER      (A16/9)
+1 #POL-FACE        (A13/9)
+1 #POL-PLAN        (A2/9)
+1 #AL-X            (I2/9)
+1 #POL-SELECTED    (L)
+1 #WORK-INT-CALC   (F8)    /* PM18
+1 #REQUEST         (I2)                 /* NG4
+1 #MSG             (A) DYNAMIC          /* NG4
+1 #HOLD-SHARE           (A) DYNAMIC     /* TT2
+*
+1 #HOLD-CLAIMANTS     (12)              /* TT2 BEGIN
+  2 #HOLD-PCT         (N3.2)
+  2 #HOLD-FRAC-1      (N1)
+  2 #HOLD-FRAC-2      (N2)
+  2 #HOLD-AMT         (N7.2)            /* TT2 END
+*
+1 #TOTAL-AMOUNTS (12)
+  2 #HOLD-DB-2                    (N7.2)
+  2 #HOLD-PREM                    (N5.2)
+  2 #HOLD-PRIN                    (N7.2)
+  2 #HOLD-ACC-INT                 (N5.2)
+  2 #HOLD-EARNED-INT              (N5.2)
+  2 #HOLD-TOT-DB-PAID-2           (N7.2)
+1 #HOLD-TOT-DB                  (P9.2)
+1 #plan                           (a3)                      /* vt3
+END-DEFINE
+* * * * * * * * * * *
+*
+* WRITE 'TOP OF C2330SCI' #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX
+*   / 'Passed Tot DB.........:'#PASSED-TOT-DB
+*   / 'Passed tot net premium:' #PASSED-TOT-NET-PREM
+*   / ' TOT-LOAN-PRIN........:' #PASSED-TOT-LOAN-PRIN
+*   / 'Passed tot accu intrst:' #PASSED-TOT-ACC-INT
+*   / 'Passed tot earned int.:' #PASSED-TOT-EARNED-INT
+*   / 'Passed tot DB paid....:' #PASSED-TOT-TOTAL-DB-PAID
+* WRITE 'PRESS ENTER TO CONTINUE EDS IS TESTING TEMPORARILY'
+*
+IF #CGA-SCR-SUFFIX = 'CSV' OR = 'AL'      /* DW7
+  MOVE 'Life Annuity Information' TO #SCN-LBL
+END-IF
+*
+MOVE #CGA-SCR-COMMAND TO #SAVE-COMMAND
+MOVE #CGA-SCR-ID      TO #SAVE-ID
+MOVE #CGA-SCR-SUFFIX  TO #SAVE-SUFFIX
+MOVE #CGA-SCR-ID TO #ID
+MOVE TRUE TO #DEAD
+FIND (1) ST-V WITH WIDOW-KEY = #ID-A /* assumed dead
+  IF NO RECORD FOUND
+    RESET #DEAD
+  END-NOREC
+END-FIND
+*
+IF #DEAD
+  MOVE DATE-OF-DEATH TO #YYYYMMDD
+  COMPRESS #DD-A #MON (#MM) #YYYY-A INTO #DOD-MMDDYYYY WITH '-'
+*
+  FIND (1) FR-V WITH WIDOW-KEY = #ID-A
+    IF NO RECORDS FOUND
+      WRITE 'NO FIR RECORDS FOUND for a deceased mbr - CALL EDS'
+    END-NOREC
+*
+    RESET #I2 #DB-BY-POL (*) #ISS-DT-BY-POL (*)
+    IF DEAD-GROSS-DB (1) NE 0  /* HAS SPLIT AMOUNTS
+      RESET #PASSED-TOT-DB
+        #PASSED-TOT-NET-PREM
+        #PASSED-TOT-LOAN-PRIN
+        #PASSED-TOT-ACC-INT
+        #PASSED-TOT-TOTAL-DB-PAID
+    END-IF
+*
+    RESET #ALREADY-USED (*) /* DW14
+    FOR #I1 1 TO 9 /* assumes purged pol is still on status file
+      IF POL-NAME (#I1) = 'AAFMAA' OR = 'AMAA'
+        ADD 1 TO #I2
+*
+        FOR #I5 1 TO 9   /* Try 9 pols                      /* DW11
+          IF ((ST-V.ISSUE-DATE (#I5) = POL-DATE (#I1))
+              AND (NOT #ALREADY-USED (#I5)))                      /* DW12
+              OR (#I5 GE 9)
+            MOVE TRUE TO #ALREADY-USED (#I5)
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+*
+        MOVE ST-V.SPLIT-IND (#I5) TO #ISS-DT-SPL-IND (#I2)    /* DW11
+        MOVE POL-AMT-PAID (#I1) TO #DB-BY-POL     (#I2)
+        MOVE POL-DATE     (#I1) TO #ISS-DT-BY-POL (#I2)
+*
+        IF DEAD-GROSS-DB (1) NE 0
+          ADD DEAD-GROSS-DB  (#I1) TO #PASSED-TOT-DB
+          ADD DEAD-PREM-ADJ  (#I1) TO #PASSED-TOT-NET-PREM
+          ADD DEAD-DB-CR     (#I1) TO #PASSED-TOT-NET-PREM
+          ADD DEAD-LOAN-PRIN (#I1) TO #PASSED-TOT-LOAN-PRIN
+          ADD DEAD-LOAN-INT  (#I1) TO #PASSED-TOT-ACC-INT
+          COMPUTE #DB-BY-POL (#I1) =
+            DEAD-GROSS-DB(#I1) + DEAD-LOAN-PRIN(#I1)
+            + DEAD-LOAN-INT(#I1) + DEAD-PREM-ADJ(#I1) + DEAD-DB-CR(#I1)
+          ADD #DB-BY-POL (#I1) TO #PASSED-TOT-TOTAL-DB-PAID
+        ELSE
+          MOVE ST-V.CASH-VALUE (#I5) TO #CSV-BY-POL (#I1)    /* DW11
+        END-IF
+      END-IF
+    END-FOR
+*
+    IF   (#SAVE-COMMAND = 'BP')
+        AND (DEAD-GROSS-DB (1) = 0)  /* has no split amounts
+      MOVE TERM-DEBIT-CREDIT TO #PASSED-TOT-NET-PREM
+      MOVE TERM-PREM-REF-DUE TO #PASSED-TOT-NET-PREM
+      MOVE TERM-LOAN-PRIN    TO #PASSED-TOT-LOAN-PRIN
+      MOVE TERM-ACC-INT      TO #PASSED-TOT-ACC-INT
+      COMPUTE #PASSED-TOT-TOTAL-DB-PAID = #PASSED-TOT-DB
+        + TERM-DEBIT-CREDIT + TERM-PREM-REF-DUE
+        + TERM-LOAN-PRIN + TERM-ACC-INT
+    END-IF
+  END-FIND
+END-IF
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+IF #SAVE-COMMAND = 'BP'   /* beneficiary payments
+  IF NOT #DEAD
+    MOVE *DATN TO #YYYYMMDD
+    COMPRESS #DD-A #MON (#MM) #YYYY-A INTO #DOD-MMDDYYYY WITH '-'
+*
+    FIND (1) ST-V WITH MEMBER-KEY = #ID-A
+      MOVE *DATN TO #AS-OF-DT
+*
+      RESET #SUFFIX
+*
+      MOVE ST-V.FACE-AMOUNT (*) TO #FACE-AMT (*)
+      CALLNAT 'CVALUSXX'    /* DW6
+        #ID
+        #SUFFIX
+        #AS-OF-DT
+        #LOAN-BAL   (1:9)
+        #LOAN-BAL-2 (1:9)
+        #ACC-INT-9   (1:9)
+        #ACC-INT-2-9 (1:9)
+        #CSV        (1:9)
+        #CVALUE     (1:9)
+        #LVALUE     (1:9)
+        #MCSV       (1:9)
+        #DB-9       (1:9)
+        #ANN-PREMIUM  (1:9)
+        #FACE-AMT   (1:9)   /* DW8
+        #TPP        (1:9)   /* DW8
+*
+      IF #CGA-SCR-SUFFIX = 'AL' /* PM10
+        PERFORM PROCESS-AL-SELECTION-SCREEN
+      END-IF
+*
+      RESET #I2 #DB-BY-POL (*) #ISS-DT-BY-POL (*)
+      FOR #I1 1 TO 9
+        RESET #POL-SELECTED
+        IF #CGA-SCR-SUFFIX NE 'AL'               /* DW7
+            AND ST-V.STATUS (#I1) = 'D'
+          MOVE TRUE TO #POL-SELECTED
+        END-IF
+*
+        IF #CGA-SCR-SUFFIX = 'AL'                /* DW7
+*           AND ST-V.PLAN (#I1) = 'AL'
+            AND IS-ANNUITY-LIFE(< ST-V.PLAN (#I1) >)  /* NG4
+          RESET #POL-SELECTED                    /* PM10
+          FOR #I3 1 TO 9
+            IF #AL-X (#I3) = #I1
+                AND #SELECT-POL (#I3) NE ' '
+              MOVE TRUE TO #POL-SELECTED
+              ESCAPE BOTTOM
+            END-IF
+          END-FOR
+        END-IF
+*
+        IF NOT #POL-SELECTED                     /* PM10
+          ESCAPE TOP
+        END-IF
+*
+        ADD 1 TO #I2
+        IF #CGA-SCR-SUFFIX = 'CSV' OR = 'AL'   /* DW7
+          MOVE #CSV (#I1) TO #DB-BY-POL  (#I2) /* DW7
+          ADD  #CSV (#I1) TO  #PASSED-TOT-DB   /* DW7
+          MOVE #CSV (#I1) TO #CSV-BY-POL (#I2) /* DW7
+          MOVE #SELECT-POL (#I3) TO #AL-TYPE (#I2)    /* NG1
+        ELSE
+          MOVE #DB-9 (#I1) TO #DB-BY-POL  (#I2)
+          ADD  #DB-9 (#I1) TO  #PASSED-TOT-DB
+        END-IF
+*
+        MOVE ISSUE-DATE    (#I1) TO #ISS-DT-BY-POL (#I2)
+        MOVE ST-V.SPLIT-IND (#I1) TO #ISS-DT-SPL-IND (#I2)
+      END-FOR
+    END-FIND
+  END-IF
+*
+  MOVE ST-V.NAME TO #NAME-25
+  RESET #LAST #MI #FIRST-20
+  CALLNAT 'GFMLNSXX' /* split name
+    #NAME-25
+    #FIRST-20
+    #MI
+    #LAST
+    #ERR-MSG
+  COMPRESS #FIRST-20 #MI #LAST INTO #PASSED-NAME
+ELSE
+  IF NOT #DEAD     /* DW11
+    MOVE ST-V.SPLIT-IND (*) TO #ISS-DT-SPL-IND (*) /* split ind needed
+  END-IF
+END-IF
+*
+**COMPUTE #NT-ID = #ID + 400000  /* only use finalized
+FIND (1) NT-V WITH ID-NUMBER = #ID                 /* NG3
+  IF NO RECORDS FOUND
+    WRITE '4XXXXX BENE REC not found on CN' NT-V.ID-NUMBER
+  END-NOREC
+END-FIND
+*
+FOR #I1 1 TO 9   /* load all bene info into 9 policies
+  IF  (#ISS-DT-BY-POL (#I1) = 0)
+      OR (#CGA-SCR-SUFFIX = 'CSV' OR = 'AL')   /* DW7
+    ESCAPE BOTTOM
+  END-IF
+*
+  RESET #NT-FOUND
+  FOR #I2 1 TO 6
+    FOR #I3 1 TO 7
+      IF BENE-ISS-DT (#I2, #I3) = 0
+        ESCAPE BOTTOM
+      END-IF
+      IF   (BENE-ISS-DT (#I2, #I3) = #ISS-DT-YYMMDD (#I1))
+          AND (BENE-SPLIT-IND (#I2, #I3) = #ISS-DT-SPL-IND (#I1))
+*         WRITE 'FOUND IT'
+*           / 'Policy:' #I1 'Bene line:' #I2 'Bene colmn:' #I3
+*           / 'ISSUE-DATE' #ISS-DT-YYMMDD(#I1) #ISS-DT-SPL-IND(#I1)
+*           /  'BENE-DTAE'  BENE-ISS-DT (#I2, #I3)
+*          BENE-SPLIT-IND (#I2, #I3)
+        MOVE TRUE TO #NT-FOUND
+        MOVE #I2 TO #NT-X-1
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FOR
+*
+  RESET #SHARE-ENTERED
+  IF   #NT-FOUND
+      AND (NT-V.BENE-NEW-LAYOUT (#NT-X-1) = 1)  /* NEW LAYOUT
+    MOVE TRUE TO #BENE-USE-NEW (#I1)
+    FOR #I2 1 TO 5
+      IF NT-V.BN-NAME (#NT-X-1, 1, #I2) = ' '
+        ESCAPE BOTTOM
+      END-IF
+*
+      IF  ((NT-V.BENE-TYPE (#NT-X-1, 1) = 'P') AND (#I2 GT 1))
+          OR  (NT-V.BENE-TYPE (#NT-X-1, 1) = 'I')
+        ESCAPE BOTTOM
+      END-IF
+*
+      ADD 1 TO #BENE-NUM-BENES (#I1)
+      MOVE NT-V.BN-NAME (#NT-X-1, 1, #I2) TO #NAME-25
+      RESET #LAST #MI #FIRST-20
+      CALLNAT 'GFMLNSXX' /* split name
+        #NAME-25
+        #FIRST-20
+        #MI
+        #LAST
+        #ERR-MSG
+*     COMPRESS #FIRST-20 #MI #LAST INTO #BENE-NAME    (#I1, #I2)
+      MOVE #NAME-25 TO #BENE-NAME    (#I1, #I2)    /* DW3
+      MOVE BN-REL   (#NT-X-1, 1, #I2)  TO #BENE-REL   (#I1, #I2)
+      MOVE BN-DOB   (#NT-X-1, 1, #I2)  TO #BENE-DOB   (#I1, #I2)
+*
+      IF BN-SSN (#NT-X-1, 1, #I2) = MASK (NNNNNNNNN)
+        MOVE BN-SSN   (#NT-X-1, 1, #I2)  TO #BENE-SSN   (#I1, #I2)
+      END-IF
+*
+      MOVE BN-SHARE (#NT-X-1, 1, #I2)  TO #BENE-SHARE (#I1, #I2)
+      MOVE BN-RESTRICTION (#NT-X-1, 1, #I2)
+        TO #BENE-RESTRICT (#I1, #I2)
+*
+      IF #BENE-SHARE (#I1, #I2) NE ' '
+        MOVE TRUE TO #SHARE-ENTERED
+      END-IF
+    END-FOR
+  END-IF
+END-FOR
+*
+FOR #I1 1 TO 9
+  IF #DB-BY-POL (#I1) NE 0
+    ADD 1 TO #NUM-POLS
+    ADD #CSV-BY-POL (#I1) TO #TOT-CSV
+  END-IF
+END-FOR
+*
+IF #NUM-POLS GT 1
+  MOVE 'Y' TO #BN-SPLIT-BY-POL
+END-IF
+*
+IF     (#NUM-POLS GT 1)   /* ask if multiple policies are all combined
+    AND (#SAVE-COMMAND NE 'BP')   /* assume split by pols for BP
+  IF ( #CGA-SCR-SUFFIX <> 'P22' )                                  /*  bz1
+    #BN-SPLIT-BY-POL := 'N'
+    INPUT MARK *#BN-SPLIT-BY-POL USING MAP 'C2330MCI'
+  ELSE  #BN-SPLIT-BY-POL := "N"
+  END-IF
+*
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+IF (#SAVE-COMMAND = 'BP')
+    AND (#NUM-POLS GT 1)
+  MOVE 'Y' TO #BN-SPLIT-BY-POL
+END-IF
+*
+RESET #POL-X
+REPEAT     /* multiple pol loop
+  IF (#POL-X = 1) AND (#NUM-POLS = 1)        /* DW3
+    ESCAPE BOTTOM
+  END-IF
+*
+  RESET #BN-TBL (*) #BN-NUM-BEN #BN-EVEN-SPLIT #BN-UNEVEN-SPLIT
+  MOVE 'N' TO #BN-MULT-BEN
+  RESET #TEXT
+  RESET #CONTESTABLE-POL                       /* DW19
+*
+*   IF (#BN-SPLIT-BY-POL = 'N') OR (#NUM-POLS LE 1)                                                                       /* TT2 BEGIN
+*     IF #NUM-POLS = 1                                         /* DW19
+*       MOVE 1 TO #SEG-I
+*       compress #iss-dt-yyyy(1) #iss-dt-mm(1) #iss-dt-dd(1) into #bn-pol-date-yyyymmdd-a  leaving no  /* vt2             /* TT1
+*     ELSE
+*       RESET #SEG-I
+*     END-IF
+* *
+*     CALLNAT 'GCONTSXX' ST-V.ID-NUMBER #SEG-I #HAS-CONTESTABILITY  /* DW19
+*       #NO-LONGER-CONTESTABLE #CONTESTABLE-BUT-PAID         /* DW22 DW24
+*     IF #HAS-CONTESTABILITY
+*       IF #NUM-POLS = 1
+*         MOVE 'This is a Contestable Death Policy' TO #TEXT
+*         MOVE TRUE TO #CONTESTABLE-POL
+*       ELSE
+*         MOVE 'Has a Contestable Death Claim' TO #TEXT
+*       END-IF
+*     END-IF
+* *
+*     MOVE #PASSED-TOT-DB            TO #TOT-DB
+*     MOVE #PASSED-TOT-NET-PREM      TO #TOT-NET-PREM
+*     MOVE #PASSED-TOT-LOAN-PRIN     TO #TOT-LOAN-PRIN
+*     MOVE #PASSED-TOT-ACC-INT       TO #TOT-ACC-INT
+*     MOVE #PASSED-TOT-EARNED-INT    TO #TOT-EARNED-INT
+*     MOVE #PASSED-TOT-TOTAL-DB-PAID TO #TOT-TOTAL-DB-PAID
+* *
+*     MOVE 1 TO #POL-X
+*   ELSE
+  IF #POL-X GE #NUM-POLS
+    ESCAPE BOTTOM
+  END-IF
+*
+  ADD 1 TO #POL-X
+  COMPRESS #ISS-DT-MM(#POL-X) #ISS-DT-DD(#POL-X) #ISS-DT-YYYY(#POL-X)
+    INTO #BN-POL-DATE WITH '/'
+  COMPRESS  #ISS-DT-YYYY(#POL-X) #ISS-DT-MM(#POL-X) #ISS-DT-DD(#POL-X)  /* DW23
+    INTO #BN-POL-DATE-YYYYMMDD-A LEAVING NO
+*   CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #POL-X               /* TT1
+*    COMPRESS 'For Policy Issued' #BN-POL-DATE INTO #BN-POL-DATE
+*     COMPRESS 'For Policy ' #POL-NUM INTO #BN-POL-DATE
+  reset #plan                                                     /* vt3
+  FOR I 1 TO 9
+    IF ST-V.ISSUE-DATE(I) = POL-DATE (#POL-X)
+        and st-v.plan (i) = pol-type(#pol-x)                   /* vt 02/05/2018
+      #POL-NUM := ST-V.POLICY-ID(I)
+      #plan    := st-v.plan(i)                                    /* vt3
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+  #BN-POL-DATE := #POL-NUM                                          /* TT2 END
+*
+  IF #DEAD AND (FR-V.DEAD-GROSS-DB (1) NE 0)
+    if #plan ne 'GT1'                                                             /* vt3
+      CALLNAT 'GCONTSXX' ST-V.ID-NUMBER #POL-X #HAS-CONTESTABILITY    /* DW19
+        #NO-LONGER-CONTESTABLE #CONTESTABLE-BUT-PAID       /* DW22 DW24
+      IF #HAS-CONTESTABILITY
+        MOVE 'This is a Contestable Death Policy' TO #TEXT
+        MOVE TRUE TO #CONTESTABLE-POL
+      END-IF
+    end-if                                                                      /* vt3
+*
+    MOVE DEAD-GROSS-DB  (#POL-X)  TO #TOT-DB
+    MOVE DEAD-PREM-ADJ  (#POL-X)  TO #TOT-NET-PREM
+    ADD  DEAD-DB-CR     (#POL-X)  TO #TOT-NET-PREM
+    MOVE DEAD-LOAN-PRIN (#POL-X)  TO #TOT-LOAN-PRIN
+    MOVE DEAD-LOAN-INT  (#POL-X)  TO #TOT-ACC-INT
+    COMPUTE #TOT-TOTAL-DB-PAID = #TOT-DB + #TOT-NET-PREM
+      + #TOT-LOAN-PRIN + #TOT-ACC-INT
+*    CALC EARNED INTEREST FOR EACH POLICY
+*   MOVE #PASSED-TOT-LOAN-PRIN TO #LOAN-PRIN-5  /* REPLACED 2/27/2006
+    MOVE #TOT-LOAN-PRIN TO #LOAN-PRIN-5          /* DW15
+*
+    CALLNAT 'C2321SCI' #CN #POL-X
+      DATE-OF-DEATH
+      DEAD-PREM-ADJ (#POL-X)
+      DEAD-DB-CR    (#POL-X)
+      #LOAN-PRIN-5
+      DEAD-LOAN-INT (#POL-X)
+      #DEATH-BENEFIT
+      #NET-DB
+      #EARNED-INT-9
+      #FINAL-DB
+      #DATE                                   /* PM25
+    MOVE #EARNED-INT-9 TO #TOT-EARNED-INT
+  ELSE
+    if #plan ne 'GT1'                                                            /* vt3
+      CALLNAT 'GCONTSXX' ST-V.ID-NUMBER #POL-X #HAS-CONTESTABILITY
+        #NO-LONGER-CONTESTABLE #CONTESTABLE-BUT-PAID    /*  DW22 DW24
+      IF #HAS-CONTESTABILITY
+        MOVE 'This is a Contestable Death Policy' TO #TEXT
+        MOVE TRUE TO #CONTESTABLE-POL
+      END-IF
+    end-if                                                                      /* vt3
+*
+    IF #TOT-CSV NE 0
+      COMPUTE ROUNDED #RATIO = #CSV-BY-POL (#POL-X) / #TOT-CSV
+    END-IF
+    MOVE #DB-BY-POL (#POL-X) TO #TOT-DB
+    COMPUTE ROUNDED #TOT-NET-PREM      = #PASSED-TOT-NET-PREM   * #RATIO
+    COMPUTE ROUNDED #TOT-LOAN-PRIN     = #PASSED-TOT-LOAN-PRIN  * #RATIO
+    COMPUTE ROUNDED #TOT-ACC-INT       = #PASSED-TOT-ACC-INT    * #RATIO
+    COMPUTE ROUNDED #TOT-EARNED-INT    = #PASSED-TOT-EARNED-INT * #RATIO
+    COMPUTE ROUNDED #TOT-TOTAL-DB-PAID = #PASSED-TOT-TOTAL-DB-PAID
+      * #RATIO
+*
+    IF #POL-X = #NUM-POLS   /* last policy
+      COMPUTE #TOT-TOTAL-DB-PAID =
+        #PASSED-TOT-TOTAL-DB-PAID - #TOT-DB-PAID-BY-POL-SO-FAR
+    END-IF
+*     END-IF                                   /* TT2
+    ADD #TOT-TOTAL-DB-PAID TO #TOT-DB-PAID-BY-POL-SO-FAR
+  END-IF
+*
+  IF #BENE-USE-NEW (#POL-X)
+      AND (NT-V.BENE-TYPE (#NT-X-1, 1) NE 'I')  /* ADDED 8/8/2004
+    COMPRESS #TEXT 'Using Info from Bene file' INTO #TEXT
+*
+    IF #BENE-NUM-BENES (#POL-X) GT 1
+      MOVE 'Y' TO #BN-MULT-BEN
+      IF #SHARE-ENTERED
+        MOVE 'Y' TO #BN-UNEVEN-SPLIT
+      ELSE
+        MOVE 'Y' TO #BN-EVEN-SPLIT
+      END-IF
+      MOVE #BENE-NUM-BENES (#POL-X) TO #BN-NUM-BEN
+    END-IF
+  END-IF
+*
+  RESET #BN-POL-#
+*
+  FOR #I5 1 TO 9   /* Try 9 pols                      /* DW11
+    IF ((ST-V.ISSUE-DATE (#I5) = POL-DATE (#POL-X))
+        AND (NOT #PDF-ALREADY-USED (#I5)))                       /* DW99
+        OR (#I5 GE 9)
+      MOVE TRUE TO #PDF-ALREADY-USED (#I5)   /* DW13
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  CALLNAT 'GPLNMSXX' #BN-POL-# #ID #I5 /* build #i5
+*
+  MOVE '*' TO #CGA-SCR-COMMAND
+*
+  IF NOT #CGA-SCR-SUFFIX = 'CSV' OR = 'AL'   /* DW7
+    IF #CONTESTABLE-POL                                /* DW19
+        AND (NOT #CGA-SCR-SUFFIX = 'OVR' OR = 'PDO')    /* DW21
+      COMPRESS 'The policy issued' #ISS-DT (#POL-X)
+        'is Contestable-BP not available'  TO #TEXT
+      WRITE #TEXT
+        'Press Enter to continue to next Policy'      /* DW21
+      ESCAPE TOP
+    END-IF
+*
+    IF   #CGA-SCR-SUFFIX <> 'P22'                              /* bz1
+        AND NOT #DEAD                                          /* NG4
+      INPUT TEXT #TEXT MARK *#BN-MULT-BEN USING MAP 'C2331MCI' /* mult benes?
+    END-IF
+*                                                      /* NG4 Start
+    IF #DEAD
+      #BN-MULT-BEN   := TRUE
+      #BN-NUM-BEN    := 2
+      #BN-EVEN-SPLIT := ' '
+      #BN-UNEVEN-SPLIT := 'Y'
+    END-IF
+*                                                      /* NG4 End
+    IF #CGA-SCR-COMMAND NE '*'
+      FETCH 'G1000PXX'
+    END-IF
+  END-IF
+*
+  IF (#BN-MULT-BEN = 'N') AND (#BN-SPLIT-BY-POL = 'N')
+      AND (#SAVE-COMMAND NE 'BP')
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF (#BN-MULT-BEN = 'N')
+    MOVE 1 TO #BN-NUM-BEN
+    MOVE 'X' TO #BN-EVEN-SPLIT
+  END-IF
+*
+  IF #BN-NUM-BEN = 0
+    REINPUT 'Enter Number of Beneficiaries'
+      MARK *#BN-NUM-BEN
+  END-IF
+*
+  IF #BN-NUM-BEN GT 12
+    REINPUT 'Number of Beneficiaries cannot exceed 12'
+      MARK *#BN-NUM-BEN
+  END-IF
+*
+  IF (#BN-EVEN-SPLIT = ' ') AND (#BN-UNEVEN-SPLIT = ' ')
+    REINPUT 'Split Method must be Entered'
+      MARK *#BN-EVEN-SPLIT
+  END-IF
+*
+  MOVE (AD=P) TO #BN-CV (*)
+*                                                       /* NG4 Start
+  IF #DEAD
+    #REQUEST := 1  /*GET
+    CALLNAT 'C2330NCI'
+      #REQUEST
+      #MSG
+      #CGA-SCR-ID
+      #BN-NUM-BEN
+      #BN-TBL      (*)
+    PERFORM POPULATE-SHARES     /* TT2
+  ELSE                                                  /* NG4 End
+    FOR #I1 1 TO #BN-NUM-BEN
+* IF #CGA-SCR-ID = 36580
+*  DISPLAY #I1 #POL-X #BENE-NAME(#POL-X,#I1) #BENE-NAME(#POL-X + 1,#I1)
+* END-IF
+      RESET #BN-CV (#I1)
+      MOVE #I1  TO #NUM  (#I1)
+      MOVE '/'  TO #FRAC-/ (#I1)
+      MOVE '%'  TO #PCT-PCT(#I1)
+*
+      IF   #BENE-USE-NEW (#POL-X)
+          AND (NT-V.BENE-TYPE (#NT-X-1, 1) NE 'I')  /* ADDED 8/8/2004
+        MOVE #BENE-NAME (#POL-X, #I1) TO #NAME (#I1)
+        MOVE #BENE-SSN  (#POL-X, #I1) TO #SSN  (#I1)
+        MOVE #BENE-DOB  (#POL-X, #I1) TO #DOB-MMDDYYYY  (#I1)
+*
+        IF #BENE-SHARE-A (#POL-X, #I1, 2) = '/'
+          IF #BENE-SHARE-A (#POL-X, #I1, 1) = MASK (N)
+            MOVE #BENE-SHARE-N (#POL-X, #I1, 1) TO #FRAC-1 (#I1)
+          END-IF
+*
+          IF   (#BENE-SHARE-A (#POL-X, #I1, 4) = MASK (N))
+              AND (#BENE-SHARE-A (#POL-X, #I1, 3) = MASK (N))
+            MOVE #BENE-SHARE-N2 (#POL-X, #I1) TO #FRAC-2 (#I1)
+          ELSE
+            IF #BENE-SHARE-A (#POL-X, #I1, 3) = MASK (N)
+              MOVE #BENE-SHARE-N (#POL-X, #I1, 3) TO #FRAC-2 (#I1)
+            END-IF
+          END-IF
+        ELSE
+          IF  (#BENE-SHARE-A (#POL-X, #I1, 3) = '%')
+            MOVE #BENE-SHARE-PCT2 (#POL-X, #I1) TO #PCT (#I1)
+            RESET #PCT-B (#I1)                                        /* DW9
+          ELSE
+            IF  (#BENE-SHARE-A (#POL-X, #I1, 4) = '%')
+              MOVE #BENE-SHARE-PCT3 (#POL-X, #I1) TO #PCT (#I1)
+              RESET #PCT-B (#I1)                                      /* DW9
+            ELSE
+              IF  (#BENE-SHARE-A (#POL-X, #I1, 6) = '%')              /* DW9
+                MOVE #BENE-SHARE-PCT2 (#POL-X, #I1) TO #PCT (#I1)
+                MOVE #BENE-SHARE-PCT2B(#POL-X, #I1) TO #PCT-B (#I1)
+              ELSE
+                FOR #I2 1 TO 10
+                  IF #BENE-SHARE-A (#POL-X, #I1, #I2) = '.'
+                    RESET #AMT (#I1)
+                    MOVE #BENE-SHARE-N(#POL-X, #I1, #I2 + 1) TO #CENT1(#I1)
+                    MOVE #BENE-SHARE-N(#POL-X, #I1, #I2 + 2) TO #CENT2(#I1)
+                    MOVE #BENE-SHARE-N (#POL-X, #I1, #I2 - 1) TO #DOL1 (#I1)
+                    MOVE #BENE-SHARE-N (#POL-X, #I1, #I2 - 2) TO #DOL2 (#I1)
+                    MOVE #BENE-SHARE-N (#POL-X, #I1, #I2 - 3) TO #DOL3 (#I1)
+*
+                    IF   (#I2 GT 4)
+                        AND (#BENE-SHARE-N (#POL-X, #I1, #I2 - 4) = MASK (N))
+                      MOVE #BENE-SHARE-N(#POL-X, #I1, #I2 - 4) TO #DOL4(#I1)
+                    END-IF
+*
+                    IF   (#I2 GT 5)
+                        AND (#BENE-SHARE-N (#POL-X, #I1, #I2 - 5) = MASK (N))
+                      MOVE #BENE-SHARE-N(#POL-X, #I1, #I2 - 5) TO #DOL5(#I1)
+                    END-IF
+*
+                    IF   (#I2 GT 6)
+                        AND (#BENE-SHARE-N (#POL-X, #I1, #I2 - 6) = MASK (N))
+                      MOVE #BENE-SHARE-N(#POL-X, #I1, #I2 - 6) TO #DOL6(#I1)
+                    END-IF
+*
+                    IF   (#I2 GT 7)
+                        AND (#BENE-SHARE-N (#POL-X, #I1, #I2 - 7) = MASK (N))
+                      MOVE #BENE-SHARE-N(#POL-X, #I1, #I2 - 7) TO #DOL7(#I1)
+                    END-IF
+                    ESCAPE BOTTOM
+                  END-IF
+                END-FOR
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      ELSE
+        IF #SAVE-COMMAND NE 'BP'
+          MOVE ALL '_' TO #NAME (#I1)
+        ELSE
+          IF #CGA-SCR-SUFFIX = 'CSV' OR = 'AL'  /* DW7
+            RESET PDA-CONTACT                                       /* TT1
+            P-CONTACT-ID := ST-V.MEMBER-CONTACT-ID                  /* TT1
+            CALLNAT 'CONTS001' PDA-CONTACT                          /* TT1
+            MOVE NAME          TO #NAME  (#I1)  /* DW7
+            MOVE P-DATE-OF-BIRTH TO #YYYYMMDD     /* DW7            /* TT1
+            COMPRESS #MM-A #DD-A #YYYY-A        /* DW7
+              INTO #DOB-MMDDYYYY-A (#I1) LEAVING NO /* DW7
+            MOVE ST-V.SSN           TO #SSN   (#I1)   /* DW7        /* TT2
+            MOVE P-GENDER      TO #SEX   (#I1)   /* DW7             /* TT1
+          END-IF
+        END-IF
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF  (#BN-EVEN-SPLIT NE ' ')
+    MOVE #BN-NUM-BEN TO #NUM-TO-SPLIT
+    FOR #I1 1 TO #BN-NUM-BEN
+      MOVE 1           TO #FRAC-1 (#I1)
+      MOVE #BN-NUM-BEN TO #FRAC-2 (#I1)
+      RESET #PCT (#I1)                         /* PM17
+    END-FOR
+  END-IF
+*
+  IF (#BN-UNEVEN-SPLIT NE ' ') OR (#BN-SPLIT-BY-POL NE 'N')
+      OR #DEAD                                               /* NG4
+    REPEAT     /* 'how to split menu' loop
+      IF (#BN-MULT-BEN = 'N') AND (#BN-SPLIT-BY-POL NE 'N')
+        MOVE 'Y' TO #BN-SPLIT-OK
+      ELSE
+        MOVE 'Y' TO #BN-SPLIT-OK
+        IF #IS-FIRST-ITERATION OR #NUM-POLS = 1           /* TT2
+          IF #BENE-USE-NEW (#POL-X)
+            MOVE 'Y' TO #BN-SPLIT-OK
+            INPUT TEXT #TEXT MARK *#BN-SPLIT-OK
+              USING MAP 'C2332MCI' /* How to split benes?
+          ELSE
+            INPUT TEXT #TEXT MARK *#FRAC-1 (1)
+              USING MAP 'C2332MCI' /* How to split benes?
+          END-IF
+        ELSE                                         /* TT2 BEGIN
+          #BN-SPLIT-OK := 'Y'
+        END-IF
+*
+        RESET #TEXT
+        PERFORM SPLIT-EVEN-SHARES                    /* TT2 END
+        IF #CGA-SCR-COMMAND NE '*'
+          FETCH 'G1000PXX'
+        END-IF
+      END-IF
+
+*                                   NG4 Start
+      #REQUEST := 2  /* COMPRESS
+      #BN-NUM-BEN-X := #BN-NUM-BEN
+      CALLNAT 'C2330NCI'
+        #REQUEST
+        #MSG
+        #CGA-SCR-ID
+        #BN-NUM-BEN
+        #BN-TBL      (*)
+      IF #BN-NUM-BEN NE #BN-NUM-BEN-X
+        ESCAPE TOP
+      END-IF
+*                                   NG4 End
+      IF #BN-NUM-BEN = 0
+        MOVE 1 TO #BN-NUM-BEN
+      END-IF
+*
+      RESET #LARGEST-DENOM #TOT-DB-ENT #LAST-BN-TO-SPLIT #TOT-PCT
+      RESET #FRAC-USED #PCT-USED
+      MOVE #BN-NUM-BEN TO #NUM-TO-SPLIT
+*
+      FOR #I1 1 TO #BN-NUM-BEN
+        IF #AMT (#I1) = 0 /* fractions or percents
+          MOVE #I1 TO #LAST-BN-TO-SPLIT
+*
+          IF #PCT (#I1) NE 0
+            ADD #PCT (#I1) TO #TOT-PCT
+            MOVE TRUE TO #PCT-USED
+          ELSE
+            MOVE TRUE TO #FRAC-USED
+            IF #FRAC-2 (#I1) GT #LARGEST-DENOM
+              MOVE #FRAC-2 (#I1) TO #LARGEST-DENOM
+            END-IF
+          END-IF
+        ELSE   /* amt was entered
+          ADD #AMT (#I1) TO #TOT-DB-ENT
+          SUBTRACT 1 FROM #NUM-TO-SPLIT
+        END-IF
+      END-FOR
+*
+
+      RESET #FRAC-1-X (*) #FRAC-2-X (*) #TOT-FRAC-1-X
+      FOR #I1 1 TO #BN-NUM-BEN
+        IF  ((#FRAC-1 (#I1) NE 0) AND (#FRAC-2 (#I1) =  0))
+            OR ((#FRAC-1 (#I1) =  0) AND (#FRAC-2 (#I1) NE 0))
+          REINPUT 'Both Sides of the Fraction must be entered'
+            MARK *#FRAC-1 (#I1)
+        END-IF
+*
+        IF   (#FRAC-1 (#I1) = 0)
+            AND (#AMT    (#I1) = 0)
+            AND (#PCT    (#I1) = 0)
+          REINPUT 'Either Fractions or Amount or Percent must be entered'
+            MARK *#FRAC-1 (#I1)
+        END-IF
+*
+        IF #FRAC-1 (#I1) NE 0
+          IF #FRAC-2 (#I1) = #LARGEST-DENOM
+            MOVE #FRAC-1 (#I1)  TO #FRAC-1-X (#I1)
+            MOVE #LARGEST-DENOM TO #FRAC-2-X (#I1)
+          ELSE
+            COMPUTE #FRAC-1-X (#I1) =
+              (#LARGEST-DENOM / #FRAC-2 (#I1)) * #FRAC-1 (#I1)
+            MOVE #LARGEST-DENOM TO #FRAC-2-X (#I1)
+          END-IF
+*
+          ADD #FRAC-1-X (#I1) TO #TOT-FRAC-1-X
+        END-IF
+      END-FOR
+*
+      IF #PCT-USED AND #FRAC-USED
+        REINPUT 'Both Percents and Fractions cannot be used'
+          MARK *#PCT (1)
+      END-IF
+*
+      IF #PCT-USED
+          AND (#TOT-PCT NE 100)
+        REINPUT 'Percents must equal 100'
+          MARK *#PCT (1)
+      END-IF
+*
+      IF #FRAC-USED
+          AND (#TOT-FRAC-1-X NE #LARGEST-DENOM)
+        REINPUT 'Fractions do not add to a Whole'
+          MARK *#FRAC-1 (1)
+        ESCAPE TOP
+      END-IF
+*
+      IF #BN-SPLIT-OK = 'Y'
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT   /*(1096)
+  END-IF
+*
+  IF #BN-NUM-BEN = 0
+    MOVE 1 TO #BN-NUM-BEN
+    MOVE 1 TO #NUM-TO-SPLIT
+  END-IF
+*
+  COMPUTE #DB-TO-SPLIT = #TOT-DB - #TOT-DB-ENT
+  RESET #DB-SO-FAR #PREM-SO-FAR #PRIN-SO-FAR #ACC-INT-SO-FAR
+    #EARNED-INT-SO-FAR #TOT-LINE (*) #TOT-ACTUAL-TOTAL-DB-PAID
+    #HIGHEST-DB
+  FOR #I1 1 TO #BN-NUM-BEN
+    MOVE ALL '_' TO #TOT-LINE (#I1)
+    MOVE ' CK # ______   DT _______' TO  #CHK-#-DATE (#I1)
+    IF #AMT (#I1) NE 0
+      COMPUTE ROUNDED #WORK-INT-CALC = #AMT (#I1) / #TOT-DB-ENT              /* PM18
+      COMPUTE ROUNDED #EARNED-INT (#I1) = #TOT-EARNED-INT * #WORK-INT-CALC   /* PM18
+      MOVE #AMT (#I1) TO #DB          (#I1)
+      MOVE #AMT (#I1) TO #TOT-DB-PAID (#I1)
+      IF #SAVE-COMMAND NE 'BP' /* only add in earned int if an RE  /* DW2
+        ADD #EARNED-INT (#I1) TO #TOT-DB-PAID (#I1)
+      END-IF
+      MOVE #TOT-DB-PAID (#I1) TO #DB-TO-PAY   (#I1)
+      MOVE #TOT-DB-PAID (#I1) TO #DB-TO-PAY-ANNUITIZE (#I1)
+      ADD #AMT (#I1) TO #DB-SO-FAR
+      ADD #EARNED-INT (#I1) TO #EARNED-INT-SO-FAR
+      IF #I1 = #BN-NUM-BEN                                      /* PM18  Start
+          AND #EARNED-INT-SO-FAR NE #TOT-EARNED-INT
+        #EARNED-INT (#I1) := #EARNED-INT (#I1) + #TOT-EARNED-INT - #EARNED-INT-SO-FAR
+      END-IF                                                    /* PM18  End
+      ESCAPE TOP
+    END-IF
+*
+    IF   (#I1 = #BN-NUM-BEN)
+        AND (#BN-EVEN-SPLIT NE ' ')   /* EVEN SPLIT
+      IF #SAVE-COMMAND = 'BP'
+        COMPUTE #DB (#I1) = #TOT-DB - #DB-SO-FAR
+      ELSE
+        COMPUTE #DB (#I1) = #TOT-DB - #DB-SO-FAR
+      END-IF
+      COMPUTE #PREM (#I1) = #TOT-NET-PREM - #PREM-SO-FAR
+      COMPUTE #PRIN (#I1) = #TOT-LOAN-PRIN - #PRIN-SO-FAR
+      COMPUTE #EARNED-INT (#I1) = #TOT-EARNED-INT - #EARNED-INT-SO-FAR
+      COMPUTE #ACC-INT (#I1) = #TOT-ACC-INT - #ACC-INT-SO-FAR
+    ELSE
+      IF #PCT (#I1) NE 0
+        COMPUTE ROUNDED #DB (#I1) = #DB-TO-SPLIT
+          * #PCT (#I1) / 100                                       /* PM16
+        COMPUTE ROUNDED #PREM (#I1) = #TOT-NET-PREM
+          * #PCT (#I1) / 100                                       /* PM16
+        COMPUTE ROUNDED #PRIN (#I1) = #TOT-LOAN-PRIN
+          * #PCT (#I1) / 100                                       /* PM16
+        COMPUTE ROUNDED #EARNED-INT (#I1) = #TOT-EARNED-INT
+          * #PCT (#I1) / 100                                       /* PM16
+        COMPUTE ROUNDED #ACC-INT (#I1) = #TOT-ACC-INT
+          * #PCT (#I1) / 100                                       /* PM16
+      ELSE
+        COMPUTE ROUNDED #DB (#I1) = #DB-TO-SPLIT
+          * #FRAC-1 (#I1) / #FRAC-2 (#I1)
+        COMPUTE ROUNDED #PREM (#I1) = #TOT-NET-PREM
+          * #FRAC-1 (#I1) / #FRAC-2 (#I1)
+        COMPUTE ROUNDED #PRIN (#I1) = #TOT-LOAN-PRIN
+          * #FRAC-1 (#I1) / #FRAC-2 (#I1)
+        COMPUTE ROUNDED #EARNED-INT (#I1) = #TOT-EARNED-INT
+          * #FRAC-1 (#I1) / #FRAC-2 (#I1)
+        COMPUTE ROUNDED #ACC-INT (#I1) = #TOT-ACC-INT
+          * #FRAC-1 (#I1) / #FRAC-2 (#I1)
+      END-IF
+      ADD #DB (#I1) TO #DB-SO-FAR
+      ADD #PREM (#I1) TO #PREM-SO-FAR
+      ADD #PRIN (#I1) TO #PRIN-SO-FAR
+      ADD #EARNED-INT (#I1) TO #EARNED-INT-SO-FAR
+      ADD #ACC-INT (#I1) TO #ACC-INT-SO-FAR
+    END-IF
+    #TOT-DB-PAID (#I1) := #DB (#I1) + #PREM (#I1) + #PRIN (#I1) + #ACC-INT (#I1)
+    IF #SAVE-COMMAND NE 'BP' /* only add in earned int if an RE    /* DW2
+      ADD #EARNED-INT (#I1) TO #TOT-DB-PAID (#I1)
+    END-IF
+    MOVE #TOT-DB-PAID (#I1) TO #DB-TO-PAY (#I1)
+    IF #TOT-DB-PAID (#I1) GT #HIGHEST-DB
+      MOVE #TOT-DB-PAID (#I1) TO #HIGHEST-DB
+    END-IF
+    MOVE #DB-TO-PAY (#I1) TO #DB-TO-PAY-ANNUITIZE (#I1)
+    IF #PREM (#I1) GT 0
+      SUBTRACT #PREM (#I1) FROM #DB-TO-PAY-ANNUITIZE (#I1)
+    END-IF
+  END-FOR
+*
+  FOR #I1 1 TO #BN-NUM-BEN
+    IF #AMT (#I1) NE 0
+      ESCAPE TOP
+    END-IF
+    IF #BN-EVEN-SPLIT NE ' '   /* EVEN SPLIT
+      IF (#TOT-DB-PAID (#I1) NE #HIGHEST-DB)
+        IF #ACC-INT (#I1) NE 0
+          COMPUTE #ACC-INT (#I1) =
+            #ACC-INT (#I1) + (#HIGHEST-DB - #TOT-DB-PAID (#I1))
+        ELSE
+          IF #PREM (#I1) NE 0
+            COMPUTE #PREM (#I1) =
+              #PREM (#I1) + (#HIGHEST-DB - #TOT-DB-PAID (#I1))
+          ELSE
+            IF #EARNED-INT (#I1) NE 0
+              COMPUTE #EARNED-INT (#I1) =
+                #EARNED-INT (#I1) + (#HIGHEST-DB - #TOT-DB-PAID (#I1))
+            ELSE
+              COMPUTE #DB (#I1) =
+                #DB (#I1) + (#HIGHEST-DB - #TOT-DB-PAID (#I1))
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+      MOVE #HIGHEST-DB TO #TOT-DB-PAID (#I1)
+      MOVE #HIGHEST-DB TO #DB-TO-PAY (#I1)
+    END-IF
+  END-FOR
+*
+  IF #TOT-NET-PREM LT 0
+    MOVE 'Less Premiums' TO #PREM-LBL
+  ELSE
+    MOVE 'Plus Premiums' TO #PREM-LBL
+  END-IF
+*
+  RESET #BN-PAGE-LBL
+  IF #BN-NUM-BEN GT 6
+    MOVE 'Page 1 of 2' TO #BN-PAGE-LBL
+  END-IF
+*
+  RESET #BOT-BEN-LBL
+  RESET #BOT-NAME-LBL
+  RESET #BOT-LBLS (*)
+  RESET #BOT-TOT-LBL
+  IF #BN-NUM-BEN GT 3
+    MOVE 'BENEFICIARY'     TO #BOT-BEN-LBL
+    MOVE 'Name'            TO #BOT-NAME-LBL
+    MOVE 'Death Benefit'   TO #BOT-LBLS (1)
+    MOVE #PREM-LBL         TO #BOT-LBLS (2)
+    MOVE 'Less Loan Prin'  TO #BOT-LBLS (3)
+    MOVE 'Less Acc Int'    TO #BOT-LBLS (4)
+    MOVE 'Plus Earned In'  TO #BOT-LBLS (5)
+    MOVE 'Total Paid'      TO #BOT-TOT-LBL
+  END-IF
+*
+  IF #SAVE-COMMAND = 'BP'
+    PERFORM POPULATE-1099S         /* TT2
+    PERFORM BOP-BENES   /* beneficiary options
+  ELSE
+    IF (#BN-SPLIT-BY-POL = 'N') OR (#NUM-POLS LE 1)
+      #INT-1099-UPDATE := TRUE
+    ELSE
+      RESET #INT-1099-UPDATE
+    END-IF
+*
+    ADD #BN-TBL.#DB-2(*)           TO #HOLD-TOT-DB
+    ADD #BN-TBL.#DB-2(*)           TO #HOLD-DB-2(*)
+    ADD #BN-TBL.#PREM(*)           TO #HOLD-PREM(*)
+    ADD #BN-TBL.#PRIN(*)           TO #HOLD-PRIN(*)
+    ADD #BN-TBL.#ACC-INT(*)        TO #HOLD-ACC-INT(*)
+    ADD #BN-TBL.#EARNED-INT(*)     TO #HOLD-EARNED-INT(*)
+    ADD #BN-TBL.#TOT-DB-PAID-2(*)  TO #HOLD-TOT-DB-PAID-2(*)
+
+*
+    PERFORM POPULATE-1099S         /* TT2
+    PERFORM DELETE-CLAIMANTS       /* TT2
+    PERFORM CALL-C2331NCI
+    IF #CGA-SCR-COMMAND NE '*'
+      FETCH 'G1000PXX'
+    END-IF
+  END-IF
+*   IF (#BN-SPLIT-BY-POL = 'N') OR (#NUM-POLS LE 1)        /* TT2 BEGIN
+  ADD 1 TO #CURRENT-POL
+  IF #NUM-POLS = #CURRENT-POL
+    ESCAPE BOTTOM
+  END-IF
+
+  IF #NUM-POLS LE 1                                        /* TT2 END
+    ESCAPE BOTTOM
+  END-IF
+*
+END-REPEAT /*(0771)      multiple policy loop
+*
+IF #SAVE-COMMAND <> 'BP'
+  IF #BN-SPLIT-BY-POL = 'N' OR = 'n'
+    #BN-POL-DATE := 'Aggregate'
+    #TOT-DB := #HOLD-TOT-DB
+    #BN-TBL.#DB-2(*)            := #HOLD-DB-2(*)
+    #BN-TBL.#PREM(*)            := #HOLD-PREM(*)
+    #BN-TBL.#PRIN(*)            := #HOLD-PRIN(*)
+    #BN-TBL.#ACC-INT(*)         := #HOLD-ACC-INT(*)
+    #BN-TBL.#EARNED-INT(*)      := #HOLD-EARNED-INT(*)
+    #BN-TBL.#TOT-DB-PAID-2(*)   := #HOLD-TOT-DB-PAID-2(*)
+    PERFORM CALL-C2331NCI
+  END-IF
+END-IF
+
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE BOP-BENES
+* * * * * * * * * * * * * *
+*
+MOVE #DB-TO-PAY (*) TO #HOLD-DB-TO-PAY (*)   /* DW14
+IF #SAVE-SUFFIX = 'CSV' OR = 'AL'            /* NG1
+    AND #AL-TYPE ( #POL-X ) = 'J'
+  MOVE 'Joint and Survivor Annuity Information' TO #SCN-LBL
+  CALLNAT 'ASON0003'
+    #ID
+    #NAME          (2)
+    #SEX           (2)
+    #DOB-MMDDYYYY  (2)
+    #SSN           (2)
+  IF #NAME (2) = ' '
+    MOVE 'Please add the spouse for Joint and Survivor Annuity' TO #TEXT
+    #AL-TYPE ( #POL-X ) := 'X'
+  END-IF
+END-IF
+INPUT TEXT #TEXT MARK *#NAME (1) USING MAP 'C2335MCI'
+*
+IF #CGA-SCR-COMMAND NE '*'
+  FETCH 'G1000PXX'
+END-IF
+*
+FOR #I1 1 TO 12   /* DW14
+  IF #DB-TO-PAY (#I1) NE #HOLD-DB-TO-PAY (#I1)
+    MOVE #DB-TO-PAY (#I1) TO #DB-TO-PAY-ANNUITIZE (#I1)
+  END-IF
+END-FOR
+*
+FOR #I1 1 TO 12
+  IF #NUM (#I1) NE 0
+    IF #NAME (#I1) = ' '
+      REINPUT 'Name required'
+        MARK *#NAME (#I1)
+    END-IF
+*
+    MOVE 1 TO #BP-X                     /* PM26
+    FOR #I6 1 TO 6                      /* PM26
+      FOR #I7 1 TO 7                    /* PM26
+        IF BENE-ISS-DT (#I6, #I7) = 0   /* PM26
+          ESCAPE BOTTOM                 /* PM26
+        END-IF                          /* PM26
+*                                       /* PM26
+        IF   (BENE-ISS-DT (#I6, #I7) = #BN-POL-DATE-YYMMDD) /* PM26
+          MOVE #I6 TO #BP-X             /* PM26
+          ESCAPE BOTTOM                 /* PM26
+        END-IF                          /* PM26
+      END-FOR                           /* PM26
+    END-FOR                             /* PM26
+*
+    IF #NT-FOUND                                                       /* PM1
+*    AND NT-V.BENE-TYPE (#NT-X-1, 1) = 'P' OR = 'T' OR = 'X' OR = 'K'  /* PM26
+        AND NT-V.BENE-TYPE (#BP-X, 1) = 'P' OR = 'T' OR = 'X' OR = 'K'    /* PM26
+      MOVE '01011940' TO #DOB-MMDDYYYY (#I1)  /* Initialize to
+      MOVE 'M'        TO #SEX (#I1)           /* unused info
+      MOVE 60         TO #AGE (#I1)
+      ESCAPE TOP     /* KHB
+    END-IF
+*
+    IF   (#DOB-MMDDYYYY (#I1) NE MASK (MMDDYYYY))
+      REINPUT 'DOB required in format MMDDYYYY'
+        MARK *#DOB-MMDDYYYY (#I1)
+    END-IF
+    COMPRESS #DOB-YYYY-A (#I1) #DOB-MM-A (#I1) #DOB-DD-A (#I1)
+      INTO #DOB-YYYYMMDD-A LEAVING NO
+*
+    MOVE *DATN TO #YYYYMMDD
+    SUBTRACT #DOB-YYYYMMDD FROM #YYYYMMDD
+*
+    IF (#YYYY GT 115)
+      REINPUT 'Age cannot exceed 115'
+        MARK *#DOB-MMDDYYYY (#I1)
+    END-IF
+*
+    IF (#YYYY LT 5)
+      REINPUT 'Age cannot be less than 5'
+        MARK *#DOB-MMDDYYYY (#I1)
+    END-IF
+*
+    IF NOT #SEX (#I1) = 'M' OR = 'F'
+      REINPUT 'SEX must be M/F'
+        MARK *#SEX (#I1)
+    END-IF
+    MOVE #YYYY TO #AGE (#I1)
+*
+*   IF #SSN (#I1) = 0   /* removed as per LCE
+*     REINPUT 'SSN is required'
+*     MARK *#SSN (#I1)
+*   END-IF
+  END-IF
+END-FOR
+*
+IF #BN-NUM-BEN GT 6
+  MOVE 'Page 2 of 2' TO #BN-PAGE-LBL
+* do 2nd screen
+END-IF
+*
+FOR #I1 1 TO 12
+  IF #NAME (#I1) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE #DOB-MM (#I1) TO #I2
+  COMPRESS #DOB-DD-A (#I1) #MON (#I2) #DOB-YYYY-A (#I1)
+    INTO #BOP-DOB WITH '-'
+  MOVE #NAME      (#I1) TO #BOP-NAME
+  MOVE #DB-TO-PAY (#I1) TO #BOP-DB
+  MOVE #DB-TO-PAY-ANNUITIZE (#I1) TO #BOP-DB-AN
+*
+  IF #DB-TO-PAY-ANNUITIZE (#I1) NE #DB-TO-PAY (#I1)
+    COMPUTE #DIFF = (#DB-TO-PAY (#I1) - #DB-TO-PAY-ANNUITIZE (#I1))
+    WRITE 'Annuities are offset by prem-adj refund of' #DIFF
+  END-IF
+  MOVE #SSN       (#I1) TO #BOP-SSN
+  MOVE #SEX       (#I1) TO #BOP-SEX
+  MOVE #AGE       (#I1) TO #BOP-BENE-AGE
+*
+  MOVE 1 TO #BP-X                   /* DW23
+  FOR #I6 1 TO 6
+    FOR #I7 1 TO 7
+      IF BENE-ISS-DT (#I6, #I7) = 0
+        ESCAPE BOTTOM
+      END-IF
+      IF   (BENE-ISS-DT (#I6, #I7) = #BN-POL-DATE-YYMMDD)
+*      AND (BENE-SPLIT-IND (#I6, #I7) = #bp-pol-spl-ind
+        MOVE #I6 TO #BP-X
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FOR                             /* END DW23
+*
+  CALLNAT 'ASON0001'    /* NG1
+    #BOP-DB-AN
+    #BOP-SEX
+    #BOP-BENE-AGE
+    #BOP-BENE      (*)
+    #BOP-RESV-AMT  (*)
+    #BOP-TAXBL-PCT (*)
+    #BOP-TAXBL-MON (*)
+    #BOP-TAXBL-AMT (*)
+    #BN-POL-DATE-N8
+*
+  IF #NT-FOUND                                                        /* PM1
+*   AND NT-V.BENE-TYPE (#NT-X-1, 1) = 'P' OR = 'T' OR = 'X' OR = 'K'  /* DW23
+      AND NT-V.BENE-TYPE (#BP-X, 1) = 'P' OR = 'T' OR = 'X' OR = 'K'     /* DW23
+    RESET #PDF-BENE (*) #BOP-BENE (1) #BOP-BENE (2) #BOP-BENE (3)     /* NG2
+      #BOP-BENE (4) #BOP-DOB                                          /* NG2
+  END-IF
+*
+  IF #CGA-SCR-SUFFIX = 'PDF' OR = 'PDO'     /* DW21
+    MOVE EDITED #BOP-SSN (EM=999-99-9999)   TO #PDF-SSN
+    FOR J 1 TO 5                            /* NG1
+      MOVE EDITED #BOP-BENE (J) (EM=Z,ZZZ,ZZZ.99) TO #PDF-BENE (J)
+      MOVE LEFT #PDF-BENE (J) TO #PDF-BENE (J)
+      COMPRESS '$' #PDF-BENE(J) INTO #PDF-BENE(J) LEAVING NO SPACE       /* bz-4377
+    END-FOR
+    MOVE EDITED #BOP-DB     (EM=Z,ZZZ,ZZZ.99) TO #PDF-BENE-D
+    MOVE LEFT #PDF-BENE-D TO #PDF-BENE-D
+*
+    MOVE *DATN TO #YYYYMMDD
+    COMPRESS #MM-A #DD-A #YYYY-A INTO #USER WITH '/'
+    COMPRESS #CGA-CLERK #USER INTO #USER
+*
+    MOVE '%FDF-1.2' TO #FILL-BLNKS (1)
+    MOVE '1 0 obj << /FDF << /Fields [' TO #FILL-BLNKS (2)
+    COMPRESS #FILL-BLNKS (2) ' <</T(ID)/V(' #USER ')>>'
+      INTO #FILL-BLNKS (2) LEAVING NO
+    COMPRESS '<</T(PolNumber)/V(' #BN-POL-# ')>>'
+      INTO #FILL-BLNKS (3) LEAVING NO
+*   COMPRESS '<</T(InsuredName)/V(' #PASSED-NAME
+    COMPRESS '<</T(InsuredName)/V(' ST-V.NAME     /* DW3
+      ')>>' INTO #FILL-BLNKS (4) LEAVING NO
+    COMPRESS '<</T(DeathDate)/V(' #DOD-MMDDYYYY
+      ')>>' INTO #FILL-BLNKS (5) LEAVING NO
+*    COMPRESS '<</T(ClaimantSSN)/V(' #PDF-SSN
+*      ')>>' INTO #FILL-BLNKS (6) LEAVING NO
+    COMPRESS '<</T(ClaimantName)/V(' #BOP-NAME
+      ')>>' INTO #FILL-BLNKS (7) LEAVING NO
+    COMPRESS '<</T(ClaimantBirthDate)/V(' #BOP-DOB
+      ')>>' INTO #FILL-BLNKS (8) LEAVING NO
+    IF #BOP-DB < 10000 AND #CGA-SCR-SUFFIX = 'PDF'           /* bz-4377
+      RESET #PDF-BENE (*)                                    /* bz-4377
+    END-IF                                                   /* bz-4377
+    COMPRESS '<</T(AnnuityQuote)/V('  #PDF-BENE (1)        /* bz-4377    /* NG1 Start
+      ')>>' INTO #FILL-BLNKS (9) LEAVING NO
+    COMPRESS '<</T(Annuity10Quote)/V('  #PDF-BENE (2)      /* bz-4377
+      ')>>' INTO #FILL-BLNKS (10) LEAVING NO
+    COMPRESS '<</T(Annuity15Quote)/V('  #PDF-BENE (3)      /* bz-4377
+      ')>>' INTO #FILL-BLNKS (11) LEAVING NO
+    COMPRESS '<</T(Annuity20Quote)/V('  #PDF-BENE (4)      /* bz-4377
+      ')>>' INTO #FILL-BLNKS (12) LEAVING NO
+    COMPRESS '<</T(InterestQuote)/V('  #PDF-BENE (5)       /* bz-4377    /* NG1 End
+      ')>>' INTO #FILL-BLNKS (13) LEAVING NO
+    COMPRESS '<</T(LumpQuote)/V(' '$' #PDF-BENE-D
+      ')>>' INTO #FILL-BLNKS (14) LEAVING NO
+*
+    MOVE '] /F (F:\AAFMAA_Insurance_Claim.PDF)>> >>' TO #FILL-BLNKS (15) /* bz-4377
+    MOVE 'endobj'                             TO #FILL-BLNKS (16)
+    MOVE'trailer <</Root 1 0 R >> %%EOF'     TO #FILL-BLNKS  (17)
+*
+    COMPRESS 'Press ENTER to Go on to next screen' TO #FILL-BLNKS (22)
+*
+    INPUT USING MAP 'GPDFXMXX'
+  ELSE
+    RESET #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX
+    IF #SAVE-SUFFIX = 'CSV' OR = 'AL'                     /* NG1
+      RESET #BOP-BENE (2:5)
+      IF #AL-TYPE ( #POL-X ) = 'J'                        /* NG1
+        CALLNAT 'ASON0002'
+          #BOP-DB-AN
+          #BOP-SEX
+          #BOP-BENE-AGE
+          #ID
+          #BOP-BENE      (1)
+          #BOP-TAXBL-MON (1)
+      END-IF
+    ELSE
+      IF #NT-FOUND
+          AND NT-V.BENE-TYPE (#BP-X, 1) = 'P' OR = 'T' OR = 'X' OR = 'K'
+        /* SHOW only option C & D
+        RESET #BOP-BENE (1:4)
+      END-IF
+    END-IF
+    INPUT USING MAP 'C2338MCI'  /* SHOW ALL BP CHOICES
+*
+    IF #CGA-SCR-COMMAND NE ' '
+      FETCH 'G1000PXX'
+    END-IF
+*
+*   MOVE #SAVE-COMMAND TO #CGA-SCR-COMMAND
+    MOVE '*'           TO #CGA-SCR-COMMAND
+    MOVE #SAVE-ID      TO #CGA-SCR-ID
+    MOVE #SAVE-SUFFIX  TO #CGA-SCR-SUFFIX
+*
+    IF #CGA-SCR-SUFFIX = 'CSV' OR = 'AL'                  /* DW7
+      RESET #BOP-BENE (2:5)
+      IF #AL-TYPE ( #POL-X ) = 'J'                        /* NG1
+        INPUT USING MAP 'C233CMCI'  /* SHOW only option 7
+      ELSE
+        INPUT USING MAP 'C233BMCI'  /* SHOW only option 1
+      END-IF
+    ELSE
+      IF #NT-FOUND                                         /* PM1
+*       AND NT-V.BENE-TYPE (#NT-X-1, 1) = 'P' OR = 'T' OR = 'X' OR = 'K' /* DW23
+          AND NT-V.BENE-TYPE (#BP-X, 1) = 'P' OR = 'T' OR = 'X' OR = 'K'   /* DW23
+        INPUT USING MAP 'C233AMCI'  /* SHOW only option C & D
+      ELSE
+        INPUT USING MAP 'C2339MCI'  /* SHOW ALL BP CHOICES
+      END-IF
+    END-IF
+*
+    IF #CGA-SCR-COMMAND NE '*'
+      FETCH 'G1000PXX'
+    END-IF
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE PROCESS-AL-SELECTION-SCREEN   /* PM10
+* * * * * * * * * * * * * * * * * *
+MOVE (AD=P) TO #POL-CV (*)
+FOR #I1 1 TO 9
+* IF ST-V.PLAN (#I1)  = 'AL'
+  IF IS-ANNUITY-LIFE(< ST-V.PLAN (#I1) >) /* NG4
+    ADD +1 TO #I3
+    COMPRESS ISSUE-DATE-MM (#I1) ISSUE-DATE-DD (#I1)
+      ISSUE-DATE-YYYY (#I1) INTO #POL-ISS-DATE (#I3) WITH '/'
+    MOVE ST-V.PLAN (#I1) TO #POL-PLAN (#I3)
+    MOVE EDITED #FACE-AMT (#I1) (EM=Z,ZZZ,ZZ9.99) TO #POL-FACE (#I3)
+    COMPRESS '$' #POL-FACE (#I3) INTO #POL-FACE (#I3) LEAVING NO
+    CALLNAT 'GPLNMSXX'
+      #POL-NUMBER (#I3)
+      ST-V.ID-NUMBER
+      #I1
+    MOVE #I1 TO #AL-X (#I3)
+    MOVE (AD=U) TO  #POL-CV (#I3)
+  END-IF
+END-FOR
+*
+IF #I3 = 0
+  MOVE 'AL policy not found' TO #TEXT
+END-IF
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+INPUT TEXT #TEXT MARK *#SELECT-POL (1) USING MAP 'C2336MCI'
+IF #CGA-SCR-COMMAND NE '*'
+  FETCH 'G1000PXX'
+END-IF
+*
+RESET #POL-SELECTED
+FOR #I3 1 TO 9
+  IF #SELECT-POL (#I3) = ' '
+    ESCAPE TOP
+  END-IF
+*
+  MOVE TRUE TO #POL-SELECTED
+  ESCAPE BOTTOM
+END-FOR
+*
+IF NOT #POL-SELECTED
+  IF #TEXT = ' '
+    MOVE 'Please select the policies to process' TO #TEXT
+  END-IF
+*
+  REINPUT #TEXT MARK *#SELECT-POL (1)
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE POPULATE-1099S                                            /* TT2 BEGIN
+* ------------------------------
+FOR I 1 TO 12
+  IF #CLAIMANT-CI(I) = 0
+    ESCAPE TOP
+  END-IF
+  PERFORM FORMAT-SHARE
+  FIND T1099-V WITH T1099-V.CLAIMANT-ID = #CLAIMANT-CI(I)
+    IF NO RECORDS FOUND
+      ESCAPE ROUTINE
+    END-NOREC
+    IF T1099-V.SETTLEMENT-DATE > 0 OR T1099-V.FINAL-PAYMENT-DATE > 0
+      ESCAPE TOP
+    END-IF
+    PERFORM FORMAT-SHARE
+    IF T1099-V.POLICY-NUMBER = ' '
+      T1099-V.POLICY-NUMBER   := #POL-NUM
+      T1099-V.GROSS-AMT       := #TOT-DB-PAID(I)
+      T1099-V.SHARE           := #HOLD-SHARE
+      T1099-V.AMOUNT          := #EARNED-INT(I)
+      MOVE BY NAME T1099-V TO #PDA-1099
+      CALLNAT 'T1099N01' #FIRST-UPDATE #MSG #PDA-1099
+    ELSE
+      IF T1099-V.POLICY-NUMBER =  #POL-NUM
+        T1099-V.SHARE           := #HOLD-SHARE
+        T1099-V.GROSS-AMT       := #TOT-DB-PAID(I)
+        T1099-V.AMOUNT          := #EARNED-INT(I)
+        MOVE BY NAME T1099-V TO #PDA-1099
+        CALLNAT 'T1099N01' #UPDATE #MSG #PDA-1099
+      ELSE
+        FIND(1) T1099-V-2 WITH T1099-V-2.CLAIMANT-ID = #CLAIMANT-CI(I)
+            AND T1099-V-2.POLICY-NUMBER = #POL-NUM
+          IF NO RECORDS FOUND
+            MOVE BY NAME T1099-V TO T1099-V-2
+            T1099-V-2.POLICY-NUMBER := #POL-NUM
+            T1099-V-2.GROSS-AMT     := #TOT-DB-PAID(I)
+            T1099-V-2.AMOUNT        := #EARNED-INT(I)
+            T1099-V-2.SHARE         := #HOLD-SHARE
+            MOVE BY NAME T1099-V-2 TO #PDA-1099
+            CALLNAT 'T1099N01' #ADD #MSG #PDA-1099
+          END-NOREC
+          ESCAPE BOTTOM
+        END-FIND
+      END-IF
+    END-IF
+  END-FIND
+END-FOR
+*
+END TRANSACTION
+*
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE FORMAT-SHARE
+* ----------------------------
+RESET #HOLD-SHARE
+IF #PCT(I) <> 0
+  MOVE EDITED #PCT(I) (EM=ZZZ.99) TO #HOLD-SHARE
+  COMPRESS #HOLD-SHARE '%' INTO #HOLD-SHARE LEAVING NO
+  ESCAPE ROUTINE
+ELSE
+  IF #FRAC-1(I) <> 0
+    COMPRESS #FRAC-1(I) '/' #FRAC-2(I) INTO #HOLD-SHARE LEAVING NO
+    ESCAPE ROUTINE
+  ELSE
+*     COMPRESS #AMT(I) INTO #HOLD-SHARE LEAVING NO         /* TT3
+    MOVE EDITED #AMT(I) (EM=ZZZZZZZ.99) TO #HOLD-SHARE     /* TT3
+  END-IF
+END-IF
+
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE POPULATE-SHARES
+* -------------------------------
+FOR I 1 TO 12
+  IF #POL-NUM = ' '
+    ESCAPE ROUTINE
+  END-IF
+  IF #CLAIMANT-CI(I) = 0
+    ESCAPE TOP
+  END-IF
+  #HOLD-SHARE:= GET-CLAIMANT-SHARE(<#POL-NUM,#CLAIMANT-CI(I)>)
+  IF #HOLD-SHARE <> ' '
+    /* Percent
+    EXAMINE #HOLD-SHARE FOR '%' GIVING POSITION #INDEX
+    IF #INDEX > 0
+      SUBTRACT 1 FROM #INDEX
+      #STRING            := SUBSTR(#HOLD-SHARE,1,#INDEX)
+      #PCT(i)  := VAL(#STRING)
+    ELSE
+      /* Fraction
+      EXAMINE #HOLD-SHARE FOR '/' GIVING POSITION #INDEX
+      IF #INDEX > 0
+        SUBTRACT 1 FROM #INDEX
+        #STRING              := SUBSTR(#HOLD-SHARE,1,#INDEX)
+        #FRAC-1(I) := VAL(#STRING)
+        ADD 2 TO #INDEX
+        #END-INDEX := *LENGTH(#HOLD-SHARE) - 2
+        RESET #STRING
+        #STRING              := SUBSTR(#HOLD-SHARE,#INDEX,#END-INDEX)
+        #FRAC-2(I) := VAL(#STRING)
+      ELSE
+        #AMT(I)    := VAL(#HOLD-SHARE)
+      END-IF
+    END-IF
+  END-IF
+END-FOR
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE SPLIT-EVEN-SHARES
+* ---------------------------------
+IF #BN-SPLIT-BY-POL = 'N' OR = 'n'
+  IF #IS-FIRST-ITERATION
+    #IS-FIRST-ITERATION := FALSE
+    FOR I 1 TO 12
+      IF #BN-TBL.#NAME(I) = ' '
+        ESCAPE TOP
+      END-IF
+      #HOLD-PCT(I)      :=  #PCT(I)
+      #HOLD-FRAC-1(I)   :=  #FRAC-1(I)
+      #HOLD-FRAC-2(I)   :=  #FRAC-2(I)
+      #HOLD-AMT(I)      :=  #AMT(I)
+    END-FOR
+  ELSE
+    FOR I 1 TO 12
+      IF #HOLD-PCT(I) = 0 AND
+          #HOLD-FRAC-1(I) = 0 AND
+          #HOLD-FRAC-2(I) = 0 AND
+          #HOLD-AMT(I)    = 0
+        ESCAPE TOP
+      END-IF
+      #PCT(I)    := #HOLD-PCT(I)
+      #FRAC-1(I) := #HOLD-FRAC-1(I)
+      #FRAC-2(I) := #HOLD-FRAC-2(I)
+      #AMT(I)    := #HOLD-AMT(I)
+    END-FOR
+  END-IF
+END-IF
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE DELETE-CLAIMANTS
+* --------------------------------
+FIND T1099-V WITH T1099-V.POLICY-NUMBER = #POL-NUM
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  IF T1099-V.CLAIMANT-ID = #CLAIMANT-CI(*)
+    ESCAPE TOP
+  END-IF
+  DELETE
+END-FIND
+END TRANSACTION
+END-SUBROUTINE
+* ------------                                                /* TT2 END
+
+DEFINE SUBROUTINE CALL-C2331NCI
+* -----------------------------
+CALLNAT 'C2331NCI'
+  #CGA-SCR-COMMAND
+  #CGA-SCR-ID
+  #CGA-SCR-SUFFIX
+  #CGA-CLERK
+  #TOT-NET-PREM
+  #BN-POL-DATE
+  #TOT-DB
+  #BN-NUM-BEN
+  #INT-1099-UPDATE
+  #BN-TBL      (*)
+END-SUBROUTINE
+* ------------
+
+
+END

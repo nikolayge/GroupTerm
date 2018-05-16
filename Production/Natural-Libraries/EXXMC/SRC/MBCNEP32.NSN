@@ -1,0 +1,437 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*******************************************************************
+* MBCNEP32 - Member Center/MC-II - Update payment settings
+* Called from MBCNEP30 - 'ManagePaymentSettings' function
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    01102016       Initial Creation EB&P II
+* YAK    05022017  YK1  Changes for EB&P III AUC
+* YAK    08012017  YK2  Check Paid to date for EZ-PAY
+* YAK    09032017  YK3  Correct logic for EZ-Pay
+* YAK    09102017  YK4  Add Bill Cycle selection
+* YAK    11072017  YK5  Do not allow changes to EZ-Pay when policy is not current
+* YAK    11152017  YK6  Do not allow changes to EZ-Pay/Credit Card when
+*                       CAP loan payment is not current
+* YAK    01202018  YK7  Changes for function F-SERVICE
+* YAK    04202018  YK8  Allow changes to EZ-Pay for policies paid
+*                       behind and with billing adjustments
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEP30
+PARAMETER
+1 #ErrorCode (A3)
+1 #ErrorDescription (A) DYNAMIC
+*
+LOCAL USING MBCAEC51
+LOCAL USING OBJAPINF
+LOCAL USING GPRATR02
+LOCAL USING ERROR_LN
+LOCAL USING GPBACOMM          /* YK4
+LOCAL
+1 #I                (I2)
+1 #II               (I2)
+1 #value            (A) DYNAMIC
+1 #length           (N2)
+1 #DATN             (N8)
+1 REDEFINE #DATN              /* YK2
+  2 #DATN-YYYY      (N4)      /* YK2
+  2 #DATN-MM        (N2)      /* YK2
+  2 #DATN-DD        (N2)      /* YK2
+1 #PAID-TO-DATE     (N8)
+1 #TRAN-CONTACT-ID  (N8)
+1 FUNCTION_CODE     (A) DYNAMIC INIT <'ModeChange'>
+1 #DISCLAIMER       (A) DYNAMIC INIT <'Disclaimer'>
+*
+1 #GET             (A) DYNAMIC CONST <'GET'>
+1 #GET-ST          (A) DYNAMIC CONST <'GET-ST'>
+1 #UPDATE-MODE     (A) DYNAMIC CONST <'UPDATE-MODE'>
+1 #ADD-EZPAY       (A) DYNAMIC CONST <'ADD-EZPAY'>
+1 #Update          (A) DYNAMIC CONST <'UPDATE'>      /* YK7 Used to update service
+1 #UPDATE-CLERK    (A3)
+1 #UPDATE-USER     (A) DYNAMIC
+1 #MEMBER-CENTER-CLERK (A3) INIT <'MBR'>
+1 #MEMBER-CENTER-USER  (A) DYNAMIC INIT <'MEMBER'>
+1 #AUC (A) DYNAMIC CONST <'AUC'>
+*
+1 #AutoPayFixedLoan (L)
+1 #AutoPayVariableLoan (L)
+1 #ActionType      (A) DYNAMIC
+1 #MethodType      (A) DYNAMIC
+1 #CheckType       (A) DYNAMIC
+1 #PayDate         (A) DYNAMIC
+1 #PolicyNumber    (A) DYNAMIC
+1 #ServicePlan     (A) DYNAMIC
+1 #ServicePlanType (A3)
+1 #Mode            (A1)
+1 #NewMode         (A1)
+1 #PolicyMode      (A1)          /* YK4
+1 #BillCycle       (A1)          /* YK4
+1 #NewBillCycle    (A1)          /* YK4
+1 #ModeType        (A) DYNAMIC
+1 #MonthlyPayAmount    (N7.2)
+1 #NewMonthlyPayAmount (N7.2)
+* Loan Type
+1 #CAP_Loan        (A) DYNAMIC CONST <'C'>
+1 #FixedLoan       (A) DYNAMIC CONST <'F'>
+1 #VariableLoan    (A) DYNAMIC CONST <'V'>
+* Payment Mode
+1 #EZ-PAY          (A) DYNAMIC CONST <'EZ-Pay'>
+1 #CC              (A) DYNAMIC CONST <'Credit Card'>
+1 #Allotment       (A) DYNAMIC CONST <'Allotment'>
+1 #DirectBill      (A) DYNAMIC CONST <'Direct Bill'>
+* Payment Data
+1 #EZPayData       (A) DYNAMIC
+1 #CCData          (A) DYNAMIC
+* AutoPayPaymentType
+1 #Policy          (A) DYNAMIC CONST <'Policy'>
+1 #Loan            (A) DYNAMIC CONST <'Loan'>
+1 #CAPLoan         (A) DYNAMIC CONST <'CapLoan'>
+1 #Service         (A) DYNAMIC CONST <'Service'>
+*
+1 #True            (A) DYNAMIC CONST <'true'>
+1 #False           (A) DYNAMIC CONST <'false'>
+* YK3 >
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 CAP-BILL-DATE
+  2 POLICY-ID (9)
+  2 C*ACTIVE-SEGMENTS
+  2 STATUS        (9)
+  2 X-BILL-ADJUST (9)
+* < YK3
+1 #MODE-WITH-BILL-CYCLE (A1/4) CONST <'1','2','4','0'>    /* YK4
+1 #LOAN-MODE-WITH-BILL-CYCLE (A1) CONST <'8'>             /* YK4
+1 #BillCycleChange (L)                                    /* YK4
+1 #BC-CHANGE (A) DYNAMIC CONST <'BC-CHANGE'>    /* YK4
+1 #Status    (A1)         /* YK7
+*
+END-DEFINE
+*
+#DATN := *DATN
+DECIDE FOR FIRST CONDITION
+  WHEN PaymentSettings.UserID <> ' '
+    #UPDATE-CLERK := FUNCTION-WEB-USER(<PaymentSettings.UserID>)(1)
+    #UPDATE-USER  := FUNCTION-WEB-USER(<PaymentSettings.UserID>)(2)
+  WHEN PaymentSettings.SystemSource = #AUC
+    #UPDATE-CLERK := #AUC
+    #UPDATE-USER  := #AUC
+  WHEN NONE
+    #UPDATE-CLERK := #MEMBER-CENTER-CLERK
+    #UPDATE-USER  := #MEMBER-CENTER-USER
+END-DECIDE
+*
+FOR #I = 1 TO PaymentSettings.C@AutoPay
+* Get Policy Number
+  RESET #AutoPayVariableLoan #AutoPayFixedLoan #Mode #NewMode #PolicyNumber #ModeType
+  RESET PARM-POL-INFO BEFORE_IMAGE AFTER_IMAGE  #ServicePlan #ServicePlanType
+  RESET #MonthlyPayAmount #NewMonthlyPayAmount
+*
+  IF AutoPayPaymentType(#I) = #Service
+    #ServicePlan := AutoPayPolicyNumber(#I)
+  ELSE
+    #PolicyNumber := AutoPayPolicyNumber(#I)
+  END-IF
+* Convert Mode / Get existing mode
+  DECIDE FOR FIRST CONDITION
+    WHEN AutoPayPolicy(#I) = SCAN('CAP Loan')
+      #AutoPayFixedLoan := true
+      BEFORE_IMAGE.POLICY-NUMBER := 'CAP Loan'
+      #Mode := F-LOAN-MODE(<AutoPayCN(#I),#PolicyNumber,#CAP_Loan,#MonthlyPayAmount,#BillCycle>)
+      #PolicyMode := F-POLICY-MODE(<AutoPayCN(#I),#PolicyNumber,#BillCycle>)
+    WHEN AutoPayPolicy(#I) = SCAN('Variable Loan')
+      #AutoPayVariableLoan := true
+      COMPRESS 'Variable Loan (' #PolicyNumber ')' INTO BEFORE_IMAGE.POLICY-NUMBER LEAVING NO
+      #Mode := F-LOAN-MODE(<AutoPayCN(#I),#PolicyNumber,#VariableLoan,#MonthlyPayAmount,#BillCycle>)
+    WHEN AutoPayPolicy(#I) = SCAN('Fixed Loan')
+      #AutoPayFixedLoan := true
+      COMPRESS 'Fixed Loan (' #PolicyNumber ')' INTO BEFORE_IMAGE.POLICY-NUMBER LEAVING NO
+      #Mode := F-LOAN-MODE(<AutoPayCN(#I),#PolicyNumber,#FixedLoan,#MonthlyPayAmount,#BillCycle>)
+    WHEN AutoPayPaymentType(#I) = #Service
+      BEFORE_IMAGE.POLICY-NUMBER := #ServicePlan
+      #ServicePlanType := 'PSM'   /* add function to retreive a plan
+        F-SERVICE(<#Update,AutoPayCN(#I),#ServicePlanType,#Mode,#Status,#UPDATE-USER>)   /* YK7
+        FUNCTION-PAYMENT-MODE(<#NewMode,AutoPayMethod(#I),AutoPayFrequency(#I)>)(1)
+    WHEN NONE   /* Policy
+      BEFORE_IMAGE.POLICY-NUMBER := #PolicyNumber
+      #Mode := F-POLICY-MODE(<AutoPayCN(#I),#PolicyNumber,#BillCycle>)
+        FUNCTION-PAYMENT-MODE(<#NewMode,AutoPayMethod(#I),AutoPayFrequency(#I)>)(1)
+      #PolicyMode := #NewMode
+  END-DECIDE
+*
+  #NewBillCycle := PaymentSettings.AutoPayBillCycle(#I)                    /* YK4
+*
+  IF AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan            /* YK4
+* Translate Loan Modes
+    DECIDE FOR FIRST CONDITION
+      WHEN (AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan)
+          AND (#Mode = '1' OR #Mode = '2' OR #Mode = 'L')
+        #ModeType := #Allotment
+      WHEN (AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan)
+          AND (#Mode = '3' OR #Mode = '4' OR #Mode = 'E')
+        #ModeType := #EZ-Pay
+      WHEN (AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan)
+          AND #Mode = '8'
+        #ModeType := #CC
+      WHEN AutoPayPaymentType(#I) = #Loan AND (#Mode = '0' OR #Mode = ' ' OR #Mode = '6')
+        #ModeType := #DirectBill
+      WHEN AutoPayPaymentType(#I) = #CAPLoan AND #Mode = '6'
+        #ModeType := #DirectBill
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+* Translate New mode for Loan
+    DECIDE FOR FIRST CONDITION
+      WHEN (AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan)
+          AND AutoPayMethod(#I) = #Allotment
+        #NewMode := '2'
+      WHEN (AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan)
+          AND AutoPayMethod(#I) = #EZ-Pay
+        #NewMode := '4'
+        AutoPayFrequency(#I) := 'Monthly'
+      WHEN (AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan)
+          AND AutoPayMethod(#I) = #CC
+        #NewMode := '8'
+        AutoPayFrequency(#I) := 'Monthly'
+      WHEN AutoPayPaymentType(#I) = #CAPLoan AND AutoPayMethod(#I) = #DirectBill
+        #NewMode := '6'
+        AutoPayFrequency(#I) := 'Monthly'
+      WHEN AutoPayPaymentType(#I) = #Loan AND AutoPayMethod(#I) = #DirectBill
+        #NewMode := '0'
+        AutoPayFrequency(#I) := 'Annually'
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+*
+    IF PaymentSettings.AutoPayAmount(#I) <> 'N/A'
+      EXAMINE PaymentSettings.AutoPayAmount(#I) FOR '$' DELETE
+      EXAMINE PaymentSettings.AutoPayAmount(#I) FOR ',' DELETE
+      #NewMonthlyPayAmount := val(PaymentSettings.AutoPayAmount(#I))
+    END-IF
+  END-IF
+* If Loan with policy and Payment Type is the same as Policy - Loan payed in the same cycle as Policy
+*   IF #CurrentPolicyAutoPayIndex <> 0 AND
+*                   PaymentSettings.AutoPayMethod(#I) = PaymentSettings.AutoPayMethod(#CurrentPolicyAutoPayIndex)
+*     RESET #NewBillCycle #BillCycle
+*   END-IF                                                                     /* YK3
+*
+  IF ((AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan)
+      AND (#ModeType <> AutoPayMethod(#I) OR #MonthlyPayAmount <> #NewMonthlyPayAmount))
+      OR ((AutoPayPaymentType(#I) = #Policy OR AutoPayPaymentType(#I) = #Service) AND #Mode <> #NewMode) OR #NewBillCycle <> #BillCycle   /* YK3
+    PERFORM CHECK-BUSINESS-RULES
+    PARM-POL-INFO.ID-NUMBER := AutoPayCN(#I)
+    PARM-POL-INFO.#ACTION   := #UPDATE-MODE
+    EXPAND ARRAY PARM-POL-INFO.POLICY-SEGMENT TO (1:1)
+    IF AutoPayPaymentType(#I) = #CAPLoan             /* YK1
+      PARM-POL-INFO.POLICY-ID(1) := 'CAP Loan'       /* YK1
+    ELSE
+      PARM-POL-INFO.POLICY-ID(1) := #PolicyNumber
+    END-IF                                           /* YK1
+    DECIDE FOR FIRST CONDITION
+      WHEN #AutoPayFixedLoan
+        PARM-POL-INFO.X-ALT-LP-IND(1) := #NewMode
+        PARM-POL-INFO.X-ALT-LP-AMT(1) := #NewMonthlyPayAmount
+        BEFORE_IMAGE.LOAN-TYPE := #FixedLoan
+      WHEN #AutoPayVariableLoan
+        PARM-POL-INFO.X-ALT-LP-IND-2(1) := #NewMode
+        PARM-POL-INFO.X-ALT-LP-AMT-2(1) := #NewMonthlyPayAmount
+        BEFORE_IMAGE.LOAN-TYPE := #VariableLoan
+* YK4 >
+      WHEN AutoPayPaymentType(#I) = #Policy OR AutoPayPaymentType(#I) = #Service
+        IF #Mode <> #NewMode
+          PARM-POL-INFO.MODE(1) := #NewMode
+          BEFORE_IMAGE.MODE := #Mode
+          AFTER_IMAGE.MODE := #NewMode
+        END-IF
+      WHEN ANY
+        IF AutoPayPaymentType(#I) = #Policy OR
+            ((#AutoPayFixedLoan OR #AutoPayVariableLoan) AND #NewMode = #LOAN-MODE-WITH-BILL-CYCLE)
+          IF #NewBillCycle <> #BillCycle
+            PARM-POL-INFO.BILL-CYCLE(1) := #NewBillCycle
+            BEFORE_IMAGE.BILL-CYCLE := #BillCycle
+            AFTER_IMAGE.BILL-CYCLE  := #NewBillCycle
+            #BillCycleChange := true
+          END-IF
+        END-IF
+* < YK4
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+    IF AutoPayPaymentType(#I) = #Service
+        F-SERVICE(<#Update,AutoPayCN(#I),#ServicePlanType,#NewMode,#Status,#UPDATE-USER>)    /* YK7
+    ELSE
+*       IF AutoPayPaymentType(#I) = #CAPLoan             /* YK1
+*         PARM-POL-INFO.POLICY-ID(1) := 'CAP Loan'       /* YK1
+*       END-IF                                           /* YK1
+      CALLNAT 'OBJNPINF' PARM-POL-INFO
+      IF PARM-POL-INFO.#RETURN-CODE <> ' '
+        #ErrorCode := PARM-POL-INFO.#RETURN-CODE
+        IF #ErrorCode = #EXCEEDS-LOAN-AMOUNT-CAP OR #ErrorCode = #LOW-CAP-PAYMENT-AMOUNT
+          MOVE EDITED PARM-POL-INFO.X-LOAN-AMOUNT(1) (EM=ZZZZ9.99) TO #value
+          #value := *TRIM(#value)
+          COMPRESS '$' #value to #value LEAVING NO
+          COMPRESS F-ERROR-DESCRIPTION(<#ErrorCode>) #value TO #ErrorDescription
+        END-IF
+        ESCAPE MODULE
+      END-IF
+      BEFORE_IMAGE.DATE-LAST-UPDATE := PARM-POL-INFO.DATE-ACCT-UPDATE
+    END-IF
+    IF (AutoPayPaymentType(#I) = #Loan OR AutoPayPaymentType(#I) = #CAPLoan) AND #NewMonthlyPayAmount <> #MonthlyPayAmount
+      MOVE EDITED #MonthlyPayAmount (EM=ZZZZ9.99) TO BEFORE_IMAGE.MONTHLY-PREM
+      BEFORE_IMAGE.MONTHLY-PREM := *TRIM(BEFORE_IMAGE.MONTHLY-PREM)
+      COMPRESS '$' BEFORE_IMAGE.MONTHLY-PREM INTO BEFORE_IMAGE.MONTHLY-PREM LEAVING NO
+      MOVE EDITED #NewMonthlyPayAmount (EM=ZZZZ9.99) TO AFTER_IMAGE.MONTHLY-PREM
+      AFTER_IMAGE.MONTHLY-PREM := *TRIM(AFTER_IMAGE.MONTHLY-PREM)
+      COMPRESS '$' AFTER_IMAGE.MONTHLY-PREM INTO AFTER_IMAGE.MONTHLY-PREM LEAVING NO
+    END-IF
+    AFTER_IMAGE.POLICY-NUMBER := BEFORE_IMAGE.POLICY-NUMBER
+* Fields for TR
+    TR_ID_NUMBER     := PaymentSettings.AutoPayCN(#I)
+    #TRAN-CONTACT-ID := PARM-POL-INFO.MEMBER-CONTACT-ID
+    PERFORM WRITE-TRANSACTION-LOG
+    IF AutoPayMethod(#I) = #EZ-Pay AND #EZPayData <> SCAN('EZ-Pay')
+      PERFORM UPDATE-EZPAY-DATA
+    END-IF
+  END-IF
+END-FOR
+* Write disclaimer note to transaction log
+IF PaymentSettings.CreditCardDisclaimerConfirmed = #True OR PaymentSettings.BankAccountDisclaimerConfirmed = #True
+  RESET BEFORE_IMAGE AFTER_IMAGE
+  AFTER_IMAGE.CC-DISCLAIMER := PaymentSettings.CreditCardDisclaimerConfirmed
+  AFTER_IMAGE.BA-DISCLAIMER := PaymentSettings.BankAccountDisclaimerConfirmed
+* Fields for TR
+  FUNCTION_CODE    := #DISCLAIMER
+  TR_ID_NUMBER     := PaymentSettings.ViewCN
+  #TRAN-CONTACT-ID := F-GET-CONTACT-ID(<PaymentSettings.ViewCN>)
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+* Write data for Bill Cycle change notification Letter  /* YK4
+IF #BillCycleChange AND PaymentSettings.SystemSource = #AUC
+  PERFORM SEND-NOTIFICATION
+END-IF
+*
+**************************************
+DEFINE SUBROUTINE CHECK-BUSINESS-RULES
+**************************************
+* Check business rules
+* #EZ-PAY
+* #CC
+* #Allotment
+DECIDE FOR EVERY CONDITION            /* YK3
+  WHEN (#ModeType = #EZ-Pay OR #Mode = 'E') AND PaymentSettings.AutoPayMethod(#I) <> #EZ-Pay AND PaymentSettings.SystemSource <> #AUC
+    #ErrorCode := #CALL-CUSTOMER-SERVICE
+* YK2 >
+  WHEN (AutoPayPaymentType(#I) = #Policy AND PaymentSettings.AutoPayMethod(#I) = #EZ-Pay AND #Mode <> 'E')
+    #DATN := *DATN
+    #DATN-DD := 01
+* Convert PaymentSettings.AutoPayPaidToDate to comparerable format
+    EXAMINE PaymentSettings.AutoPayPaidToDate(#I) FOR '/' DELETE                 /* '07/05/2017'
+    #PAID-TO-DATE := VAL(PaymentSettings.AutoPayPaidToDate(#I))
+    #PAID-TO-DATE := FUNCTION-DATE(<#PAID-TO-DATE>)
+    IF #PAID-TO-DATE < #DATN                         /* YK2
+      IF PaymentSettings.SystemSource = #AUC         /* YK5
+        IGNORE                                                 /* YK8
+*       #ErrorCode := #POLICY-NOT-CURRENT            /* YK5    /* YK8
+      ELSE                                           /* YK5
+        #ErrorCode := #PAID-TO-DATE-PAST-DUE
+        ESCAPE MODULE                                          /* YK8
+      END-IF
+    END-IF
+* < YK2
+* YK3 >
+  WHEN AutoPayPaymentType(#I) = #Policy AND PaymentSettings.AutoPayMethod(#I) = #EZ-Pay AND #Mode <> 'E'
+    FIND(1) ST-V WITH ID-NUMBER = AutoPayCN(#I)
+      FOR #II = 1 TO C*ACTIVE-SEGMENTS
+        IF ST-V.POLICY-ID(#II) = #PolicyNumber AND ST-V.STATUS(#II) = 'D'      /* Active policy
+          IF ST-V.X-BILL-ADJUST(#II) <> 0
+            IF PaymentSettings.SystemSource = #AUC
+              IGNORE                                       /* YK8
+*             #ErrorCode := #HAS-BILLING-ADJUSTMENT        /* YK8
+            ELSE
+              #ErrorCode := #CALL-CUSTOMER-SERVICE
+              ESCAPE MODULE                                /* YK8
+            END-IF
+          END-IF
+        END-IF
+      END-FOR
+    END-FIND
+* < YK3
+  WHEN ((#ModeType = #Allotment OR #Mode = 'G') AND AutoPayMethod(#I) <> #Allotment) OR
+      (AutoPayMethod(#I) = #Allotment AND NOT (#ModeType = #Allotment OR #Mode = 'G'))
+    #ErrorCode := #CHANGE-NOT-ALLOWED
+  WHEN AutoPayMethod(#I) = #CC
+    #CCData := F-CC-ACCOUNT(<AutoPayPayerCN(#I)>)
+    IF #CCData = ' '
+      #ErrorCode := #NO-CC-ON-FILE
+    END-IF
+    IF #CCData = SCAN('Expired')
+      #ErrorCode := #EXPIRED-CC-ON-FILE
+      ESCAPE MODULE
+    END-IF
+  WHEN AutoPayMethod(#I) = #EZ-Pay
+    #EZPayData := F-BANK-ACCOUNT(<AutoPayPayerCN(#I)>)
+    IF #EZPayData = ' '
+      #ErrorCode := #NO-BA-ON-FILE
+    END-IF
+* YK6 >
+  WHEN AutoPayPaymentType(#I) = #CAPLoan AND #ModeType <> AutoPayMethod(#I) AND
+      (AutoPayMethod(#I) = #CC OR AutoPayMethod(#I) = #EZ-Pay)
+    FIND(1) ST-V WITH ID-NUMBER = AutoPayCN(#I)
+      #PAID-TO-DATE := ST-V.CAP-BILL-DATE
+    END-FIND
+    IF #PAID-TO-DATE <> 0 AND #PAID-TO-DATE < #DATN
+      IF PaymentSettings.SystemSource = #AUC
+        #ErrorCode := #CAP-LOAN-PAYMENT-BEHIND
+      ELSE
+        #ErrorCode := #PAID-TO-DATE-PAST-DUE
+      END-IF
+    END-IF
+* < YK6
+  WHEN ANY
+    IF #ErrorCode <> '0'
+      ESCAPE MODULE
+    END-IF
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE UPDATE-EZPAY-DATA
+***********************************
+*
+SEPARATE #EZPayData INTO #value BankAccount.RoutingNumber BankAccount.AccountNumber BankAccount.AccountType WITH DELIMITER '/'
+BankAccount.ActionType := #ADD-EZPAY
+BankAccount.AccountCN  := PaymentSettings.AutoPayPayerCN(#I)
+BankAccount.UserID     := PaymentSettings.UserID
+CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+TR_NAME          := FUNCTION-CONTACT-NAME(<#TRAN-CONTACT-ID>)
+TR_CLERK         := #UPDATE-CLERK
+CALLNAT 'GPRNTR02' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE SEND-NOTIFICATION      /* YK4
+***********************************
+*
+PARM-LETTERS.ID-NUMBER := PaymentSettings.ViewCN
+PARM-LETTERS.PROCESS-TYPE := #BC-CHANGE
+PARM-LETTERS.MONTH-END := false
+CALLNAT 'GPBNCOMM' PARM-LETTERS
+END-SUBROUTINE
+*
+END

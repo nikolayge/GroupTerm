@@ -1,0 +1,150 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+******************************************************************************
+* Function returns communication information related to the particular policy*
+* Trying to find the policy owner first                                      *
+* Policy owner found - return all information for policy owner:              *
+* Name, rank, physical and email address, phone number                       *
+* If pending policy - look in AT file for the email address                  *
+* If policy owner not found - return the same information for the Member     *
+******************************************************************************
+* Modification log                                                           *
+******************************************************************************
+* YAK    April 2010               Initital creation                          *
+* NGG    July  2014  NG1          Normalization (Clean up Status)            *
+******************************************************************************
+*
+DEFINE FUNCTION FUNCTION-COMM-INFO
+  DEFINE DATA
+  PARAMETER
+  1 COMM-INFORMATION
+    2 CN-NUMBER         (N6)
+    2 OWNER-CN          (N6)
+    2 MEMBER-CN         (N6)
+    2 POLICY-SEGMENT    (A) DYNAMIC
+    2 PLAN              (A) DYNAMIC
+    2 ISSUE-DATE        (A) DYNAMIC
+    2 FULL-NAME         (A) DYNAMIC
+    2 RANK              (A) DYNAMIC
+    2 ADDRESS-LINE-1    (A) DYNAMIC
+    2 ADDRESS-LINE-2    (A) DYNAMIC
+    2 ADDRESS-LINE-3    (A) DYNAMIC
+    2 ZIP-CODE          (A) DYNAMIC
+    2 EMAIL-ADDRESS     (A) DYNAMIC
+    2 PHONE-NUMBER      (A) DYNAMIC
+    2 AT-EMAIL-ADDRESS  (A) DYNAMIC
+*
+  LOCAL USING OBJLSTAT
+  LOCAL USING OBJLAPTR
+  LOCAL USING ADDA0001   /* NG1
+  LOCAL
+  1 #MULTIPLE-OWNER            (L)
+  1 #NON-INS-OWNER             (L)
+  1 #POLICY                    (I2)
+  1 #I                         (I2)
+  1 #OWNER-OCC-9   (9)
+    2 #OWNER-FLAG               (A1)
+    2 #OWNER-CN                 (N6/10)
+    2 #OWNER-CN-BY-POL          (N6)
+    2 #OWNER-CN-SEG             (I2/9)
+    2 #ISS-DATE                 (N8/9)
+    2 #ISS-DATE-DISP            (A10/9)
+    2 #BENE-TYPE                (A1/2)
+    2 #BENE-TEXT                (A60/10)
+  1 #ZIP        (N9)
+  1 REDEFINE #ZIP
+    2 #ZIP-5    (A5)
+    2 #ZIP-4    (A4)
+  1 #ISSUE-DATE (N8)
+  1 #ID-NUMBER  (N6)
+  END-DEFINE
+*
+PERFORM FIND-OWNER
+*
+IF #ID-NUMBER = 0
+* If owner not found - communicate with member
+  FIND(1) ST-V WITH ID-NUMBER = CN-NUMBER
+    IF ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+      COMM-INFORMATION.MEMBER-CN := #ID-NUMBER := LINKED-CN(1)
+    ELSE
+      COMM-INFORMATION.MEMBER-CN := #ID-NUMBER := CN-NUMBER
+    END-IF
+  END-FIND
+END-IF
+*
+* Get Owner/Member (if owner not found) address/email/phone etc.
+FIND(1) ST-V WITH ID-NUMBER = #ID-NUMBER
+  FULL-NAME              := NAME
+  COMM-INFORMATION.RANK  := ST-V.RANK
+*                               NG1  \/
+  RESET #PDA-ADDRESS
+  MOVE ST-V.MEMBER-CONTACT-ID TO #ADD-CONTACT-ID
+  MOVE 'P' TO #ADD-TYPE  /* PRIMARY
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+  ADDRESS-LINE-1         := #ADD-LINE-1
+  ADDRESS-LINE-2         := #ADD-LINE-2
+  ADDRESS-LINE-3         := #ADD-LINE-3
+  #ZIP := #ADD-ZIP-CODE
+*                              NG1  /\
+  IF #ZIP-4 NE ' ' AND #ZIP-4 NE '0000'
+    COMPRESS #ZIP-5 #ZIP-4 INTO COMM-INFORMATION.ZIP-CODE WITH DELIMITER '-'
+  ELSE
+    COMM-INFORMATION.ZIP-CODE := #ZIP-5
+  END-IF
+  DECIDE FOR FIRST CONDITION
+    WHEN INS-MAIL-CODE = 'E'
+* ins mail code "E" means - no email communication with the member
+      EMAIL-ADDRESS := 'XXX'
+*     WHEN INTERNET-ADDR = ' ' OR INTERNET-ADDR = '999'  NG1
+*       EMAIL-ADDRESS := ' '
+    WHEN NONE
+*      EMAIL-ADDRESS := INTERNET-ADDR                    NG1
+      EMAIL-ADDRESS := FUNCTION-PREFFERED-EMAIL(<ST-V.MEMBER-CONTACT-ID>)
+  END-DECIDE
+*   IF ST-V.TELE-NUMBER > 2000000000
+*     MOVE EDITED ST-V.TELE-NUMBER (EM=Z9999999999) TO COMM-INFORMATION.PHONE-NUMBER
+*   END-IF
+  COMM-INFORMATION.PHONE-NUMBER := FUNCTION-DEFAULT-PHONE (< ST-V.MEMBER-CONTACT-ID >) /* NG1
+  IF EMAIL-ADDRESS = ' ' AND PROCESS-IND = 'C' AND INTRO-FLAG = 'A'
+    FIND AT-V WITH SSN = ST-V.SSN
+      ACCEPT IF CN-NUMBER = VAL(AT-V.MEMBER-CN)
+      COMM-INFORMATION.AT-EMAIL-ADDRESS := AT-V.INTERNET-ADDR
+    END-FIND
+  END-IF
+END-FIND
+*
+****************************
+DEFINE SUBROUTINE FIND-OWNER
+****************************
+IF POLICY-SEGMENT = ' '
+  #ISSUE-DATE := VAL(COMM-INFORMATION.ISSUE-DATE)
+  FIND(1) ST-V WITH ID-NUMBER = CN-NUMBER
+    FOR #I = 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.ISSUE-DATE(#I) = #ISSUE-DATE
+          AND ST-V.PLAN(#I) = COMM-INFORMATION.PLAN
+        #POLICY := #I
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+ELSE
+  #POLICY := VAL(POLICY-SEGMENT)
+END-IF
+*
+IF #POLICY NE 0
+  CALLNAT 'GOWNRSXX' CN-NUMBER
+    #NON-INS-OWNER
+    #MULTIPLE-OWNER
+    #OWNER-OCC-9 (1:9)
+*
+  IF #OWNER-CN(#POLICY,1) <> 0
+    COMM-INFORMATION.OWNER-CN := #ID-NUMBER := #OWNER-CN(#POLICY,1)
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+END-FUNCTION
+END

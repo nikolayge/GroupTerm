@@ -1,0 +1,753 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPRP0005                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Create reports for financial management from the      *
+*                   month end processing                               *
+*                1. Monthly peachtree file with credit card AR records *
+*                   sorted by Account number                           *
+*                2. Monthly peachtree file with credit6 card AR records*
+*                   sorted by CN number                                *
+*                3. Create an input file for e-mail driver/automated   *
+*                   e-mail processing for successful charges           *
+*                4. Create an input file for e-mail driver/automated   *
+*                   e-mail processing for rejected charges             *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE        TAG     REASON                                    *
+* YAK    02/01/2010  None    Separate Monthly/Daily reports            *
+* YAK    02/02/2010  YK1     Add emails for rejected transactions to   *
+*                            monthly process                           *
+* YAK    02/11/2010  YK2     Change logic to extract transactions      *
+*                            with and without "Sungard" break          *
+* YAK    06/24/2010  YK3     Use member (if available), then insured   *
+*                            email address, write phone number to      *
+*                            autodialer file if email is not available *
+* YAK    08/25/2010  YK4     Add logic to send e-mail by policy(not by *
+*                            CN) in order to use owner email, combine  *
+*                            by CN/email to avoid multiple emails to   *
+*                            the same person.                          *
+* PAM    01/26/2011  PM5     Fixed account number error                *
+* vxt    08/06/2013  vt1     Increased the size of CC-CHARGE-AMOUNT field *
+* vxt    12/20/2013  vt2     Add new GL account numbers /Ticket 2447/  *
+* YAK    03/30/2014  YK5     Add service only SAS account (2351)       *
+* YAK    07/25/2014  YK6     Changes in Email PDA (add clerk fields,   *
+*                            rename CC-CHARGE to E-CHARGE )            *
+* VXT    01/05/2014  VT3     Ticket 3270 - change the layout of the    *
+*                            account file.                             *
+* vxt    03/02/2016  vt4     /Ticket 4252 - New GL code for SAS service*
+* YAK    11/08/2017  YK7     Send email to owner /Payer                *
+*                            Use payer address in the e-mail           *
+* YAK    12/01/2017  YK8     Add CC Rejection Letter to SSRS           *
+*                            Replace hard-coded GL account logic with  *
+*                            function that had been used in GPRP004E   *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRL0001       /* Property file
+LOCAL USING OBJLACRG       /* Accounting Register
+LOCAL USING GPRA0005       /* E-mail Information
+LOCAL USING ADDA0001       /* Address Information
+LOCAL USING GPBACOMM       /* Letters Info             YK8
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS                     /* vt2 \/
+  2 ID-NUMBER
+  2 PROCESS-IND                             /* YK7
+  2 INTRO-FLAG                              /* YK7
+  2 SSN                                     /* YK7
+  2 C*ACTIVE-SEGMENTS
+  2 PLAN (9)                                /* vt2 /\
+  2 POLICY-ID (9)                           /* YK7
+*
+1 AT-V VIEW OF A-APPL-TRACKING              /* YK7
+  2 ID-NUMBER
+  2 SSN
+  2 MEMBER-CN
+  2 INTERNET-ADDR
+*
+1 #OUTPUT-RECORD
+  2 #ACCOUNT-NUMBER         (A4)
+  2 #ACCOUNT-DESCRIPTION    (A25)
+  2 #AMOUNT                 (N7.2)
+  2 #AMOUNT-DISPLAY         (A11)
+  2 ID-NUMBER               (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A           (A6)
+  2 #NAME                   (A25)
+  2 TXN-CODE                (A4)
+  2 #SG-CATEGORY-1          (A2)
+  2 #SG-CATEGORY-2          (A2)   /* vt2 11/28/2014
+  2 CASH-CODE               (A1)
+  2 MONTH-END               (A1)
+  2 POLICY-NUMBER           (A16)
+*
+1 #PEACHTREE-DYNAMIC-FIELDS
+  2 #PEACHTREE              (A150)
+  2 #PEACH-ACCOUNT-NUMBER   (A9)
+  2 #DESCRIPTION-1          (A25)
+  2 #DESCRIPTION-2          (A25)
+  2 #PEACHTREE-AMOUNT       (A20)
+  2 #peach-acc-nbr          (a9)                /* vt3
+*
+1 #PEACHTREE-STATIC-FIELDS
+  2 #PEACHTREE-DATE         (A10)
+  2 #PEACHTREE-REC-CNT      (N8)
+  2 #PEACH-REC-CNT-NEW      (n8)                /* vt3
+*
+1 #DATN                     (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY              (N4)
+  2 #DATN-MM                (A2)
+  2 #DATN-DD                (A2)
+1 #I                        (I2)
+1 #CNT-1                    (N7)
+1 #CNT-2                    (N7)
+1 #TXN-CODE                 (A6)
+1 #IGNORE-TRAN              (A4) INIT <'5655'>
+1 #WRITE-OFF-TRAN           (A4) INIT <'5476'>
+1 #NAME-D                   (A)  DYNAMIC
+1 #COMMA                    (A1) INIT <','>
+1 #TAB                      (A1) INIT <H'09'>
+1 #NO-TRAN-FOUND            (L)
+1 #TOTAL-AMOUNT             (N9.2)
+1 #GRAND-TOTAL-AMOUNT       (N9.2)
+1 #POL-SEG                  (N1)                                             /* YK4
+1 #APPR-EMAIL-INFO                                                           /* YK4
+  2 SORT-KEY                (A66)
+  2 REDEFINE SORT-KEY
+    3 DAL-CN                (A6)
+    3 OWNER-EMAIL           (A60)
+  2 POLICY-NUMBER           (A16)
+  2 CC-CHARGE-AMOUNT        (N9.2)                                           /* vt1 was n5.2
+1 #REPORT-OUTPUT            (A100)                                           /* YK1
+1 #DECLINED-REPORT-FIELDS
+  2 #DECLINED-CN-NUMBER       (A) DYNAMIC                                    /* YK1
+  2 #DECLINED-PAYER-CN        (A) DYNAMIC                                    /* YK7
+  2 #DECLINED-POL-NUMBER      (A) DYNAMIC                                    /* YK7
+  2 #DECLINED-SEQ             (A) DYNAMIC                                    /* YK1
+  2 #DECLINED-TRAN-CODE       (A) DYNAMIC                                    /* YK1
+  2 #DECLINED-ISSUE-DATE      (A) DYNAMIC                                    /* YK1
+  2 #DECLINED-PLAN            (A) DYNAMIC                                    /* YK1
+  2 #DECLINED-AMOUNT          (A) DYNAMIC                                    /* YK1
+  2 #DECLINED-CC-NUMBER       (A) DYNAMIC                                    /* YK1
+1 #DECLINED-RECORD
+  2 #CN-NUMBER       (N6)
+  2 #PAYER-CN        (N6)   /* YK7
+  2 #POLICY-NUMBER   (A16)  /* YK7
+  2 #TRAN-CODE       (A4)
+  2 #REJ-AMOUNT      (N7.2)
+  2 #CC-NUMBER       (A16)
+* YK8 >
+1 #LETTER-RECORD
+  2 #KEY-1             (N12)
+  2 REDEFINE #KEY-1
+    3 #PAYER-CN        (N6)
+    3 #CN-NUMBER       (N6)
+  2 #POLICY-NUMBER   (A16)
+  2 #TOT-AMOUNT      (N7.2)
+  2 #PREM-AMOUNT     (N7.2)
+  2 #LOAN-AMOUNT     (N7.2)
+  2 #CC-NUMBER       (A16)
+* < YK8
+* YK7 >
+1 #REJ-EMAIL-INFO
+  2 SORT-KEY                (A74)
+  2 REDEFINE SORT-KEY
+    3 DAL-CN                (A6)
+    3 PAYER-CI              (N8)
+    3 NOTIFY-EMAIL          (A60)
+  2 POLICY-NUMBER           (A16)
+  2 CC-CHARGE-AMOUNT        (N9.2)
+* Communication Info - used for creating REJECTED CC e-mails
+1 COMM-INFORMATION
+  2 PAYER-CI          (N8)
+  2 FULL-NAME         (A) DYNAMIC
+  2 ADDRESS-LINE-1    (A) DYNAMIC
+  2 ADDRESS-LINE-2    (A) DYNAMIC
+  2 ADDRESS-LINE-3    (A) DYNAMIC
+  2 PHONE-NUMBER      (A) DYNAMIC
+  2 AT-EMAIL-ADDRESS  (A) DYNAMIC
+* < YK7
+1 #WORK-FIELD               (A) DYNAMIC                                      /* YK1
+1 #WEB-CHARGE-SUCCESSFUL-TEMPLATE  (A3) INIT <'WCS'>
+1 #WEB-CHARGE-REJECTED-TEMPLATE-PS (A3) INIT <'WCR'>                         /* YK1
+1 #REPORT-FOOTER            (A) DYNAMIC INIT <'Total Rejected Trans'>        /* YK1
+1 #REPORT-HEADER            (A) DYNAMIC INIT <'#N'>                          /* YK1
+1 #CC-RUN-DATE-SEQ          (N2) INIT <3>
+1 #MONTHLY-CREDIT-CARD-TRAN (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/MonthlyCreditCardTran.txt'>
+1 #PEACHTREE-MONTHLY-CC-TRAN-BY-ACCOUNT (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/MonthlyCCTranByAccount.txt'>
+1 #PEACHTREE-MONTHLY-CC-TRAN-BY-TRANSACTION (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/MonthlyCCTranByTrans.txt'>
+1 #REJECTED-CREDIT-CARD-REPORT (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/CC_REJECTED.TXT'>
+1 #REJECTED-CREDIT-CARD-TRAN  (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/CCRejectedExtract.txt'>        /* YK3
+1 #AUTODIALER-MONTHLY         (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/Autodialer_Monthly.txt'>       /* YK3
+1 #AUTODIALER-MONTHLY-BACKUP  (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/Autodialer_Monthly_bkup.txt'>  /* YK3
+1 #APPROVED-EMAIL-BY-POLICY (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/BillCycleCCApprovedEmailByPolicy.txt'>  /* YK4
+1 #REJECTED-EMAIL-BY-POLICY (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/BillCycleCCRejectedEmailByPolicy.txt'>  /* YK7
+1 #REJECTED-LETTER-BY-POLICY (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/BillCycleCCRejectedLetterByPolicy.txt'>  /* YK8
+
+*
+1 #HOME-PHONE        (A11)                          /* YK3
+1 #AUTO-DIALER-CONST (A8) INIT <'0001.wav'>         /* YK3
+1 #WRITE-EMAIL       (A60)                          /* YK3 write to spool (test)
+*
+1 #POL-NUM      (A16)               /* VT2
+1 #PLAN-GL      (A3)                /* VT2
+1 #K            (I2)
+* YK7 >
+1 #ID-NUMBER    (N6)
+1 #OWNER-CI     (N8)
+1 #PAYER-CI     (N8)
+1 #OWNER-EMAIL  (A) DYNAMIC
+1 #EMAIL-DEL    (A1) CONST <','>
+1 v_sch         (A) DYNAMIC INIT <'rm @NAME'>
+* < YK7
+1 #CC-Q-CONV    (A10) CONST <'CC-Q-CONV'>       /* YK8
+1 #LOAN-TRAN    (A4/4) CONST <'PRNF','PRNV','INTF','INTV'>  /* YK8
+1 #NEW-GL-ACCOUNT (A4/10) CONST <'PREP','PRER','FPFP','FPFR','FPRP','RIDP','RIDR','DUEP','DUER','DISC'>
+1 #GL-ACCOUNT     (A/2) DYNAMIC
+1 #N            (N2)   /* YK8
+*
+END-DEFINE
+*
+WRITE 'process started'
+*
+  FUNCTION-RUN-DATE(<#DATN,'R',#CC-RUN-DATE-SEQ>)  /* From Bill Cycle Credit card run         YK7
+
+IF #DATN = 0
+  ESCAPE ROUTINE IMMEDIATE        /* Bill Cycle Credit card process did not run yet         YK7
+END-IF
+*
+DEFINE WORK FILE 1 #MONTHLY-CREDIT-CARD-TRAN TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 #PEACHTREE-MONTHLY-CC-TRAN-BY-ACCOUNT TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 3 #PEACHTREE-MONTHLY-CC-TRAN-BY-TRANSACTION TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 4 #EMAIL-CC-MONTHLY-FILE TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 9 #APPROVED-EMAIL-BY-POLICY  TYPE 'ASCII-COMPRESSED'           /* YK7
+DEFINE WORK FILE 10 #REJECTED-EMAIL-BY-POLICY  TYPE 'ASCII-COMPRESSED'          /* YK7
+DEFINE WORK FILE 5 #REJECTED-CREDIT-CARD-REPORT TYPE 'ASCII-COMPRESSED'         /* YK7
+* Declined records to sort
+DEFINE WORK FILE 6 #REJECTED-CREDIT-CARD-TRAN TYPE 'ASCII-COMPRESSED'
+* YK3   Auto-dialer file
+DEFINE WORK FILE 7 #AUTODIALER-MONTHLY TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+* AAFMAAPhoneList_&RUNDATE.csv
+* YK3   backup file with CN numbers
+* AAFMAAPhoneList_&RUNDATE.txt
+DEFINE WORK FILE 8 #AUTODIALER-MONTHLY-BACKUP TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+* Rejected Letter data sorted by Policy
+DEFINE WORK FILE 11 #REJECTED-LETTER-BY-POLICY TYPE 'ASCII-COMPRESSED' /* YK8
+*
+FIND ACCT-REG-V WITH TRANSACTION-DATN = #DATN
+  IF NO RECORDS FOUND
+    WRITE 'There are no credit card transaction records for ' #DATN
+    #NO-TRAN-FOUND := TRUE
+  END-NOREC
+  IF ACCT-REG-V.CASH-CODE = 'C' AND ACCT-REG-V.MONTH-END  = 'Y'
+    RESET #OUTPUT-RECORD
+    #NAME-D := ACCT-REG-V.NAME
+    #NAME   := FUNCTION-FORM-NAME(<#NAME-D,'U'>)
+    MOVE BY NAME ACCT-REG-V TO #OUTPUT-RECORD
+    IF C*SUNGARD-INFO = 0                             /* YK2
+      IF ACCT-REG-V.CREDIT-AMOUNT NE 0
+        #AMOUNT := ACCT-REG-V.CREDIT-AMOUNT * -1
+      ELSE
+        #AMOUNT := ACCT-REG-V.DEBIT-AMOUNT
+      END-IF
+      PERFORM WRITE-OUTPUT-RECORD
+    ELSE                                              /* YK2
+      FOR #I = 1 TO C*SUNGARD-INFO                    /* YK2
+        #SG-CATEGORY-1 := SG-CATEGORY-1(#I)           /* YK2
+        IF #SG-CATEGORY-1 = '**'
+          RESET #SG-CATEGORY-1
+        END-IF
+        #AMOUNT := ACCT-REG-V.SG-AMOUNT(#I) * -1      /* YK2
+        PERFORM WRITE-OUTPUT-RECORD                   /* YK2
+      END-FOR
+    END-IF
+* common code in subroutine
+    DEFINE SUBROUTINE WRITE-OUTPUT-RECORD             /* YK2
+    COMPRESS ACCT-REG-V.TXN-CODE #SG-CATEGORY-1 INTO #TXN-CODE LEAVING NO
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<#TXN-CODE>)(1)
+    #ACCOUNT-DESCRIPTION := FUNCTION-ACCT-NUMBER(<#TXN-CODE>)(2)
+*
+    IF #DATN GE 20140101                                              /* vt2 \/
+      IF ACCT-REG-V.TXN-CODE = #NEW-GL-ACCOUNT(*)
+        IF #SG-CATEGORY-1 <> 'SS'                                     /* YK5
+          PERFORM GET-NEW-ACCT-NUM                                    /* YK5
+        ELSE                                                          /* vt4 \/
+          IF #DATN GE 20160301
+            #ACCOUNT-NUMBER := 4115
+            #ACCOUNT-DESCRIPTION := 'SAS Service'
+          END-IF                                                      /* vt4 /\
+        END-IF                                                        /* YK5
+      END-IF
+    END-IF                                                            /* vt2 /\
+*
+    IF #ACCOUNT-NUMBER = #IGNORE-TRAN
+      ESCAPE ROUTINE
+    END-IF
+    MOVE EDITED #AMOUNT (EM=-ZZZZZZ9.99) TO #AMOUNT-DISPLAY
+    WRITE WORK FILE 1 VARIABLE #OUTPUT-RECORD
+    END-SUBROUTINE
+*
+  END-IF
+END-FIND
+*
+CLOSE WORK FILE 1
+PERFORM CREATE-CC-PEACHTREE-FILE-BY-ACCOUNT
+PERFORM CREATE-CC-PEACHTREE-FILE-BY-TRANSACTION
+PERFORM CREATE-APPROVED-TRANSACTIONS-EMAIL
+PERFORM CREATE-REJECTED-TRANSACTIONS-EMAIL
+PERFORM CREATE-CONVERSION-LETTER
+*
+WRITE 'process ended'
+* Reset Bill Cycle Credit card run dates
+  FUNCTION-RUN-DATE(<#DATN,'S',#CC-RUN-DATE-SEQ>)
+* YK7 >
+* Delete 'BillCycleCCApprovedEmailByPolicy.txt' - intermediate file
+EXAMINE v_sch  FOR '@NAME' REPLACE #APPROVED-EMAIL-BY-POLICY
+call 'shcmd' v_sch
+* Delete 'BillCycleCCRejectedEmailByPolicy.txt' - intermediate file
+RESET INITIAL v_sch
+EXAMINE v_sch  FOR '@NAME' REPLACE #REJECTED-EMAIL-BY-POLICY
+call 'shcmd' v_sch
+* < YK7
+*****************************************************
+DEFINE SUBROUTINE CREATE-CC-PEACHTREE-FILE-BY-ACCOUNT
+*****************************************************
+*
+* #PEACHTREE := '1,2,3,4,5,6'                       /* vt3
+#PEACHTREE := '1,2,3,4,5,6,7,8'                     /* vt3
+WRITE WORK FILE 2 #PEACHTREE
+IF #NO-TRAN-FOUND
+  ESCAPE ROUTINE
+END-IF
+*
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+* Count number of rows first
+SORT BY #ACCOUNT-NUMBER USING #AMOUNT
+  AT BREAK OF #ACCOUNT-NUMBER
+    #CNT-1 := #CNT-1 + 1
+  END-BREAK
+  AT END OF DATA
+    #CNT-1 := #CNT-1 + 1                   /* Add summary line
+    #CNT-2 := COUNT(#AMOUNT) + 1
+  END-ENDDATA
+END-SORT
+*
+#PEACHTREE-DATE       := FUNCTION-CALENDAR(<#DATN,'D'>)
+#PEACHTREE-REC-CNT    := #CNT-1
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #ACCOUNT-NUMBER USING #ACCOUNT-DESCRIPTION #AMOUNT #OUTPUT-RECORD.TXN-CODE
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #AMOUNT
+  AT BREAK OF #ACCOUNT-NUMBER
+    #PEACH-ACCOUNT-NUMBER := OLD(#ACCOUNT-NUMBER)
+    #DESCRIPTION-1        := OLD(#ACCOUNT-DESCRIPTION)
+    COMPRESS 'CCRD' #PEACHTREE-DATE INTO #DESCRIPTION-2
+*   IF #ACCOUNT-NUMBER = #WRITE-OFF-TRAN          /* PM5
+    IF OLD(#ACCOUNT-NUMBER) = #WRITE-OFF-TRAN     /* PM5
+      COMPRESS #PEACH-ACCOUNT-NUMBER '- 07' INTO #PEACH-ACCOUNT-NUMBER
+    ELSE
+      COMPRESS #PEACH-ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    END-IF
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    #PEACH-REC-CNT-NEW := #PEACHTREE-REC-CNT -1             /* vt3
+    #PEACH-ACC-NBR := '1010 - 00'                           /* vt3
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-2 #COMMA                                 /* vt3
+      #PEACH-REC-CNT-NEW #COMMA                             /* vt3
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-1 #COMMA                                 /* vt3
+      #PEACHTREE-AMOUNT #COMMA                              /* vt3
+      #PEACH-ACC-NBR #COMMA                                 /* vt3
+      #DESCRIPTION-2                                        /* vt3
+      INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 2 #PEACHTREE
+    #GRAND-TOTAL-AMOUNT := #GRAND-TOTAL-AMOUNT + #TOTAL-AMOUNT
+    RESET #TOTAL-AMOUNT #PEACHTREE-DYNAMIC-FIELDS
+  END-BREAK
+END-SORT
+*
+END-SUBROUTINE
+*
+*********************************************************
+DEFINE SUBROUTINE CREATE-CC-PEACHTREE-FILE-BY-TRANSACTION
+*********************************************************
+*
+RESET #PEACHTREE-DYNAMIC-FIELDS
+#PEACHTREE := '1,2,3,4,5,6'
+WRITE WORK FILE 3 #PEACHTREE
+IF #NO-TRAN-FOUND
+  ESCAPE ROUTINE
+END-IF
+*
+#PEACHTREE-REC-CNT    := #CNT-2
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #OUTPUT-RECORD.ID-NUMBER #OUTPUT-RECORD.POLICY-NUMBER
+    USING #ACCOUNT-NUMBER #AMOUNT ID-NUMBER-A #NAME #OUTPUT-RECORD.TXN-CODE
+  RESET #DESCRIPTION-1 #DESCRIPTION-2
+  IF #ACCOUNT-NUMBER = #WRITE-OFF-TRAN
+    COMPRESS #ACCOUNT-NUMBER '- 07' INTO #PEACH-ACCOUNT-NUMBER
+  ELSE
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+  END-IF
+  COMPRESS #OUTPUT-RECORD.TXN-CODE #DATN-MM #DATN-DD 'CN' #OUTPUT-RECORD.ID-NUMBER-A
+    INTO #DESCRIPTION-1 LEAVING NO
+  IF #OUTPUT-RECORD.TXN-CODE NE 'APFP'
+    COMPRESS #NAME #OUTPUT-RECORD.POLICY-NUMBER INTO #DESCRIPTION-2
+  ELSE
+    #DESCRIPTION-2 := #NAME
+  END-IF
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #AMOUNT
+  MOVE EDITED #AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+  MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+  COMPRESS #PEACHTREE-DATE #COMMA
+    #DESCRIPTION-1  #COMMA
+    #PEACHTREE-REC-CNT #COMMA
+    #PEACH-ACCOUNT-NUMBER #COMMA
+    #DESCRIPTION-2 #COMMA
+    #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+  WRITE WORK FILE 3 #PEACHTREE
+  RESET #PEACHTREE-DYNAMIC-FIELDS
+* YK4 start Create Email by policy - combine by CN/E-mail address later
+  AT BREAK OF #OUTPUT-RECORD.POLICY-NUMBER
+    RESET #APPR-EMAIL-INFO #OWNER-EMAIL
+    #APPR-EMAIL-INFO.CC-CHARGE-AMOUNT := SUM(#AMOUNT)
+    #APPR-EMAIL-INFO.DAL-CN  := OLD(#OUTPUT-RECORD.ID-NUMBER)
+    #APPR-EMAIL-INFO.POLICY-NUMBER    := OLD(#OUTPUT-RECORD.POLICY-NUMBER)
+* YK4 end
+* YK7 >
+    #OWNER-CI := GET-POL-OWNER-CI(<#APPR-EMAIL-INFO.POLICY-NUMBER>)(1)
+    #PAYER-CI := GET-POL-PAYER-CI(<#APPR-EMAIL-INFO.POLICY-NUMBER>)
+    IF #OWNER-CI <> 0
+      #OWNER-EMAIL := F-PREF-EMAIL(<#OWNER-CI>)
+    END-IF
+    IF #OWNER-CI <> #PAYER-CI AND #PAYER-CI <> 0
+      COMPRESS #OWNER-EMAIL F-PREF-EMAIL(<#PAYER-CI>) INTO #OWNER-EMAIL WITH DELIMITER #EMAIL-DEL
+    END-IF
+    #APPR-EMAIL-INFO.OWNER-EMAIL := #OWNER-EMAIL
+* < YK7
+* if Owner / Payer does not have an email - send to Member / Insured
+    IF #APPR-EMAIL-INFO.OWNER-EMAIL = ' '                                                 /* YK3
+      #APPR-EMAIL-INFO.OWNER-EMAIL   := FUNCTION-MEMBER-EMAIL(<#APPR-EMAIL-INFO.DAL-CN>)  /* YK3
+    END-IF                                                                                /* YK3
+    IF #APPR-EMAIL-INFO.OWNER-EMAIL = ' '                                                 /* YK3
+      #APPR-EMAIL-INFO.OWNER-EMAIL   := FUNCTION-CN-EMAIL(<#APPR-EMAIL-INFO.DAL-CN>)      /* YK3
+    END-IF
+    IF #APPR-EMAIL-INFO.OWNER-EMAIL <> ' '                                                /* YK7
+      WRITE WORK FILE 9 #APPR-EMAIL-INFO                                                  /* YK4
+    END-IF                                                                                /* YK7
+  END-BREAK
+  AT END OF DATA
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<'CASH  '>)(1)
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    #DESCRIPTION-1  := FUNCTION-ACCT-NUMBER(<'CASH  '>)(2)
+    RESET #DESCRIPTION-2
+    COMPRESS 'CCRD' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    MOVE EDITED #TOTAL-AMOUNT (EM=ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 3 #PEACHTREE
+  END-ENDDATA
+END-SORT
+*
+END-SUBROUTINE
+*
+****************************************************
+DEFINE SUBROUTINE CREATE-APPROVED-TRANSACTIONS-EMAIL       /* YK4
+****************************************************
+READ WORK FILE 9 #APPR-EMAIL-INFO
+END-ALL
+*
+SORT BY #APPR-EMAIL-INFO.DAL-CN #APPR-EMAIL-INFO.OWNER-EMAIL USING
+    #APPR-EMAIL-INFO.CC-CHARGE-AMOUNT #APPR-EMAIL-INFO.POLICY-NUMBER
+  AT BREAK OF #APPR-EMAIL-INFO.SORT-KEY
+    RESET EMAIL-INFORMATION
+    EMAIL-INFORMATION.TEMPLATE-TYPE    := #WEB-CHARGE-SUCCESSFUL-TEMPLATE
+    EMAIL-INFORMATION.DAL-CN := EMAIL-INFORMATION.PENDING-CN := OLD(#APPR-EMAIL-INFO.DAL-CN)
+    EMAIL-INFORMATION.E-CHARGE-AMOUNT := SUM(#APPR-EMAIL-INFO.CC-CHARGE-AMOUNT)    /* YK6
+    EMAIL-INFORMATION.OWNER-EMAIL      := OLD(#APPR-EMAIL-INFO.OWNER-EMAIL)
+    IF COUNT(#APPR-EMAIL-INFO.OWNER-EMAIL) = 1
+      EMAIL-INFORMATION.POLICY-NUMBER := OLD(#APPR-EMAIL-INFO.POLICY-NUMBER)
+    ELSE
+      EMAIL-INFORMATION.POLICY-NUMBER := EMAIL-INFORMATION.DAL-CN
+    END-IF
+    WRITE WORK FILE 4 EMAIL-INFORMATION
+  END-BREAK
+*
+END-SORT
+END-SUBROUTINE
+*
+****************************************************
+DEFINE SUBROUTINE CREATE-REJECTED-TRANSACTIONS-EMAIL
+****************************************************
+*
+* TEMPLATE-TYPE
+* PENDING-CN
+* DAL-CN
+* POLICY-NUMBER
+* INSURED-NAME
+* OWNER-EMAIL
+* STREET-ADDRESS
+* CITY-STATE-ZIP
+* INSERT-MONTH-PLUS-ONE
+*
+#WORK-FIELD := FUNCTION-CALENDAR(<#DATN,'N'>)
+*
+READ WORK FILE 5 #REPORT-OUTPUT
+  SEPARATE #REPORT-OUTPUT INTO #DECLINED-SEQ #DECLINED-CN-NUMBER
+    #DECLINED-PAYER-CN #DECLINED-POL-NUMBER #DECLINED-TRAN-CODE    /* YK7
+    #DECLINED-ISSUE-DATE #DECLINED-PLAN #DECLINED-AMOUNT
+    #DECLINED-CC-NUMBER   IGNORE WITH DELIMITER #TAB
+  DECIDE ON FIRST VALUE #DECLINED-SEQ
+    VALUE #REPORT-HEADER
+      ESCAPE TOP
+    VALUE #REPORT-FOOTER
+      ESCAPE BOTTOM
+    NONE VALUE
+      #DECLINED-RECORD.#CN-NUMBER  := VAL(#DECLINED-CN-NUMBER)
+      #DECLINED-RECORD.#PAYER-CN   := VAL(#DECLINED-PAYER-CN)
+      #DECLINED-RECORD.#POLICY-NUMBER := #DECLINED-POL-NUMBER
+      #DECLINED-RECORD.#TRAN-CODE  := #DECLINED-TRAN-CODE
+      #DECLINED-RECORD.#REJ-AMOUNT := VAL(#DECLINED-AMOUNT)
+      #DECLINED-RECORD.#CC-NUMBER  := #DECLINED-CC-NUMBER
+      WRITE WORK FILE 6 #DECLINED-RECORD
+  END-DECIDE
+END-WORK
+CLOSE WORK FILE 6
+* YK7 >
+READ WORK FILE 6 #DECLINED-RECORD
+END-ALL
+SORT BY #DECLINED-RECORD.#CN-NUMBER #DECLINED-RECORD.#POLICY-NUMBER
+    USING #DECLINED-RECORD.#PAYER-CN #DECLINED-RECORD.#REJ-AMOUNT #DECLINED-RECORD.#CC-NUMBER
+  AT BREAK OF #DECLINED-RECORD.#POLICY-NUMBER
+    RESET #REJ-EMAIL-INFO #OWNER-EMAIL
+    #REJ-EMAIL-INFO.CC-CHARGE-AMOUNT := SUM(#AMOUNT)
+    #REJ-EMAIL-INFO.DAL-CN  := OLD(#DECLINED-RECORD.#CN-NUMBER)
+    #ID-NUMBER := OLD(#DECLINED-RECORD.#PAYER-CN)
+    #REJ-EMAIL-INFO.PAYER-CI := F-GET-CONTACT-ID(<#ID-NUMBER>)
+    #REJ-EMAIL-INFO.POLICY-NUMBER    := OLD(#DECLINED-RECORD.#POLICY-NUMBER)
+    #OWNER-CI := GET-POL-OWNER-CI(<#REJ-EMAIL-INFO.POLICY-NUMBER>)(1)
+    #PAYER-CI := #REJ-EMAIL-INFO.PAYER-CI
+    IF #OWNER-CI <> 0
+      #OWNER-EMAIL := F-PREF-EMAIL(<#OWNER-CI>)
+    END-IF
+    IF #OWNER-CI <> #PAYER-CI AND #PAYER-CI <> 0
+      COMPRESS #OWNER-EMAIL F-PREF-EMAIL(<#PAYER-CI>) INTO #OWNER-EMAIL WITH DELIMITER #EMAIL-DEL
+    END-IF
+    #REJ-EMAIL-INFO.NOTIFY-EMAIL := #OWNER-EMAIL
+    IF #REJ-EMAIL-INFO.NOTIFY-EMAIL = ' '
+      #REJ-EMAIL-INFO.NOTIFY-EMAIL   := FUNCTION-MEMBER-EMAIL(<#REJ-EMAIL-INFO.DAL-CN>)
+    END-IF
+    IF #REJ-EMAIL-INFO.NOTIFY-EMAIL = ' '
+      #REJ-EMAIL-INFO.NOTIFY-EMAIL   := FUNCTION-CN-EMAIL(<#REJ-EMAIL-INFO.DAL-CN>)
+    END-IF
+    IF #REJ-EMAIL-INFO.NOTIFY-EMAIL = ' '
+      #REJ-EMAIL-INFO.NOTIFY-EMAIL := '999'              /* for SORT to work correctly
+    END-IF
+    WRITE WORK FILE 10 #REJ-EMAIL-INFO
+  END-BREAK
+END-SORT
+CLOSE WORK FILE 10
+* < YK7
+READ WORK FILE 10 #REJ-EMAIL-INFO
+END-ALL
+SORT BY #REJ-EMAIL-INFO.SORT-KEY USING #REJ-EMAIL-INFO.CC-CHARGE-AMOUNT #REJ-EMAIL-INFO.POLICY-NUMBER
+  AT BREAK OF #REJ-EMAIL-INFO.SORT-KEY
+    RESET EMAIL-INFORMATION COMM-INFORMATION
+    EMAIL-INFORMATION.PENDING-CN  := EMAIL-INFORMATION.DAL-CN := OLD(#REJ-EMAIL-INFO.DAL-CN)
+    EMAIL-INFORMATION.OWNER-EMAIL := OLD(#REJ-EMAIL-INFO.NOTIFY-EMAIL)
+    IF COUNT(#REJ-EMAIL-INFO.SORT-KEY) = 1
+      EMAIL-INFORMATION.POLICY-NUMBER := OLD(#REJ-EMAIL-INFO.POLICY-NUMBER)
+    ELSE
+      EMAIL-INFORMATION.POLICY-NUMBER := EMAIL-INFORMATION.DAL-CN
+    END-IF
+    EMAIL-INFORMATION.TEMPLATE-TYPE   := #WEB-CHARGE-REJECTED-TEMPLATE-PS
+    EMAIL-INFORMATION.INSERT-MONTH-PLUS-ONE := VAL(#WORK-FIELD)
+*
+    COMM-INFORMATION.PAYER-CI  := OLD(#REJ-EMAIL-INFO.PAYER-CI)
+*
+    PERFORM GET-PAYER-ADDRESS-PHONE
+* In Email program GPRP0002 Owner Name is being formatted as a salutation
+* This is a Payer name - Use Insured-Name field for correct formatting in e-mail
+    EMAIL-INFORMATION.INSURED-NAME    := COMM-INFORMATION.FULL-NAME
+    EMAIL-INFORMATION.ADDRESS-LINE-1  := COMM-INFORMATION.ADDRESS-LINE-1
+    EMAIL-INFORMATION.ADDRESS-LINE-2  := COMM-INFORMATION.ADDRESS-LINE-2
+    EMAIL-INFORMATION.ADDRESS-LINE-3  := COMM-INFORMATION.ADDRESS-LINE-3
+*
+* If email is not found - try e-mail address from AT file for pending policies
+* might be useful when when CAP policy is not issued because of CC rejection
+    IF EMAIL-INFORMATION.OWNER-EMAIL = '999'
+      PERFORM GET-AT-EMAIL
+      EMAIL-INFORMATION.OWNER-EMAIL := COMM-INFORMATION.AT-EMAIL-ADDRESS
+    END-IF
+    IF EMAIL-INFORMATION.OWNER-EMAIL NE ' '
+      WRITE WORK FILE 4 EMAIL-INFORMATION
+    ELSE
+*  Create file for Autodialer                                        /* YK3 start
+      IF COMM-INFORMATION.PHONE-NUMBER NE ' '
+        #HOME-PHONE := COMM-INFORMATION.PHONE-NUMBER
+        WRITE WORK FILE 7 VARIABLE #HOME-PHONE ',' #AUTO-DIALER-CONST
+        WRITE WORK FILE 8 VARIABLE #HOME-PHONE #TAB #DECLINED-RECORD.#CN-NUMBER #TAB
+      END-IF
+    END-IF
+  END-BREAK
+END-SORT
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE CREATE-CONVERSION-LETTER       /* YK8
+******************************************
+*
+READ WORK FILE 6 #DECLINED-RECORD
+END-ALL
+SORT BY #DECLINED-RECORD.#PAYER-CN #DECLINED-RECORD.#CN-NUMBER #DECLINED-RECORD.#POLICY-NUMBER
+    USING #DECLINED-RECORD.#TRAN-CODE #DECLINED-RECORD.#REJ-AMOUNT #DECLINED-RECORD.#CC-NUMBER
+  IF #TRAN-CODE = #LOAN-TRAN(*)
+    #LETTER-RECORD.#LOAN-AMOUNT := #LETTER-RECORD.#LOAN-AMOUNT + #REJ-AMOUNT
+  ELSE
+    #LETTER-RECORD.#PREM-AMOUNT := #LETTER-RECORD.#PREM-AMOUNT + #REJ-AMOUNT
+  END-IF
+  AT BREAK OF #DECLINED-RECORD.#POLICY-NUMBER
+    #LETTER-RECORD.#CN-NUMBER := OLD(#DECLINED-RECORD.#CN-NUMBER)
+    #LETTER-RECORD.#PAYER-CN := OLD(#DECLINED-RECORD.#PAYER-CN)
+    #LETTER-RECORD.#POLICY-NUMBER := OLD(#DECLINED-RECORD.#POLICY-NUMBER)
+    #LETTER-RECORD.#CC-NUMBER := OLD(#DECLINED-RECORD.#CC-NUMBER)
+    #LETTER-RECORD.#TOT-AMOUNT := SUM(#DECLINED-RECORD.#REJ-AMOUNT)
+    WRITE WORK FILE 11 #LETTER-RECORD
+    RESET #LETTER-RECORD
+  END-BREAK
+END-SORT
+CLOSE WORK FILE 11
+*
+READ WORK FILE 11 #LETTER-RECORD
+END-ALL
+SORT BY #LETTER-RECORD.#PAYER-CN #LETTER-RECORD.#CN-NUMBER #LETTER-RECORD.#POLICY-NUMBER
+    USING #LETTER-RECORD.#TOT-AMOUNT #LETTER-RECORD.#PREM-AMOUNT #LETTER-RECORD.#LOAN-AMOUNT #LETTER-RECORD.#CC-NUMBER
+  AT BREAK OF #LETTER-RECORD.#KEY-1
+    #N := #N + 1
+  END-BREAK
+  AT BREAK OF #LETTER-RECORD.#PAYER-CN
+    RESET PARM-LETTERS
+    PARM-LETTERS.ID-NUMBER := OLD(#LETTER-RECORD.#PAYER-CN)
+    DECIDE FOR FIRST CONDITION
+      WHEN COUNT(#LETTER-RECORD.#POLICY-NUMBER) = 1
+        PARM-LETTERS.POLICY-NUMBER := OLD(#LETTER-RECORD.#POLICY-NUMBER)
+        PARM-LETTERS.REFERENCE := 'Policy Number'
+      WHEN #N = 1
+        PARM-LETTERS.POLICY-NUMBER := OLD(#LETTER-RECORD.#CN-NUMBER)
+        PARM-LETTERS.REFERENCE := 'Customer Number'
+      WHEN NONE
+        PARM-LETTERS.POLICY-NUMBER := OLD(#LETTER-RECORD.#PAYER-CN)
+        PARM-LETTERS.REFERENCE := 'Customer Number'
+    END-DECIDE
+    MOVE EDITED SUM(#LETTER-RECORD.#TOT-AMOUNT) (EM=ZZZ,ZZ9.99) TO PARM-LETTERS.TOTAL-AMOUNT
+    PARM-LETTERS.TOTAL-AMOUNT := *TRIM(PARM-LETTERS.TOTAL-AMOUNT)
+    MOVE EDITED SUM(#LETTER-RECORD.#PREM-AMOUNT) (EM=ZZZ,ZZ9.99) TO PARM-LETTERS.AMOUNT
+    PARM-LETTERS.AMOUNT := *TRIM(PARM-LETTERS.AMOUNT)
+    IF SUM(#LETTER-RECORD.#LOAN-AMOUNT) <> 0
+      MOVE EDITED SUM(#LETTER-RECORD.#LOAN-AMOUNT) (EM=ZZZ,ZZ9.99) TO PARM-LETTERS.OTHER-AMOUNT
+      PARM-LETTERS.OTHER-AMOUNT := *TRIM(PARM-LETTERS.OTHER-AMOUNT)
+    ELSE
+      PARM-LETTERS.OTHER-AMOUNT := '0.00'
+    END-IF
+    PARM-LETTERS.ADD-INFO := OLD(#LETTER-RECORD.#CC-NUMBER)
+    PARM-LETTERS.PROCESS-TYPE := #CC-Q-CONV
+    CALLNAT 'GPBNCOMM' PARM-LETTERS
+    RESET #N
+*
+  END-BREAK
+END-SORT
+*
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE GET-PAYER-ADDRESS-PHONE   /* YK7
+*****************************************
+*
+COMM-INFORMATION.FULL-NAME := '!'
+CALLNAT 'GPRS0CNT' COMM-INFORMATION.PAYER-CI COMM-INFORMATION.FULL-NAME
+
+RESET #PDA-ADDRESS
+#ADD-CONTACT-ID := COMM-INFORMATION.PAYER-CI
+#ADD-TYPE := 'P'
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+COMM-INFORMATION.ADDRESS-LINE-1 := #ADD-LINE-1
+COMM-INFORMATION.ADDRESS-LINE-2 := #ADD-LINE-2
+COMM-INFORMATION.ADDRESS-LINE-3 := #ADD-LINE-3
+*
+COMM-INFORMATION.PHONE-NUMBER := GET-PHONE(<COMM-INFORMATION.PAYER-CI>)
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE GET-AT-EMAIL     /* YK7
+******************************
+*
+#ID-NUMBER := VAL(EMAIL-INFORMATION.DAL-CN)
+FIND(1) ST-V WITH ID-NUMBER = #ID-NUMBER
+  IF ST-V.PROCESS-IND = 'C' AND ST-V.INTRO-FLAG = 'A'
+    FIND AT-V WITH SSN = ST-V.SSN
+      ACCEPT IF EMAIL-INFORMATION.DAL-CN = AT-V.MEMBER-CN
+      COMM-INFORMATION.AT-EMAIL-ADDRESS := AT-V.INTERNET-ADDR
+    END-FIND
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+*****************                                          /* vt2 \/
+DEFINE SUBROUTINE GET-NEW-ACCT-NUM
+*****************
+*
+IF #SG-CATEGORY-1 = 'SP' AND #SG-CATEGORY-2 = 'AL'
+  #ACCOUNT-NUMBER      := '4028'
+  #ACCOUNT-DESCRIPTION := 'First Year Premiums - AL'     /* vt1
+ELSE
+* YK7 >
+  RESET #PLAN-GL
+  FIND(1) ST-V WITH ST-V.ID-NUMBER = ACCT-REG-V.ID-NUMBER
+    FOR #K = 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.POLICY-ID (#K) = ACCT-REG-V.POLICY-NUMBER
+        MOVE ST-V.PLAN(#K) TO #PLAN-GL
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+* < YK7
+* YK8 >
+  #GL-ACCOUNT(*) := F-GL-ACCOUNT(<ACCT-REG-V.ID-NUMBER,#POL-SEG,#SG-CATEGORY-1,#PLAN-GL>)(*)
+  IF #GL-ACCOUNT(*) <> ' '
+    #ACCOUNT-NUMBER      := #GL-ACCOUNT(1)
+    #ACCOUNT-DESCRIPTION := #GL-ACCOUNT(2)
+  END-IF
+END-IF
+* < YK8
+END-SUBROUTINE                                             /* vt2 /\
+*
+END

@@ -1,0 +1,304 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* * * * * * * * * * * * * * * * * *
+* PROGRAM-ID: W5300PWP            *
+* WP  -  WIDOW INSURANCE MENU     *
+* * * * * * * * * * * * * * * * * *
+*
+* DRW 05/22/2008 DW1 Show Death Contestabiity
+* DRW 07/18/2008 DW2 Add No Longer Contestable Linkage to GCONTSXX
+* DRW 11/25/2008 DW3 Add Linkage to GCONTSXX for #CONTESTABLE-BUT-PAID
+* DRW 10/30/2009 DW4 AFFL Unification
+* BZ  09/20/2010 bz1 Print death report
+* VT  07/15/2014 vt1 Fix the production issue for cont normalization
+* TMT 12/22/2015 TT1 1099 PROJECT
+* vxt 06/07/2017 vt2 Group Term Project
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX    /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+LOCAL USING W5300LWP
+LOCAL
+*
+1 #HAS-CONTESTABILITY   (L)                    /* DW1
+1 #NO-LONGER-CONTESTABLE (L)     /* Dw2
+1 #CONTESTABLE-BUT-PAID  (L)    /* DW3
+1 #SEG-I              (I2)
+*
+1 #SCR-MESSAGE    (A35)
+1 #SCR-OPTION     (A2)
+1 REDEFINE #SCR-OPTION
+  2 #SCR-OPTION-N (N2)
+1 REDEFINE #SCR-OPTION
+  2 #SCR-OPTION-1ST (A1)
+  2 #SCR-OPTION-2ND (A1)
+1 #SCR-NAME       (A24)
+1 #SCR-DOB        (A10)
+1 #SCR-MDOD       (A10)
+1 #SCR-W-STATUS   (A1)
+1 #SCR-MEMINS     (P7.2)
+1 #SCR-DEPINS     (P7.2)
+1 #SCR-TOTINS     (P7.2)
+1 #SCR-LST-UPDT   (A10)
+1 #INS-ARRAY      (31)
+  2 #SCR-ENTRY    (A2)
+  2 #SCR-PNAME    (A16)
+  2 #SCR-PNUM     (A13)
+*
+1 #A-X            (I2)
+1 #START-X        (I2)
+1 #END-X          (I2)
+1 #LST-POLS       (L)
+1 #SEGMENT        (I4)          /* TT1
+1 J               (I4)          /* TT1
+********************************************************************
+*                    WORK AREA
+********************************************************************
+*
+1 #HOLD-ISN       (P8)
+1 #W-MENU-CT      (N2)
+1 REDEFINE #W-MENU-CT
+  2 #W-MENU-CT-A  (A2)
+*
+1 #HOLD-SCR-ID    (N9)
+1 #HOLD-SCR-COMM  (A2)
+*
+1 #W-X            (I2)
+1 #ST-X           (I2)
+1 #SC-X           (I2)
+*
+1 #NUM-OPTIONS    (I2)
+1 #NUM-POLS       (I2)
+*
+1 #WYYYYMMDD      (N8)
+1 REDEFINE #WYYYYMMDD
+  2 #WYYYY        (A4)
+  2 #WMM          (A2)
+  2 #WDD          (A2)
+*
+1 #W-AMOUNT       (N7.2)
+1 REDEFINE #W-AMOUNT
+  2 #W-AMT1       (N7)
+  2 #W-AMT2       (N2)
+*
+********************************************************************
+*                     ACCUMULATORS
+********************************************************************
+*
+1 #A-REC-MV          (P5)
+1 #A-MEMIN           (P7)
+1 #A-DEPIN           (P7)
+1 #A-TOTIN           (P7)
+1 #A-TOTAL           (P7)
+1 #A-AMAA            (P2)
+1 #A-AMAA-1ST        (P2)
+1 #A-AMAA-TOT        (P7.2)
+*
+LOCAL USING CONTPDA1                             /* vt1
+local
+1 #date-of-birth-sp           (n8)               /* vt1
+1 #SPOUSE-SEX                 (a1)               /* vt1
+*
+1 #idx                         (i2)              /* vt2
+END-DEFINE
+*****************
+INCLUDE GONERCXX
+*****************
+*
+
+* WRITE  "Top of" *Program *LINE "DP for:" #CGA-ISN
+GET STATUS-V #CGA-ISN
+*
+MOVE *ISN        TO #HOLD-ISN
+MOVE #CGA-SCR-ID TO #HOLD-SCR-ID
+RESET #CGA-SCR-COMMAND #CGA-SCR-ID
+PERFORM HEADER-INFO
+PERFORM PROCESS-FIRS
+*
+IF FIRS-V.C*POLICY-TABLE GT 31
+  MOVE 'RECORD HAS MORE THAN 31 POLICIES' TO #SCR-MESSAGE
+END-IF
+*
+RESET #SEG-I
+examine status-v.plan(*) for 'GT1'  index #idx                                        /* vt2  
+if (#idx ne 0) and  (status-v.plan(#idx) ne 'GT1' )                                   /* vt2  
+  CALLNAT 'GCONTSXX' STATUS-V.ID-NUMBER #SEG-I #HAS-CONTESTABILITY  /* DW1
+    #NO-LONGER-CONTESTABLE #CONTESTABLE-BUT-PAID     /* DW2 DW3
+  IF #HAS-CONTESTABILITY
+    COMPRESS 'Has a Contestable Death Claim' #SCR-MESSAGE INTO #SCR-MESSAGE
+  END-IF
+end-if                                                                                /* vt2  
+*
+* WRITE  *Program *LINE "Bypass 1:" #CGA-SCR-SUFFIX  --db
+IF #CGA-SCR-SUFFIX = 'P22'                                 /* bz1
+  #SCR-OPTION := 1                                         /* bz1
+ELSE                                                     /* bz1
+  INPUT TEXT #SCR-MESSAGE MARK *#SCR-OPTION USING MAP 'W5300MWP'
+END-IF                                                     /* bz1
+*
+IF #CGA-SCR-COMMAND NE '  '
+  END TRANSACTION                /*  09/15/88
+  FETCH 'G1000PXX'
+END-IF
+*
+PERFORM FIND-SELECTION
+* WRITE  *Program *LINE "Return to Main DR:" #CGA-SCR-SUFFIX --db
+IF #CGA-SCR-SUFFIX = 'P22'  ESCAPE ROUTINE END-IF
+*
+*****************************
+DEFINE SUBROUTINE HEADER-INFO
+*****************************
+*
+MOVE STATUS-V.STATUS-CODE-SP   TO #SCR-W-STATUS
+MOVE STATUS-V.NAME-SP          TO #SCR-NAME
+*
+RESET PDA-CONTACT  #date-of-birth-sp                                /* vt1 \/
+P-CONTACT-ID := status-v.MEMBER-CONTACT-ID
+CALLNAT 'CONTS001' PDA-CONTACT #DATE-OF-BIRTH-SP #SPOUSE-SEX
+move #DATE-OF-BIRTH-SP            to #WYYYYMMDD
+* MOVE STATUS-V.DATE-OF-BIRTH-SP TO #WYYYYMMDD                      /* vt1 /\
+COMPRESS #WMM #WDD #WYYYY INTO #SCR-DOB WITH '/'
+MOVE STATUS-V.DATE-OF-DEATH    TO #WYYYYMMDD
+COMPRESS #WMM #WDD #WYYYY INTO #SCR-MDOD WITH '/'
+*
+END-SUBROUTINE /* (920)
+*
+******************************
+DEFINE SUBROUTINE PROCESS-FIRS
+******************************
+*
+FIND (1) FIRS-V WITH WIDOW-KEY = #CGA-ID-G
+  IF NO RECORDS FOUND
+    MOVE 'NO FIRS RECORD ON FILE' TO #SCR-MESSAGE
+    ESCAPE BOTTOM
+  END-NOREC
+END-FIND
+*
+IF   (#CGA-SCR-SUFFIX = 'ADL')
+    AND (FIRS-V.C*POLICY-TABLE GT 31)
+  MOVE TRUE TO #LST-POLS
+  MOVE 32 TO #START-X
+  MOVE FIRS-V.C*POLICY-TABLE TO #END-X
+ELSE
+  MOVE 1 TO #START-X
+  MOVE 31 TO #END-X
+END-IF
+IF #CGA-SCR-SUFFIX <> 'P22'
+  RESET #CGA-SCR-SUFFIX
+END-IF
+*
+MOVE 1 TO #A-X
+FOR #W-X #START-X TO #END-X
+  IF   (FIRS-V.POL-NAME (#W-X) = ' ')
+      AND (FIRS-V.POL-NUMBER (#W-X) = ' ')
+      AND (FIRS-V.POL-AMOUNT (#W-X) = 0)
+*   ESCAPE BOTTOM
+    ESCAPE TOP
+  END-IF
+*
+*  IF (PROCESS-IND = 'S')                             /* DW4
+*   AND (FIRS-V.POL-NAME (#W-X) = 'AFSC')
+*    ESCAPE TOP
+*  END-IF
+*
+  MOVE #A-X                           TO #W-MENU-CT
+  MOVE EDITED #W-MENU-CT (EM=Z9)      TO #SCR-ENTRY(#A-X)
+  MOVE FIRS-V.POL-NAME(#W-X)          TO #SCR-PNAME(#A-X)
+  MOVE FIRS-V.POL-NUMBER(#W-X)        TO #SCR-PNUM(#A-X)
+*
+  IF FIRS-V.POL-NAME(#W-X) = 'AMAA' OR = 'AAFMAA'
+    IF #A-AMAA-1ST = 0
+      MOVE #W-X TO #A-AMAA-1ST
+    END-IF
+    FOR J 1 TO 9                            /* TT1 BEGIN
+      IF POL-DATE(#W-X) = ISSUE-DATE(J)
+        #SCR-PNUM(#A-X) := POLICY-ID(J)
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR                                /* TT1 END
+*
+    ADD 1 TO #A-AMAA
+    MOVE FIRS-V.POL-AMT-PAID(#W-X)  TO #W-AMOUNT
+    ADD #W-AMT1                     TO #A-MEMIN
+    COMPUTE #A-AMAA-TOT = #A-AMAA-TOT + FIRS-V.POL-AMT-PAID(#W-X)
+  ELSE
+    IF FIRS-V.POL-CODE(#W-X) EQ ' ' OR FIRS-V.POL-CODE(#W-X) EQ '*'
+      COMPUTE #A-MEMIN = #A-MEMIN + FIRS-V.POL-AMOUNT(#W-X)
+    ELSE
+      IF FIRS-V.POL-CODE(#W-X) EQ '&'
+        COMPUTE #A-DEPIN = #A-DEPIN + FIRS-V.POL-AMOUNT(#W-X)
+      ELSE
+        IF FIRS-V.POL-CODE(#W-X) EQ 'X'
+          COMPUTE #A-DEPIN = #A-DEPIN + FIRS-V.POL-AMOUNT(#W-X)
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  ADD 1 TO #A-X
+  ADD 1 TO #NUM-OPTIONS
+END-FOR
+*
+COMPUTE #A-TOTIN = #A-MEMIN + #A-DEPIN
+MOVE #A-MEMIN TO #SCR-MEMINS
+MOVE #A-DEPIN TO #SCR-DEPINS
+MOVE #A-TOTIN TO #SCR-TOTINS
+RESET #A-MEMIN
+RESET #A-DEPIN
+RESET #A-TOTIN
+MOVE FIRS-V.INS-LAST-FM-DATE TO #WYYYYMMDD
+COMPRESS #WMM #WDD #WYYYY INTO #SCR-LST-UPDT WITH '/'
+*
+END-SUBROUTINE /* (0170)
+*
+********************************
+DEFINE SUBROUTINE FIND-SELECTION
+********************************
+*
+IF #SCR-OPTION = ' '
+  REINPUT WITH 'NO POLICY NUMBER REQUESTED'
+    MARK *#CGA-SCR-COMMAND
+END-IF
+*
+IF #SCR-OPTION = MASK (N' ')
+  MOVE #SCR-OPTION-1ST TO #SCR-OPTION-2ND
+  MOVE '0' TO #SCR-OPTION-1ST
+END-IF
+*
+IF #SCR-OPTION NE MASK (NN)
+  REINPUT WITH 'MENU SELECTION INVALID'
+    MARK *#SCR-OPTION
+END-IF
+*
+IF #SCR-OPTION-N GT #NUM-OPTIONS
+  IF  #CGA-SCR-SUFFIX = 'P22'  ESCAPE ROUTINE END-IF
+  REINPUT WITH 'INVALID POLICY NUMBER'
+    MARK *#SCR-OPTION
+END-IF
+*
+MOVE FIRS-V.C*POLICY-TABLE TO #NUM-POLS
+*
+IF #SCR-OPTION-N = 0
+  IF #NUM-POLS GE 45
+    REINPUT WITH 'MAXIMUM POLICIES REACHED'
+  ELSE
+    FETCH 'W5302PWP' #HOLD-SCR-ID #SC-X #HOLD-ISN
+      #A-AMAA-TOT #NUM-POLS
+  END-IF
+ELSE
+  MOVE #SCR-OPTION-N TO #SC-X
+  IF  #CGA-SCR-SUFFIX = 'P22'
+    FETCH RETURN 'W5301PWP' #HOLD-SCR-ID #SC-X #HOLD-ISN
+      #A-AMAA-TOT #NUM-POLS #A-AMAA #A-AMAA-1ST #LST-POLS
+  ELSE
+    FETCH 'W5301PWP' #HOLD-SCR-ID #SC-X #HOLD-ISN
+      #A-AMAA-TOT #NUM-POLS #A-AMAA #A-AMAA-1ST #LST-POLS
+  END-IF
+END-IF
+END-SUBROUTINE /* (0258)
+********************************************************************
+*
+END

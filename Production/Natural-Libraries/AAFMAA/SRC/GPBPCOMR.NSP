@@ -1,0 +1,623 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPBPCOMR - Load the file for creating letters in SSRS
+*                        Second step to load Rider letters & emails
+*************************************************************************
+* Created for Letters @ Emails project
+******************************************************************
+* MODIFICATION LOG
+******************************************************************
+* YAK  03182014       Initial Creation
+* bz-Name 07/07/2017     Fine Names
+******************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLSTAT      /* Status file structure
+LOCAL USING OBJLLETT      /* Letters file structure
+LOCAL USING ADDA0001      /* PDA to call address generic program
+LOCAL USING GPRL0EML      /* PDA to send notification email
+LOCAL
+1 #RECORD-DATA
+  2 INSURED-CN                        (N6)
+  2 POLICY-NUMBER                     (A16)
+  2 PLAN                              (A10)
+  2 OWNER-CN                          (N6)
+  2 OWNER-SALUTATION                  (A75)
+  2 OWNER-NAME                        (A75)
+  2 EMAIL-ADDRESS                     (A70)
+  2 INSURED-NAME                      (A75)
+  2 OWNER-HOME-PHONE                  (A20)
+  2 OWNER-WORK-PHONE                  (A20)
+  2 OWNER-CELL-PHONE                  (A20)
+  2 ADDRESS-1                         (A75)
+  2 ADDRESS-2                         (A75)
+  2 ADDRESS-3                         (A75)
+  2 DEATH-BENEFIT                     (A15)
+  2 BENEFIT-DECREASE-DATE             (A20)
+  2 POLICY-EXPIRATION-DATE            (A20)
+  2 TEMPLATE-NAME                     (A20)
+  2 REPORT-NAME                       (A20)
+  2 SEND-CORR-IND                     (A1)
+  2 FAMILY-MEMBER-NAME                (A75)
+  2 FAMILY-MEMBER-DOB                 (A20)
+  2 CHILD-NAME                        (A75/1:12)
+  2 CHILD-DOB                         (A20/1:12)
+1 #REPORT
+  2 INSURED-CN                        (N6)
+  2 INSURED-NAME                      (A75)
+  2 POLICY-NUMBER                     (A16)
+  2 OWNER-CN                          (N6)
+  2 OWNER-NAME                        (A75)
+  2 CHILD-NAME                        (A75/1:12)
+  2 CHILD-DOB                         (A20/1:12)
+  2 DEATH-BENEFIT                     (A15)
+  2 POLICY-EXPIRATION-DATE            (A20)
+  2 EMAIL-ADDRESS                     (A70)
+  2 PREF-PHONE                        (A20)
+  2 REPORT-NAME                       (A20)
+  2 SEND-CORR-IND                     (A1)
+*
+1 #DATN           (N8)
+1 REDEFINE #DATN
+  2 #DATN-6       (N6)
+1 #TIMN           (N7)
+1 #USER           (A8)
+*
+* Rider Letters & Email Templates
+1 #TEMPLATES-TABLE
+* FBR Templates
+  2 #LET-LTI-RIDER (A20) CONST <'LTI_RIDER_LET'>
+  2 #EML-LTI-RIDER (A20) CONST <'LTI_RIDER_EML'>
+  2 #LET-FBR         (A20) CONST <'FBR_LET'>
+  2 #EML-FBR         (A20) CONST <'FBR_EML'>
+*
+1 #REPORTS-LIST
+  2 #REP-RIDER-2     (A2) CONST <'21'>
+*
+* GOWNRSXX Communication area
+1 #GOWNRSXX
+  2 #OWNER-OCC-9   (9)
+    3 #OWNER-FLAG               (A1)
+    3 #OWNER-CN-ARRAY           (N6/10)
+    3 #OWNER-CN-BY-POL          (N6)
+    3 #OWNER-CN-SEG             (I2/9)
+    3 #ISS-DATE                 (N8/9)
+    3 #ISS-DATE-DISP            (A10/9)
+    3 #BENE-TYPE                (A1/2)
+    3 #BENE-TEXT                (A60/10)
+  2 #MULTIPLE-OWNER             (L)
+  2 #NON-INS-OWNER              (L)
+*
+1 #WINDOWS-TEST-DIR       (A) DYNAMIC INIT <'Ftp/EDS/Downloads/Test/'>
+1 #WINDOWS-USER-DIR       (A) DYNAMIC INIT <'Ftp/Marketing/'>
+1 #WINDOWS-SUBDIR         (A) DYNAMIC
+1 #UNIX-DIR               (A) DYNAMIC CONST <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/'>
+1 #FTP-SCRIPT-NAME        (A) DYNAMIC CONST <'/usr/SAG/cronus/.scripts/ftpAafmaaLocal'>
+1 #REPORT-FILE-RIDER      (A) DYNAMIC CONST <'2M_RIDER_REPORT_'>
+1 #WIN-FILE-NAME          (A) DYNAMIC
+1 #UNIX-FILE-NAME         (A) DYNAMIC
+1 #OUTPUT                 (A32000)
+*
+1 CONSTANTS
+  2 #CLERK-ID                 (A3)  CONST <'EDS'>
+  2 #SPOUSE                   (A1)  CONST <'S'>
+  2 #TAB                      (A1)  CONST <H'09'>
+  2 #LTI                      (A)   DYNAMIC CONST <'LTI'>
+  2 #EMAIL-ADDRESS-ERROR      (A)   DYNAMIC CONST <'No email address available for owner, member or insured'>
+  2 #CONTACT-ID-ERROR         (A)   DYNAMIC CONST <'Contact ID for the owner is zero - no information can be retrieved'>
+  2 #LET-LTI-RIDER-WARNING    (A)   DYNAMIC CONST <'* Sent letter: LTI Rider exp. warning (XM before age 99)'>
+  2 #LET-FBR-WARNING          (A)   DYNAMIC CONST <'* Sent letter: FBR exp. warning (XM before age 99)'>
+  2 #EML-LTI-RIDER-WARNING    (A)   DYNAMIC CONST <'* Sent email: LTI Rider exp. warning (XM before age 99)'>
+  2 #EML-FBR-WARNING          (A)   DYNAMIC CONST <'* Sent email: FBR exp. warning (XM before age 99)'>
+  2 #LET-EML-LTI-RIDER-WARNING(A)   DYNAMIC CONST <'* Sent letter/email: FBR exp. warning (XM before age 99)'>
+  2 #LET-EML-FBR-WARNING      (A)   DYNAMIC CONST <'* Sent letter/email: FBR exp. warning (XM before age 99)'>
+*
+* Work variables
+1 #COUNTERS
+  2 #REC-CNT           (N7)
+  2 #REP-CNT           (N7)
+  2 #I                 (I2)
+  2 #I1                (I2)
+  2 #II                (I2)
+  2 #J                 (I2)
+  2 #OWNER-BAD-CI      (N7)
+  2 #NO-EMAIL-ADDR     (N7)
+
+1 #ID-NUMBER           (N6)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-A       (A6)
+
+1 #LETTER-DATES        (N6/5)
+1 #LETTER-DATES-S      (N6/5)
+1 #REPORT-2M-DATE      (N6)
+1 #REPORT-2M-DATE-S    (N6)
+1 #FAMILY-INFO (*)
+  2 #FAMILY-MEMBER-NAME (A) DYNAMIC
+  2 #FAMILY-MEMBER-ROLE (A) DYNAMIC
+  2 #FAMILY-MEMBER-DOB  (N8)
+
+1 #RECORD-VARIABLES
+  2 #LTI-RIDER           (L)
+  2 #FAMILY-RIDER        (L)
+  2 #FAMILY-RIDER-PLAN   (A3)
+  2 REDEFINE #FAMILY-RIDER-PLAN
+    3 #FAMILY-RIDER-TYPE (A1)
+    3 #NUMBER-OF-UNITS   (N1)
+
+1 #FAMILY-MEMBER-VARIABLES
+  2 #AGE-A               (A2)
+  2 #MONTH               (A1)
+  2 #LETTER-NOTE         (A) DYNAMIC
+  2 #LET_EML             (L)
+  2 #FAMILY-RIDER-S      (L)
+  2 #DOB                 (N8)
+  2 REDEFINE #DOB
+    3 #DOB-YYYY-MM       (N6)
+  2 #BENEFIT-AMOUNT      (N7.2)
+  2 #AMOUNT              (A) DYNAMIC
+
+1 #DYNAMIC-VARIABLES
+  2 #ERROR-MESSAGE        (A75)
+  2 #NOTE-TEXT            (A60/10)
+  2 #Dynamic_Name         (A) DYNAMIC
+  2 #CONTACT-ID           (N8)
+  2 #OWNER-CONTACT-ID     (N8)
+  2 #OWNER-CN             (N6)
+  2 #PLAN                 (A) DYNAMIC
+  2 #CHANGE-DATE          (N8)
+  2 #EMAIL                (L)
+
+*
+* Variables for running program online (testing/debugging)
+1 f_1     (A80) INIT <"/usr/SAG/tmp/Exception_report.txt">
+1 f_2     (A80) INIT <"/usr/SAG/tmp/Statistics_report.txt">
+1 v_PN    (I1)
+1 v_RC    (N3)
+
+END-DEFINE
+*
+ON ERROR
+  WRITE 'CN = ' #ID-NUMBER
+END-ERROR
+*
+IF *DEVICE = 'BATCH'
+  IGNORE
+ELSE
+  PERFORM DEFINE-PRINTERS
+END-IF
+* Check on which server process is running (Test/Prod)
+IF F-IS-DEV(<>)
+  #WINDOWS-USER-DIR := #WINDOWS-TEST-DIR
+END-IF
+*
+#USER := *USER
+#TIMN := *TIMN
+#DATN := *DATN
+WRITE 'Start Time:    '   *TIMN
+*
+FORMAT (1) LS=133 PS=60
+FORMAT (2) LS=133 PS=60
+*
+**===============================
+DEFINE SUBROUTINE DEFINE-PRINTERS
+**===============================
+v_PN := 1
+v_RC := PRT_FN_PUT(<v_PN, f_1>)
+IF v_RC <> 0
+  PRINT (0)  'Error in print file 1 assigment'
+  ESCAPE ROUTINE
+END-IF
+v_PN := 2
+v_RC := PRT_FN_PUT(<v_PN, f_2>)
+IF v_RC <> 0
+  PRINT (0)  'Error in print file 2 assigment'
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+COMPRESS #UNIX-DIR #REPORT-FILE-RIDER INTO #UNIX-FILE-NAME LEAVING NO
+DEFINE WORK FILE 2 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+*
+COMPRESS 'Insured CN' 'Insured Name' 'Owner Name' 'Child Name' 'Child Age' 'FBR Expiration Date' 'Preferred Phone' 'Email'
+  INTO #OUTPUT WITH DELIMITER #TAB
+WRITE WORK FILE 2 #OUTPUT
+*
+#LETTER-DATES(1)    := F-LET-DATE(<'21','06'>)
+#LETTER-DATES(2)    := F-LET-DATE(<'21','05'>)
+#LETTER-DATES(3)    := F-LET-DATE(<'21','04'>)
+#LETTER-DATES(4)    := F-LET-DATE(<'21','03'>)
+#LETTER-DATES(5)    := F-LET-DATE(<'21','01'>)
+#REPORT-2M-DATE     := F-LET-DATE(<'21','02'>)
+#LETTER-DATES-S(1)  := F-LET-DATE(<'60','06'>)
+#LETTER-DATES-S(2)  := F-LET-DATE(<'60','05'>)
+#LETTER-DATES-S(3)  := F-LET-DATE(<'60','04'>)
+#LETTER-DATES-S(4)  := F-LET-DATE(<'60','03'>)
+#LETTER-DATES-S(5)  := F-LET-DATE(<'60','01'>)
+#REPORT-2M-DATE-S   := F-LET-DATE(<'60','02'>)
+*
+R_ST.
+READ ST-V BY ID-NUMBER = 126942
+*
+  IF ST-V.STATUS(*) = 'D'
+*
+    IF ST-V.PLAN(*) = #LTI OR ST-V.RID-PLAN(*) <> ' '
+      #ID-NUMBER := ST-V.ID-NUMBER
+      #CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+      RESET #FAMILY-INFO(*)
+      CALLNAT 'GPBN0001' #CONTACT-ID #FAMILY-INFO(*)
+    END-IF
+*
+    FOR #I = 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.STATUS(#I) <> 'D'
+        ESCAPE TOP
+      END-IF
+      RESET LT-V #REPORT #RECORD-DATA
+      RESET #RECORD-VARIABLES
+      IF ST-V.PLAN(#I) = #LTI AND ST-V.STATUS(#I) = 'D'
+        #LTI-RIDER := TRUE
+      END-IF
+      IF ST-V.RID-PLAN(#I) <> ' ' AND ST-V.STATUS(#I) = 'D'
+        #FAMILY-RIDER := TRUE
+        #FAMILY-RIDER-PLAN := ST-V.RID-PLAN(#I)
+      END-IF
+*
+      FOR #I1 = 1 TO *OCC(#FAMILY-MEMBER-NAME)
+* Continue process only when certain conditions are true
+* Go to the next family member otherwise
+        RESET #FAMILY-MEMBER-VARIABLES
+        DECIDE FOR FIRST CONDITION
+          WHEN #LTI-RIDER AND (#FAMILY-MEMBER-ROLE(#I1)= 'K' OR #FAMILY-MEMBER-ROLE(#I1)= 'D')
+            IGNORE
+          WHEN #FAMILY-RIDER AND (#FAMILY-MEMBER-ROLE(#I1)= 'K' OR #FAMILY-MEMBER-ROLE(#I1)= 'D')
+            IGNORE
+          WHEN #FAMILY-RIDER AND #FAMILY-MEMBER-ROLE(#I1)= 'S' AND
+              (#FAMILY-RIDER-TYPE = 'F' OR #FAMILY-RIDER-TYPE = 'T')
+            #FAMILY-RIDER-S := TRUE
+          WHEN NONE
+            ESCAPE TOP
+        END-DECIDE
+        #DOB := #FAMILY-MEMBER-DOB(#I1)
+        IF (#DOB-YYYY-MM = #LETTER-DATES(*) OR #DOB-YYYY-MM = #REPORT-2M-DATE) OR
+            (#FAMILY-RIDER-S AND (#DOB-YYYY-MM = #LETTER-DATES-S(*) OR #DOB-YYYY-MM = #REPORT-2M-DATE-S ))
+          PERFORM FIND-TEMPLATE-REPORT-NAME
+          DECIDE FOR FIRST CONDITION
+            WHEN #RECORD-DATA.TEMPLATE-NAME <> ' ' AND ST-V.RENEW-FLAG(#I) <> 'X'
+              RESET #DYNAMIC-VARIABLES
+              RESET #GOWNRSXX
+              RESET #PDA-ADDRESS
+              PERFORM CREATE-FILE-RECORD
+              PERFORM WRITE-NOTE
+              END TRANSACTION
+            WHEN #RECORD-DATA.REPORT-NAME <> ' '
+              RESET #DYNAMIC-VARIABLES
+              RESET #GOWNRSXX
+              RESET #PDA-ADDRESS
+              PERFORM CREATE-REPORT-RECORD
+            WHEN NONE
+              IGNORE
+          END-DECIDE
+        END-IF
+      END-FOR
+    END-FOR
+  END-IF
+*
+END-READ
+END TRANSACTION
+*
+* PERFORM SEND-REPORT
+*
+WRITE 'End   Time:    '   *TIMN
+WRITE(2)
+  'Records created               :'      #REC-CNT
+  'No Email address              :'      #NO-EMAIL-ADDR
+IF #OWNER-BAD-CI <> 0
+  WRITE(2) 'Owner contact id zero         :'      #OWNER-BAD-CI
+END-IF
+*
+RESET p_EMAIL
+* P_CC     := 'ykegeles@aafmaa.com'
+P_TO     := 'ykegeles@aafmaa.com'
+P_SUBJ   := '"Statistics report on Letters file load"'
+COMPRESS FULL 'Records created               :' #REC-CNT INTO P_MSG(1)
+COMPRESS FULL 'No Email address              :' #NO-EMAIL-ADDR INTO P_MSG(2)
+IF #OWNER-BAD-CI <> 0
+  COMPRESS FULL 'Owner contact id zero       :' #OWNER-BAD-CI INTO P_MSG(3)
+END-IF
+CALLNAT 'GPRS0EML' p_EMAIL
+*
+*******************************************
+DEFINE SUBROUTINE FIND-TEMPLATE-REPORT-NAME
+*******************************************
+*
+DECIDE FOR FIRST CONDITION
+* LTI Rider
+  WHEN #LTI-RIDER
+    DECIDE ON FIRST VALUE #DOB-YYYY-MM
+      VALUE #LETTER-DATES(1)                 /* mailed 6 months before Rider expiration
+        #MONTH := 6
+      VALUE #LETTER-DATES(2)                 /* e-mailed 5 months before Rider expiration
+        #MONTH := 5
+      VALUE #LETTER-DATES(3)                 /* mailed 4 months before Rider expiration
+        #MONTH := 4
+      VALUE #LETTER-DATES(4)                 /* e-mailed 3 months before Rider expiration
+        #MONTH := 3
+      VALUE #LETTER-DATES(5)                 /* letter and email 1 months before Rider expiration
+        #MONTH := 1
+      ANY VALUE
+        #AGE-A := 21
+        DECIDE ON FIRST VALUE #MONTH
+          VALUE '6', '4'
+            #RECORD-DATA.TEMPLATE-NAME := #LET-LTI-RIDER
+            #LETTER-NOTE := #LET-LTI-RIDER-WARNING
+          VALUE '5', '3'
+            #RECORD-DATA.TEMPLATE-NAME := #EML-FBR
+            #LETTER-NOTE := #EML-LTI-RIDER-WARNING
+          VALUE '1'
+            #RECORD-DATA.TEMPLATE-NAME := #LET-LTI-RIDER
+            #LETTER-NOTE := #LET-EML-LTI-RIDER-WARNING
+            #LET_EML := TRUE
+          NONE IGNORE
+        END-DECIDE
+      NONE VALUE
+        IGNORE
+    END-DECIDE
+* Family Benefit Rider kids age 21
+  WHEN #FAMILY-RIDER
+    DECIDE ON FIRST VALUE #DOB-YYYY-MM
+      VALUE #LETTER-DATES(1), #LETTER-DATES-S(1)   /* mailed 6 months before Rider expiration
+        #MONTH := 6
+      VALUE #LETTER-DATES(2), #LETTER-DATES-S(2)   /* e-mailed 5 months before Rider expiration
+        #MONTH := 5
+      VALUE #LETTER-DATES(3), #LETTER-DATES-S(3)   /* mailed 4 months before Rider expiration
+        #MONTH := 4
+      VALUE #LETTER-DATES(4), #LETTER-DATES-S(4)   /* e-mailed 3 months before Rider expiration
+        #MONTH := 3
+      VALUE #LETTER-DATES(5), #LETTER-DATES-S(5)   /* letter and email 1 months before Rider expiration
+        #MONTH := 1
+      ANY VALUE
+        IF #FAMILY-RIDER-S #AGE-A := 60
+          ELSE #AGE-A := 21 END-IF
+        DECIDE ON FIRST VALUE #MONTH
+          VALUE '6','4'
+            #RECORD-DATA.TEMPLATE-NAME := #LET-FBR
+            #LETTER-NOTE := #LET-FBR-WARNING
+          VALUE '5','3'
+            #RECORD-DATA.TEMPLATE-NAME := #EML-FBR
+            #LETTER-NOTE := #EML-FBR-WARNING
+          VALUE '1'
+            #RECORD-DATA.TEMPLATE-NAME := #LET-FBR
+            #LETTER-NOTE := #LET-EML-FBR-WARNING
+            #LET_EML := TRUE
+          NONE IGNORE
+        END-DECIDE
+      NONE VALUE
+        IGNORE
+    END-DECIDE
+  WHEN ANY
+* Report Children/Spouse - report created 2 months before Rider expiration
+    IF #DOB-YYYY-MM = #REPORT-2M-DATE OR #DOB-YYYY-MM = #REPORT-2M-DATE-S
+      #RECORD-DATA.REPORT-NAME := #REP-RIDER-2
+    END-IF
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE CREATE-FILE-RECORD
+************************************
+*
+#CONTACT-ID := #OWNER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+PERFORM GET-OWNER-INFO
+* Do not create a record
+IF #OWNER-CONTACT-ID = 0
+  #OWNER-BAD-CI := #OWNER-BAD-CI + 1
+  COMPRESS #RECORD-DATA.POLICY-NUMBER #CONTACT-ID-ERROR INTO #ERROR-MESSAGE
+  WRITE (1) #ERROR-MESSAGE
+  ESCAPE ROUTINE
+END-IF
+#RECORD-DATA.OWNER-CN := #OWNER-CN
+*
+PERFORM POPULATE-DATA
+IF #ERROR-MESSAGE <> ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE BY NAME #RECORD-DATA TO LT-V
+LT-V.LAST-LOAD-USER := #USER
+LT-V.LAST-LOAD-DATE := #DATN
+LT-V.LAST-LOAD-TIME := *TIMN
+*
+STORE LT-V
+#REC-CNT := #REC-CNT + 1
+IF #LET_EML
+  EXAMINE LT-V.TEMPLATE-NAME FOR 'LET' REPLACE 'EML'
+  STORE LT-V
+  #REC-CNT := #REC-CNT + 1
+END-IF
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE CREATE-REPORT-RECORD
+**************************************
+*
+* Insured-cn
+* Insured-name
+* Child-name
+* Owner-name
+* Issue-date
+* Termination-Date
+* Email
+* Pref Phone / Home Phone / Work-Phone
+*
+#CONTACT-ID := #OWNER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+PERFORM GET-OWNER-INFO
+* Create a record on the report with insured data if there is an error for owner
+IF #OWNER-CONTACT-ID = 0
+  #OWNER-BAD-CI := #OWNER-BAD-CI + 1
+  COMPRESS #REPORT.POLICY-NUMBER #CONTACT-ID-ERROR INTO #ERROR-MESSAGE
+  WRITE (1) #ERROR-MESSAGE
+  #CONTACT-ID := #OWNER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+END-IF
+#RECORD-DATA.OWNER-CN := #OWNER-CN
+PERFORM POPULATE-DATA
+*
+MOVE BY NAME #RECORD-DATA TO #REPORT
+*
+#REPORT.PREF-PHONE := F-PREF-PHONE(<#OWNER-CONTACT-ID>)
+IF #REPORT.PREF-PHONE = ' '
+  #REPORT.PREF-PHONE := F-FORMATTED-PHONE(<#OWNER-CONTACT-ID,'C'>)
+  IF #REPORT.PREF-PHONE = ' '
+    #REPORT.PREF-PHONE := F-FORMATTED-PHONE(<#OWNER-CONTACT-ID,'H'>)
+  END-IF
+END-IF
+#REP-CNT := #REP-CNT + 1
+* Rider report
+COMPRESS  #REPORT.INSURED-CN #TAB #REPORT.INSURED-NAME #TAB #REPORT.OWNER-NAME #TAB #REPORT.CHILD-NAME(1) #TAB #REPORT.CHILD-DOB(1) #TAB #REPORT.DEATH-BENEFIT #TAB
+  #REPORT.POLICY-EXPIRATION-DATE #TAB #REPORT.PREF-PHONE #TAB #REPORT.EMAIL-ADDRESS INTO #OUTPUT
+WRITE WORK FILE 2 #OUTPUT
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-OWNER-INFO
+********************************
+*
+CALLNAT 'GOWNRSXX' #ID-NUMBER
+  #NON-INS-OWNER
+  #MULTIPLE-OWNER
+  #OWNER-OCC-9 (1:9)
+*
+#OWNER-CN           := #ID-NUMBER
+IF #OWNER-CN-ARRAY(#I,1) <> #ID-NUMBER
+  #OWNER-CN         := #OWNER-CN-ARRAY(#I,1)
+  #OWNER-CONTACT-ID := F-GET-CONTACT-ID(<#OWNER-CN>)
+END-IF
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE POPULATE-DATA
+*******************************
+*
+IF #RECORD-DATA.TEMPLATE-NAME = SCAN 'EML'
+  #EMAIL := TRUE
+END-IF
+#RECORD-DATA.INSURED-CN := ST-V.ID-NUMBER
+COMPRESS ST-V.ID-NUMBER '-' ST-V.NUM-MBRSHIPS(#I) INTO #RECORD-DATA.POLICY-NUMBER LEAVING NO
+#PLAN := ST-V.PLAN(#I)
+IF #LTI-RIDER
+  #RECORD-DATA.PLAN := 'LTI'
+ELSE
+  #RECORD-DATA.PLAN := ST-V.RID-PLAN(#I)
+END-IF
+#CHANGE-DATE := #DOB + 210000
+#RECORD-DATA.POLICY-EXPIRATION-DATE := FUNCTION-CALENDAR(<#CHANGE-DATE,'F'>)
+#RECORD-DATA.SEND-CORR-IND := ST-V.RENEW-FLAG(#I)
+*
+#Dynamic_Name := '!L'
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+#RECORD-DATA.OWNER-NAME := #Dynamic_Name
+*
+#Dynamic_Name := '!L'
+CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name
+#RECORD-DATA.INSURED-NAME := #Dynamic_Name
+*
+IF #RECORD-DATA.TEMPLATE-NAME <> ' '
+  #Dynamic_Name := 'S1'
+  CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+*  #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >) /* bz-Name
+  #RECORD-DATA.OWNER-SALUTATION    := #Dynamic_Name
+END-IF
+*
+* if email to be sent find an email address
+IF #EMAIL OR #LET_EML OR #RECORD-DATA.REPORT-NAME <> ' '
+  #RECORD-DATA.EMAIL-ADDRESS := F-PREF-EMAIL(<#OWNER-CONTACT-ID>)
+  IF #RECORD-DATA.EMAIL-ADDRESS = ' '                            /* Owner does not have e-mail
+    IF INTRO-FLAG = 'S' OR INTRO-FLAG = 'K' OR INTRO-FLAG = 'G'  /* Retreive member email if spouse, child or grandchild
+      #RECORD-DATA.EMAIL-ADDRESS := FUNCTION-MEMBER-EMAIL(<#ID-NUMBER-A>)
+    END-IF
+  END-IF
+  IF #RECORD-DATA.EMAIL-ADDRESS = ' '                                    /* Use insured'e email address
+    #RECORD-DATA.EMAIL-ADDRESS := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)
+  END-IF
+  IF #RECORD-DATA.EMAIL-ADDRESS = ' '
+    COMPRESS #RECORD-DATA.POLICY-NUMBER #EMAIL-ADDRESS-ERROR INTO #ERROR-MESSAGE
+    WRITE (1) #ERROR-MESSAGE
+    #NO-EMAIL-ADDR := #NO-EMAIL-ADDR + 1
+  END-IF
+END-IF
+*
+#ADD-CONTACT-ID := #OWNER-CONTACT-ID
+#ADD-TYPE       := 'P'  /* Primary
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+#RECORD-DATA.ADDRESS-1 := #ADD-LINE-1
+#RECORD-DATA.ADDRESS-2 := #ADD-LINE-2
+#RECORD-DATA.ADDRESS-3 := #ADD-LINE-3
+*
+* Populate Spouse/Children Information
+#RECORD-DATA.FAMILY-MEMBER-NAME   := #FAMILY-MEMBER-NAME(#I1)
+IF #FAMILY-MEMBER-DOB(#I1) <> 0
+  #RECORD-DATA.FAMILY-MEMBER-DOB    := FUNCTION-CALENDAR(<#FAMILY-MEMBER-DOB(#I1),'F'>)
+END-IF
+*
+IF #FAMILY-RIDER-S
+  #BENEFIT-AMOUNT := 3000 * #NUMBER-OF-UNITS
+ELSE
+  #BENEFIT-AMOUNT := 5000 * #NUMBER-OF-UNITS
+END-IF
+*
+MOVE EDITED #BENEFIT-AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #AMOUNT
+#AMOUNT := *TRIM(#AMOUNT)
+COMPRESS '$' #AMOUNT INTO #AMOUNT LEAVING NO
+#RECORD-DATA.DEATH-BENEFIT := #AMOUNT
+*
+RESET #J
+FOR #II = 1 TO *OCC(#FAMILY-MEMBER-NAME)
+* IF #II <> #I1 AND #FAMILY-MEMBER-ROLE(#I1) <> #SPOUSE
+* IF #FAMILY-MEMBER-ROLE(#I1) <> #SPOUSE
+  #CHANGE-DATE := #FAMILY-MEMBER-DOB(#II) + 210000
+  IF #CHANGE-DATE > #DATN
+    #J := #J + 1
+    #RECORD-DATA.CHILD-NAME(#J) := #FAMILY-MEMBER-NAME(#II)
+    #RECORD-DATA.CHILD-DOB(#J)  := FUNCTION-CALENDAR(<#FAMILY-MEMBER-DOB(#II),'F'>)
+  END-IF
+*  END-IF
+END-FOR
+IF #J = 0
+  #RECORD-DATA.CHILD-NAME(1) := 'None'
+END-IF
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE WRITE-NOTE
+****************************
+*
+EXAMINE #LETTER-NOTE FOR 'X'  REPLACE #MONTH
+EXAMINE #LETTER-NOTE FOR '99' REPLACE #AGE-A
+#II := 1
+#NOTE-TEXT (#II) := #LETTER-NOTE
+*
+CALLNAT 'E4205SDM' #ID-NUMBER
+  #II
+  #CLERK-ID
+  #NOTE-TEXT (1:10)
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE SEND-REPORT
+******************************
+* send Rider report
+CLOSE WORK FILE 2
+COMPRESS #UNIX-DIR #REPORT-FILE-RIDER INTO #UNIX-FILE-NAME LEAVING NO
+COMPRESS #WINDOWS-USER-DIR #REPORT-FILE-RIDER #DATN '.txt' INTO #WIN-FILE-NAME LEAVING NO
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WIN-FILE-NAME
+*
+END-SUBROUTINE
+*
+END

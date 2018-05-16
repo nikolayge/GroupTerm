@@ -1,0 +1,380 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* PROGRAM-ID: ATHP1035 rebuilds a 1035's history & acv
+*     CHANGE AMTS AT LINE 1930 & 2820
+*
+************************************************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* SAG 10282005 RH1 - AB Changed Cobol CALL to Natural CALLNAT
+*
+************************************************************************
+DEFINE DATA
+* GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX    /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+LOCAL USING GC2V5LXX
+LOCAL
+1 ST-V VIEW OF A-STATUS
+ 2 ONLINE-ACTION-GN
+ 2 C*ACTIVE-SEGMENTS
+ 2 ONLINE-ACTION         (9)
+ 2 PAID-TO-DATE          (9)
+ 2 REDEFINE PAID-TO-DATE
+  3 PAID-TO-DATE-OCC   (9)
+   4 PTD-YYYYMM    (N6)
+   4 PTD-DD        (N2)
+ 2 FACE-AMOUNT           (9)
+ 2 ACC-CASH-VALUE        (9)
+ 2 DEATH-BENEFIT         (9)
+ 2 NXT-MON-DEATH-BENEFIT (9)
+ 2 CASH-VALUE            (9)
+ 2 NXT-MON-CASH-VALUE    (9)
+ 2 TOT-PREMIUMS-PAID     (9)
+ 2 NET-PR-RATIO          (9)
+ 2 MIN-CASH-VALUE        (9)
+ 2 NXT-YR-MIN-CASH-VALUE (9)
+ 2 MONTH-ALLOC-AMT       (9)
+ 2 PREM-DEFICIENCY       (9)
+ 2 BEG-CASH-VALUE        (9)
+ 2 MTD-ACV-PREM-ADJ      (9)
+ 2 MTD-ACV-INT-ADJ       (9)
+*
+1 VA-V VIEW OF A-VA-HISTORY
+ 2 RECORD-KEY          (N15)
+ 2 ACCUM-CASH-VALUE-M   (P7.2/13)
+ 2 CASH-VALUE-M         (P7.2/13)
+ 2 YEAR-MONTH-M         (P7/13)
+ 2 PREMIUM-M            (P7.2/13)  /* NG99
+ 2 COST-OF-INSURANCE-M  (P7.2/13)  /* NG99
+ 2 INTEREST-M           (P5.2/13)
+ 2 PRORAT-LOAN-BAL-M    (P5.2/13)
+ 2 PRORAT-LN-ACC-INT-M  (P5.2/13)
+*
+1 #RECORD-KEY   (N15)
+1 REDEFINE #RECORD-KEY
+ 2 #VA-ID-NUMBER (N6)
+ 2 #VA-ISS-DATE  (N8)
+ 2 #VA-SPL-IND   (N1)
+*
+1 #WYYYYMMDD-N  (N8)
+1 REDEFINE #WYYYYMMDD-N
+  2 #WYYYY (N4)
+  2 REDEFINE #WYYYY
+   3 #WCENT (N2)
+   3 #WYY   (N2)
+  2 #WMM   (N2)
+  2 #WDD   (N2)
+1 REDEFINE #WYYYYMMDD-N
+  2 #WYYYY-A (A4)
+  2 #WMM-A (A2)
+  2 #WDD-A (A2)
+*
+1 #I1       (I2)
+1 #I2       (I2)
+1 #I3       (I2)
+1 #IDX      (I2)
+1 #CNT-1    (P5)
+1 #CNT-2    (P5)
+1 #CNT-3    (P5)
+1 #CNT-6    (P5)
+1 #ACV   (N7.2)
+1 #CSV   (N7.2)
+1 #DB-W-TDIV  (N7.2)
+1 #NEW-ACV   (P7.2)
+1 #PREV-ACV  (P7.2)
+1 #ACV-DIFF  (P7.2)
+1 #REAL-PREM (P7.2)
+1 #HOLD-CSV   (N7.2)
+1 #HOLD-ACV   (N7.2)
+1 #HOLD-ACQ   (N7.2)
+1 #HOLD-CF    (N7.2)
+1 #DOB        (A10)
+1 #ISS        (A10)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY      (A4)
+ 2 #MM        (A2)
+ 2 #DD        (A2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM    (N6)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-N    (N4)
+ 2 #MM-N      (N2)
+ 2 #DD-N      (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM-N  (N6)
+1 #TOT-PD-PREM   (P5.2)
+1 #TOT-VA-PREM   (P5.2)
+1 #NUM-PREM-MONS (P3)
+1 #NUM-INT-MONS  (P3)
+1 #ACV-PREM-ADJ   (P5.2)
+1 #ACV-INT-ADJ    (P5.5)
+1 #MON-PRM        (P5.2)
+1 #VA-ISN         (P8)
+1 #NO-VA-HIST     (L)
+*
+END-DEFINE
+*
+* FORMAT  LS=133 PS=76
+* WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+*      'Redo a 1035"s History using existing prms paid'
+*
+MOVE *DATN TO #WYYYYMMDD-N
+COMPRESS #WMM-A #WDD-A #WYYYY-A INTO #PARM-DATE WITH '/'
+*
+FIND (1) ST-V WITH MEMBER-KEY = '067128'
+  IF NO RECORD FOUND
+    WRITE 'rec not found'
+    STOP
+  END-NOREC
+*
+  GET #PROJECTION-VIEW *ISN
+  MOVE 3 TO #IDX
+*
+* * * * * BUILD PMT TABLE FROM V/A HISTORY
+*
+  RESET #L-CALC-MO-IND (*)
+  RESET #L-CALC-AMT2   (*)
+  MOVE ID-NUMBER TO #VA-ID-NUMBER
+  MOVE ISSUE-DATE (#IDX) TO #VA-ISS-DATE
+  RESET                    #VA-SPL-IND
+  RESET #NO-VA-HIST
+  FIND (1) VA-V WITH RECORD-KEY = #RECORD-KEY
+    IF NO RECORD FOUND
+      WRITE ID-NUMBER ISSUE-DATE (#IDX) 'No V/A history found'
+      MOVE TRUE TO #NO-VA-HIST
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    MOVE *ISN TO #VA-ISN
+    RESET #I2
+    FOR #I1 1 TO 13
+      IF YEAR-MONTH-M (#I1) NE 0
+        IF #I1 GT 1
+          MOVE VA-V.ACCUM-CASH-VALUE-M (#I1 - 1) TO #PREV-ACV
+        ELSE
+          RESET #PREV-ACV
+        END-IF
+*
+        COMPUTE #NEW-ACV = #PREV-ACV + VA-V.PREMIUM-M           (#I1)
+                                     + VA-V.INTEREST-M          (#I1)
+                                     - VA-V.COST-OF-INSURANCE-M (#I1)
+*
+        IF   (#IDX LE 9)
+         AND (ISSUE-DATE (#IDX) GE 19970101) /* 1997 pol
+         AND (MONTH-ALLOC-AMT (#IDX) NE 999) /* not FORCED 1996 PREMS
+          SUBTRACT VA-V.PRORAT-LOAN-BAL-M   (#I1) FROM #NEW-ACV
+          SUBTRACT VA-V.PRORAT-LN-ACC-INT-M (#I1) FROM #NEW-ACV
+        END-IF
+*
+        IF #NEW-ACV GT VA-V.ACCUM-CASH-VALUE-M (#I1)
+          COMPUTE #ACV-DIFF = #NEW-ACV - VA-V.ACCUM-CASH-VALUE-M (#I1)
+        ELSE
+          COMPUTE #ACV-DIFF = VA-V.ACCUM-CASH-VALUE-M (#I1) - #NEW-ACV
+        END-IF
+*
+        MOVE VA-V.PREMIUM-M (#I1) TO #REAL-PREM
+        IF #ACV-DIFF NE 0
+          PERFORM CALC-REAL-PREM
+        END-IF
+*
+        ADD 1 TO #I2
+        MOVE YEAR-MONTH-M (#I1) TO #YYYYMM
+        MOVE #MM-N      TO #L-CALC-MO-IND (#I2)
+        MOVE #REAL-PREM TO #L-CALC-AMT2 (#I2)
+      END-IF
+    END-FOR
+  END-FIND
+*
+  MOVE #PROJECTION-VIEW.BEG-CASH-VALUE  (#IDX) TO #HOLD-CF
+  MOVE #PROJECTION-VIEW.ACC-CASH-VALUE  (#IDX) TO #HOLD-ACV
+  MOVE #PROJECTION-VIEW.CASH-VALUE      (#IDX) TO #HOLD-CSV
+  MOVE #PROJECTION-VIEW.MONTH-ALLOC-AMT (#IDX) TO #HOLD-ACQ
+*
+  MOVE 1 TO #PROJECTION-VIEW.ONLINE-ACTION   (#IDX)
+  RESET     #PROJECTION-VIEW.BEG-CASH-VALUE  (#IDX)
+  RESET     #PROJECTION-VIEW.ACC-CASH-VALUE  (#IDX)
+  RESET     #PROJECTION-VIEW.CASH-VALUE      (#IDX)
+  RESET     #PROJECTION-VIEW.MONTH-ALLOC-AMT (#IDX)
+  MOVE 35717.00 TO #PROJECTION-VIEW.FACE-AMOUNT (#IDX)
+*
+  MOVE ST-V.C*ACTIVE-SEGMENTS TO #L-ACTIVE-SEG
+  MOVE #IDX       TO #L-SEGNO
+  MOVE ST-V.PAID-TO-DATE (#IDX) TO #L-PAID-THRU
+*
+  FOR #I1 1 TO 9
+    IF STATUS (#I1) = 'D'
+      MOVE ISSUE-DATE (#I1) TO #L-ISS-DT (#I1)
+    END-IF
+  END-FOR
+*
+  MOVE 08250              TO #L-GROWTH-RATE
+  RESET                      #L-MONTHLY-SW
+  MOVE 1986               TO #L-MNTHLY-START-YR
+  MOVE 'REDO'             TO #L-REIN-CODE
+  MOVE 01                 TO #L-NUM-PROJ-YRS
+  MOVE 'N'                TO #L-DISPLAY-CALCS
+  MOVE 'N'                TO #L-SHOW-LOAN-REPAID
+*
+  IF *DEVICE = 'BATCH'
+*       WRITE 'GOING TO AOCX2V5B'
+** SAG RH1 10282005 AB START
+**    CALL 'AOCX2V5B' #PROJECTION-VIEW.ID-NUMBER
+**                    #L-ACTIVE-SEG
+**                    #L-NUM-DTLS
+      CALLNAT 'AOCX2V5B'  #PROJECTION-VIEW  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+ ELSE
+*       WRITE 'GOING TO AOCX2V5A'
+** SAG RH1 0282005 AB START
+**    CALL 'AOCX2V5A' #PROJECTION-VIEW.ID-NUMBER
+**                    #L-ACTIVE-SEG
+**                    #L-NUM-DTLS
+      CALLNAT 'AOCX2V5A'  #PROJECTION-VIEW  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+      END-IF
+*
+  GET VA-V #VA-ISN
+  FOR #I1 1 TO 12
+    COMPUTE #I2 = 10 + (#I1 * 5) - 4
+*
+    IF #L-CALC-MO-IND (#I2 + 0) = 0    /* no info
+      ESCAPE TOP
+    END-IF
+*
+    FOR #I3 1 TO 13
+      IF YEAR-MONTH-M (#I3) = 0
+        ESCAPE TOP
+      END-IF
+*
+      MOVE YEAR-MONTH-M (#I3) TO #YYYYMM
+      IF #MM-N = #L-CALC-MO-IND (#I2 + 0)
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    DISPLAY
+      'DATE' YEAR-MONTH-M       (#I3)
+      'New/PREM' #L-CALC-AMT2   (#I2 + 0) (EM=ZZ,ZZZ.99)
+      'New/COI'  #L-CALC-AMT2   (#I2 + 1) (EM=ZZZ.99)
+      'New/INT'  #L-CALC-AMT2 (#I2 + 2)   (EM=ZZZ.99)
+      'New/ACQ'  #L-CALC-AMT2 (#I2 + 3)   (EM=ZZZ.99)
+      'New/EXP'  #L-CALC-AMT2 (#I2 + 4)   (EM=ZZZ.99)
+      'New/ACV'   #L-CALC-AMT   (#I2 + 0) (EM=ZZ,ZZZ.99-)
+      'New/CSV'   #L-CALC-AMT   (#I2 + 1) (EM=ZZ,ZZZ.99-)
+*   MOVE #L-CALC-AMT2 (#I2 + 0) TO PREMIUM-M           (#I3) /* no chg
+    MOVE #L-CALC-AMT2 (#I2 + 1) TO COST-OF-INSURANCE-M (#I3)
+    MOVE #L-CALC-AMT2 (#I2 + 2) TO INTEREST-M          (#I3)
+    MOVE #L-CALC-AMT2 (#I2 + 3) TO PRORAT-LOAN-BAL-M   (#I3)
+    MOVE #L-CALC-AMT2 (#I2 + 4) TO PRORAT-LN-ACC-INT-M (#I3)
+    MOVE #L-CALC-AMT  (#I2 + 0) TO ACCUM-CASH-VALUE-M  (#I3)
+    MOVE #L-CALC-AMT  (#I2 + 1) TO CASH-VALUE-M        (#I3)
+  END-FOR
+*
+  UPDATE (0242)         /* <<<<<<<<<<<<<<<********
+*
+  WRITE
+     'ACQ'      #L-CALC-AMT2 (3)
+     'MNT'      #L-CALC-AMT2 (4)
+     'C-F'      #L-CALC-AMT2 (5)
+     'ACV'      #L-CALC-AMT2 (6)
+     'CSV'      #CSV
+     'DB '      #L-CALC-AMT2 (7)
+  COMPUTE #CSV = #L-CALC-AMT2 (6) - #L-CALC-AMT (5)
+  MOVE ROUNDED #L-CALC-AMT2 (3) TO ST-V.MONTH-ALLOC-AMT(#IDX)
+  MOVE ROUNDED #L-CALC-AMT2 (4) TO ST-V.PREM-DEFICIENCY(#IDX)
+  MOVE ROUNDED #L-CALC-AMT2 (5) TO ST-V.BEG-CASH-VALUE (#IDX)
+  MOVE ROUNDED #L-CALC-AMT2 (6) TO ST-V.ACC-CASH-VALUE (#IDX)
+  MOVE #CSV                     TO ST-V.CASH-VALUE    (#IDX)
+  MOVE #CSV                     TO ST-V.NXT-MON-CASH-VALUE(#IDX)
+  MOVE ROUNDED #L-CALC-AMT2 (7) TO ST-V.DEATH-BENEFIT  (#IDX)
+  MOVE ROUNDED #L-CALC-AMT2 (7)
+                                TO ST-V.NXT-MON-DEATH-BENEFIT(#IDX)
+*
+  MOVE  35717.00                TO ST-V.FACE-AMOUNT (#IDX)
+  MOVE  15797.00                TO ST-V.TOT-PREMIUMS-PAID (#IDX)
+*
+  IF MTD-ACV-PREM-ADJ (#IDX) NE 0
+    WRITE 'Acv-Prem-Adj = ' MTD-ACV-PREM-ADJ (#IDX)
+  END-IF
+*
+  GET #PROJECTION-VIEW *ISN    /* compute NPR & min csv
+*
+  MOVE 1 TO #PROJECTION-VIEW.ONLINE-ACTION   (#IDX)
+  RESET     #PROJECTION-VIEW.BEG-CASH-VALUE  (#IDX)
+  RESET     #PROJECTION-VIEW.ACC-CASH-VALUE  (#IDX)
+  RESET     #PROJECTION-VIEW.CASH-VALUE      (#IDX)
+  RESET     #PROJECTION-VIEW.MONTH-ALLOC-AMT (#IDX)
+  MOVE ST-V.FACE-AMOUNT (#IDX) TO #PROJECTION-VIEW.FACE-AMOUNT (#IDX)
+*
+  IF #PROJECTION-VIEW.PAY-STATUS (#IDX) = '47'
+    MOVE ST-V.TOT-PREMIUMS-PAID (#IDX)
+       TO #PROJECTION-VIEW.ACC-CASH-VALUE (#IDX)
+          #PROJECTION-VIEW.CASH-VALUE (#IDX)
+  END-IF
+*
+  MOVE 08250              TO #L-GROWTH-RATE
+  RESET                      #L-MONTHLY-SW
+  MOVE 1986               TO #L-MNTHLY-START-YR
+  MOVE 'MCSV'             TO #L-REIN-CODE
+  MOVE 01                 TO #L-NUM-PROJ-YRS
+  MOVE 'N'                TO #L-DISPLAY-CALCS
+  MOVE 'N'                TO #L-SHOW-LOAN-REPAID
+*
+  IF *DEVICE = 'BATCH'
+*       WRITE 'GOING TO AOCX2V5B'
+** SAG RH1 10282005 AB START
+**    CALL 'AOCX2V5B' #PROJECTION-VIEW.ID-NUMBER
+**                    #L-ACTIVE-SEG
+**                    #L-NUM-DTLS
+      CALLNAT 'AOCX2V5B'  #PROJECTION-VIEW  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+  ELSE
+*       WRITE 'GOING TO AOCX2V5A'
+** SAG RH1 10282005 AB START
+**    CALL 'AOCX2V5A' #PROJECTION-VIEW.ID-NUMBER
+**                    #L-ACTIVE-SEG
+**                    #L-NUM-DTLS
+      CALLNAT 'AOCX2V5A'  #PROJECTION-VIEW  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+  END-IF
+*
+  MOVE ROUNDED #L-CALC-AMT  (1) TO ST-V.NET-PR-RATIO   (#IDX)
+  MOVE ROUNDED #L-CALC-AMT2 (1) TO ST-V.MIN-CASH-VALUE (#IDX)
+  MOVE ROUNDED #L-CALC-AMT2 (2) TO ST-V.NXT-YR-MIN-CASH-VALUE(#IDX)
+*
+  WRITE
+     'NPR'       #L-CALC-AMT (1)
+     'MCSV'      #L-CALC-AMT2 (1)
+     'NX-MCSV ' #L-CALC-AMT2 (2)
+*
+  UPDATE (0130)
+*
+  END TRANSACTION
+END-FIND
+*
+**********************************
+DEFINE SUBROUTINE CALC-REAL-PREM
+**********************************
+*
+FOR #I3 1 TO 800
+  IF   (#ACV-DIFF GT ((#I3 * 1000) - 10))
+   AND (#ACV-DIFF LT ((#I3 * 1000) + 10))
+    IF #NEW-ACV LT VA-V.ACCUM-CASH-VALUE-M (#I1)
+      ADD (#I3 * 1000) TO #REAL-PREM
+    ELSE
+      SUBTRACT (#I3 * 1000) FROM #REAL-PREM
+    END-IF
+*
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,152 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ADRNTRUP
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* NGG    11/17/2010  None    Program written                           *
+************************************************************************
+DEFINE DATA
+PARAMETER
+1 #STATUS-ISN         (P8)
+1 #UPDATE-REQUEST     (I4)
+1 #ADDRESS-POOL-ID    (N8)
+LOCAL USING ADDA0001
+LOCAL USING GPRA0004                /* Parameters passed to write transaction log
+LOCAL
+1 #PRIMARY-DELETE   (I4) CONST <1>
+1 #PRIMARY-UPDATE   (I4) CONST <2>
+1 #SECONDARY-DELETE (I4) CONST <3>
+1 #SECONDARY-UPDATE (I4) CONST <4>
+1 #CHANGE-CODE      (A1)
+*
+1 STATUS VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 NAME
+*   2 ADDRESS-1       (A25)
+*   2 ADDRESS-2       (A25)
+*   2 ADDRESS-3       (A25)
+*   2 ZIP-CODE        (N9)
+*   2 ADDRESS-CHG-CODE (A1)
+*   2 S-ADDRESS-1     (A25)
+*   2 S-ADDRESS-2     (A25)
+*   2 S-ADDRESS-3     (A25)
+*   2 S-ZIP-CODE      (N9.0)
+*   2 DATE-LAST-ADDR-UPDT   (N8)
+*
+1 A-ADD-REL VIEW OF A-ADDRESS-RELATIONSHIP
+  2 RETURNED-MAIL-IND (A1)
+  2 PREVENT-OVER-IND  (A1)
+  2 ADDRESS-SOURCE    (A1)
+  2 ADDR-LOCATION     (A1)
+*
+END-DEFINE
+
+IF #STATUS-ISN = 0
+  ESCAPE ROUTINE
+END-IF
+PRINT 'Obsolete code for Transaction Register.'
+  / 'Please contact production support'
+ESCAPE ROUTINE
+*
+GET STATUS #STATUS-ISN
+RESET #PDA-ADDRESS
+#ADD-POOL-ID := #ADDRESS-POOL-ID
+#ADD-CONTACT-ID := MEMBER-CONTACT-ID
+#ADD-OLD-FORMAT := 'Y'
+IF #UPDATE-REQUEST = #PRIMARY-DELETE OR= #PRIMARY-UPDATE
+  #ADD-TYPE := 'P'
+ELSE
+  #ADD-TYPE := 'S'
+END-IF
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+
+IF *USER = 'guentch'
+  PRINT
+    / 'Status ISN.......:' #STATUS-ISN
+    / 'Address Pool.....:' #ADD-POOL-ID
+    / 'ADDN0001 data....:' #PDA-ADDRESS
+END-IF
+
+IF #UPDATE-REQUEST = #PRIMARY-DELETE OR= #PRIMARY-UPDATE
+  #FIELD-DESCRIPTION(1) := 'ADDRESS 1'
+  #FIELD-DESCRIPTION(2) := 'ADDRESS 2'
+  #FIELD-DESCRIPTION(3) := 'ADDRESS 3'
+  #FIELD-DESCRIPTION(4) := 'ZIP CODE'
+  #FIELD-DESCRIPTION(5) := 'AD-CHG-CD'
+  #SYNC-FIELD-TABLE(1)  := 2
+  #SYNC-FIELD-TABLE(2)  := 3
+  #SYNC-FIELD-TABLE(3)  := 4
+  #SYNC-FIELD-TABLE(4)  := 5
+  #SYNC-FIELD-TABLE(5)  := 29
+
+*   #OLD-DATA(1)          := STATUS.ADDRESS-1
+*   #OLD-DATA(2)          := STATUS.ADDRESS-2
+*   #OLD-DATA(3)          := STATUS.ADDRESS-3
+*   #OLD-DATA(4)          := STATUS.ZIP-CODE
+*   #OLD-DATA(5)          := STATUS.ADDRESS-CHG-CODE
+  IF #UPDATE-REQUEST = #PRIMARY-UPDATE
+    #NEW-DATA(1)          := #ADD-LINE-1
+    #NEW-DATA(2)          := #ADD-LINE-2
+    #NEW-DATA(3)          := #ADD-LINE-3
+    #NEW-DATA(4)          := #ADD-ZIP-CODE
+    FIND (1) A-ADD-REL WITH CONTACT-ID = MEMBER-CONTACT-ID
+        AND ADDRESS-POOL-ID = #ADDRESS-POOL-ID
+    END-FIND
+    DECIDE FOR FIRST CONDITION
+      WHEN PREVENT-OVER-IND = 'Y'
+        #CHANGE-CODE := 'N'
+      WHEN PREVENT-OVER-IND = 'S'
+        #CHANGE-CODE := 'X'
+      WHEN RETURNED-MAIL-IND = 'Y'
+        #CHANGE-CODE := 'U'
+      WHEN #ADD-VALID-IND = 'F'
+        #CHANGE-CODE := 'W'
+      WHEN NONE
+        #CHANGE-CODE := A-ADD-REL.ADDRESS-SOURCE
+    END-DECIDE
+    #NEW-DATA(5)          := #CHANGE-CODE
+  ELSE
+    RESET #NEW-DATA (*)
+  END-IF
+END-IF
+IF #UPDATE-REQUEST = #SECONDARY-DELETE OR= #SECONDARY-UPDATE
+  #FIELD-DESCRIPTION(1) := 'S-ADDRS 1'
+  #FIELD-DESCRIPTION(2) := 'S-ADDRS 2'
+  #FIELD-DESCRIPTION(3) := 'S-ADDRS 3'
+  #FIELD-DESCRIPTION(4) := 'ZIP COD 2'
+  #SYNC-FIELD-TABLE(1)  := 6
+  #SYNC-FIELD-TABLE(2)  := 7
+  #SYNC-FIELD-TABLE(3)  := 8
+  #SYNC-FIELD-TABLE(4)  := 9
+
+*   #OLD-DATA(1)          := STATUS.S-ADDRESS-1
+*   #OLD-DATA(2)          := STATUS.S-ADDRESS-2
+*   #OLD-DATA(3)          := STATUS.S-ADDRESS-3
+*   #OLD-DATA(4)          := STATUS.S-ZIP-CODE
+  IF #UPDATE-REQUEST = #SECONDARY-UPDATE
+    #NEW-DATA(1)          := #ADD-LINE-1
+    #NEW-DATA(2)          := #ADD-LINE-2
+    #NEW-DATA(3)          := #ADD-LINE-3
+    #NEW-DATA(4)          := #ADD-ZIP-CODE
+  ELSE
+    RESET #NEW-DATA (*)
+  END-IF
+END-IF
+*
+#LOG-DESCRIPTION       := 'CG-ADD-AD'
+#TR-DATE-LAST-UPDATE   := *DATN
+
+#TR-NAME               := STATUS.NAME
+#TR-ID-NUMBER          := STATUS.ID-NUMBER
+
+CALLNAT 'GPRN0004'
+  #TR-FIELDS #SYNC-FIELD-TABLE(*)
+  #OLD-DATA-TABLE(*) #NEW-DATA-TABLE(*)
+
+END

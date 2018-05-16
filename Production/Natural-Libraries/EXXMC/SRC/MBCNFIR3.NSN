@@ -1,0 +1,226 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Policy Information
+* XML Request (Serializer)
+* Returns Policy Information for all policies
+* the member with CN and family members insured.
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    11042010       Initial Creation
+* YAK    02062013  YK1  Add maximum premium for LTII+
+* YAK    10042013  YK2  Add DueDate field for MobileApp
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC         /* In
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING MBCA0007
+LOCAL USING MBCA0008
+LOCAL USING OBJACTRL
+LOCAL USING OBJLCONT
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML          (A) DYNAMIC
+1 #I           (I2)
+1 #II          (I2)
+1 #ErrorCode   (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value       (A) DYNAMIC
+1 #MEMBER-NAME (A) DYNAMIC
+1 #FirRequest  (L)
+1 #EXT-LIFE-POLICIES (A) DYNAMIC CONST<'ExternalLifeInsurance'>
+1 #TRUE              (A) DYNAMIC CONST<'true'>
+1 #TotalCurrentDeathBenefit (A) DYNAMIC
+1 #CurrentDeathBenefit (A) DYNAMIC
+1 #ExternalPolicyDeathBenefit (N7.2)
+1 #ContactId    (N8)
+1 #FamilyMembers     (*)
+  2 ContactId        (N8)
+  2 Relation         (A1)
+1 #MEMBER            (A) DYNAMIC INIT <'MEMBER'>
+1 #CHILD             (A) DYNAMIC INIT <'CHILD'>
+1 #SPOUSE            (A) DYNAMIC INIT <'SPOUSE'>
+1 #SP-GEN            (A) DYNAMIC INIT <'SP-GEN'>
+1 #GET-FAMILY        (A) DYNAMIC CONST <'GET-FAMILY'>
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic
+*
+#FirRequest := true
+CALLNAT 'MBCNN071' Policies #ErrorCode #FirRequest
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  C@PolicyInfo := 0
+END-IF
+*
+* Get External Insurance policies
+MemberBenefits.BenefitType := #EXT-LIFE-POLICIES
+MemberBenefits.CN := Policies.CN
+CALLNAT 'MBCN0081' MemberBenefits #ErrorCode
+
+PERFORM GET-FAMILY
+
+FOR #I = 1 TO C@ExternalLifeInsurance
+  IF MemberBenefits.PolicyCode(#I) = #TRUE
+    TotalCurrentDeathBenefit := TotalCurrentDeathBenefit + MemberBenefits.DeathBenefits(#I)
+  END-IF
+  PERFORM POPULATE-INSURED-NAME
+END-FOR
+MOVE EDITED TotalCurrentDeathBenefit (EM=Z,ZZZ,ZZ9.99) TO #TotalCurrentDeathBenefit
+#TotalCurrentDeathBenefit := *TRIM(#TotalCurrentDeathBenefit)
+COMPRESS '$' #TotalCurrentDeathBenefit INTO #TotalCurrentDeathBenefit LEAVING NO
+*
+PERFORM COMPOSE-XML
+RESPONSE-DATA := XML
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-INSURED-NAME
+***************************************
+*
+DECIDE ON FIRST VALUE MemberBenefits.InsuredName(#I)
+  VALUE #MEMBER
+    IF #MEMBER-NAME = ' '
+      #ContactId := Policies.MemberContactId
+      PERFORM POPULATE-NAME
+      #MEMBER-NAME := #value
+    ELSE
+      MemberBenefits.InsuredName(#I) := #MEMBER-NAME
+    END-IF
+  VALUE #SPOUSE
+    EXAMINE #FamilyMembers.Relation(*) FOR 'S' INDEX #II
+    IF #II <> 0
+      #ContactId := #FamilyMembers.ContactId(#II)
+    END-IF
+    PERFORM POPULATE-NAME
+  VALUE #CHILD, #SP-GEN    
+    IF MemberBenefits.Remarks(#I) <> ' '
+      FOR #II = 1 TO *OCCURRENCE(#FamilyMembers.ContactId(*))
+        FIND(1) CT-V WITH CONTACT-ID = #FamilyMembers.ContactId(#II)
+          IF MemberBenefits.Remarks(#I) = SCAN(CT-V.FIRST-NAME) 
+            #ContactId := CT-V.CONTACT-ID
+            PERFORM POPULATE-NAME
+            ESCAPE ROUTINE
+          END-IF
+        END-FIND
+      END-FOR
+    END-IF
+    IF MemberBenefits.InsuredName(#I) = ' ' OR = #CHILD OR = #SP-GEN
+      MemberBenefits.InsuredName(#I) := MemberBenefits.Remarks(#I)
+      MemberBenefits.InsuredName(#I) := EDIT_NAME_LOWCASE (<MemberBenefits.InsuredName(#I)>)
+    END-IF  
+  NONE VALUE
+    MemberBenefits.InsuredName(#I) := MemberBenefits.Remarks(#I)
+END-DECIDE
+*
+****************************
+DEFINE SUBROUTINE GET-FAMILY
+****************************
+*
+RESET PARM-CONTACT-REL
+PARM-CONTACT-REL.#ACTION := #GET-FAMILY
+PARM-CONTACT-REL.CONTACT-1-ID := Policies.MemberContactId
+EXPAND ARRAY #FamilyMembers TO (*:1)
+CALLNAT 'OBJNCTRL' PARM-CONTACT-REL #FamilyMembers(*)
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE POPULATE-NAME
+*******************************
+RESET #value
+CALLNAT 'GPRS0CNT' #ContactId #value
+* #value := EDIT_NAME_LOWCASE (< #value >) /* bz-Name
+MemberBenefits.InsuredName(#I) := #value
+END-SUBROUTINE
+END-SUBROUTINE
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'FirPolicies'
+    Ignore
+  VALUE 'FirPolicies/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      Policies.CN := VAL(#value)
+    END-IF
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+COMPRESS
+  '<FirPolicies>' '<CN>' Policies.CN '</CN>'
+  '<TotalCurrentDeathBenefit>' #TotalCurrentDeathBenefit '</TotalCurrentDeathBenefit>'
+  INTO XML LEAVING NO
+FOR #I = 1 TO Policies.C@PolicyInfo
+  COMPRESS XML
+    '<Policy>'
+    '<Company>AAFMAA</Company>'
+    '<PolicyPlan>' Policies.PolicyPlan(#I) '</PolicyPlan>'
+    '<PolicyNumber>' Policies.PolicyNumber(#I) '</PolicyNumber>'
+    '<Insured>' Policies.Insured(#I) '</Insured>'
+    '<IssueDate>' Policies.IssueDate(#I) '</IssueDate>'
+    '<CurrentDeathBenefit>' Policies.CurrentDeathBenefit(#I) '</CurrentDeathBenefit>'
+    '</Policy>' INTO XML LEAVING NO
+END-FOR
+FOR #I = 1 TO C@ExternalLifeInsurance
+  #ExternalPolicyDeathBenefit := MemberBenefits.DeathBenefits(#I)
+  MOVE EDITED #ExternalPolicyDeathBenefit (EM=Z,ZZZ,ZZ9.99) TO #CurrentDeathBenefit
+  #CurrentDeathBenefit := *TRIM(#CurrentDeathBenefit)
+  COMPRESS '$' #CurrentDeathBenefit INTO #CurrentDeathBenefit LEAVING NO
+  COMPRESS XML '<Policy>'
+    '<Company><![CDATA[' MemberBenefits.Company(#I) ']]></Company>'
+    '<PolicyPlan><![CDATA[' MemberBenefits.Type(#I) ']]></PolicyPlan>'
+    '<PolicyNumber><![CDATA[' MemberBenefits.PolicyNumber(#I) ']]></PolicyNumber>'
+    '<Insured><![CDATA[' MemberBenefits.InsuredName(#I) ']]></Insured>'
+    '<IssueDate>' MemberBenefits.IssueDate(#I) '</IssueDate>'
+    '<CurrentDeathBenefit>' #CurrentDeathBenefit '</CurrentDeathBenefit>'
+    '</Policy>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</FirPolicies>'
+  INTO XML LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+END

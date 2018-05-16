@@ -1,0 +1,733 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center/MC-II 'GetPayments' function - called via EntireX
+* MBCNEP10 - Accepts Request Data from Member Center/Payment Center
+*            includes payments calculation module,
+*            autopayment settings
+*            saved payment methods
+* Called from - NATSERV0 (EntireX NATURAL server)
+* Main logic from MBCNCC10 (MC-I)
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11152010       Initial Creation
+* YAK    11152010  YK1  Add field to indicate that payment
+*                       cannot exceed due amount displayed
+*                       (currently used for loan payments)
+* YAK    01042012  YK2  Changes to include Premier Services
+* YAK    09132012  YK3  Remove F-SERV-EXIST function, change logic
+*                       to determine if there is a payable service
+* YAK    10032012  YK4  Use function to identify Level II Term plans
+* YAK    10022013  YK5  Set rules for ADCR, RDCR on Member Center
+* YAK    11292013  YK6  Add rules for calculating PAST DUE
+* YAK    03052014  YK7  Add Survivor Assistance Service plan
+*                  NG1  Add valid statuses
+* YAK    08152014  YK8  Add eCheck / eCheck scheduling
+* YAK    12252014  YK9  Add payment history/Autopayments settings/
+*                       Saved payment methods
+* YAK    06102015  YK10 Correct Payment ID assignment - has to be unique
+*                       for all payments.
+* YAK    02132017  YK11 Correct compiling Payments array - skip policy
+*                       if already processed (temp. fix)
+* YAK    03292017  YK12 EB&P III (Payor project)
+* YAK    09132017  YK13 EB&P III (Bill Cycle)
+* YAK    10202017  YK14 EB&P III - Correct Next Bill date for CAP loan
+* YAK    02202018  YK15 Show correct Next Bill Date for credit card
+*                       if account has overdue amount
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+LOCAL USING MBCLEP01          /* YK9     Member E-Payments
+LOCAL USING MBCAEP10          /* YK9     Payment settings
+LOCAL USING MBCAEP06          /* YK9     Payment history
+LOCAL USING WCCA0011
+LOCAL USING PARSER-X
+LOCAL USING GPRA006N
+LOCAL USING OBJLMB01           /* YK3
+LOCAL USING MBCAPR02           /* YK8
+LOCAL USING ERROR_L
+LOCAL
+1 ERROR-MESSAGE     (A100)
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML               (A) DYNAMIC
+1 #I                (I2)
+1 #II               (I2)
+1 #J                (I2)
+1 #JJ               (I2)
+1 #I1               (I2)
+1 #I2               (I2)
+1 #I3               (I2)
+1 #P_I              (I2)
+1 #ErrorCode        (A3)
+1 #value            (A) DYNAMIC
+1 #ActionType       (A) DYNAMIC     /* YK8
+*
+1 Members                           /* YK8
+  2 CN_Owner         (N6)
+  2 User             (A) DYNAMIC
+  2 ErrorCode        (A) DYNAMIC
+  2 ErrorDescription (A) DYNAMIC
+
+1 #TARGET-POLICY    (L)
+1 C@Own_Polices     (N2)
+1 #PREV-ID-NUMBER   (N6)
+*
+1 #SUCCESS-CODE    (A4) CONST <'0'>
+1 #AMOUNT          (A) DYNAMIC
+1 #DATE            (A20)
+1 #PAYMENT-ID      (N4)
+1 #TRUE            (A4) INIT <'true'>
+1 #FALSE           (A5) INIT <'false'>
+1 #FLEX-PLAN       (A2)
+1 #FLEX-KEY        (A3)
+1 ERROR-LOG        (A100)
+1 #FULL-NAME       (A) DYNAMIC
+1 #ACTIVE          (A1) CONST <'A'>
+1 #SERVICE-PLAN    (A) DYNAMIC CONST <'Service Plan'>    /* YK2
+1 #SERV-PAYABLE    (A3/2) CONST <'PSM','SAS'>            /* YK3  YK7
+1 #MC-EXCEPTION-TRAN (A4/3) CONST <'ADCR','RDCR'>        /* YK5
+1 #PAST-DUE-DATE   (N8)                                  /* YK6
+1 REDEFINE #PAST-DUE-DATE                                /* YK6
+  2 #PAST-DUE-YYYYMM     (N6)                            /* YK6
+  2 #PAST-DUE-DD         (N2)                            /* YK6
+* YK8 >
+1 #GET             (A) DYNAMIC CONST <'GET'>
+1 #GET-ST          (A) DYNAMIC CONST <'GET-ST'>
+1 #eCheck          (A) DYNAMIC CONST <'eCheck'>
+1 #EZ-PAY          (A) DYNAMIC CONST <'EZ-Pay'>
+1 #CC              (A) DYNAMIC CONST <'Credit Card'>
+1 #Scheduled       (A) DYNAMIC CONST <'S'>
+1 #AUTO-PAY        (A1/6) CONST <'0','1','2','4','E','G'>      /* YK9
+1 #CC-MODE         (A1/4) CONST <'0','1','2','4'>              /* YK9
+1 #EZPAY-MODE      (A1)   CONST <'E'>                          /* YK9
+1 #ALOT-MODE       (A1)   CONST <'G'>                          /* YK9
+1 #LOAN-TRAN       (A4/4) CONST <'PRNF','PRNV','INTF','INTV'>  /* YK9
+1 #CAP-TRAN        (A4/2) CONST <'PRNC','INTF'>                /* YK9
+1 #SERV-TRAN       (A6/6) CONST <'DUEPPS','DUEPSS','DUEP1S','DUERPS','DUEP1T','DUEPRF'>
+1 #CAPLoan         (A) DYNAMIC CONST <'CAP Loan'>              /* YK9
+1 #LinkedLoan      (A) DYNAMIC CONST <'Linked Loan'>           /* YK9
+1 #Mobile          (A) DYNAMIC CONST <'AAFMAA\mobile'>
+1 #Mobapp          (A) DYNAMIC CONST <'AAFMAA\mobapp'>
+1 #PolicyFullName  (A) DYNAMIC                                 /* YK9
+1 #Short           (A) DYNAMIC CONST <'Short'>                 /* YK9
+1 #DropDownRequired(A/2) DYNAMIC CONST <'PREP','DUEPPS'>
+1 #PREP            (A) DYNAMIC CONST <'PREP'>
+1 #PaidWithPemium  (A/2) DYNAMIC CONST <'DUEP','RIDP'>
+1 #NoPayStatus     (A/3) DYNAMIC CONST <'BADJ','ADCR','RDCR'>
+1 #PAY-DATE        (A) DYNAMIC
+1 #DATN            (N8)
+* > YK8
+1 #Service         (A) DYNAMIC CONST <'Service'>
+1 #Policy          (A) DYNAMIC CONST <'Policy'>
+1 #Loan            (A) DYNAMIC CONST <'Loan'>
+1 #AutoPayPolicy   (A) DYNAMIC
+1 #AutoPayMethod   (A) DYNAMIC
+1 #AUTO-PAY-TOTAL  (N7.2)
+1 #Owner           (N2) CONST <2>                         /* YK12
+1 #OwnerPayer      (N2) CONST <0>                         /* YK12
+1 #BILL-CYCLE-DATES(N8/3)                                 /* YK13
+1 #PROCESS (A) DYNAMIC                                    /* YK13
+1 #BILL-CYCLE      (N1)                                   /* YK13
+1 #NEXT-MONTH      (N8)                                   /* YK14
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* calculate when payment considered past-due    YK6
+#PAST-DUE-DATE := #DATN := *DATN
+#PAST-DUE-DD   := 1
+* Business Logic
+RESET RESPONSE-DATA XML
+PERFORM GET-POLICIES
+*
+FOR #J = 1 TO C@Own_Polices
+* Save CN/Policy for getting payment history
+  IF PARM-POLICIES.ID-NUMBER(#J) <> #PREV-ID-NUMBER
+    #I1 := #I1 + 1
+    EXPAND ARRAY PaymentHistory.PaymentCN TO (*:#I1)
+    PaymentHistory.PaymentCN(#I1) := PARM-POLICIES.ID-NUMBER(#J)
+  END-IF
+  #I3 := #I3 + 1
+  EXPAND ARRAY PaymentHistory.PolicyNumber TO (*:#I3)
+  PaymentHistory.PolicyNumber(#I3) := PARM-POLICIES.POLICY-NUMBER(#J)
+* Save CN to get payment settings
+  IF POLICY-MODE(#J) = #CC-MODE(*) OR POLICY-MODE(#J) = #EZPAY-MODE
+    #I2 := #I2 + 1
+    EXPAND ARRAY PaymentSettings.SavedMethods TO (*:#I2)
+    PaymentSettings.MethodCN(#I2) := PARM-POLICIES.ID-NUMBER(#J)
+    DECIDE FOR FIRST CONDITION
+      WHEN POLICY-MODE(#J) = #EZPAY-MODE
+        PaymentSettings.MethodType(#I2):= #EZ-Pay
+      WHEN POLICY-MODE(#J) = #CC-MODE(*)
+        PaymentSettings.MethodType(#I2):= #CC
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-IF
+  IF PARM-POLICIES.ID-NUMBER(#J) = #PREV-ID-NUMBER
+    ESCAPE TOP
+  END-IF
+  #PREV-ID-NUMBER := PARM-POLICIES.ID-NUMBER(#J)
+*
+  RESET Member
+  PERFORM GET-PAYMENTS
+  PERFORM POPULATE-PAYMENT-DATA
+  IF Member.C@Policy = 0
+    ESCAPE TOP
+  END-IF
+* Check Service Only - Disallow "Pay By Check" for Service Only
+  IF AFFL-ONLY-CLIENT(<PARM-POLICIES.ID-NUMBER(#J)>)
+    Member.ServiceOnly := #TRUE
+  ELSE
+    Member.ServiceOnly := #FALSE
+  END-IF
+  PERFORM GET-EXISTING-REQUEST
+  PERFORM COMPOSE-XML
+END-FOR
+*
+PERFORM GET-PAYMENT-HISTORY
+PERFORM GET-PAYMENT-SETTINGS
+PERFORM COMPOSE-RESPONSE-DATA
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'Members'
+    Ignore
+  VALUE 'Members/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      Members.CN_Owner := VAL(#value)
+    END-IF
+  VALUE 'Members/User/$'
+    Members.User := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET XML
+ErrorCode        := XML_PARSER_RESPONSE
+ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+ESCAPE MODULE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE GET-POLICIES
+******************************
+* Call subprogram that returns all policy numbers this member owns
+PARM-CN := Members.CN_Owner
+CALLNAT 'GPRN006N' PARM-CN PARM-MEMBER-CN PARM-POLICIES(*) #OwnerPayer    /* YK12
+C@Own_Polices := *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+*
+IF C@Own_Polices = 0 AND PARM-CN = PARM-MEMBER-CN      /* YK2
+  PERFORM CHECK-SERVICES                               /* YK2
+END-IF                                                 /* YK2
+*
+IF C@Own_Polices = 0
+  RESET XML
+  ErrorCode := #NO-POLICIES-OWN
+  PERFORM GET-PAYMENT-SETTINGS
+  PERFORM COMPOSE-RESPONSE-DATA
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CHECK-SERVICES          /* YK3 Start
+********************************
+*
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = PARM-CN
+  ACCEPT IF SVC-MEMBER-V.SVC-PLAN = #SERV-PAYABLE(*)
+  IF SVC-STATUS = 'A'
+      OR SVC-PLAN = 'SAS' AND SVC-STATUS = 'P' OR= 'F'
+    C@Own_Polices := C@Own_Polices + 1
+    EXPAND ARRAY PARM-POLICIES TO (*:C@Own_Polices)
+    PARM-POLICIES.ID-NUMBER(C@Own_Polices)     := PARM-CN
+    PARM-POLICIES.POLICY-NUMBER(C@Own_Polices) := #SERVICE-PLAN
+    PARM-POLICIES.POLICY-MODE(C@Own_Polices)   := SVC-MEMBER-V.SVC-MODE
+  END-IF
+END-FIND
+*
+END-SUBROUTINE                            /* YK3 End
+*
+******************************
+DEFINE SUBROUTINE GET-PAYMENTS
+******************************
+* Get payments for the CN
+RESET CC-PAYMENT
+CC-PAYMENT.PARM-DATE := *DATN
+CC-PAYMENT.ID-NUMBER := PARM-POLICIES.ID-NUMBER(#J)
+CALLNAT 'WCCNCC11' CC-PAYMENT ERROR-MESSAGE
+IF ERROR-MESSAGE NE ' '
+  ErrorCode := SUBSTR(ERROR-MESSAGE,1,4)
+  COMPRESS '*MemberCN*' CC-PAYMENT.ID-NUMBER ERROR-MESSAGE INTO ErrorDescription
+* Write log file
+  RESET XML
+  PERFORM COMPOSE-RESPONSE-DATA
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE GET-EXISTING-REQUEST   /* YK8
+**************************************
+* Check if has scheduled payments
+FOR #II = 1 TO Member.C@Policy
+  RESET PayRequest #ErrorCode
+  PayRequest.CN := val(Member.CN)
+  PayRequest.PayPolicyNumber := Member.PolicyNumber(#II)
+  PayRequest.RequestStatus := #Scheduled
+  PayRequest.RequestType   := 'eCheck'
+  #ActionType := #GET
+  CALLNAT 'MBCNPR21' PayRequest #ActionType #ErrorCode
+  IF #ErrorCode = ' '
+    C@PaymentRequest := C@PaymentRequest + 1
+    EXPAND ARRAY PaymentRequest TO (*:C@PaymentRequest)
+    #I := C@PaymentRequest
+    MOVE BY NAME PayRequest TO Member.PaymentRequest(#I)
+*
+    FOR #P_I = 1 TO C@Payment(#II)
+      COMPRESS 'One Time Payment scheduled for' Member.PolicyNumber(#II) 'for'
+        INTO Member.PaymentDesc2(#II,#P_I)
+      #DATN := VAL(PayRequest.PaymentDate)
+      #PAY-DATE := FUNCTION-CALENDAR(<#DATN,'W'>)
+      COMPRESS Member.PaymentDesc2(#II,#P_I) #PAY-DATE INTO Member.PaymentDesc2(#II,#P_I)
+      COMPRESS Member.PaymentDesc2(#II,#P_I) 'in amount of' PayRequest.PaymentAmount INTO Member.PaymentDesc2(#II,#P_I)
+    END-FOR
+*
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE GET-PAYMENT-HISTORY  /* YK9
+*************************************
+*
+PaymentHistory.ViewCN := PARM-CN
+CALLNAT 'MBCNEP61' PaymentHistory
+IF PaymentHistory.C@HistoryPayment > 5
+  PaymentHistory.C@HistoryPayment := 5
+END-IF
+FOR #I = 1 TO PaymentHistory.C@HistoryPayment
+  IF PaymentHistory.PaymentDescription(#I) <> #SERVICE-PLAN
+    COMPRESS 'Policy' PaymentHistory.PaymentPolicy(#I) INTO PaymentHistory.PaymentPolicy(#I)
+  END-IF
+  COMPRESS '(' PaymentHistory.PaymentPolicy(#I) ')' INTO PaymentHistory.PaymentPolicy(#I) LEAVING NO
+  COMPRESS PaymentHistory.PaymentType(#I) PaymentHistory.PaymentPolicy(#I) INTO PaymentHistory.PaymentPolicy(#I)
+END-FOR
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE GET-PAYMENT-SETTINGS  /* YK9
+**************************************
+*
+#ErrorCode := '0'
+PaymentSettings.ViewCN := PARM-CN
+PaymentSettings.C@SavedMethods := #I2
+CALLNAT 'MBCNEP11' PaymentSettings #ErrorCode
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+* XML for one CN
+COMPRESS XML '<Member><CN>' Member.CN '</CN>'
+  '<Name>' Member.NAME '</Name>'
+  '<ServiceOnly>' Member.ServiceOnly '</ServiceOnly>'
+  '<Policies>' INTO XML LEAVING NO
+FOR #I = 1 TO Member.C@POLICY
+  IF Member.POLICYNUMBER(#I) = ' '
+    ESCAPE TOP
+  END-IF
+  COMPRESS XML
+    '<Policy><PolicyNumber>' Member.POLICYNUMBER(#I) '</PolicyNumber>'
+    '<PolicyName>' Member.POLICYNAME(#I) '</PolicyName>'
+    '<PolicyDesc>' Member.POLICYDESC(#I) '</PolicyDesc>'
+    '<PolicyDesc2>' Member.POLICYDESC2(#I) '</PolicyDesc2>'
+    '<MaxPremiums>' Member.MAXPREMIUMS(#I) '</MaxPremiums>'
+    '<Payments>' INTO XML LEAVING NO
+  FOR #II = 1 TO Member.C@PAYMENT(#I)
+    IF (Member.PAYMENTTYPE(#I,#II) = 'ADCR' OR = 'RDCR' OR = 'BADJ')
+        AND Members.User = #Mobile
+      ESCAPE TOP
+    END-IF
+    COMPRESS XML '<Payment ID="' Member.ID(#I,#II) '">'
+      '<PaymentCategory>' Member.PaymentCategory(#I,#II) '</PaymentCategory>'
+      '<CCPayable>' Member.CCPAYABLE(#I,#II) '</CCPayable>'
+      '<VariableAmt>' Member.VARIABLEAMT(#I,#II) '</VariableAmt>'
+      '<ExceedAmt>' Member.EXCEEDAMT(#I,#II) '</ExceedAmt>'
+      '<PaymentType>' Member.PAYMENTTYPE(#I,#II) '</PaymentType>'
+      '<PaymentDesc>' Member.PAYMENTDESC(#I,#II) '</PaymentDesc>'
+      '<PaymentDesc2>' Member.PAYMENTDESC2(#I,#II) '</PaymentDesc2>'
+      '<PaymentMode>' Member.PAYMENTMODE(#I,#II) '</PaymentMode>'
+      '<DueDate>' Member.DUEDATE(#I,#II) '</DueDate>'
+      '<DefaultAmount>' Member.DEFAULTAMOUNT(#I,#II) '</DefaultAmount>'
+      '<DueAmount>'Member.AMOUNT(#I,#II)'</DueAmount>'
+      '<Amount>' Member.AMOUNT(#I,#II) '</Amount>'
+      '<PastDue>' Member.PASTDUE(#I,#II) '</PastDue>'
+      '<DropDown>' Member.DropDown(#I,#II) '</DropDown>'
+      '<PaidWithPemium>' Member.PaidWithPemium(#I,#II) '</PaidWithPemium>'
+      '<AutoPayMode>' Member.AutoPayMode(#I,#II) '</AutoPayMode>'
+      '<LoanMode>' Member.LoanMode(#I,#II) '</LoanMode>'
+      '<LoanPrincipal>' Member.LoanPrincipal(#I,#II) '</LoanPrincipal>'
+      '<LoanInterest>' Member.LoanInterest(#I,#II) '</LoanInterest>'
+      '</Payment>' INTO XML LEAVING NO
+  END-FOR
+  COMPRESS XML '</Payments>' '</Policy>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</Policies>' INTO XML LEAVING NO
+*
+IF C@PaymentRequest = 0
+  COMPRESS XML '<PaymentRequests />' INTO XML LEAVING NO
+ELSE
+  COMPRESS XML '<PaymentRequests>' INTO XML LEAVING NO
+  FOR #I = 1 TO C@PaymentRequest
+    COMPRESS XML '<PaymentRequest>'
+      '<RequestType>' Member.RequestType(#I) '</RequestType>'
+      '<RequestStatus>' Member.RequestStatus(#I) '</RequestStatus>'
+      '<RequestDate>' Member.RequestDate(#I) '</RequestDate>'
+      '<PaymentDate>' Member.PaymentDate(#I) '</PaymentDate>'
+      '<PolicyNumber>' Member.PayPolicyNumber(#I) '</PolicyNumber>'
+      '<PaymentAmount>' Member.PaymentAmount(#I) '</PaymentAmount>'
+      '</PaymentRequest>' INTO XML LEAVING NO
+  END-FOR
+  COMPRESS XML '</PaymentRequests>' INTO XML LEAVING NO
+END-IF
+* > YK8
+COMPRESS XML '</Member>' INTO XML LEAVING NO
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN ErrorCode = ' ' AND XML = ' '
+    ErrorCode := #ErrorCode := #NO-PAYMENTS-DUE
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  WHEN ErrorCode <> ' ' AND ErrorDescription = ' '
+    #ErrorCode       := ErrorCode
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  WHEN ErrorCode = ' ' AND XML <> ' '
+    ErrorCode        :=  #SUCCESS-CODE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+COMPRESS
+  '<Members>'
+  '<CN>' Members.CN_Owner '</CN>'
+  '<User />'
+  '<PaymentMethod />'
+  XML INTO XML LEAVING NO
+*
+COMPRESS XML '<PaymentHistory>'
+  '<Payments>' INTO XML LEAVING NO
+FOR #I1 = 1 TO PaymentHistory.C@HistoryPayment
+  COMPRESS XML '<Payment>'
+    '<PaymentDate>' PaymentHistory.PaymentDate(#I1) '</PaymentDate>'
+    '<PaymentPolicy>' PaymentHistory.PaymentPolicy(#I1) '</PaymentPolicy>'
+    '<PaymentAmount>' PaymentHistory.PaymentAmount(#I1) '</PaymentAmount>'
+    '</Payment>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</Payments>' '</PaymentHistory>'  INTO XML LEAVING NO
+COMPRESS XML '<PaymentSettings>'
+  '<AutoPaySettings>' INTO XML LEAVING NO
+FOR #I1 = 1 TO PaymentSettings.C@AutoPay
+  COMPRESS XML '<AutoPay>'
+    '<AutoPayPolicy>' PaymentSettings.AutoPayPolicy(#I1) '</AutoPayPolicy>'
+    '<AutoPayMethod>' PaymentSettings.AutoPayMethod(#I1) '</AutoPayMethod>'
+    '</AutoPay>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</AutoPaySettings>' '<SavedPaymentMethods>' INTO XML LEAVING NO
+FOR #I1 = 1 TO PaymentSettings.C@SavedMethods
+  COMPRESS XML '<SavedMethods>'
+    '<SavedMethodName>' SavedMethodName(#I1) '</SavedMethodName>'
+    '<CCExpirationDate>' CCExpirationDate(#I1) '</CCExpirationDate>'
+    '</SavedMethods>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</SavedPaymentMethods>' '</PaymentSettings>' INTO XML LEAVING NO
+COMPRESS XML
+  '<ErrorCode>' ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' ErrorDescription '</ErrorDescription>'
+  '</Members>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-PAYMENT-DATA
+***************************************
+*
+IF C@PAY-POLICY NE 0
+  C@POLICY     := C@PAY-POLICY
+ELSE
+  C@POLICY := 0
+  ESCAPE ROUTINE
+END-IF
+*
+FOR #I = 1 TO C@POLICY
+  C@PAYMENT(#I) := C@AVAILABLE-PAYMENT(#I)
+END-FOR
+*
+Member.NAME := INSURED-NAME
+Member.CN   := PARM-POLICIES.ID-NUMBER(#J)
+Member.DropDown(*,*) := #FALSE
+Member.PaidWithPemium(*,*) := #FALSE
+FOR #I = 1 TO C@PAY-POLICY
+* Filter by owner
+  RESET #TARGET-POLICY
+  FOR #JJ = 1 TO C@Own_Polices
+    IF PARM-POLICIES.POLICY-NUMBER(#JJ) = CC-PAYMENT.POLICY-NBR(#I)
+        OR (CC-PAYMENT.POLICY-NBR(#I) = 'Service Plan'                 /* YK2
+        AND CC-PAYMENT.ID-NUMBER = PARM-MEMBER-CN                      /* YK2
+        AND PARM-MEMBER-CN = PARM-CN )                                 /* YK2
+      #TARGET-POLICY := true
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+  IF NOT #TARGET-POLICY
+    ESCAPE TOP
+  END-IF
+*
+  RESET #AUTO-PAY-TOTAL
+  Member.AutoPayMode(#I,*):= #false
+  Member.PolicyNumber(#I) := POLICY-NBR(#I)
+  DECIDE FOR FIRST CONDITION
+    WHEN (SUBSTR(PLAN-TYPE(#I),3,1) = 'F' AND PLAN-TYPE(#I) NE 'SPF')
+      #FLEX-PLAN := SUBSTR(PLAN-TYPE(#I),1,2)
+      #FLEX-KEY  := '99F'
+    WHEN F-LT2-TRUE(<PLAN-TYPE(#I)>)
+      #FLEX-PLAN := SUBSTR(PLAN-TYPE(#I),2,2)
+      COMPRESS SUBSTR(PLAN-TYPE(#I),1,1) '99' INTO #FLEX-KEY LEAVING NO
+    WHEN ANY
+      PolicyName(#I) := FUNCTION-PLAN(<#FLEX-KEY>)(4)
+      EXAMINE PolicyName(#I) FOR '99' REPLACE #FLEX-PLAN
+      #PolicyFullName := FUNCTION-PLAN(<#FLEX-KEY>)(1)
+      EXAMINE #PolicyFullName FOR '99' REPLACE #FLEX-PLAN
+    WHEN NONE
+      PolicyName(#I) := FUNCTION-PLAN(<PLAN-TYPE(#I)>)(4)
+      #PolicyFullName := FUNCTION-PLAN(<PLAN-TYPE(#I)>)(1)
+  END-DECIDE
+  #DATE := FUNCTION-CALENDAR(<CC-PAYMENT.ISSUE-DATE(#I),'S'>)
+  IF CC-PAYMENT.FACE-AMOUNT(#I) <> 0                                         /* YK2
+    COMPRESS 'Policy' Member.PolicyNumber(#I) INTO Member.PolicyNumber(#I)      /* YK2
+    MOVE EDITED CC-PAYMENT.FACE-AMOUNT(#I) (EM=Z,ZZZ,ZZ9.99) TO #AMOUNT
+    #AMOUNT := *TRIM(#AMOUNT)
+    COMPRESS '$' #AMOUNT INTO #AMOUNT LEAVING NO
+    COMPRESS #PolicyFullName 'for' #AMOUNT 'issued' #DATE
+      INTO Member.PolicyDesc(#I)
+    COMPRESS '(' Member.PolicyNumber(#I) ')' INTO Member.PolicyDesc2(#I) LEAVING NO
+    COMPRESS Member.PolicyName(#I) Member.PolicyDesc2(#I) 'for' #AMOUNT INTO Member.PolicyDesc2(#I)
+  ELSE
+    COMPRESS #PolicyFullName 'issue date' #DATE INTO PolicyDesc(#I)
+    Member.PolicyDesc2(#I) := Member.PolicyName(#I)
+  END-IF
+  COMPRESS MIN-PREMIUMS(#I) '-' MAX-PREMIUMS(#I) '-' DEFAULT-PREM(#I)
+    INTO MaxPremiums(#I) LEAVING NO
+  FOR #II = 1 TO C@Payment(#I)
+    #PAYMENT-ID := #PAYMENT-ID + 1
+    ID(#I,#II) := #PAYMENT-ID
+    IF CC-PAYABLE(#I,#II)= 'T'
+      CCPayable(#I,#II) := #TRUE
+    ELSE
+      CCPayable(#I,#II) := #FALSE
+    END-IF
+* YK5 - set variable amount and exceed amount for ADCR, RDCR or BADJ to false for Member Center
+    IF TRAN-TYPE(#I,#II) = #MC-EXCEPTION-TRAN(*)
+      VariableAmt(#I,#II) := #FALSE
+      ExceedAmt(#I,#II)   := #FALSE
+    ELSE                                    /* YK5
+      IF VAR-AMOUNT(#I,#II) = 'T'
+        VariableAmt(#I,#II) := #TRUE
+      ELSE
+        VariableAmt(#I,#II) := #FALSE
+      END-IF
+      IF EXCEED-AMT(#I,#II) = 'T'           /* YK1
+        ExceedAmt(#I,#II) := #TRUE          /* YK1
+      ELSE                                  /* YK1
+        ExceedAmt(#I,#II) := #FALSE         /* YK1
+      END-IF                                /* YK1
+    END-IF                                  /* YK5
+    Member.PaymentType(#I,#II) := TRAN-TYPE(#I,#II)
+    Member.PaymentDesc(#I,#II) := FUNCTION-PAYMENT-TYPE(<TRAN-TYPE(#I,#II)>)(1)
+    Member.PaymentMode(#I,#II) := FUNCTION-PAYMENT-MODE(<PAYMENT-MODE(#I,#II)>)(3)
+* Loans and some other transactions do not have PAID-TO-DATE
+    IF CC-PAYMENT.PAID-TO-DATE(#I,#II) <> 0
+      Member.DueDate(#I,#II) := FUNCTION-CALENDAR(<CC-PAYMENT.PAID-TO-DATE(#I,#II),'D'>)
+    END-IF
+* Remove "," from MASK for amounts
+    MOVE EDITED DEFAULT-AMOUNT(#I,#II) (EM=ZZZ,ZZ9.99) TO Member.DefaultAmount(#I,#II)
+    Member.DefaultAmount(#I,#II) := *TRIM(Member.DefaultAmount(#I,#II))
+    IF DEFAULT-AMOUNT(#I,#II) < 0
+      COMPRESS '(' Member.DefaultAmount(#I,#II) ')' TO Member.DefaultAmount(#I,#II) LEAVING NO
+    END-IF
+    COMPRESS '$' Member.DefaultAmount(#I,#II) INTO Member.DefaultAmount(#I,#II) LEAVING NO
+    MOVE EDITED DUE-AMOUNT(#I,#II) (EM=ZZZZZ9.99) TO Member.Amount(#I,#II)
+    Member.Amount(#I,#II) := *TRIM(Member.Amount(#I,#II))
+    IF DUE-AMOUNT(#I,#II) < 0
+      COMPRESS '-' Member.Amount(#I,#II) TO Member.Amount(#I,#II) LEAVING NO
+    END-IF
+    IF CC-PAYMENT.PAID-TO-DATE(#I,#II) < #PAST-DUE-DATE AND CC-PAYMENT.PAID-TO-DATE(#I,#II) <> 0      /* YK6
+      Member.PastDue(#I,#II) := #TRUE
+    ELSE
+      Member.PastDue(#I,#II) := #FALSE
+    END-IF                                         /* YK6
+* DropDown logic
+    IF Member.PaymentType(#I,#II) = #DropDownRequired(*)
+      DropDown(#I,#II)  := #TRUE
+    END-IF
+* Paid With Premium logic
+    IF Member.PaymentType(#I,#II) = #PaidWithPemium(*)
+      PaidWithPemium(#I,#II) := #TRUE
+    END-IF
+* Additional Loan Logic
+    IF Member.PaymentType(#I,#II) = #LOAN-TRAN(*) OR = #CAP-TRAN(*)
+      MOVE EDITED LOAN-PRINCIPAL(#I,#II) (EM=ZZZ,ZZ9.99) TO Member.LoanPrincipal(#I,#II)
+      Member.LoanPrincipal(#I,#II) := *TRIM(Member.LoanPrincipal(#I,#II))
+      COMPRESS '$' Member.LoanPrincipal(#I,#II) INTO Member.LoanPrincipal(#I,#II) LEAVING NO
+      MOVE EDITED LOAN-INTEREST(#I,#II) (EM=ZZZ,ZZ9.99) TO Member.LoanInterest(#I,#II)
+      Member.LoanInterest(#I,#II) := *TRIM(Member.LoanInterest(#I,#II))
+      IF LOAN-INTEREST(#I,#II) < 0
+        COMPRESS '(' Member.LoanInterest(#I,#II) ')' INTO Member.LoanInterest(#I,#II) LEAVING NO
+      END-IF
+      COMPRESS '$' Member.LoanInterest(#I,#II) INTO Member.LoanInterest(#I,#II) LEAVING NO
+      MOVE EDITED CC-PAYMENT.LOAN-AUTO-PAY-AMT(#I,#II) (EM=ZZZZZ9.99) TO Member.LoanAutoPayAmount(#I,#II)
+      Member.LoanAutoPayAmount(#I,#II) := *TRIM(Member.LoanAutoPayAmount(#I,#II))
+      Member.Amount(#I,#II) := Member.LoanAutoPayAmount(#I,#II)            /* NEW
+      COMPRESS '$' Member.LoanAutoPayAmount(#I,#II) INTO Member.LoanAutoPayAmount(#I,#II) LEAVING NO
+    END-IF
+* Assign Payment Category
+    DECIDE FOR FIRST CONDITION
+      WHEN Member.PaymentType(#I,#II) = #SERV-TRAN(*)
+        Member.PaymentCategory(#I,#II) := #Service
+      WHEN Member.PaymentType(#I,#II) = #LOAN-TRAN(*) OR = #CAP-TRAN(*)
+        Member.PaymentCategory(#I,#II) := #Loan
+      WHEN NONE
+        Member.PaymentCategory(#I,#II) := #Policy
+    END-DECIDE
+* Payment Description logic
+    DECIDE FOR FIRST CONDITION
+      WHEN TRAN-TYPE(#I,#II) = #NoPayStatus(*)
+        RESET PAYMENT-MODE(#I,#II)
+      WHEN PAYMENT-MODE(#I,#II) = #CC-MODE(*)
+* YK13 >
+        #PROCESS := 'CC'
+* YK14 >
+        #DATE       := FUNCTION-CALENDAR(<#DATN,'N'>)   /* First of the next month
+        #NEXT-MONTH := VAL(#DATE)
+* Linked loans always considered to be paid current - assign to calculate next payment date according to Bill Cycle
+        IF TRAN-TYPE(#I,#II) = #LOAN-TRAN(*) AND CC-PAYMENT.PAID-TO-DATE(#I,#II) = 0
+          CC-PAYMENT.PAID-TO-DATE(#I,#II) := #DATN
+        END-IF
+        IF (CC-PAYMENT.PAID-TO-DATE(#I,#II) <> 0 AND TRAN-TYPE(#I,#II) <> #CAP-TRAN(1))
+            OR (TRAN-TYPE(#I,#II) = #CAP-TRAN(1) AND CC-PAYMENT.PAID-TO-DATE(#I,#II) = #NEXT-MONTH AND F-CAP-CURRENT(<CC-PAYMENT.ID-NUMBER>)
+            OR (TRAN-TYPE(#I,#II) = #CAP-TRAN(1) AND CC-PAYMENT.PAID-TO-DATE(#I,#II) > #NEXT-MONTH))
+          #BILL-CYCLE-DATES(*) := F-BILL-DATE(<CC-PAYMENT.PAID-TO-DATE(#I,#II),#PROCESS>)(*)
+* < YK14
+        ELSE
+          #BILL-CYCLE-DATES(*) := F-BILL-DATE(<#DATN,#PROCESS>)(*)
+        END-IF
+*
+        IF PARM-POLICIES.BILL-CYCLE(#JJ) <> ' '                                    /* YK15 AND PARM-POLICIES.BILL-CYCLE(#JJ) <> '3'
+          #BILL-CYCLE := VAL(PARM-POLICIES.BILL-CYCLE(#JJ))
+          #PAY-DATE := FUNCTION-CALENDAR(<#BILL-CYCLE-DATES(#BILL-CYCLE),'W'>)
+        ELSE
+          #PAY-DATE := FUNCTION-CALENDAR(<#BILL-CYCLE-DATES(3),'W'>)               /* YK15
+        END-IF
+* < YK13
+* YK15 >
+        IF Member.PastDue(#I,#II) = #true
+          #PAY-DATE := FUNCTION-CALENDAR(<#BILL-CYCLE-DATES(1),'W'>)
+        END-IF
+* < YK15
+        COMPRESS 'Credit Card Pay Scheduled for' #PAY-DATE INTO Member.PaymentDesc2(#I,#II)
+      WHEN PAYMENT-MODE(#I,#II) = #EZPAY-MODE
+        IF CC-PAYMENT.PAID-TO-DATE(#I,#II) <> 0 OR Member.PaymentCategory(#I,#II) = #Loan           /* YK14
+          IF CC-PAYMENT.PAID-TO-DATE(#I,#II) < #DATN OR
+              (Member.PaymentCategory(#I,#II) = #Loan AND CC-PAYMENT.PAID-TO-DATE(#I,#II) <> 0)
+            #PAY-DATE := FUNCTION-CALENDAR(<#DATN,'Y'>)
+          ELSE
+            #PAY-DATE := FUNCTION-CALENDAR(<CC-PAYMENT.PAID-TO-DATE(#I,#II),'Y'>)
+          END-IF
+        END-IF
+        COMPRESS 'EZ-Pay Scheduled for' #PAY-DATE INTO Member.PaymentDesc2(#I,#II)
+      WHEN PAYMENT-MODE(#I,#II) = #ALOT-MODE
+        Member.PaymentDesc2(#I,#II) := 'Monthly Allotment'
+      WHEN NONE
+        Member.PaymentDesc2(#I,#II) := 'No Payment Scheduled'
+    END-DECIDE
+*
+* YK9 - Populate Autopayment settings
+    IF PAYMENT-MODE(#I,#II) = #AUTO-PAY(*)
+      IF Member.PaymentCategory(#I,#II) = #Policy OR = #Service
+        #AutoPayMethod := Member.PaymentMode(#I,#II)
+        #AUTO-PAY-TOTAL := #AUTO-PAY-TOTAL + DEFAULT-AMOUNT(#I,#II)
+
+        Member.AutoPayMode(#I,#II) := #true
+        Member.PaymentMode(#I,#II) := Member.PaymentDesc2(#I,#II)
+      ELSE
+        DECIDE FOR FIRST CONDITION
+          WHEN TRAN-TYPE(#I,#II) = #CAP-TRAN(*)
+            #AutoPayPolicy := #CAPLoan
+          WHEN TRAN-TYPE(#I,#II) = #LOAN-TRAN(*)
+            COMPRESS '(' Member.PolicyNumber(#I) ')' INTO #AutoPayPolicy LEAVING NO
+            COMPRESS Member.PolicyName(#I) #AutoPayPolicy INTO #AutoPayPolicy
+            COMPRESS #LinkedLoan #AutoPayPolicy INTO #AutoPayPolicy
+          WHEN ANY
+            Member.AutoPayMode(#I,#II) := #true
+            PaymentSettings.C@AutoPay  := PaymentSettings.C@AutoPay + 1
+            EXPAND ARRAY PaymentSettings.AutoPay TO (*:C@AutoPay)
+            PaymentSettings.AutoPayPolicy(C@AutoPay)      := #AutoPayPolicy
+            PaymentSettings.AutoPayMethod(C@AutoPay)      := Member.PaymentMode(#I,#II)
+            Member.PaymentMode(#I,#II)                    := Member.PaymentDesc2(#I,#II)
+          WHEN NONE
+            IGNORE
+        END-DECIDE
+      END-IF
+    END-IF
+  END-FOR
+  IF #AUTO-PAY-TOTAL <> 0
+    PaymentSettings.C@AutoPay  := PaymentSettings.C@AutoPay + 1
+    EXPAND ARRAY PaymentSettings.AutoPay TO (*:C@AutoPay)
+    #AutoPayPolicy := Member.PolicyName(#I)
+    COMPRESS '(' Member.PolicyNumber(#I) ')' INTO #AutoPayPolicy LEAVING NO
+    COMPRESS Member.PolicyName(#I) #AutoPayPolicy INTO #AutoPayPolicy
+    PaymentSettings.AutoPayPolicy(C@AutoPay)      := #AutoPayPolicy
+    PaymentSettings.AutoPayMethod(C@AutoPay)      := #AutoPayMethod
+  END-IF
+END-FOR
+END-SUBROUTINE
+END

@@ -1,0 +1,139 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Benefits/Financial Information
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    03142012       Initial Creation
+* YAK    02182015  YK2  MC-II - FIR - new fields in copycode
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING MBCA0009
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 FUNCTION_CODE       (A) DYNAMIC CONST <'FAS'>
+1 #FAS-REPORT         (A200)
+1 #TAB                (A1) INIT <H'09'>
+1 #value              (A) DYNAMIC
+1 #ErrorCode          (A3) INIT <'0'>
+1 #ErrorDescription   (A) DYNAMIC
+1 XML                 (A) DYNAMIC
+1 #DATN               (N8)
+1 #I                  (I2) 
+1 #GET                (A) DYNAMIC CONST <'GET'>  
+1 #ADD                (A) DYNAMIC CONST <'ADD'>
+1 #UPDATE             (A) DYNAMIC CONST <'UPDATE'>
+1 #DELETE             (A) DYNAMIC CONST <'DELETE'>
+*
+END-DEFINE
+*
+#DATN := *DATN
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic
+CALLNAT 'MBCN0091' FinancialProfile #ErrorCode
+DECIDE ON FIRST FinancialProfile.ActionType
+  VALUE #GET
+    IF #ErrorCode = '0'
+      PERFORM COMPOSE-GET-XML
+    ELSE
+      PERFORM COMPOSE-XML
+    END-IF
+  NONE
+    IF #ErrorCode = '0'
+      END TRANSACTION
+    ELSE
+      BACKOUT TRANSACTION
+    END-IF
+    PERFORM COMPOSE-XML
+END-DECIDE
+RESPONSE-DATA := XML
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+* Copycode to parse XML for each Benefit Type
+INCLUDE MBCCP009
+IGNORE
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-GET-XML
+*********************************
+* Copycode to compile XML for each Benefit Type
+INCLUDE MBCCS009
+IGNORE
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+ELSE
+  IF FinancialProfile.ActionType <> #GET
+    PERFORM LOG-REQUESTS
+  END-IF  
+END-IF
+COMPRESS '<FinancialProfile>' '<CN>' CN '</CN>'
+  '<InvestmentCategoryType>' FinancialProfile.InvestmentCategoryType '</InvestmentCategoryType>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</FinancialProfile>' 
+  INTO XML LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE LOG-REQUESTS
+******************************
+* save FIR request
+WRITE WORK FILE 2 FinancialProfile.CN
+CLOSE WORK FILE 2
+COMPRESS FULL FinancialProfile.CN #TAB FUNCTION_CODE #TAB #DATN #TAB
+              FinancialProfile.ActionType #TAB InvestmentCategoryType #TAB 
+              InvestmentTypeCode(1) TO #FAS-REPORT
+WRITE WORK FILE 4 #FAS-REPORT
+CLOSE WORK FILE 4
+* Update "Profile Update Date" on Web User File
+F-PROFILE-UPDATE-DATE(<FinancialProfile.CN>)
+*
+END-SUBROUTINE
+*
+END

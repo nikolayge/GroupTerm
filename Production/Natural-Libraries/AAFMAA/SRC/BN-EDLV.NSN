@@ -1,0 +1,115 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* BN-EDLV. created for (OI-2404) 
+*  Send ME Email (Called from ATHS07P6)
+*  Validate eDlv for BN (used on ST screen) 
+* bz-Name 07/07/2017     Fine Names
+DEFINE DATA
+PARAMETER
+ 1 p_RC        (N4)
+ 1 p_CN        (N6)              /* CN Owner 
+ 1 p_CI        (N8)   OPTIONAL   /* Ci Owner
+ 1 p_InsCN     (N6)   OPTIONAL   /* Insured CN   YK1   
+ 1 p_PN        (A16)  OPTIONAL   /* Pol numb
+ 1 p_Name      (A70)  OPTIONAL   /* Name
+ 1 p_AMNT      (A12)  OPTIONAL   /* Amount
+ 1 p_DDATE     (A10)  OPTIONAL   /* Due Date   YK1
+ 1 p_Loan      (A10)  OPTIONAL   /* Loan payment
+*  
+LOCAL USING GPRA0005        /* Fields to be passed to EmailCreator YK1
+LOCAL USING GPRL0001        /* Init properties                     YK1
+LOCAL
+1 #E-BILL-NOTICE (A3) INIT <'EBI'>               /* YK1
+1 #EMAIL-CN-NUMBER (A6)                          /* YK1
+1 #Dynamic_Name    (A) Dynamic                   /* YK1 
+*
+ 1 WEB-V VIEW OF A-WEB-ACCOUNT-INFO 
+   2  BILL-DELIVERY-FLAG            
+*
+1 v_MM        (A2)
+1 v_DD        (A2)
+1 v_YYYY      (A4)  
+*
+1 v_N8        (N8)
+1 REDEFINE v_N8 
+  2 v_YYYY-N  (N4)    
+  2 v_MM-N    (N2)
+  2 v_DD-N    (N2)
+END-DEFINE
+*
+ p_RC := 0
+ FIND(1) WEB-V WITH MEMBER-CN = p_CN  END-FIND             
+ IF   BILL-DELIVERY-FLAG <> 'W'
+   p_RC := 1
+   ESCAPE ROUTINE 
+ END-IF
+ IF p_CI NOT SPECIFIED  ESCAPE ROUTINE END-IF
+*                                                 Below only for Email 
+ SEPARATE p_DDATE INTO v_MM v_DD v_YYYY WITH DELIMITER '/'
+ v_MM-N   := val(v_MM)
+ v_DD-N   := val(v_DD)
+ v_YYYY-N := val(v_YYYY)
+* PRINT  p_CN '::' v_N8  
+ IF v_N8 <> MASK(YYYYMMDD)
+   p_RC := 3
+   ESCAPE ROUTINE 
+ END-IF
+
+PERFORM GET-EMAIL
+ IF EMAIL-INFORMATION.OWNER-EMAIL = ' '
+    p_RC := 2
+    ESCAPE ROUTINE
+ END-IF
+ 
+* ========================
+* {OwnerName}:
+* {PolicyNumber}
+* {AmountDue}
+* {DueDate}
+* {OwnerCn}
+*
+* TEMPLATE-TYPE
+* DAL-CN
+* POLICY-NUMBER
+* SALUTATION
+* OWNER-EMAIL
+* DUE-DATE
+* TOTAL-AMOUNT-DUE
+* ========================
+* YK1 Define E-mail information file
+
+DEFINE WORK FILE 14 #EMAIL-MONTHLY-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+*
+EMAIL-INFORMATION.TEMPLATE-TYPE    := #E-BILL-NOTICE
+EMAIL-INFORMATION.DAL-CN           := p_CN
+EMAIL-INFORMATION.PENDING-CN       := p_CN
+EMAIL-INFORMATION.POLICY-NUMBER    := p_PN
+EMAIL-INFORMATION.DUE-DATE         := v_N8
+EMAIL-INFORMATION.TOTAL-AMOUNT-DUE := p_AMNT
+IF p_Loan <> ' ' 
+  EMAIL-INFORMATION.TEXT-1           := "and CAP loan" 
+END-IF  
+COMPRESS '$' *TRIM(EMAIL-INFORMATION.TOTAL-AMOUNT-DUE) INTO EMAIL-INFORMATION.TOTAL-AMOUNT-DUE LEAVING NO
+#Dynamic_Name := 'S1'
+CALLNAT 'GPRS0CNT' p_CI #Dynamic_Name
+* #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >)  /*  bz-Name
+EMAIL-INFORMATION.SALUTATION       := #Dynamic_Name
+* EMAIL-INFORMATION.OWNER-NAME       := p_Name
+WRITE WORK FILE 14 EMAIL-INFORMATION
+* ---------------------------------------------------------------------------------
+DEFINE GET-EMAIL     /* MY VERSION
+  #EMAIL-CN-NUMBER := p_CN
+  EMAIL-INFORMATION.OWNER-EMAIL := FUNCTION-CN-EMAIL(<#EMAIL-CN-NUMBER>)
+  IF EMAIL-INFORMATION.OWNER-EMAIL = ' ' AND p_CN NE p_InsCN
+    #EMAIL-CN-NUMBER := p_InsCN
+    EMAIL-INFORMATION.OWNER-EMAIL := FUNCTION-MEMBER-EMAIL(<#EMAIL-CN-NUMBER>)
+    IF EMAIL-INFORMATION.OWNER-EMAIL = ' '
+      EMAIL-INFORMATION.OWNER-EMAIL := FUNCTION-CN-EMAIL(<#EMAIL-CN-NUMBER>)
+    END-IF
+  END-IF
+END-SUBROUTINE
+
+END

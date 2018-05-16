@@ -1,0 +1,1074 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: ATHPATLB - Daily AT processing  for labels to FTP to AAFM
+*         and aged status processing
+* <<<< PROGRAM DRWPATLB is a clone of this program which produces
+* <<<<     labels for selected AT's   (DRWJATLB is job to run it)
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06242004  PM1     Re-organized output of daily AT PO's to be  *
+*                          sorted by User as per Keith Calhoun.        *
+* PAM    03232005  PM2     Removed AFSC indicator logic - field is now *
+*                          used for trade-up purposes only.            *
+* DRW    05162005  DW3     Add Sex for LTII Rates                      *
+* DRW    06042005  DW4     Add FU60 & FU90 Follow-up Processing        *
+* SAG  12012005 RH1  SS - Replaced the HEC constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII                     *
+* PAM    01252006  PM5     Removed FU90 Follow-up Processing           *
+* DRW    07262006  DW6     REMOVED FU60 FOLLOW-UP PROCESSING           *
+* PAM    03152007  PM7     Do not process North Carolina Inquiry apps  *
+* PAM    03152007  PM8     Not FU30 letters for SD status              *
+* PAM    200705003 PM9     Allow quotes for North Carolina apps        *
+* DRW   01/16/2008 DW10    Chg 30 day processing to 45 day processing  *
+* DRW   01/16/2008 DW11    Add 4 files for Addl Follow-ups             *
+*                          (15/30/45/60 days)                          *
+* PAM   01/16/2008 PM12    Changed processing for AT premium rating    *
+* DRW   02/25/2008 DW13    New Allotment start files based on          *
+*                          ALOT-CHG-CODE                               *
+* DRW   03/18/2008 DW14    Check for 99999999 as well as 0 if          *
+*                          follow-up dates                             *
+* PAM    20080408  PM15    Use code SP (instead of SD) to suppress ltr *
+* DRW   06/06/2008 DW16    Add mbrship coordinator name & extention to *
+*                          FU files                                    *
+* PAM   07/02/2008 PM17    Do not include SP or SD status in FU letters*
+*                          or 45 day letter                            *
+* DRW   11/13/2008 DW18    Add Email address to AFB file.              *
+* PAM   02/26/2009 PM19    Added new CAP types                         *
+* PAM   03/11/2009 PM20    Added Bridger file processing               *
+* PAM   04/03/2009 PM21    Reversed Bridger file processing            *
+* PAM   05/11/2009 PM22    Bypass S7 applications in follow-up letters *
+* JNT   08/28/2013 JT1     Address normalization                       *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL  USING G3500AAD  /* PM ADDED 03/2000 FOR FU5 LETTER
+LOCAL  USING CLASSLAI  /* PM12
+LOCAL  USING ADDA0001  /* JT1
+LOCAL
+*
+* * * *   A P P L I C A T I O N   T R A C K I N G   F I L E   * *
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER      (N6)
+ 2 NAME           (A25)
+ 2 RANK           (A3)
+ 2 SEX                             /* DW3
+ 2 DATE-OF-BIRTH  (N8)
+ 2 MEMBER-CN      (A6)
+ 2 REFERING-ID-NUMBER   (1)
+ 2 CONTACT-CODE   (A1)
+ 2 ALOT-CHG-AUTH                   /* DW13
+ 2 MIL-STATUS     (A1)
+ 2 SMOKER-FLAG    (A1)
+ 2 MIL-SERVICE    (A3)
+ 2 PLAN           (A3)
+ 2 MODE           (A1)
+ 2 PMT-PLAN       (A1)
+ 2 INS-ONLY       (A1)
+ 2 INTRO-FLAG     (A1)
+ 2 CONTACT-ID     (N8)             /* JT1
+ 2 SSN            (N9)
+ 2 FACE-AMT-UNITS (N4)            /*  NG99
+ 2 CAP-TERM       (N2)
+ 2 CAP-LOAN-AMT   (N5.2)
+ 2 DATE-RECEIVED  (N8)
+ 2 NEXT-ACTION-DATE (N8) /* used to ind aged status has been nx'd
+ 2 ACTION-FLAG    (A1)
+ 2 ACTION-DATE    (N8)
+ 2 AT-STATUS      (A2)
+ 2 ST-NOTE-DATE   (N8/1)
+ 2 APPL-SOURCE    (A7)
+ 2 CAP-IND        (A1)
+ 2 CAP-TYPE                        /* PM19
+ 2 USER-SOURCE    (A3)
+ 2 INTERNET-ADDR                   /* DW11
+ 2 FOLLOW-UP-DATE (N8/5)
+ 2 REDEFINE FOLLOW-UP-DATE
+  3 FUD-OCC       (5)
+   4 FUD-YYYY     (N4)
+   4 FUD-MM       (N2)
+   4 FUD-DD       (N2)
+ 2 VA-CALC-TYPE   (A1)
+ 2 HOME-PHONE     (N10)
+ 2 REDEFINE HOME-PHONE
+  3 HOME-PHONE-A  (A10)
+ 2 HOME-PHONE-INTR (A6)
+ 2 WORK-PHONE     (N10)
+ 2 REDEFINE WORK-PHONE
+  3 WORK-PHONE-A  (A10)
+ 2 WORK-PHONE-INTR (A6)
+ 2 ALLOT-STRT-AMT   (N3.2)
+ 2 RATING-CODE    (A1)             /* PM12
+ 2 NOTES            (A75/40)
+ 2 REDEFINE NOTES
+  3 NOTES-TBL  (40)
+   4 NOTES-75   (A75)
+   4 REDEFINE NOTES-75
+    5 NOTES-AST  (A1)
+    5 NOTES-USER (A3)
+    5 NOTES-DASH (A1)
+    5 NOTES-DATE (A10)
+    5 REDEFINE NOTES-DATE
+      6 NOTES-MM   (A2)
+      6 NOTES--1   (A1)
+      6 NOTES-DD   (A2)
+      6 NOTES--2   (A1)
+      6 NOTES-YYYY (A4)
+    5 NOTES-REST (A60)
+*
+1 ST-V VIEW OF A-STATUS           /* PM20
+ 2 BRIDGER-IND                    /* PM20
+*
+1 LABELS
+ 2 LAB-ID          (A9)
+ 2 LAB-MBRSHIPS    (N1)
+ 2 LAB-NAME        (A25)
+ 2 LAB-RANK        (A4)
+ 2 REDEFINE LAB-RANK
+  3 LAB-RANK-3     (A3)
+ 2 LAB-ACT-FLAG    (A1)    /* usually mil-stat
+ 2 LAB-ADDR-1      (A25)
+ 2 LAB-ADDR-2      (A25)
+ 2 LAB-ADDR-3      (A25)
+ 2 LAB-ZIP-CODE    (A10)
+ 2 LAB-MIL-SERV    (A3)
+ 2 LAB-SSN         (N9)
+ 2 LAB-ZIP-CODE-DPB (A2)
+ 2 LAB-CHIEF-OF-STAFF-IND (A1)
+ 2 LAB-FILL-1       (A10)
+ 2 LAB-SPUSE        (A1)
+ 2 LAB-ALOT-MSG     (A13)
+ 2 LAB-FILL-2       (A12)
+ 2 LAB-LBL-TYPE     (A3)
+ 2 LAB-FILL-3       (A2)
+*
+1 #AFB-FILE   (A200)
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+*
+1 #COUNTERS
+ 2 #AT-RECS-READ     (P5)
+ 2 #AT-RECS-UPDT     (P5)
+ 2 #IM-RECS-UPDT     (P5)
+ 2 #AFB-CNT          (P5)
+ 2 #CNT              (P5)
+ 2 #CNT-2            (P5)
+ 2 #I1               (I2)
+ 2 #I2               (I2)
+ 2 #I3               (I2)
+ 2 #AT-LINKED        (A1)                                         /* PM1
+ 2 #AT-WITH          (A1)                                         /* PM1
+ 2 #AT-USER          (A3)                                         /* PM1
+ 2 #AT-NUMBER        (N6)                                         /* PM1
+*
+1 #MONTH-LITERALS (A108) INIT<'January  February March    April    May      June     '
+  -'July     August   SeptemberOctober  November December '>
+1 REDEFINE #MONTH-LITERALS   2 #MON-LIT (A9/12)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY    (N4)
+ 2 REDEFINE #YYYY
+  3 #CENT   (N2)
+  3 #YY     (N2)
+ 2 #MM      (N2)
+ 2 #DD      (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A  (A4)
+ 2 #MM-A    (A2)
+ 2 #DD-A    (A2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMMDD-A   (A8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM   (N6)
+*
+1 #DATN           (N8)
+1 REDEFINE #DATN
+ 2 #DATN-YYYYMM   (N6)
+*
+1 #MMDDYYYY      (A8)
+*
+1 #STREET   (A25)
+1 #STREET-2 (A25)
+1 #CITY     (A22)
+1 #STATE    (A2)
+1 #CITY-STATE (A25)
+1 #LAST      (A25)
+1 #FIRST-20  (A20)
+1 #MI        (A1)
+1 #ERR-MSG      (A60)
+1 #SPLIT        (A1)
+*
+1 #INT        (I2)
+1 #NOTE-TEXT  (A60/10)
+1 #TO-INIT    (A3)
+*
+1 #FORM-IND   (A3)
+1 #MSG-FORM-IND (A3)
+*
+1 #CNT-5    (P5)
+1 #CNT-6    (P5)
+1 #96-DAYS-AGO (N8)   /* DW4
+1 #66-DAYS-AGO (N8)   /* DW4
+1 #36-DAYS-AGO (N8)
+1 #45-DAYS-AGO (N8)    /* DW10
+1 #15-DAYS-AGO (N8)    /* DW11
+1 #3-MON-AGO   (N8)   /* DW4
+1 #2-MON-AGO   (N8)   /* DW4
+1 #1-MON-AGO   (N8)
+*
+1 #FORMAT-CN            (A7)  /* PM ADDED 03/2000 FOR FU5 LETTER
+1 #SURVEY-CN            (A16) /* PM ADDED 03/2000 FOR FU5 LETTER
+1 #DEAR-FORMATED-NAME   (A45) /* PM ADDED 03/2000 FOR FU5 LETTER
+1 #SCR-ZIP-BAR-CODE     (A14) /* PM ADDED 03/2000 FOR FU5 LETTER
+*
+1 #ACTION-FLAG     (A1)
+1 #AT-STATUS       (A2)
+1 #AFB-BANK  (A40)
+1 #TEXT   (A75)
+1 #WITH    (L)
+1 #CNT-NC               (P5)  /* PM7
+1 #CNT-APP-TO-MAIL      (P5)
+1 #CNT-ALT-STRT-TO-MAIL (P5)
+1 #CNT-30-DAY-FU        (P5)
+1 #CNT-60-DAY-FU        (P5)  /* DW4
+1 #CNT-90-DAY-FU        (P5)  /* DW4
+1 #CNT-REG-APP-TO-MAIL  (P5)
+*
+1 #COMMAND    (A2) INIT <'BA'>
+1 #INVALID    (L)
+1 #RANK-DISPL (P2)
+1 #RANK-LIT   (A23)
+1 #RANK-DISPLAY (A5)
+1 #MIL-SERV   (A3)
+1 #ISN    (P8)
+1 #YEARS    (N4/10)
+1 #LAST-MON (N2)
+*
+1 #ORIGIN-TOTS (P5/10)
+1 #SPS-GEN-I   (P5)
+1 #MBR-I       (P5)
+1 #AFB-IND      (A1)
+1 #HOME-PHONE     (A16)
+1 #WORK-PHONE     (A16)
+1 #ISS-AGE    (N2)
+1 REDEFINE #ISS-AGE
+ 2 #ISS-AGE-A2 (A2)
+1 #APREM       (N6.2)
+1 #MON-PREM    (N4.2)
+1 #SMOKER-FLAG (A1)
+1 #FACE-9      (N7.2)
+1 #LOAN-PMT     (N3.2)
+1 #CALC-TOT-ALOT-AMT (N4.2)
+1 #FUP-REC       (A150)       /* DW11    DW16
+*
+1 #ALOT-START-EXTR   (A170)                /* DW13
+1 #LOAN-PMT-DISP          (A10)
+1 #MON-PREM-DISP          (A10)
+1 #CALC-TOT-ALOT-AMT-DISP (A10)
+1 #DFAS-ACTIVE-DATE       (A8)
+1 #DFAS-RETIRED-DATE      (A8)
+1 #DFAS-ACT-SUBMIT-DAY   (A4)
+1 #DFAS-ACT-SUBMIT-MONTH (A9)
+1 #DFAS-ACT-WIRE-MONTH   (A9)
+1 #DFAS-RET-SUBMIT-DAY   (A4)
+1 #DFAS-RET-SUBMIT-MONTH (A9)
+1 #DFAS-RET-WIRE-MONTH   (A9)
+*
+1 #CLERK-ABB-NAME-PASS (A20)      /* DW13
+1 #EDIT-INVALID (L)
+1 #RANK-LITERAL (A23)
+1 #HOLD-RANK-5  (A5)
+1 #DISPL        (P2)
+1 #PASS-COMMAND (A2)   INIT <'AD'>
+1 #BRIDGER      (A1)                                  /* PM20
+*
+* Below table is also in C2153SPO  - keep them in sync
+1 #MC-TABLE     /* Membership Coordinator Table       /* DW16
+ 2 #MC-1   (A33)   INIT <'AZS-112-Alex Shriner'>
+ 2 #MC-2   (A33)   INIT <'DMH-113-Dale Hawley'>
+ 2 #MC-3   (A33)   INIT <'KMT-114-Keith Tederick'>
+ 2 #MC-4   (A33)   INIT <'KFZ-106-Ken Zweibon'>
+ 2 #MC-5   (A33)   INIT <'LKW-107-Lauren Wynn'>
+ 2 #MC-6   (A33)   INIT <'PNP-104-Neal Pelletier'>
+ 2 #MC-7   (A33)   INIT <'REM-108-Rick Mosby'>
+ 2 #MC-8   (A33)   INIT <'SRG-109-Steve Garnett'>
+1 REDEFINE #MC-TABLE
+ 2 #MC-TBL-OCC   (8)
+  3 #MCO-INIT      (A3)
+  3 #MCO-FIL-1     (A1)
+  3 #MCO-EXTENSION (A3)
+  3 #MCO-FIL-2     (A1)
+  3 #MCO-NAME      (A25)
+*
+1 #MC-NUM-ENTRIES   (N3) INIT <8>  /* Keep in sync with above   /* DW16
+1 #MC-NAME   (A25)
+1 #MC-X      (A3)
+END-DEFINE
+*
+FORMAT LS=133 PS=76
+WRITE TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+                  'PROGRAM MESSAGES'
+                   5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE   (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+                  'Labels to AAFMAA to produce'
+                   5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (4) LS=133 PS=60
+WRITE   (4) TITLE LEFT 'PROGRAM:' *PROGRAM 2X
+          'AAFMAA C.A.P. Allot Starts mailed requiring AFB Account'
+           2X 'DATE:' *DAT4U 2X 'TIME:' *TIMX
+*
+RESET #CGA-MF-SCR-PARM-1-N
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 1 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #1-MON-AGO
+*
+SUBTRACT 6 FROM #DD
+IF #DD LT 1
+  ADD 31 TO #DD
+  SUBTRACT 1 FROM #MM
+  IF #MM LT 1
+    ADD 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+END-IF
+MOVE #YYYYMMDD TO #36-DAYS-AGO
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 2 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #2-MON-AGO  /* DW4
+*
+SUBTRACT 6 FROM #DD
+IF #DD LT 1
+  ADD 31 TO #DD
+  SUBTRACT 1 FROM #MM
+  IF #MM LT 1
+    ADD 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+END-IF
+MOVE #YYYYMMDD TO #66-DAYS-AGO
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 3 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #3-MON-AGO  /* DW4
+*
+SUBTRACT 6 FROM #DD
+IF #DD LT 1
+  ADD 31 TO #DD
+  SUBTRACT 1 FROM #MM
+  IF #MM LT 1
+    ADD 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+END-IF
+MOVE #YYYYMMDD TO #96-DAYS-AGO
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 15 FROM #DD
+IF #DD LT 1
+  ADD 30 TO #DD
+  SUBTRACT 1 FROM #MM
+*
+  IF #MM LT 1
+    ADD 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+END-IF
+MOVE #YYYYMMDD TO #15-DAYS-AGO
+*
+MOVE *DATN TO #YYYYMMDD    /* DW10
+SUBTRACT 1 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+*
+SUBTRACT 15 FROM #DD
+IF #DD LT 1
+  ADD 30 TO #DD
+  SUBTRACT 1 FROM #MM
+*
+  IF #MM LT 1
+    ADD 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+END-IF
+MOVE #YYYYMMDD TO #45-DAYS-AGO  /* DW10
+*
+WRITE 'Current system date =' *DATN
+WRITE '15-days-ago         =' #15-DAYS-AGO
+WRITE '36-days-ago         =' #36-DAYS-AGO
+WRITE '45-days-ago         =' #45-DAYS-AGO    /* DW10
+WRITE '66-days-ago         =' #66-DAYS-AGO
+WRITE '96-days-ago         =' #96-DAYS-AGO
+WRITE '1-mon-ago           =' #1-MON-AGO
+WRITE '2-mon-ago           =' #2-MON-AGO
+WRITE '3-mon-ago           =' #3-MON-AGO
+*
+
+COMPRESS 'Account'
+   #TAB 'SSN'
+   #TAB 'Rank'
+   #TAB 'Last-Name'
+   #TAB 'First-Name'
+   #TAB 'MI'
+   #TAB 'Address1'
+   #TAB 'Address2'
+   #TAB 'CityState'
+   #TAB 'Zip'
+   #TAB 'DOB'
+   #TAB 'Home Phone'
+   #TAB 'Work Phone'
+   #TAB 'Email Addr'              /* DW18
+   #TAB 'Sig-Card'
+      INTO #AFB-FILE LEAVING NO
+WRITE WORK 5 #AFB-FILE
+*
+COMPRESS 'AT#'                         /* DW11
+   #TAB 'Name'
+   #TAB 'Create-User'
+   #TAB 'Source'
+   #TAB 'Create-Date'
+   #TAB 'Email'
+   #TAB 'MC Name'                      /* DW16
+   #TAB 'MCX'                          /* DW16
+      INTO #FUP-REC LEAVING NO
+WRITE WORK 6 #FUP-REC
+WRITE WORK 7 #FUP-REC
+WRITE WORK 8 #FUP-REC
+WRITE WORK 9 #FUP-REC               /*END DW11
+*
+COMPRESS 'Application Number'            /* DW13
+   #TAB 'CN'
+   #TAB 'Email Address'
+   #TAB 'Rank'
+   #TAB 'Last Name'
+   #TAB 'First Name'
+   #TAB 'MI'
+   #TAB 'Premium'
+   #TAB 'Loan Payment'
+   #TAB 'Total Payment'
+   #TAB 'Home-Phone'
+   #TAB 'Work-Phone'
+   #TAB 'Mrep'
+   #TAB 'Submit-Day'
+   #TAB 'Submit-Month'
+   #TAB 'Wire-Month'
+      INTO #ALOT-START-EXTR LEAVING NO
+WRITE WORK 10 #ALOT-START-EXTR
+WRITE WORK 11 #ALOT-START-EXTR
+*
+READ WORK 12 ONCE RECORD #DFAS-ACTIVE-DATE /* YYYYMMDD Last time DFAS ACT was run DW13
+READ WORK 13 ONCE RECORD #DFAS-RETIRED-DATE /* YYYYMMDD Last time DFAS RET was run DW13
+*
+MOVE *DATN TO #DATN
+*
+MOVE #DFAS-ACTIVE-DATE TO #YYYYMMDD-A /* SETUP Active dates
+IF #YYYYMM GE #DATN-YYYYMM
+  MOVE #DATN TO #YYYYMMDD
+  ADD 1 TO #MM
+ELSE
+  MOVE #DATN TO #YYYYMMDD
+END-IF
+*
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE '15th' TO #DFAS-ACT-SUBMIT-DAY
+MOVE #MON-LIT (#MM) TO #DFAS-ACT-SUBMIT-MONTH
+*
+ADD 1 TO #MM
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE 1 TO #DD        /* Wire will always occur on the 1st
+MOVE #MON-LIT (#MM) TO #DFAS-ACT-WIRE-MONTH
+*
+MOVE #DFAS-RETIRED-DATE TO #YYYYMMDD-A /* SETUP Retired dates
+IF #YYYYMM GE #DATN-YYYYMM
+  MOVE #DATN TO #YYYYMMDD
+  ADD 1 TO #MM
+ELSE
+  MOVE #DATN TO #YYYYMMDD
+END-IF
+*
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE '10th' TO #DFAS-RET-SUBMIT-DAY
+MOVE #MON-LIT (#MM) TO #DFAS-RET-SUBMIT-MONTH
+*
+ADD 1 TO #MM
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE 1 TO #DD        /* Wire will always occur on the 1st
+MOVE #MON-LIT (#MM) TO #DFAS-RET-WIRE-MONTH
+*                                   /* END DW13
+*
+READ AT-V BY NAME
+*
+*  IF AT-V.ACTION-FLAG = 'S' or = 'M' OR = 'N'  /* PM7 PM9
+*    CALLNAT 'GCKSTSXX'                         /* PM7 PM9
+*      AT-V.ADDRESS-1                           /* PM7 PM9
+*      AT-V.ADDRESS-2                           /* PM7 PM9
+*      AT-V.ADDRESS-3                           /* PM7 PM9
+*      AT-V.ZIP-CODE                            /* PM7 PM9
+*      #INVALID                                 /* PM7 PM9
+*
+*    IF #INVALID                                /* PM7 PM9
+*      ADD +1 TO #CNT-NC                        /* PM7 PM9
+*      ESCAPE TOP                               /* PM7 PM9
+*    END-IF                                     /* PM7 PM9
+*  END-IF                                       /* PM7 PM9
+*
+  MOVE AT-V.MIL-SERVICE TO #MIL-SERV
+  MOVE AT-V.ACTION-FLAG TO #ACTION-FLAG
+  MOVE AT-V.AT-STATUS   TO #AT-STATUS
+*
+  ADD 1 TO #AT-RECS-READ
+*
+  FOR #I1 1 TO #MC-NUM-ENTRIES                    /* DW16
+    IF AT-V.USER-SOURCE = #MCO-INIT (#I1)
+      MOVE #MCO-NAME (#I1)      TO #MC-NAME
+      MOVE #MCO-EXTENSION (#I1) TO #MC-X
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF #I1 GT #MC-NUM-ENTRIES
+    MOVE 'Unknown' TO #MC-NAME
+    MOVE '999'     TO #MC-X
+  END-IF
+*
+  IF #ACTION-FLAG = 'S'                       /* DW11
+   AND NOT AT-V.AT-STATUS = 'SP' OR = 'SD' OR = 'S7'                  /* PM17 PM22
+    IF   (DATE-RECEIVED GT #1-MON-AGO)
+     AND (DATE-RECEIVED LE #15-DAYS-AGO)
+     AND (FOLLOW-UP-DATE(2) = 0 OR = 99999999) /* already been dun?   /* DW14
+     COMPRESS AT-V.ID-NUMBER
+      #TAB AT-V.NAME
+      #TAB AT-V.USER-SOURCE
+      #TAB AT-V.APPL-SOURCE
+      #TAB AT-V.DATE-RECEIVED
+      #TAB AT-V.INTERNET-ADDR
+      #TAB #MC-NAME                          /* DW16
+      #TAB #MC-X                             /* DW16
+         INTO #FUP-REC LEAVING NO
+     WRITE WORK 6 #FUP-REC
+    END-IF
+*
+    IF   (DATE-RECEIVED GT #45-DAYS-AGO)
+     AND (DATE-RECEIVED LE #1-MON-AGO)
+     AND (FOLLOW-UP-DATE(3) = 0 OR = 99999999) /* already been dun?     /* DW14
+      COMPRESS AT-V.ID-NUMBER
+       #TAB AT-V.NAME
+       #TAB AT-V.USER-SOURCE
+       #TAB AT-V.APPL-SOURCE
+       #TAB AT-V.DATE-RECEIVED
+       #TAB AT-V.INTERNET-ADDR
+       #TAB #MC-NAME                          /* DW16
+       #TAB #MC-X                             /* DW16
+          INTO #FUP-REC LEAVING NO
+     WRITE WORK 7 #FUP-REC
+    END-IF
+*
+    IF   (DATE-RECEIVED GT #2-MON-AGO)
+     AND (DATE-RECEIVED LE #45-DAYS-AGO)
+     AND (FOLLOW-UP-DATE(4) = 0 OR = 99999999) /* already been dun?   /* DW14
+      COMPRESS AT-V.ID-NUMBER
+       #TAB AT-V.NAME
+       #TAB AT-V.USER-SOURCE
+       #TAB AT-V.APPL-SOURCE
+       #TAB AT-V.DATE-RECEIVED
+       #TAB AT-V.INTERNET-ADDR
+       #TAB #MC-NAME                          /* DW16
+       #TAB #MC-X                             /* DW16
+          INTO #FUP-REC LEAVING NO
+     WRITE WORK 8 #FUP-REC
+    END-IF
+*
+    IF   (DATE-RECEIVED GT #3-MON-AGO)
+     AND (DATE-RECEIVED LE #2-MON-AGO)
+     AND (FOLLOW-UP-DATE(5) = 0 OR = 99999999) /* already been dun?       /* DW14
+      COMPRESS AT-V.ID-NUMBER
+       #TAB AT-V.NAME
+       #TAB AT-V.USER-SOURCE
+       #TAB AT-V.APPL-SOURCE
+       #TAB AT-V.DATE-RECEIVED
+       #TAB AT-V.INTERNET-ADDR
+       #TAB #MC-NAME                          /* DW16
+       #TAB #MC-X                             /* DW16
+          INTO #FUP-REC LEAVING NO
+     WRITE WORK 9 #FUP-REC
+    END-IF
+  END-IF                               /* End DW11
+*
+  IF AT-V.CAP-IND = 'Y'                /* CAP AT MEMBERS
+    IF #ACTION-FLAG ='M'
+      ADD 1 TO #CNT-APP-TO-MAIL
+      MOVE 'CAP' TO LAB-LBL-TYPE
+      RESET LAB-ALOT-MSG
+      PERFORM MAIL-APP-OR-STRT-OR-FU
+    END-IF
+*
+    IF #AT-STATUS = 'PI'   /* App recvd -Produce lbl for allt card
+     AND AT-V.CAP-TYPE = 'G' OR = 'C'                             /* PM19
+*      RESET #BRIDGER                                             /* PM20 PM21
+*      FIND (1) ST-V WITH MEMBER-KEY = AT-V.MEMBER-CN             /* PM20 PM21
+*        #BRIDGER := ST-V.BRIDGER-IND                             /* PM20 PM21
+*      END-FIND                                                   /* PM20 PM21
+*      IF #BRIDGER = 'Y'                                          /* PM20 PM21
+      RESET #CALC-TOT-ALOT-AMT
+      PERFORM COMPUTE-ALLOT-AMT
+      ADD 1 TO #CNT-ALT-STRT-TO-MAIL
+      IF AT-V.CAP-TYPE = 'G'                                      /* PM19
+        MOVE 'CAP' TO LAB-LBL-TYPE
+      ELSE                                                        /* PM19
+        MOVE 'CPC' TO LAB-LBL-TYPE                                /* PM19
+      END-IF                                                      /* PM19
+      MOVE EDITED #CALC-TOT-ALOT-AMT (EM=ZZZ.99) TO LAB-ALOT-MSG
+      COMPRESS 'ALLOT $' LAB-ALOT-MSG INTO LAB-ALOT-MSG LEAVING NO
+      PERFORM MAIL-APP-OR-STRT-OR-FU
+      IF AT-V.CAP-TYPE = 'G'                                      /* PM19
+        PERFORM CREATE-ALOT-STRT-FILES          /* New as of 2/20    DW13
+      END-IF                                                      /* PM19
+*      END-IF                                                     /* PM20 PM21
+*
+*     IF AT-V.INS-ONLY = 'Y'   /* COMBO                           /* PM2
+*       RESET #NOTE-TEXT (*)
+*       COMPRESS 'SSN' AT-V.SSN 'has just returned a CAP app'
+*         'asking for services.'                 INTO #NOTE-TEXT (1)
+*       COMPRESS '"AT" record can be created using "AT" ssn COM'
+*                                                  INTO #NOTE-TEXT (2)
+*       MOVE 'MAS' TO #TO-INIT
+*       MOVE 'EDS' TO #CGA-CLERK
+*       MOVE '*NX' TO #CGA-SCR-SUFFIX
+*       FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+*     END-IF
+    END-IF
+  ELSE       /* non-cap members
+*   IF   (DATE-RECEIVED GT #36-days-ago)    /* DW10
+*    AND (DATE-RECEIVED LE #1-MON-AGO)      /* DW10
+    IF   (DATE-RECEIVED GT #2-MON-AGO)      /* DW10
+     AND (DATE-RECEIVED LE #45-DAYS-AGO)    /* DW10
+     AND (FOLLOW-UP-DATE(1) = 0 OR = 99999999) /* already been dun?  /* DW14
+     AND (#ACTION-FLAG = 'S')  /* Still not pending
+     AND (NOT AT-V.AT-STATUS = 'SP' OR = 'SD')   /* PM8 PM15 PM17
+     AND (NOT AT-V.INTRO-FLAG = 'K' OR = 'G')    /* DW10
+      ADD 1 TO #CNT-30-DAY-FU
+*     MOVE 'F30' TO LAB-LBL-TYPE                 /* PM15
+      MOVE 'F45' TO LAB-LBL-TYPE                 /* PM15
+      RESET LAB-ALOT-MSG
+      PERFORM MAIL-APP-OR-STRT-OR-FU
+*   ELSE
+*     IF   (DATE-RECEIVED GT #66-DAYS-AGO)    /* DW4    DW6
+*      AND (DATE-RECEIVED LE #2-MON-AGO)
+*      AND (FOLLOW-UP-DATE(2) = 0 or = 99999999) /*already been dun?    /* DW14
+*      AND (#ACTION-FLAG = 'S')  /* Still not pending
+*       ADD 1 TO #CNT-60-DAY-FU
+*       MOVE 'F60' TO LAB-LBL-TYPE
+*       RESET LAB-ALOT-MSG
+*       PERFORM MAIL-APP-OR-STRT-OR-FU
+*     ELSE                                                        /* PM5
+*       IF   (DATE-RECEIVED GT #96-DAYS-AGO)                  /* DW4 PM5
+*        AND (DATE-RECEIVED LE #3-MON-AGO)                        /* PM5
+*        AND (FOLLOW-UP-DATE(3) = 0 or = 99999999) /* alredy ben dun?   /* DW14
+*        AND (#ACTION-FLAG = 'S')  /* Still not pending           /* PM5
+*         ADD 1 TO #CNT-90-DAY-FU                                 /* PM5
+*         MOVE 'F90' TO LAB-LBL-TYPE                              /* PM5
+*         RESET LAB-ALOT-MSG                                      /* PM5
+*         PERFORM MAIL-APP-OR-STRT-OR-FU                          /* PM5
+*       END-IF                                                    /* PM5
+*     END-IF                                                      /* DW4
+    END-IF
+  END-IF
+*
+  IF   (AT-V.CAP-IND NE 'Y')  /* non-CAP AT MEMBERS
+   AND (#ACTION-FLAG = 'M')
+    RESET #AT-NUMBER #AT-USER                                     /* PM1
+    MOVE '2' TO #AT-LINKED #AT-WITH                               /* PM1
+    MOVE AT-V.ID-NUMBER TO #AT-NUMBER                             /* PM1
+    MOVE AT-V.USER-SOURCE TO #AT-USER                             /* PM1
+    IF   (MEMBER-CN = ' ' OR = '000000')  /* is linked to another AT
+     AND (REFERING-ID-NUMBER (1) GE 500000)
+      MOVE '1' TO #AT-LINKED                                      /* PM1
+    END-IF
+*
+    FOR #I1 1 TO 40
+      IF  (NOTES (#I1) = MASK ('*'...'-'MM'/'DD'/'YYYY)) /* 1st line
+       AND (NOTES-REST (#I1) = MASK ('W/'))  /* with/xxx
+        COMPRESS NOTES-YYYY (#I1) NOTES-MM (#I1) NOTES-DD (#I1)
+            INTO #YYYYMMDD-A LEAVING NO
+        IF  (#YYYYMMDD = ST-NOTE-DATE (1))   /* orig note date
+         OR (#YYYYMMDD = *DATN)              /* or today
+          MOVE '1' TO  #AT-WITH                                   /* PM1
+          ESCAPE BOTTOM
+        END-IF
+      END-IF
+    END-FOR
+  ELSE                                                            /* PM1
+    END TRANSACTION                                               /* PM1
+    ESCAPE TOP                                                    /* PM1
+  END-IF                                                          /* PM1
+END TRANSACTION
+END-ALL                                                           /* PM1
+*
+SORT BY #AT-USER #AT-WITH #AT-LINKED USING #AT-NUMBER             /* PM1
+DISPLAY (8) #AT-USER #AT-WITH #AT-LINKED #AT-NUMBER
+  PERFORM PROCESS-APP                                             /* PM1
+END-SORT                                                          /* PM1
+*
+WRITE (2) 'TOT-AT-RECS-READ                    = ' #AT-RECS-READ
+WRITE (2) 'TOT CAP M? to S?    (send app)      = ' #CNT-APP-TO-MAIL
+WRITE (2) 'TOT CAP PI to PC    (send allt strt)= ' #CNT-ALT-STRT-TO-MAIL
+WRITE (2) 'TOT REG M? to S?   (send app)       = ' #CNT-REG-APP-TO-MAIL
+* WRITE (2) 'TOT NON CAP 30-day follow ups       = ' #CNT-30-DAY-FU  /* DW10
+WRITE (2) 'TOT NON CAP 45-day follow ups       = ' #CNT-30-DAY-FU    /* DW10
+
+WRITE (2) 'TOT NON CAP 60-day follow ups       = ' #CNT-60-DAY-FU /* DW4
+WRITE (2) 'TOT NON CAP 90-day follow ups       = ' #CNT-90-DAY-FU /* DW4
+WRITE (2) 'TOT North Carolina apps skipped     = ' #CNT-NC        /* PM7
+*
+* * * * * * * * * * * * * * * * * * * * *
+
+DEFINE SUBROUTINE CREATE-ALOT-STRT-FILES                 /* DW13
+* * * * * * * * * * * * * * * * * * * * *
+*
+WRITE 'top of create-alot-starts' AT-V.ID-NUMBER 'auth=' AT-V.ALOT-CHG-AUTH
+IF NOT AT-V.ALOT-CHG-AUTH = 'D' OR = 'Y'
+  ESCAPE ROUTINE
+END-IF
+*
+RESET #DISPL #RANK-LIT #RANK-DISPLAY
+CALLNAT 'GRANKSXX' #PASS-COMMAND AT-V.RANK AT-V.MIL-SERVICE
+           #INVALID #DISPL #RANK-LIT #RANK-DISPLAY
+*
+MOVE EDITED #LOAN-PMT (EM=Z,ZZZ.99) TO #LOAN-PMT-DISP
+MOVE LEFT #LOAN-PMT-DISP TO #LOAN-PMT-DISP
+MOVE EDITED #MON-PREM (EM=Z,ZZZ.99) TO #MON-PREM-DISP
+MOVE LEFT #MON-PREM-DISP TO #MON-PREM-DISP
+MOVE EDITED #CALC-TOT-ALOT-AMT (EM=Z,ZZZ.99) TO #CALC-TOT-ALOT-AMT-DISP
+MOVE #CALC-TOT-ALOT-AMT-DISP TO #CALC-TOT-ALOT-AMT-DISP
+*
+RESET #CLERK-ABB-NAME-PASS
+CALLNAT 'GCKNMSXX' AT-V.USER-SOURCE
+                   #INVALID
+                   #CLERK-ABB-NAME-PASS
+IF #INVALID
+  MOVE AT-V.USER-SOURCE TO #CLERK-ABB-NAME-PASS
+END-IF
+*
+COMPRESS AT-V.ID-NUMBER
+     #TAB AT-V.MEMBER-CN
+     #TAB AT-V.INTERNET-ADDR
+     #TAB #RANK-LIT
+     #TAB #LAST
+     #TAB #FIRST-20
+     #TAB #MI
+     #TAB #MON-PREM-DISP
+     #TAB #LOAN-PMT-DISP
+     #TAB #CALC-TOT-ALOT-AMT-DISP
+     #TAB AT-V.HOME-PHONE AT-V.HOME-PHONE-INTR
+     #TAB AT-V.WORK-PHONE AT-V.WORK-PHONE-INTR
+     #TAB #CLERK-ABB-NAME-PASS                            /* Mrep
+         INTO #ALOT-START-EXTR LEAVING NO
+*
+IF AT-V.MIL-STATUS = 'A'
+  COMPRESS #ALOT-START-EXTR
+    #TAB #DFAS-ACT-SUBMIT-DAY
+    #TAB #DFAS-ACT-SUBMIT-MONTH
+    #TAB #DFAS-ACT-WIRE-MONTH
+           INTO #ALOT-START-EXTR LEAVING NO
+ELSE
+  COMPRESS #ALOT-START-EXTR
+    #TAB #DFAS-RET-SUBMIT-DAY
+    #TAB #DFAS-RET-SUBMIT-MONTH
+    #TAB #DFAS-RET-WIRE-MONTH
+           INTO #ALOT-START-EXTR LEAVING NO
+END-IF
+*
+IF AT-V.ALOT-CHG-AUTH = 'D'
+  WRITE WORK 10 #ALOT-START-EXTR
+ELSE
+  IF AT-V.ALOT-CHG-AUTH = 'Y'
+    WRITE WORK 11 #ALOT-START-EXTR
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE MAIL-APP-OR-STRT-OR-FU
+* * * * * * * * * * * * * * * * * * * * *
+*
+* create file to be used to ftp to AAFMAA for labels & update at midnite
+RESET #WORK-PHONE #HOME-PHONE
+COMPRESS 'AT' AT-V.ID-NUMBER INTO LAB-ID LEAVING NO
+MOVE AT-V.NAME         TO LAB-NAME
+*
+* IF #WITH   /* logic moved to c2153spo
+*     WRITE 'fixed label' AT-V.ID-NUMBER NOTES (#I1)
+*   COMPRESS '*' LAB-NAME INTO LAB-NAME LEAVING NO
+* END-IF
+*
+MOVE AT-V.RANK         TO LAB-RANK
+MOVE AT-V.MIL-SERVICE  TO LAB-MIL-SERV
+*
+MOVE AT-V.ACTION-FLAG  TO LAB-ACT-FLAG /* to indicate type of label
+*
+  RESET #PDA-ADDRESS                           /* JT1
+  #ADD-TYPE        := 'P'                      /* JT1
+  #ADD-CONTACT-ID := AT-V.CONTACT-ID           /* JT1
+  CALLNAT 'ADDN0001' #PDA-ADDRESS              /* JT1
+*
+* MOVE AT-V.ADDRESS-1    TO LAB-ADDR-1         /* JT1
+* MOVE AT-V.ADDRESS-2    TO LAB-ADDR-2         /* JT1
+* MOVE AT-V.ADDRESS-3    TO LAB-ADDR-3         /* JT1
+* COMPRESS AT-V.ZIP-CODE-5 '-' AT-V.ZIP-CODE-4 /* JT1
+*                   INTO LAB-ZIP-CODE LEAVING NO /* JT1
+*
+ MOVE #ADD-LINE-1    TO LAB-ADDR-1          /* JT1         
+ MOVE #ADD-LINE-2    TO LAB-ADDR-2          /* JT1
+ MOVE #ADD-LINE-3    TO LAB-ADDR-3          /* JT1
+ COMPRESS #ADD-ZIP5 '-' #ADD-ZIP4           /* JT1
+                   INTO LAB-ZIP-CODE LEAVING NO /* JT1
+*
+MOVE AT-V.SSN          TO LAB-SSN
+MOVE AT-V.VA-CALC-TYPE TO #AFB-IND
+*
+IF AT-V.HOME-PHONE NE 0
+  COMPRESS AT-V.HOME-PHONE AT-V.HOME-PHONE-INTR INTO #HOME-PHONE
+END-IF
+*
+IF AT-V.WORK-PHONE NE 0
+  COMPRESS AT-V.WORK-PHONE AT-V.WORK-PHONE-INTR INTO #WORK-PHONE
+END-IF
+*
+WRITE WORK 2 LABELS    /* file to FTP to AAFMAA
+*
+ADD 1 TO #CNT-2
+DISPLAY (2) #CNT-2 AT-V.ID-NUMBER
+  AT-V.SSN
+  'TYPE'          LAB-LBL-TYPE
+  'Date/Received' AT-V.DATE-RECEIVED
+  AT-V.NAME
+  'Action/Flag'   AT-V.ACTION-FLAG
+  'AT/STATUS'     AT-V.AT-STATUS
+  'Alot/Amt'      #CALC-TOT-ALOT-AMT
+*
+IF #AT-STATUS = 'PI'  /* App recvd -Produce lbl for allt card
+  MOVE AT-V.NAME TO #NAME
+  RESET #LAST #MI #FIRST-20
+  CALLNAT 'GFMLNSXX' /* split name
+   #NAME
+   #FIRST-20
+   #MI
+   #LAST
+   #ERR-MSG
+*
+*  MOVE 'S' TO #SPLIT                        /* JT1
+*  RESET #STREET #STREET-2 #CITY #STATE      /* JT1
+*  CALLNAT 'GCTSTSXX'  /* split city/state   /* JT1
+*   #SPLIT                                   /* JT1
+*   AT-V.ADDRESS-1                           /* JT1
+*   AT-V.ADDRESS-2                           /* JT1
+*   AT-V.ADDRESS-3                           /* JT1
+*   #STREET                                  /* JT1
+*   #STREET-2                                /* JT1
+*   #CITY                                    /* JT1
+*   #STATE                                   /* JT1
+*   #ERR-MSG                                 /* JT1
+*
+  MOVE #ADD-LINE-1    TO #STREET             /* JT1         
+  MOVE #ADD-LINE-2    TO #STREET-2           /* JT1
+  MOVE #ADD-CITY      TO #CITY               /* JT1
+  MOVE #ADD-STATE     TO #STATE              /* JT1
+*  
+  COMPRESS #CITY #STATE INTO #CITY-STATE
+  MOVE AT-V.DATE-OF-BIRTH TO #YYYYMMDD
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #MMDDYYYY LEAVING NO
+*
+  COMPRESS      /* the 1st slot is for account # for afb to propagate
+     #TAB AT-V.SSN
+     #TAB AT-V.RANK
+     #TAB #LAST
+     #TAB #FIRST-20
+     #TAB #MI
+     #TAB #STREET                                   
+     #TAB #STREET-2                                 
+     #TAB #CITY-STATE                               
+*     #TAB AT-V.ZIP-CODE                     /* JT1
+     #TAB #ADD-ZIP-CODE                      /* JT1
+     #TAB #MMDDYYYY
+     #TAB AT-V.HOME-PHONE AT-V.HOME-PHONE-INTR
+     #TAB AT-V.WORK-PHONE AT-V.WORK-PHONE-INTR
+     #TAB AT-V.INTERNET-ADDR                         /* DW18
+     #TAB AT-V.CONTACT-CODE
+        INTO #AFB-FILE LEAVING NO
+  WRITE WORK 5 #AFB-FILE
+*
+  IF #AFB-CNT = 0
+   WRITE (4) '*************** A F B   L I S T  ***********' //
+   WRITE (4) '*************** A F B   L I S T  ***********' //
+   WRITE (4) '*** fax to 8-1-913-682-6827             ' //
+   WRITE (4) '** PHONE 8-1-913-682-2206 X4014 - John Baeuchle *' //
+   WRITE (4) '***      8-1-913-682-2206 X5803 - Diane Parrish *' //
+   WRITE (4) '***      8-1-913-682-2006 X3001 - Kathy Gunther *' //
+   NEWPAGE (4)
+  END-IF
+*
+  ADD 1 TO #AFB-CNT
+  DISPLAY (4)
+              'CNT' #AFB-CNT (EM=ZZ9)
+              'ID' LAB-ID
+              'SSN' LAB-SSN (EM=999-99-9999)
+              'RANK' LAB-RANK
+              'NAME' LAB-NAME
+              'ADDR-1' LAB-ADDR-1
+              'ADDR-2' LAB-ADDR-2
+              'ZIP-CODE' LAB-ZIP-CODE
+*
+  IF LAB-ADDR-3 NE ' '
+     WRITE (4) '                                       ADDR-3 ='
+        LAB-ADDR-3
+  END-IF
+*
+  IF #AFB-IND = 'F'
+    MOVE '   ******* above is AIR ACADEMY BANK' TO #AFB-BANK
+  ELSE
+    RESET #AFB-BANK
+  END-IF
+*
+  WRITE (4) ' '
+  WRITE (4) 'DOB:' DATE-OF-BIRTH (EM=9999-99-99)
+            'HOME-PHONE:'    #HOME-PHONE (EM=XXX-XXX-XXXX)
+            '   WORK-PHONE:' #WORK-PHONE (EM=XXX-XXX-XXXX)
+             #AFB-BANK
+            'SIG-CARD:' AT-V.CONTACT-CODE
+  WRITE (4) ' '
+  WRITE (4) ' '
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE COMPUTE-ALLOT-AMT
+* * * * * * * * * * * * * * * * * *
+*
+RESET #LOAN-PMT
+IF CAP-IND = 'Y' AND (CAP-LOAN-AMT NE 0)
+  DECIDE ON FIRST VALUE CAP-LOAN-AMT
+    VALUE 5000
+      IF CAP-TERM = 48 MOVE 107.25 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 141.94 TO #LOAN-PMT END-IF
+    VALUE 4000
+      IF CAP-TERM = 48 MOVE  85.80 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 113.55 TO #LOAN-PMT END-IF
+    VALUE 3000
+      IF CAP-TERM = 48 MOVE 64.35 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 85.16 TO #LOAN-PMT END-IF
+    VALUE 2500
+      IF CAP-TERM = 48 MOVE 53.62 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 70.97 TO #LOAN-PMT END-IF
+    VALUE 2000
+      IF CAP-TERM = 48 MOVE 42.90 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 56.77 TO #LOAN-PMT END-IF
+    VALUE 1000
+      IF CAP-TERM = 48 MOVE 21.45 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 28.38 TO #LOAN-PMT END-IF
+    NONE IGNORE
+  END-DECIDE
+END-IF
+*
+IF SMOKER-FLAG = 'N' OR = ' '
+  MOVE 'N' TO #SMOKER-FLAG
+ELSE
+  MOVE 'S' TO #SMOKER-FLAG
+END-IF
+*
+COMPUTE #FACE-9 = FACE-AMT-UNITS * 1000
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT DATE-OF-BIRTH FROM #YYYYMMDD
+MOVE #YY TO #ISS-AGE-A2
+MOVE *DATN TO #YYYYMMDD /* calc premium based on 1st of next month
+ADD 1 TO #MM            /* since CAP eff date will be then
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE 1 TO #DD
+*
+IF AT-V.RATING-CODE = #CLASS-1 MOVE 'SB1' TO #CGA-SCR-SUFFIX END-IF /* PM12
+IF AT-V.RATING-CODE = #CLASS-2 MOVE 'SB2' TO #CGA-SCR-SUFFIX END-IF /* PM12
+IF AT-V.RATING-CODE = #CLASS-3 MOVE 'SB3' TO #CGA-SCR-SUFFIX END-IF /* PM12
+*
+* IF AT-STATUS = 'UA' MOVE 'SB1' TO #CGA-SCR-SUFFIX END-IF          /* PM12
+* IF AT-STATUS = 'UB' MOVE 'SB2' TO #CGA-SCR-SUFFIX END-IF          /* PM12
+* IF AT-STATUS = 'UC' MOVE 'SB3' TO #CGA-SCR-SUFFIX END-IF          /* PM12
+*
+CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX
+    PLAN #ISS-AGE #APREM #YYYYMMDD #SMOKER-FLAG #FACE-9 SEX /* DW3
+*
+RESET #MON-PREM
+IF PLAN NE 'SP'
+  COMPUTE #MON-PREM = #APREM / 12
+END-IF
+*
+COMPUTE #CALC-TOT-ALOT-AMT = #LOAN-PMT + #MON-PREM + ALLOT-STRT-AMT
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PROCESS-APP                                     /* PM1
+* * * * * * * * * * * * * * *
+*
+FIND AT-V WITH ID-NUMBER = #AT-NUMBER
+  IF NO RECORDS FOUND
+    WRITE 'AT not found - ' #AT-NUMBER
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  ADD 1 TO #CNT-REG-APP-TO-MAIL
+  MOVE 'REG' TO LAB-LBL-TYPE
+  RESET LAB-ALOT-MSG
+  PERFORM MAIL-APP-OR-STRT-OR-FU /*this is neded to chg act-flag
+*
+  IF   (AT-V.DATE-OF-BIRTH NE 0)
+   AND (AT-V.ID-NUMBER NE 0)
+    MOVE AT-V.ID-NUMBER TO #CGA-SCR-ID
+    MOVE 'ATA'          TO #CGA-SCR-SUFFIX
+    FETCH RETURN 'C2150PPO'    /* AT Application file
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+END

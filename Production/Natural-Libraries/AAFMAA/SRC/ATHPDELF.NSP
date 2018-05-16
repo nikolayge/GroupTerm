@@ -1,0 +1,246 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPDELF - DELETE UNUSED investment records
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG  REASON                                         *
+* DRW    12092004  DW1  never purge a fas if there is at least 1 e-bond*
+************************************************************************
+*
+DEFINE DATA
+LOCAL
+1 FI-V VIEW OF A-INVESTMENTS
+  2 ID-NUMBER  (N7)
+  2 REDEFINE ID-NUMBER
+   3 ID-NUMBER-FILL (A1)
+   3 ID-NUMBER-A   (A6)
+ 2 DATE-LST-UPDATE
+ 2 C*INV-GEN-TBL
+ 2 C*INV-MUTUAL-STOCKS-BONDS-TBL
+ 2 C*INV-E-BONDS-TBL
+ 2 C*INV-E-BONDS-TBL-2
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 REDEFINE ID-NUMBER
+  3 ID-NUM-A   (A6)
+ 2 WIDOW-FLAG
+ 2 INTRO-FLAG
+ 2 PROCESS-IND
+*
+1 NT-V VIEW OF A-NOTES
+ 2 ID-NUMBER
+ 2 NOTE-DATE (N8/60)
+ 2 NOTE-TEXT (A60/60)
+*
+1 #NUM-FIN    (P5)
+1 #NUM-INV    (P5)
+1 #CN-NOT-FND  (N5)
+1 #OVR-10-BNDS (N5)
+1 #OVR-5-YRS   (N5)
+1 #OVR-4-YRS   (N5)
+1 #NO-INV      (N5)
+1 #CNT-2       (P5)
+1 #I1          (I2)
+1 #DEL-INS-ONLY (P5)
+1 #OK-TO-DELETE (L) INIT <FALSE>
+*
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY  (N4)
+ 2 #MM    (N2)
+ 2 #DD    (N2)
+*
+1 #6-MONS-AGO  (N8)
+*
+END-DEFINE
+* * * * * * * * * * * * * * *
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+        'MISC EXCEPTIONS AND COUNTS'
+        5X 'DATE:' *DAT4U 5X 'TIME: ' *TIMX
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+           'DELETED INVESTMENT RECORDS'
+           5X 'DATE:' *DAT4U 5X 'TIME: ' *TIMX
+*
+************************************************************************
+* COMPUTE 6 MONTHS AGO DATE
+************************************************************************
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 6 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #6-MONS-AGO
+*
+DISPLAY '6 MONTHS AGO DELETE DATE: ' #YYYYMMDD
+*
+READ FI-V BY ID-NUMBER
+  IF FI-V.ID-NUMBER LE 1900
+*   WRITE FI-V.ID-NUMBER 'SAMPLE FIN RECORDS'
+*
+    IF   (FI-V.ID-NUMBER GT 40)  /* save samples below cn40
+     AND (NOT FI-V.ID-NUMBER = 109)   /* bill saunders
+      ADD 1 TO #CNT-2
+      DISPLAY (2) #CNT-2 FI-V.ID-NUMBER DATE-LST-UPDATE
+         ST-V.INTRO-FLAG
+         FI-V.C*INV-GEN-TBL
+         FI-V.C*INV-MUTUAL-STOCKS-BONDS-TBL
+         FI-V.C*INV-E-BONDS-TBL
+         FI-V.C*INV-E-BONDS-TBL-2
+      DELETE (0085)
+    END-IF
+*
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  RESET ST-V
+  FIND ST-V WITH MEMBER-KEY = FI-V.ID-NUMBER-A
+    IF NO RECORDS FOUND
+      FIND ST-V WITH WIDOW-KEY = FI-V.ID-NUMBER-A
+      END-FIND
+    END-NOREC
+  END-FIND
+*
+  IF   (ST-V.INTRO-FLAG = 'O' OR = 'P' OR = 'Q')
+   AND (NOT ST-V.PROCESS-IND = 'S' OR = 'C')
+    RESET #OK-TO-DELETE
+    PERFORM CHECK-FOR-DELETE
+*
+    IF #OK-TO-DELETE
+      ADD 1 TO #DEL-INS-ONLY
+      DELETE (0085)
+      WRITE FI-V.ID-NUMBER 'DELETED INS-ONLY'
+      ADD 1 TO #CNT-2
+      DISPLAY (2) #CNT-2 FI-V.ID-NUMBER DATE-LST-UPDATE
+       ST-V.INTRO-FLAG
+       FI-V.C*INV-GEN-TBL
+       FI-V.C*INV-MUTUAL-STOCKS-BONDS-TBL
+       FI-V.C*INV-E-BONDS-TBL
+       FI-V.C*INV-E-BONDS-TBL-2
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  ADD 1 TO #NUM-FIN
+  IF  (FI-V.C*INV-GEN-TBL NE 0)
+   OR (FI-V.C*INV-MUTUAL-STOCKS-BONDS-TBL NE 0)
+   OR (FI-V.C*INV-E-BONDS-TBL NE 0)
+   OR (FI-V.C*INV-E-BONDS-TBL-2 NE 0)
+    ADD 1 TO #NUM-INV
+*
+*   IF ((C*INV-E-BONDS-TBL + C*INV-E-BONDS-TBL-2) >= 10)   /* DW1
+*     ADD 1 TO #OVR-10-BNDS
+    IF (C*INV-E-BONDS-TBL + C*INV-E-BONDS-TBL-2) GT 0      /* DW1
+      IGNORE
+    ELSE
+      IF DATE-LST-UPDATE LT *DATN - 50000
+        ADD 1 TO #OVR-5-YRS
+        ADD 1 TO #CNT-2
+        DISPLAY (2) #CNT-2 FI-V.ID-NUMBER DATE-LST-UPDATE
+        ST-V.INTRO-FLAG
+        FI-V.C*INV-GEN-TBL
+        FI-V.C*INV-MUTUAL-STOCKS-BONDS-TBL
+        FI-V.C*INV-E-BONDS-TBL
+        FI-V.C*INV-E-BONDS-TBL-2
+        DELETE (0085)
+        END TRANSACTION
+        ESCAPE TOP
+      END-IF
+    END-IF
+*
+    IF   (DATE-LST-UPDATE LT *DATN - 40000)
+     AND (C*INV-E-BONDS-TBL + C*INV-E-BONDS-TBL-2) = 0      /* DW1
+      ADD 1 TO #OVR-4-YRS
+    END-IF
+  ELSE
+*   IF ((C*INV-E-BONDS-TBL + C*INV-E-BONDS-TBL-2) >= 10)   /* DW1
+*     ADD 1 TO #OVR-10-BNDS
+    IF (C*INV-E-BONDS-TBL + C*INV-E-BONDS-TBL-2) GT 0     /* DW1
+      IGNORE
+    ELSE
+      ADD 1 TO #NO-INV
+      ADD 1 TO #CNT-2
+      DISPLAY (2) #CNT-2 FI-V.ID-NUMBER DATE-LST-UPDATE
+      FI-V.C*INV-GEN-TBL
+      FI-V.C*INV-MUTUAL-STOCKS-BONDS-TBL
+      FI-V.C*INV-E-BONDS-TBL
+      FI-V.C*INV-E-BONDS-TBL-2
+      DELETE (0085)
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  IF FI-V.ID-NUMBER LT 900000 /* bypass extra fin record (9XXXXX)
+    FIND ST-V WITH MEMBER-KEY = FI-V.ID-NUMBER-A
+      IF NO RECORDS FOUND
+        ADD 1 TO #CN-NOT-FND
+        FIND ST-V WITH WIDOW-KEY = FI-V.ID-NUMBER-A
+          IF NO RECORD FOUND
+            WRITE FI-V.ID-NUMBER 'No ST number found'
+            ADD 1 TO #CNT-2
+            DISPLAY (2) #CNT-2 FI-V.ID-NUMBER DATE-LST-UPDATE
+              FI-V.C*INV-GEN-TBL
+              FI-V.C*INV-MUTUAL-STOCKS-BONDS-TBL
+              FI-V.C*INV-E-BONDS-TBL
+              FI-V.C*INV-E-BONDS-TBL-2
+            DELETE (0085)
+            ESCAPE TOP
+          END-NOREC
+        END-FIND
+      END-NOREC
+    END-FIND
+  END-IF
+  END TRANSACTION
+END-READ
+*
+WRITE #NUM-FIN       'fin records'
+WRITE #NO-INV        'fin but no INV - DELETED'
+WRITE #DEL-INS-ONLY  'INS-only AAFMAA - DELETED'
+WRITE #OVR-10-BNDS   'not touched - more than 10 bonds'
+WRITE #NUM-INV       'fin with INV'
+WRITE #OVR-5-YRS     'not touched for 5 years and deleted'
+WRITE #OVR-4-YRS     'not touched for 4 years'
+WRITE #CN-NOT-FND    'CN not found'
+*
+************************************
+DEFINE SUBROUTINE CHECK-FOR-DELETE
+************************************
+*
+WRITE FI-V.ID-NUMBER 'HAS FAS but int-flg =' INTRO-FLAG
+     'PROC-IND=' PROCESS-IND
+FIND NT-V WITH ID-NUMBER = FI-V.ID-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE TOP
+  END-NOREC
+*
+  FOR #I1 1 TO 60
+    IF NOTE-TEXT(#I1) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF NOTE-TEXT(#I1) = MASK('*#OPTED-OUT')
+     OR = MASK('*#DE-GF')
+      IF NOTE-DATE(#I1) <= #6-MONS-AGO
+        MOVE TRUE TO #OK-TO-DELETE
+      ELSE
+        MOVE FALSE TO #OK-TO-DELETE
+      END-IF
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FIND
+*
+END-SUBROUTINE
+*
+END

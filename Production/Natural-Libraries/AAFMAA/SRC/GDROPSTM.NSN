@@ -1,0 +1,177 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: GDROPSTM  DROP OR REDUCE FACE-AMT & DB WHEN FINAL RENEWAL OR
+*                   SPECIFIC AGE IS REACHED.
+*************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG     REASON
+* DRW    11302004  DW1  fix expire date text for LTII
+* PAM    12212004  PM2  Use face amount for LT's that have 0 DB and
+*                       do not meet other criteria (IE - first mnth)
+* DRW    03042005  DW3  Calc actual Death Bene for Annuity Life
+* DRW    04152005  DW4  Add 3 tests for DN for AL Death Benefit
+* DRW    03182007  DW5  Fix LT Death Bene Drop @ age 45 & 55
+* PAM    05062009  PM6  Do grade AL face amount for 20070930 and prior policies
+* YAK    09262012  YK1  Use function to identify Level Term II plans
+* YAK    11072012  YK2  Add No Medical Term plan (EZ)   
+* YAK    10152014  YK3  Replace 'AL' with function
+***************************************************************
+*
+* THE FOLLOWING PROGRAMS CALL THIS PROGRAM: ATHPFAS, ATHPSTAT, ATHP05PB,
+* ATHP05PC, C1600PCO, C2140PPO, C2150SPO, C2600PST, D3400SBA, E4004SDI,
+* G3500PAD, G3520PAD, G4720PGT, W5700PWN, C1605SCO, ATHP05P0 (2 times)
+* ATHPWACC ATHPANNS ATHPTOTD ATHPALPH
+*
+* #face-amount and #death-benefit is updated in this subprogram
+* ALSO PAY-STATUS IC CHGED TO EXPD IF RT ORE LTII HAS EXPIRED
+*
+DEFINE DATA
+PARAMETER
+*
+1 #PLAN           (A3)
+1 REDEFINE #PLAN
+ 2 #PLAN-A1       (A1)
+ 2 #PLAN-N2       (N2)
+1 #SMOKER-FLAG    (A1)
+1 #DATE-OF-BIRTH  (N8)
+1 #ISSUE-DATE   (N8)
+1 REDEFINE #ISSUE-DATE
+ 2 #ISSUE-DATE-YYYYMM (N6)
+ 2 REDEFINE #ISSUE-DATE-YYYYMM
+   3 #ISSUE-DATE-YYYY   (N4)
+   3 #ISSUE-DATE-MM     (N2)
+ 2 #ISSUE-DATE-DD     (N2)
+1 #PAID-UP-DATE (N8)
+1 REDEFINE #PAID-UP-DATE
+ 2 #PAID-UP-DATE-YYYYMM (N6)
+ 2 REDEFINE #PAID-UP-DATE-YYYYMM
+   3 #PAID-UP-DATE-YYYY   (N4)
+   3 #PAID-UP-DATE-MM     (N2)
+ 2 #PAID-UP-DATE-DD     (N2)
+1 #EFF-DATE             (N8)
+1 #ISSUE-AGE    (A2)
+1 #PAY-STATUS   (A4)
+1 #FACE-AMOUNT   (P7.2)
+1 #DEATH-BENEFIT (P7.2)
+1 #CASH-VALUE    (P7.2)  /* DW3
+1 #CONT-FUND     (P7.2)  /* DW4   (BEG-CASH-VALUE ON DATA-BASE)
+*
+LOCAL
+*
+1 #I1              (I2)
+1 #I2              (I2)
+*
+1 #YYYYMMDD         (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY           (N4)
+ 2 #MMDD           (N4)
+ 2 REDEFINE #MMDD
+  3 #MM            (N2)
+  3 #DD            (N2)
+*
+1 #TODAY-YYYYMMDD  (N8)
+1 REDEFINE #TODAY-YYYYMMDD
+ 2 #TODAY-YYYYMM (N6)
+ 2 REDEFINE #TODAY-YYYYMM
+  3 #TODAY-YYYY   (N4)
+  3 #TODAY-MM     (N2)
+ 2 #TODAY-DD     (N2)
+*
+1 #WORK-DB        (N7.2)         /* DW4
+1 #AL-DB-WITH-CONT-FUND  (P7.2)  /* DW4
+*
+END-DEFINE
+* * * * * * * * *
+*
+MOVE #EFF-DATE TO #TODAY-YYYYMMDD
+*
+IF #PLAN = 'RT'
+  IF  ((#PAID-UP-DATE-YYYYMM LT #TODAY-YYYYMM)
+   OR ((#PAID-UP-DATE-YYYYMM = #TODAY-YYYYMM)
+    AND (#TODAY-DD GE #ISSUE-DATE-DD)))
+    AND (#ISSUE-AGE GT '65')
+    RESET #FACE-AMOUNT #DEATH-BENEFIT
+    MOVE 'EXPD' TO #PAY-STATUS
+  END-IF
+END-IF
+* YK2 start
+IF #PLAN = 'EZ'
+  IF  ((#PAID-UP-DATE-YYYYMM LT #TODAY-YYYYMM)
+   OR ((#PAID-UP-DATE-YYYYMM = #TODAY-YYYYMM)
+    AND (#TODAY-DD GE #PAID-UP-DATE-DD)))           /* expires on the 80 day of birth
+    RESET #FACE-AMOUNT #DEATH-BENEFIT
+    MOVE 'EXPD' TO #PAY-STATUS
+  END-IF
+END-IF
+* YK2 end
+IF #PLAN = 'LT'
+  IF ((#SMOKER-FLAG = 'N')
+   AND (#DATE-OF-BIRTH LE #EFF-DATE - 600000))  /* = or over age 60
+   OR ((#SMOKER-FLAG = 'S')
+   AND (#DATE-OF-BIRTH LE #EFF-DATE - 500000))  /* = or over age 50
+    RESET #FACE-AMOUNT
+    RESET #DEATH-BENEFIT
+    MOVE 'EXPD' TO #PAY-STATUS       /* LT EXPIRED
+  ELSE
+    IF ((#SMOKER-FLAG = 'N')
+     AND (#DATE-OF-BIRTH LE #EFF-DATE - 550000))  /* Was 500000   /* DW5
+     OR ((#SMOKER-FLAG = 'S')
+     AND (#DATE-OF-BIRTH LE #EFF-DATE - 450000))  /* Was 400000   /* DW5
+      MULTIPLY #FACE-AMOUNT BY .20                /* Was .27      /* DW5
+      MOVE #FACE-AMOUNT TO #DEATH-BENEFIT
+    ELSE
+      IF ((#SMOKER-FLAG = 'N')
+       AND (#DATE-OF-BIRTH LE #EFF-DATE - 500000))  /* Was 550000  /* DW5
+       OR ((#SMOKER-FLAG = 'S')
+       AND (#DATE-OF-BIRTH LE #EFF-DATE - 400000))  /* Was 450000  /* DW5
+        MULTIPLY #FACE-AMOUNT BY .27                /* Was .20     /* DW5
+        MOVE #FACE-AMOUNT TO #DEATH-BENEFIT
+      ELSE
+        IF #DEATH-BENEFIT = 0                                     /* PM2
+          MOVE #FACE-AMOUNT TO #DEATH-BENEFIT                     /* PM2
+        END-IF                                                    /* PM2
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+* IF (((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z'))                 /* YK1
+IF (F-LT2-TRUE(<#PLAN>)                                         /* YK1
+ AND ((#ISSUE-DATE + (#PLAN-N2 * 10000)) LE #EFF-DATE))
+*                             above was "GE"            DW1
+  RESET #FACE-AMOUNT #DEATH-BENEFIT
+  MOVE 'EXPD' TO #PAY-STATUS
+END-IF
+*
+* IF #PLAN = 'AL'   /* Use best of 3 amounts for death benefit      /* DW3  YK3
+IF IS-ANNUITY-LIFE(<#PLAN>)                                         /* YK3
+  IF  ((#EFF-DATE LT #ISSUE-DATE)   /* happens in ATHP050)
+   OR (#EFF-DATE - #ISSUE-DATE LT 10000))   /* IN 1ST YEAR
+   AND (#ISSUE-DATE GT 20070930)                                  /* PM6
+    COMPUTE #WORK-DB = #FACE-AMOUNT * .90         /* 1
+  ELSE
+    IF #EFF-DATE - #ISSUE-DATE LT 20000    /* IN 2ND YEAR
+     AND #ISSUE-DATE GT 20070930                                  /* PM6
+      COMPUTE #WORK-DB = #FACE-AMOUNT * .95
+    ELSE
+      MOVE #FACE-AMOUNT TO #WORK-DB
+    END-IF
+  END-IF
+*
+  IF #CASH-VALUE GT #WORK-DB              /* 2  ALREADY HAS TDIV
+    MOVE #CASH-VALUE TO #WORK-DB
+  END-IF
+*
+  COMPUTE #AL-DB-WITH-CONT-FUND     /* ADD TDIV TO AL DB       /* DW4
+       = #DEATH-BENEFIT + #CONT-FUND                           /* DW4
+  IF #AL-DB-WITH-CONT-FUND GT #WORK-DB     /* 3                /* DW4
+    MOVE #AL-DB-WITH-CONT-FUND TO #WORK-DB
+  END-IF
+*
+  MOVE #WORK-DB TO #DEATH-BENEFIT   /* DW4
+END-IF
+*
+END

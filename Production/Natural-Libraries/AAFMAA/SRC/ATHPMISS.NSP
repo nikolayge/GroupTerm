@@ -1,0 +1,261 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************************************************************
+*   Program : ATHPMISS                                                                                       *
+*                                                                                                            *
+* FUNCTION : Generates report for 1 month old policies without owner 's address or e-mail or phone           *
+*                  MODIFICATION LOG                                                                          *
+* USER   DATE        DESCRIPTION                                                                             *
+* VXT    05/09/2016  Initial creation                                                                        *
+**************************************************************************************************************
+DEFINE DATA LOCAL
+1 STATUS  VIEW OF A-STATUS
+  2 ID-NUMBER (N6)
+  2 ACTIVE-SEGMENTS (1:9)
+    3 STATUS
+    3 PLAN
+    3 ISSUE-DATE
+    3 redefine issue-date
+      4 issue-date-yyyy  (n4)
+      4 issue-date-mm    (n2)
+      4 issue-date-dd    (n2)
+    3 policy-id
+*
+1 POL-CNTCT view of a-policy-contacts
+  2 policy-number
+  2 relation
+  2 reference-number
+  2 contact-id
+*
+1 contact view of a-contacts
+  2 contact-id
+  2 first-name
+  2 last-name
+*
+1 AR-V VIEW OF A-ADDRESS-RELATIONSHIP
+  2 CONTACT-ID        (N8)
+  2 ADDRESS-POOL-ID   (N8)
+  2 ADDR-LOCATION     (A1)
+  2 ADDR-TYPE-CD      (A1)
+  2 RETURNED-MAIL-IND (A1)
+  2 STATUS            (A1)
+*
+1 st-v view of a-status
+  2 id-number
+  2 member-contact-id
+*
+1 EMAIL VIEW OF A-CONTACT-EMAIL
+  2 EMAIL-UNDELIV (A1)
+  2 EMAIL-PREFERRED-IND (A1)
+  2 CONTACT-ID
+
+*
+1 PHONE VIEW OF A-CONTACT-PHONE
+  2 CONTACT-ID
+*
+1 addr-rel view of a-address-relationship
+  2 contact-id
+  2 returned-mail-ind
+*
+1 #i                          (i2)
+1 #TAB                        (A1)   INIT<H'09'>
+1 #today                      (n8)
+1 redefine #today
+  2 #today-yyyy               (a4)
+  2 #today-mm                 (a2)
+  2 #today-dd                 (a2)
+1 #start-month-d               (d)
+1 #start-month-ago             (n8)
+1 redefine #start-month-ago
+  2 #start-month-ago-yyyy-a    (a4)
+  2 #start-month-ago-mm-a      (a2)
+  2 #start-month-ago-dd-a      (a2)
+1 redefine #start-month-ago
+  2 #start-month-ago-yyyy      (n4)
+  2 #start-month-ago-mm        (n2)
+  2 #start-month-ago-dd        (n2)
+*
+1 #end-month                   (n8)
+1 redefine #end-month
+  2 #end-month-yyyy-a          (a4)
+  2 #end-month-mm-a            (a2)
+  2 #end-month-dd-a            (a2)
+1 redefine #end-month
+  2 #end-month-yyyy            (n4)
+  2 #end-month-mm              (n2)
+  2 #end-month-dd              (n2)
+*
+1 #start-month-ago-a           (a10)
+1 #end-month-a                 (a10)
+1 #issue-date-a                (a10)
+1 #cnt                         (n7)
+1 #no-bd                       (a1)
+1 #tot-cnt                     (n7)
+1 #out-file                    (a250)
+1 #address                     (L)
+1 #e-mail                      (A) Dynamic
+1 #phone                       (a) Dynamic
+1 #first-name                  (a25)
+1 #last-name                   (a25)
+1 #owner-cn                    (n6)
+1 #no-addr                     (a1)
+1 #no-email                    (a1)
+1 #no-phone                    (a1)
+1 #undeliverable               (a1)
+1 #undeliv-pref-email          (a1)
+1 #contact-id                  (n8)
+1 #leap-year                   (l)
+*
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/MISSING_INFO.TXT' TYPE 'ASCII'
+*
+move *datn to #start-month-ago
+move *datn to #end-month
+#start-month-ago-dd := 01
+#start-month-ago-mm := #start-month-ago-mm - 1
+#end-month-mm := #start-month-ago-mm
+if #start-month-ago-mm = 0
+  move 12 to #start-month-ago-mm
+  move 12 to  #end-month-mm
+  subtract 1 from #start-month-ago-yyyy
+end-if
+compress #start-month-ago-mm-a '/' #start-month-ago-dd-a '/' #start-month-ago-yyyy-a into #start-month-ago-a leaving no
+decide on first value of #end-month-mm
+  value 01 , 03 , 05 , 07 , 08 , 10 , 12
+    #end-month-dd := 31
+  value 02
+    #leap-year := f-is-leap-year(<#end-month-yyyy>)
+    if #leap-year
+      #end-month-dd := 29
+    else
+      #end-month-dd := 28
+    end-if
+  value 04 , 06 , 09 , 11
+    #end-month-dd := 30
+  none value
+    ignore
+end-decide
+compress #end-month-mm-a '/' #end-month-dd-a '/' #end-month-yyyy-a into #end-month-a leaving no
+*
+* write '=' #start-month-ago-a /
+*   '=' #end-month-a
+compress 'Owner Contact ID'            #tab
+  'Owner CN'                           #tab
+  'Owner First Name'                   #tab
+  'Owner Last-Name'                    #tab
+  'Owner Address'                      #tab
+  'Owner E-mail'                       #tab
+  'Owner Phone'                        #tab
+  'Owner Address Undeliverable'        #tab
+  'Owner Prefered Email Undeliverable' #tab
+  into #out-file leaving no
+
+write work  1  #out-file
+*
+read  status by id-number starting from 1900
+***** find status with id-number = 79657
+  for #i 1 9
+    if issue-date(#i) ge #start-month-ago and issue-date(#i) le #end-month
+      add 1 to #tot-cnt
+      find   pol-cntct with policy-number = policy-id(#i)
+        if no
+          write 'no policy-contact record for policy ' policy-id(#i)
+          escape bottom
+        end-norec
+        if   pol-cntct.relation = 2
+          #owner-cn   := pol-cntct.reference-number
+          if #owner-cn = 129838 or = 164656
+            write id-number #owner-cn
+          end-if
+          reset #contact-id
+          find(1) ST-v with id-number = #owner-cn
+            move st-v.member-contact-id to #contact-id
+          end-find
+          if #contact-id ne 0
+            find contact  with contact.contact-id  = #contact-id
+              if no
+                write 'no contact record for contact id'  #contact-id
+                escape bottom
+              end-norec
+* check for primary address
+              RESET #address
+              FIND AR-V WITH CONTACT-ID = #contact-id
+                ACCEPT IF AR-V.STATUS NE 'D'
+                  AND AR-V.ADDR-TYPE-CD = 'P'
+                #address := TRUE
+                ESCAPE BOTTOM
+              END-FIND
+              if not #address
+                write '=' #contact-id '=' #address
+                move 'Y' to #no-addr
+              else
+                reset #no-addr
+              end-if
+* check for any e-mail
+              reset #e-mail #no-email #undeliv-pref-email
+              find email with email.contact-id = #contact-id
+                if no
+                  move 'Y' to #no-email
+                end-norec
+                if EMAIL.EMAIL-PREFERRED-IND = 'Y' and email.email-undeliv eq 'Y'
+                  move 'Y' to #undeliv-pref-email
+                end-if
+              end-find
+* check for any type of phone
+              reset #phone #no-phone
+              find phone with phone.contact-id = #contact-id
+                if no
+                  move 'Y' to #no-phone
+                end-norec
+              end-find
+* check for undeliver address
+              reset #undeliverable
+              find addr-rel with addr-rel.contact-id = #contact-id
+                if no
+                  escape bottom
+                end-norec
+                if returned-mail-ind eq 'Y'
+                  #undeliverable := 'Y'
+                end-if
+              end-find
+*
+              if ( #no-addr = 'Y') or (#no-email = 'Y') or (#no-phone = 'Y' or #undeliverable = 'Y' or #undeliv-pref-email = 'Y')
+                #first-name := contact.first-name
+                #last-name  := contact.last-name
+                compress #contact-id        #tab
+                  #owner-cn                 #tab
+                  #first-name               #tab
+                  #last-name                #tab
+                  #no-addr                  #tab
+                  #no-email                 #tab
+                  #no-phone                 #tab
+                  #undeliverable            #tab
+                  #undeliv-pref-email       #tab
+                  into #out-file leaving no
+                write work 1 #out-file
+                add 1 to #cnt
+              end-if
+            end-find
+          end-if
+        end-if
+      end-find
+    end-if
+  end-for
+*
+  at end of data
+    write 'Total issue policies:' #tot-cnt
+    if #cnt gt 0
+      write 'Total policies  with missing owner''s address , e-mail or phone :' #cnt
+    else
+      write 'no policies with missing owner''s address, e-mail or phone'
+    end-if
+  end-enddata
+*
+end-read
+**** end-find
+*
+end

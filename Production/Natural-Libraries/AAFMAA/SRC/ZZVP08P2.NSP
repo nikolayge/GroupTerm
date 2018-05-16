@@ -1,0 +1,229 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHP08P2 - Research EZPAY differences
+* WARNING!!!! - change the transaction date which is hardcoded (around line 2060)
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    02/26/2009  None    Program Written                           *
+* DRW    12/31/2007  DW1     Include Mip (SALP 6) in EZ-pay totaling   *
+* DRW    02/12/2008  DW2     Loan Reconciliation Changes               *
+* DRW    02/12/2008  DW3     Fix AFSC Cn test & AP Trans Write         *
+* DRW    02/22/2008  DW4     Reallocate Loans Repaid to be             *
+*                            Fixed/Variable                            *
+* DRW    03/05 2008  DW5     Add EZ-PAY BADJ & overages Accumulations  *
+* DRW    03/06 2008  DW6     Add Cred Card Accumulations               *
+* DRW    03/21/2008  DW7     Breakout GM AR by 1Y & RN /chg Acct # and *
+*                            other screen changes                      *
+* DRW    08/30/2008  DW8     Add APFP (EIL loan Pmt) to CAP Loan       *
+*                            Deposits                                  *
+* PAM    02/26/2009  PM9     Added deferred revenue (DREV) for Credit  *
+*                            Cards                                     *
+* PAM    05/30/2009  PM10    Added FPFP/FPRP/ADCR to cc totals         *
+* RSE    09/18/2009  RE1     Change 600K logic for Unification         *
+* vxt    11/24/2010  vt1     Change the layout of TIN1 structure       *
+************************************************************************
+*
+DEFINE DATA
+*
+LOCAL
+*
+1 TR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER
+  2 TRANSACTION-DATN       (P9)
+  2 TRANSACTION-TIMN       (P7)
+  2 TXN-CODE               (A4)
+  2 CASH-CODE
+  2 DESCRIPTION
+  2 TXN-ACCT-NUMBER        (N3)
+  2 SEQUENCE-NUM           (N1)
+  2 DEBIT-AMOUNT           (P7.2)
+  2 CREDIT-AMOUNT          (P7.2)
+  2 CLERK-ID               (A3)
+  2 TERMINAL-ID            (A8)
+  2 PROCESS-IND            (A1)
+  2 MONTH-END              (A1)
+  2 SG-CATEGORY-1    (A2/15)     /* Used for 'CP' and 'UN'
+  2 SG-AMOUNT          (15)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 INTRO-FLAG
+*
+1 LK-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 INTRO-FLAG
+*
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 NOTE-TEXT    (60)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC  (60)
+      4 NOTE-TEXT-60           (A60)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-FILL1        (A14)
+        5 NOTE-TEXT-ALOT-PAYS-CN (A6)
+        5 NOTE-TEXT-FILL2        (A40)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-FILL3           (A17)
+        5 NOTE-TEXT-ALOT-PAID-BY-CN (A6)
+        5 NOTE-TEXT-FILL4           (A37)
+*
+1 #PAD-FILE
+  2 #PAD-ID        (A1)
+  2 #PAD-FILL-1    (A28)
+  2 #PAD-DEBIT-AMT (N8.2)
+  2 #PAD-CN        (A6)
+  2 #PAD-FILL-2    (A49)
+*
+1 ALOT-REC     (A45)
+1 REDEFINE ALOT-REC
+  2 AL-SSN-A    (A09)
+  2 REDEFINE AL-SSN-A
+    3 AL-SSN     (N09)
+  2 AL-SERV     (A01)
+  2 AL-STATUS   (A01)
+  2 AL-AMOUNT-A (A06)
+  2 REDEFINE AL-AMOUNT-A
+    3 AL-AMOUNT  (N4.2)
+  2 REDEFINE AL-AMOUNT-A
+    3 AL-AMOUNT-X  (A1/6)
+  2 AL-NAME     (A22)
+  2 AL-EFF-YYYYMM (A6)
+*
+1 #I1             (I4)
+1 #I2             (I4)
+1 #SSN            (N9)
+1 #FOUND          (L)
+1 #ISN            (N8)
+1 #CN             (N6)
+1 #TOTAL          (N8.2)
+1 #HOLD-TOTAL     (N8.2)
+1 #CODE           (A1)
+*
+END-DEFINE
+***************************************************************************************
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Accounting Trans info'
+  5X 'DATE:' *DAT4U 5X 'TIME: ' *TIMX
+*
+* PERFORM CHECK-EZPAY
+PERFORM CHECK-ALLOTMENT
+*
+**************************************************************************************
+DEFINE SUBROUTINE CHECK-EZPAY
+**************************************************************************************
+*
+#CODE := 'E'
+READ WORK 5 RECORD #PAD-FILE
+  IF #PAD-ID NE '6'
+    ESCAPE TOP
+  END-IF
+*
+  #CN := VAL (#PAD-CN)
+  PERFORM FIND-TRANSACTION-TOTAL
+*
+  IF #TOTAL NE #PAD-DEBIT-AMT
+    DISPLAY (1) #CN #PAD-DEBIT-AMT #TOTAL
+  ELSE
+    IF #TOTAL = 0 AND #PAD-DEBIT-AMT = 0
+      IGNORE
+    ELSE
+      DISPLAY (2) #CN #PAD-DEBIT-AMT #TOTAL
+    END-IF
+  END-IF
+END-WORK
+*
+END-SUBROUTINE
+*
+*************************************************************************************
+DEFINE SUBROUTINE CHECK-ALLOTMENT
+*************************************************************************************
+*
+#CODE := 'G'
+READ WORK 4 RECORD ALOT-REC
+  #SSN := VAL(AL-SSN-A)
+  RESET #FOUND #ISN #HOLD-TOTAL
+  FIND ST-V WITH ST-V.SSN = #SSN
+    IF ST-V.PROCESS-IND = 'C'
+        AND ST-V.INTRO-FLAG NE 'A'
+      ESCAPE TOP
+    END-IF
+*
+    #FOUND := TRUE
+    #ISN   := *ISN
+    ESCAPE BOTTOM
+  END-FIND
+*
+  IF NOT #FOUND
+    WRITE (3) 'Not found' 1X #SSN 1X AL-AMOUNT-A
+    ESCAPE TOP
+  END-IF
+*
+  #CN := ST-V.ID-NUMBER
+  PERFORM FIND-TRANSACTION-TOTAL
+  #HOLD-TOTAL := #TOTAL
+*
+  FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+    FOR #I2 1 TO 60
+      IF NT-V.NOTE-TEXT (#I2) = ' '
+        ESCAPE BOTTOM
+      END-IF
+*
+      IF NT-V.NOTE-TEXT (#I2) = MASK ('*#ALOT:PAYS')
+        FIND LK-V WITH MEMBER-KEY = NOTE-TEXT-ALOT-PAYS-CN (#I2)
+          #CN := LK-V.ID-NUMBER
+          PERFORM FIND-TRANSACTION-TOTAL
+          ADD #TOTAL TO #HOLD-TOTAL
+        END-FIND
+      END-IF
+    END-FOR
+  END-FIND
+*
+  IF #HOLD-TOTAL NE AL-AMOUNT
+    DISPLAY (4) #CN AL-AMOUNT #HOLD-TOTAL
+  ELSE
+    DISPLAY (5) #CN AL-AMOUNT #HOLD-TOTAL
+  END-IF
+END-WORK
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE FIND-TRANSACTION-TOTAL
+**********************************************************************
+*
+RESET #TOTAL
+FIND TR-V WITH TR-V.ID-NUMBER = #CN
+  IF   (TR-V.TXN-ACCT-NUMBER = 999)
+      AND (TR-V.CLERK-ID NE 'EDS')
+    WRITE TR-V.ID-NUMBER '999 but not EDS'
+  END-IF
+*
+  IF TR-V.TXN-ACCT-NUMBER NE 999 and tr-v.txn-acct-number ne 422    /* vt added premier services
+      OR TR-V.CASH-CODE NE #CODE
+      OR TR-V.TRANSACTION-DATN NE 20180101 /* vt was 20120601
+    ESCAPE TOP
+  END-IF
+*
+  IF (TR-V.CREDIT-AMOUNT NE 0) AND (TR-V.DEBIT-AMOUNT NE 0)
+    WRITE TR-V.ID-NUMBER 'Amts in both DB & CR' TR-V.CREDIT-AMOUNT TR-V.DEBIT-AMOUNT
+      TR-V.TXN-CODE
+  END-IF
+*
+  SUBTRACT TR-V.DEBIT-AMOUNT  FROM #TOTAL
+  ADD      TR-V.CREDIT-AMOUNT TO   #TOTAL
+*
+END-FIND
+*
+END-SUBROUTINE
+*
+END
+

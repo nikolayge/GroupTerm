@@ -1,0 +1,125 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* SERVICES                                                             *
+************************************************************************
+* NAME         : SVCNMB01                                              *
+* AUTHOR       : Copyright: MetrostarSystems AAFMAA                    *
+* DESCRIPTION  : Creates Service member record                         *
+* SVC-FIRST-PLACE-FEE (N7.2) From Rate table
+* IF SVC-MODE = '0' OR = '1' OR = '2' OR = '4' /*Has a Credit Card Pol
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON
+* NGG    20111208      Initial Creation
+* bz1    2012/05/18    (OI-1175)
+* NGG    20140507  NG1  MEMBERSHIP EXPANSION
+* **********************************************************************
+*
+DEFINE DATA
+PARAMETER USING OBJAMB01
+PARAMETER
+1 #MSG         (A) DYNAMIC
+LOCAL USING OBJLMB01
+LOCAL USING OBJAMR01
+LOCAL USING GPRATR01   /* bz1
+LOCAL
+1 CONTACT VIEW OF A-CONTACTS
+  2 CONTACT-ID (N8)
+1 BLANK        (A1)  CONST <' '>
+1 TR_FUNCTION_CODE        (A) DYNAMIC CONST <'Service'>   
+END-DEFINE
+*
+DEFINE WORK FILE 23 "/usr/SAG/AAFMAA/batch/workfiles/TEMP/SAS/CRM-PS.log"  /*  --db
+WRITE WORK FILE 23 VARIABLE #SVC-MEMBER.SVC-ID-NUMBER 'New PS for member'  /*  --db
+RESET #MSG
+IF #SVC-MEMBER.SVC-ID-NUMBER = 0 OR #SVC-MEMBER.SVC-PLAN = BLANK
+  #MSG := 'ID Number and Service plan have to be provided'
+  ESCAPE ROUTINE
+END-IF
+*
+FIND CONTACT WITH ID-NUMBER = #SVC-MEMBER.SVC-ID-NUMBER
+  IF NO RECORDS FOUND
+    #MSG := 'There is no contact record with provided ID'
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+*
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = #SVC-MEMBER.SVC-ID-NUMBER
+    AND SVC-PLAN = #SVC-MEMBER.SVC-PLAN
+  IF NO RECORDS FOUND
+    WRITE WORK FILE 23 VARIABLE #SVC-MEMBER.SVC-ID-NUMBER 'Plan:' #SVC-MEMBER.SVC-PLAN  /*  --db
+    PERFORM NEW-MEMBER
+    PERFORM TR-LOG
+    ESCAPE BOTTOM
+  END-NOREC
+  IF SVC-MEMBER-V.SVC-STATUS = 'A' OR= 'P'
+    #MSG := 'The requested service is active for the member'
+    SVC-MEMBER-V.SVC-AT-NUMBER := #SVC-MEMBER.SVC-AT-NUMBER  /* NG1
+    UPDATE                                                   /* NG1
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+DEFINE NEW-MEMBER
+/*     ==========
+RESET SVC-MEMBER-V #SVC-RATES
+MOVE BY NAME #SVC-MEMBER TO SVC-MEMBER-V
+SVC-MEMBER-V.SVC-CONTRACT-NUMBER := GET-SVCN (< >)
+#SVC-MEMBER.SVC-CONTRACT-NUMBER := SVC-MEMBER-V.SVC-CONTRACT-NUMBER
+IF SVC-MEMBER-V.LAST-UPD-USER EQ BLANK
+  SVC-MEMBER-V.LAST-UPD-USER    := *USER
+  SVC-MEMBER-V.LAST-UPD-USER    := FUNCTION-CLERK (< SVC-MEMBER-V.LAST-UPD-USER >)
+END-IF
+SVC-MEMBER-V.LAST-UPD-DATE    := *DATN
+SVC-MEMBER-V.LAST-UPD-TIME    := *TIMN
+SVC-MEMBER-V.SVC-ISSUE-AGE    := GET-AGE (< CONTACT.CONTACT-ID >)
+SVC-MEMBER-V.SVC-DATE-ENTERED := *DATN
+*     Get Plan Rates
+#SVC-RATES.SVC-PLAN          := #SVC-MEMBER.SVC-PLAN
+#SVC-RATES.SVC-PLAN-AGE-FROM := SVC-MEMBER-V.SVC-ISSUE-AGE
+CALLNAT 'SVCNMR02' #SVC-RATES #MSG
+SVC-MEMBER-V.SVC-MONTHLY-RATE := #SVC-RATES.SVC-PLAN-RATE / 12
+IF #SVC-MEMBER.SVC-PAY-UP = 'Y'
+  SVC-MEMBER-V.SVC-ONE-TIME-FEE := #SVC-RATES.SVC-ONE-TIME-FEE
+ELSE
+  RESET SVC-MEMBER-V.SVC-ONE-TIME-FEE
+END-IF
+IF SVC-MEMBER-V.SVC-MODE = BLANK
+  SVC-MEMBER-V.SVC-MODE := 'G'
+END-IF
+STORE SVC-MEMBER-V
+*
+END-SUBROUTINE
+**************************
+DEFINE TR-LOG
+BEFORE_IMAGE.SVC-ISSUE-DATE       := ' '                           /* bz1
+BEFORE_IMAGE.SVC-MODE             := ' '
+BEFORE_IMAGE.SVC-STATUS           := 'P'
+BEFORE_IMAGE.SVC-ISSUED-BY        := ' '
+BEFORE_IMAGE.SVC-SERVICE-TYPE     := BLANK
+*
+AFTER_IMAGE.SVC-ISSUE-DATE        := SVC-MEMBER-V.SVC-ISSUE-DATE
+AFTER_IMAGE.SVC-MODE              := SVC-MEMBER-V.SVC-MODE 
+AFTER_IMAGE.SVC-STATUS            := SVC-MEMBER-V.SVC-STATUS
+AFTER_IMAGE.SVC-ISSUED-BY         := 'CRM/Online Application'
+AFTER_IMAGE.SVC-SERVICE-TYPE      := SVC-MEMBER-V.SVC-PLAN
+*
+TR_ID_NUMBER  := SVC-MEMBER-V.SVC-ID-NUMBER
+TR_NAME       := FUNCTION-CONTACT-NAME(<CONTACT.CONTACT-ID>)
+TR_CLERK      := SVC-MEMBER-V.LAST-UPD-USER
+CALLNAT 'GPRNTR01' TR_FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE /* bz1
+END-SUBROUTINE
+**************************
+ON ERROR
+  COMPRESS *PROGRAM *ERROR-NR *ERROR-LINE
+    'Internal error'
+    INTO #MSG
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

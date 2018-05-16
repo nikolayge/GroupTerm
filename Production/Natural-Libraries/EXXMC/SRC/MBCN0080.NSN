@@ -1,0 +1,167 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Benefits/External Life Insurance Information
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09012011       Initial Creation
+* YAK    06282012  YK1  Sync with CRM using ContactID
+* YAK    05012015  YK2  MC-II - Check Pending request
+* YAK    05012015  YK2  MC-II - FIR - new fields in copycode
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 PROCESS-NAME      (A) DYNAMIC
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING MBCA0008
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 FUNCTION_CODE     (A) DYNAMIC CONST <'BENEFITS'>
+1 BENEFIT-TYPE      (A) DYNAMIC
+1 PROCESS-TYPE      (A) DYNAMIC
+1 #FIR-REQUEST      (A200)
+1 #TAB              (A1) INIT <H'09'>
+1 #value            (A) DYNAMIC
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 XML               (A) DYNAMIC
+1 #DATN             (N8)
+1 #GET              (A) DYNAMIC CONST <'Get'>
+1 #UPDATE           (A) DYNAMIC CONST <'Update'>
+1 #I                (I2)
+1 #VALIDATION-RESULT (A) DYNAMIC
+1 #ContactID         (N8)                            /* YK1
+*
+END-DEFINE
+*
+#DATN := *DATN
+*
+BENEFIT-TYPE := PROCESS-NAME
+EXAMINE PROCESS-NAME FOR #GET NUMBER #I
+IF #I <> 0
+  PROCESS-TYPE := #GET
+  EXAMINE BENEFIT-TYPE FOR #GET DELETE
+ELSE
+  EXAMINE PROCESS-NAME FOR #UPDATE NUMBER #I
+  IF #I <> 0
+    PROCESS-TYPE := #UPDATE
+    EXAMINE BENEFIT-TYPE FOR #UPDATE DELETE
+  END-IF
+END-IF
+MemberBenefits.BenefitType := BENEFIT-TYPE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic
+DECIDE ON FIRST PROCESS-TYPE
+  VALUE #GET
+    CALLNAT 'MBCN0081' MemberBenefits #ErrorCode
+    IF #ErrorCode = '0'
+      PERFORM COMPOSE-GET-XML
+    ELSE
+      PERFORM COMPOSE-XML
+    END-IF
+  VALUE #UPDATE
+* YK2 >
+    IF F-PENDING-REQUEST(<MemberBenefits.CN,PROCESS-NAME>)
+      #ErrorCode := #PENDING-REQUEST
+      PERFORM COMPOSE-XML
+      RESPONSE-DATA := XML
+      ESCAPE MODULE
+    END-IF
+* > YK2
+    CALLNAT 'MBCN0082' MemberBenefits #ErrorCode #VALIDATION-RESULT
+    IF #ErrorCode = '0'
+      END TRANSACTION
+    ELSE
+      BACKOUT TRANSACTION
+    END-IF
+    PERFORM COMPOSE-XML
+  NONE
+    IGNORE
+END-DECIDE
+RESPONSE-DATA := XML
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+* Copycode to parse XML for each Benefit Type
+INCLUDE MBCCP008
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-GET-XML
+*********************************
+* Copycode to compile XML for each Benefit Type
+INCLUDE MBCCS008
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+IF #ErrorCode <> '0'
+  IF #ErrorCode = '1'
+    #ErrorDescription := #VALIDATION-RESULT
+  ELSE
+    #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  END-IF
+ELSE
+  IF PROCESS-TYPE = #UPDATE
+    PERFORM LOG-REQUESTS
+  END-IF
+END-IF
+COMPRESS '<' MemberBenefits.BenefitType '>' '<CN>' CN '</CN>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</' MemberBenefits.BenefitType '>'
+  INTO XML LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE LOG-REQUESTS
+******************************
+* save FIR request
+WRITE WORK FILE 2 MemberBenefits.CN
+CLOSE WORK FILE 2
+* Update "Profile Update Date" on Web User File
+  F-PROFILE-UPDATE-DATE(<MemberBenefits.CN>)
+* Log CRM request
+#ContactID := F-GET-CONTACT-ID(<MemberBenefits.CN>)             /* YK1
+CALLNAT 'MBRCRC' #ContactID FUNCTION_CODE                       /* YK1
+END-SUBROUTINE
+*
+END

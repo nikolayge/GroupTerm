@@ -1,0 +1,192 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C2810SFA   ** Proceses AT Records for FA Processin
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE    TAG     REASON                                        *
+* DRW 01/23/2008 DRW Create                                            *
+* DRW 05/08/2008 DW1 Do not move Alot-auth-COde to FA if not a CAP     *
+* DRW 08/28/2008 DW2 Gen Plus Processing                               *
+* PAM 02/26/2009 PM3 Only include government allotment CAP applications*
+* YAK 10/16/2012 YK1 Use function to identify Level Term II plans      *
+* YAK 10/15/2014 YK2 Replace 'AL' with function                        * 
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #SSN             (N9)
+*   output below
+1 #AT-ID-NUMBER       (N6)
+1 #ALOT-INCREASE-AMT  (N6.2)
+1 #ALOT-CHG-AUTH      (A1)
+*
+LOCAL USING CLASSLAI
+LOCAL
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER
+ 2 SSN
+ 2 SEX
+ 2 NAME
+ 2 MIL-SERVICE
+ 2 DATE-OF-BIRTH
+ 2 AT-STATUS
+ 2 ALLOT-STRT-AMT
+ 2 ALOT-CHG-AUTH
+ 2 SMOKER-FLAG
+ 2 FACE-AMT-UNITS
+ 2 FACE-AMT-DOLS
+ 2 EXCH-1035
+ 2 LUMP-SUM
+ 2 CAP-IND
+ 2 CAP-LOAN-AMT
+ 2 CAP-TERM
+ 2 RATING-CODE
+ 2 CAP-TYPE                                         /* PM3
+ 2 PLAN
+ 2 REDEFINE PLAN
+  3 PLAN-A1    (A1)
+  3 PLAN-A2    (N2)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY    (N4)
+ 2 #MM      (N2)
+ 2 #DD      (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMMDD-A  (A8)
+*
+1 #MMDDYYYY   (N8)
+1 REDEFINE #MMDDYYYY
+ 2 #MM-X    (A2)
+ 2 #DD-X    (A2)
+ 2 #YYYY-X  (A4)
+1 REDEFINE #MMDDYYYY
+ 2 #MMDDYYYY-A  (A8)
+*
+1 #I1  (I2)
+1 #I2  (I2)
+1 #FACE-AMT    (N6.2)
+1 #FACE-9    (N7.2)
+1 #FLEX-POLICY    (L)
+1 #DIVIDEND   (N5.4)
+1 REDEFINE #DIVIDEND
+ 2 #DIV-5    (N5)
+ 2 #REM      (N4)
+1 #APREM     (N6.2)
+1 #MON-PREM  (N6.2)
+1 #ISS-AGE     (N2)
+1 #LOAN-PMT   (N5.2)
+1 #CALC-TOT-ALOT-AMT   (N6.2)
+1 #SMOKER-FLAG    (A1)
+1 #SCR-COMMAND    (A2)
+1 #SCR-ID         (N9)
+1 #SCR-SUFFIX     (A3)
+*
+END-DEFINE
+*
+RESET #ALOT-INCREASE-AMT #ALOT-CHG-AUTH
+FIND AT-V WITH SSN = #SSN
+* write 'C2810SFA' 'Found SSN=' at-v.ssn 'AT#=' at-v.id-number 'status=' at-v.at-status
+*
+  IF CAP-IND = 'Y'                 /* DW1
+    MOVE AT-V.ALOT-CHG-AUTH TO #ALOT-CHG-AUTH /* So FAS has most current Auth
+  END-IF
+*
+  IF NOT AT-V.AT-STATUS = 'PI' OR = 'PC'
+   OR AT-V.CAP-TYPE NE 'G'                    /* PM3
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE AT-V.ID-NUMBER TO #AT-ID-NUMBER
+  MOVE *DATN TO #YYYYMMDD
+  SUBTRACT AT-V.DATE-OF-BIRTH FROM #YYYYMMDD
+  MOVE #YYYY TO #ISS-AGE
+*
+  IF AT-V.SMOKER-FLAG = 'N' OR = ' '
+    MOVE 'N' TO #SMOKER-FLAG
+  ELSE
+    MOVE 'S' TO #SMOKER-FLAG
+  END-IF
+*
+  COMPUTE #FACE-AMT = (FACE-AMT-UNITS * 1000) + FACE-AMT-DOLS
+  MOVE #FACE-AMT TO #FACE-9
+  RESET #FLEX-POLICY
+  COMPUTE #DIVIDEND = #FACE-AMT / 5000
+*
+  IF (EXCH-1035 NE 0) OR (LUMP-SUM NE 0)
+   OR (NOT AT-V.PLAN = ' ' OR = '7P' OR = '20' OR = '30' OR = 'OL' OR = 'SP'
+       OR = 'GPL')                            /* DW2
+*      OR = 'RT' OR = 'LT')                                      /* YK1
+   OR (#REM NE 0)
+*   IF (AT-V.PLAN-A1 LT 'U') OR (AT-V.PLAN-A1 GT 'Z')            /* YK1
+    IF (NOT FUNCTION-TERM-POLICY(<AT-V.PLAN>))                   /* YK1
+      MOVE TRUE TO #FLEX-POLICY
+    END-IF
+  END-IF
+*
+  IF #FLEX-POLICY
+    WRITE AT-V.ID-NUMBER 'Cannot process Flex-Policies'
+  END-IF
+*
+  MOVE *DATN TO #YYYYMMDD /* calc premium based on 1st of next month
+  RESET #DD               /* since CAP eff date will be then
+  ADD 1 TO #MM
+*
+  IF #MM GT 12
+    SUBTRACT 12 FROM #MM
+    ADD 1 TO #YYYY
+  END-IF
+*
+* IF #FLEX-POLICY
+*   MOVE #FLEX-ANN-PREM TO #APREM
+* ELSE
+    IF AT-V.RATING-CODE = #CLASS-1 MOVE 'SB1' TO #SCR-SUFFIX END-IF  /* PM44
+    IF AT-V.RATING-CODE = #CLASS-2 MOVE 'SB2' TO #SCR-SUFFIX END-IF  /* PM44
+    IF AT-V.RATING-CODE = #CLASS-3 MOVE 'SB3' TO #SCR-SUFFIX END-IF  /* PM44
+    RESET #APREM
+    CALLNAT 'GPREMSXX' #SCR-COMMAND #SCR-ID #SCR-SUFFIX
+      AT-V.PLAN #ISS-AGE #APREM #YYYYMMDD #SMOKER-FLAG #FACE-9
+      AT-V.SEX
+* END-IF
+*
+  RESET #MON-PREM
+* IF NOT AT-V.PLAN = 'SP' OR = 'AL'
+  IF NOT (AT-V.PLAN = 'SP' OR IS-ANNUITY-LIFE(<AT-V.PLAN>))   /* YK2
+    COMPUTE #MON-PREM = #APREM / 12
+  END-IF
+*
+  RESET #LOAN-PMT
+  IF CAP-IND = 'Y' AND (CAP-LOAN-AMT NE 0)
+    DECIDE ON FIRST VALUE CAP-LOAN-AMT
+      VALUE 5000
+        IF CAP-TERM = 48 MOVE 107.25 TO #LOAN-PMT END-IF
+        IF CAP-TERM = 36 MOVE 141.94 TO #LOAN-PMT END-IF
+      VALUE 4000
+        IF CAP-TERM = 48 MOVE  85.80 TO #LOAN-PMT END-IF
+        IF CAP-TERM = 36 MOVE 113.55 TO #LOAN-PMT END-IF
+      VALUE 3000
+        IF CAP-TERM = 48 MOVE 64.35 TO #LOAN-PMT END-IF
+        IF CAP-TERM = 36 MOVE 85.16 TO #LOAN-PMT END-IF
+      VALUE 2500
+        IF CAP-TERM = 48 MOVE 53.62 TO #LOAN-PMT END-IF
+        IF CAP-TERM = 36 MOVE 70.97 TO #LOAN-PMT END-IF
+      VALUE 2000
+        IF CAP-TERM = 48 MOVE 42.90 TO #LOAN-PMT END-IF
+        IF CAP-TERM = 36 MOVE 56.77 TO #LOAN-PMT END-IF
+      VALUE 1000
+        IF CAP-TERM = 48 MOVE 21.45 TO #LOAN-PMT END-IF
+        IF CAP-TERM = 36 MOVE 28.38 TO #LOAN-PMT END-IF
+      NONE IGNORE
+    END-DECIDE
+  END-IF
+*
+  COMPUTE #CALC-TOT-ALOT-AMT = #LOAN-PMT + #MON-PREM + ALLOT-STRT-AMT
+  MOVE #CALC-TOT-ALOT-AMT TO #ALOT-INCREASE-AMT
+END-FIND
+*
+END
+

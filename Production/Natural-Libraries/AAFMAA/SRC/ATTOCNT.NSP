@@ -1,0 +1,221 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*
+* Create contact data based on existing AT
+* 20110810 NGG
+*
+* If CONTACT-ID is 0
+* create CONTACT RECORD
+*  create STATUS RECORD
+*  load contact id to AT-V.CONTACT-ID
+*  load CN to AT-V.MEMBER-CN
+* Else
+*  if AT-V.MEMBER-CN not blank
+*    find STATUS record with CN = AT-v.MEMBER-CN
+*    if STATUS.PROCESS-IND = 'C'
+*      update CONTACT RECORD from APPLICATION
+*      update STATUS RECORD from APPLICATION
+*    else
+*      do nothing --- info is for existing member and existing stuff is good
+*    end-if
+*  else
+*    create STATUS RECORD
+*  end-if
+* End-if
+*
+DEFINE DATA
+LOCAL USING GOADA001
+LOCAL USING GOEMA001
+LOCAL USING GOCOA001
+LOCAL USING GOMDA001
+LOCAL
+1 #PH
+  2 #HOME
+    3 #H_PH1             (N3)
+    3 #H_PH2             (N3)
+    3 #H_PH3             (N4)
+    3 #H_PH4             (N6)
+    3 #H-PH-ID           (N8)
+  2 #WORK
+    3 #W_PH1             (N3)
+    3 #W_PH2             (N3)
+    3 #W_PH3             (N4)
+    3 #W_PH4             (N6)
+    3 #W-PH-ID           (N8)
+  2 #CELL
+    3 #C_PH1             (N3)
+    3 #C_PH2             (N3)
+    3 #C_PH3             (N4)
+    3 #C-PH-ID           (N8)
+*
+1 #CONTROL-VARS     (C/22) 1 REDEFINE #CONTROL-VARS
+  2 #ONLY-EDS-CV      (C)
+  2 #ONLY-EDS-CV-P    (C)
+  2 #SDF-CV           (C)
+  2 #SEC-CV           (C)
+  2 #USER-CV          (C)
+  2 #DR-CV            (C)
+  2 #GEN-CV           (C)
+  2 #CHG-CV           (C)   /* #HPH-CV, #WPH-CV, #CPH-CV, #EML-CV, #MIL-CV
+  2 #HPH-CV           (C)
+  2 #WPH-CV           (C)
+  2 #CPH-CV           (C)
+  2 #EML-CV           (C)
+  2 #MIL-CV           (C)
+  2 #STATUS-CV        (C)
+  2 #RID-CV2          (C)
+  2 #RID-CV3          (C)
+  2 #AUTO-ISSUE-CV    (C)
+  2 #ALOT-AUTH-CV     (C)
+  2 #CV-ADDR          (C)
+  2 #CV-ADDR-S        (C)
+  2 #CV-MAIL          (C)
+1 #UPDATED               (L)
+1 #AT-ISN                (P8)
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 CONTACT-ID
+  2 SSN
+  2 ID-NUMBER
+  2 NAME
+  2 MEMBER-CN
+1 ST-V VIEW OF A-STATUS
+  2 PROCESS-IND
+*
+1 #CN                    (N6)
+1 #EXCEL                 (A80)
+1 #TRL-FILE-NAME         (A) DYNAMIC
+1 BLANK                  (A1) CONST <' '>
+1 #TITLES                (A/3) DYNAMIC INIT <
+  'CONTACT ID',
+  'CN',
+  'NAME'
+  >
+*
+1 #CN-PARMS
+  2 CN                   (N6)
+  2 ERR                  (N4)
+  2 ERR-DESC             (A78)
+  2 MOD                  (A1)
+*
+END-DEFINE
+*
+ASSIGN #TRL-FILE-NAME = '/usr/SAG/tmp/ATTOCONTACT.txt'
+DEFINE WORK FILE 2 #TRL-FILE-NAME TYPE 'ASCII-COMPRESSED'
+COMPRESS #TITLES (*) INTO #EXCEL WITH DELIMITERS ','
+WRITE WORK FILE 2 #EXCEL
+*
+READ-AT.
+READ AT-V DESCENDING BY ID-NUMBER
+  IF AT-V.CONTACT-ID = 0   /* Old AT record
+    #AT-ISN := *ISN (READ-AT.)
+    PERFORM CREATE-CONTACT-STATUS
+  ELSE
+    IF AT-V.MEMBER-CN NE BLANK
+      #CN := VAL ( AT-V.MEMBER-CN )
+      PERFORM SYNCH-DATA
+    ELSE
+      CALLNAT 'C1097NAT' #AT-ISN             /* create STATUS RECORD
+      COMPRESS FULL
+        'CREATE STATUS'
+        AT-V.CONTACT-ID
+        AT-V.ID-NUMBER
+        AT-V.NAME
+        INTO #EXCEL WITH DELIMITER ','
+      WRITE WORK FILE 2 #EXCEL
+    END-IF
+  END-IF
+  END TRANSACTION
+END-READ
+*
+DEFINE CREATE-CONTACT-STATUS
+/*     ---------------------
+GET-AT.
+GET AT-V #AT-ISN
+CALLNAT 'C1098NAT'                /* Collect contact data from AT
+  #ADDR-POOL
+  #ADDR-REL
+  #CLERK-ID
+  #MSG
+  #EMAIL
+  #CONTACT
+  #MIL
+  #HOME
+  #WORK
+  #AT-ISN
+IF #CONTACT.CONTACT-ID > 0
+    AND #CONTACT.LAST-NAME = BLANK
+  IGNORE  /* Contact exist - just populate Contact-ID
+ELSE
+  #CONTACT.#FORCE-NEW := TRUE
+  CALLNAT 'C1020NAT'             /* Update Contact related data
+    #ADDR-POOL
+    #ADDR-REL
+    #CLERK-ID
+    #MSG
+    #EMAIL
+    #CONTACT
+    #MIL
+    #PH
+    #CONTROL-VARS (*)
+    #UPDATED
+END-IF
+*  load contact id to AT-V.CONTACT-ID
+*  load CN to AT-V.MEMBER-CN
+AT-V.CONTACT-ID := #CONTACT.CONTACT-ID
+UPDATE (GET-AT.)
+CALLNAT 'C1097NAT' #AT-ISN             /* create STATUS RECORD
+COMPRESS FULL
+  'CREATE CONTACT'
+  AT-V.CONTACT-ID
+  AT-V.ID-NUMBER
+  AT-V.NAME
+  INTO #EXCEL WITH DELIMITER ','
+WRITE WORK FILE 2 #EXCEL
+END-SUBROUTINE
+/*
+DEFINE SYNCH-DATA
+/*     ----------
+FIND ST-V WITH ID-NUMBER = #CN
+  IF ST-V.PROCESS-IND = 'C'
+    CALLNAT 'C1098NAT'              /* Collect contact data from AT
+      #ADDR-POOL
+      #ADDR-REL
+      #CLERK-ID
+      #MSG
+      #EMAIL
+      #CONTACT
+      #MIL
+      #HOME
+      #WORK
+      #AT-ISN
+    CALLNAT 'C1020NAT'             /* Update Contact related data
+      #ADDR-POOL
+      #ADDR-REL
+      #CLERK-ID
+      #MSG
+      #EMAIL
+      #CONTACT
+      #MIL
+      #PH
+      #CONTROL-VARS (*)
+      #UPDATED
+    #CN-PARMS.CN := #CN            /* Synch contact information with Status
+    CALLNAT 'GOSTCN01'
+      #CN-PARMS
+    COMPRESS FULL
+      'SYNCH'
+      AT-V.CONTACT-ID
+      AT-V.ID-NUMBER
+      AT-V.NAME
+      INTO #EXCEL WITH DELIMITER ','
+    WRITE WORK FILE 2 #EXCEL
+  ELSE
+    IGNORE   /* do nothing --- info is for existing member and existing stuff is good
+  END-IF
+END-FIND
+END-SUBROUTINE
+END

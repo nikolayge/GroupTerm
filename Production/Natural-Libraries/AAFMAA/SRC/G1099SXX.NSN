@@ -1,0 +1,286 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: G1099SXX   Creates 1099 records for MEC processing
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE       TAG  REASON                                          *
+* PAM  01/13/2006 PM1  Adjust 1099 process to 'L' from 'M'             *
+* PAM  11/30/2009 PM2  Revised current cost basis calculation          *
+* PAM  04/28/2011 PM3  Increased cost basis field                      *
+* TMT  10/07/2013 TT1  ADDRESS NORMALIZATION                           *
+* TMT  06/16/2014 TT2  Contact Normalization - DOB and Sex             *
+* vxt  10/19/2016 vt1  /Ticket 4335/                                   *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+**PARAMETER USING BMASTABA  /* TT1
+PARAMETER
+1 #ID-NUMBER    (N6)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-A (A6)
+1 #IFL          (I2)
+1 #CSV          (P7.2)
+1 #PAY-STATUS   (A2)
+1 #COST-BASIS   (P7.2)
+1 #ADDL-LOAN    (P7.2)
+1 #insured-contact-id    (n8)          /* vt1 \/
+1 #owner-contact-id      (n8)
+1 #policy-id             (a16)         /* vt1 /\
+*
+LOCAL USING G3500AAD
+LOCAL
+* 1 #TPP-TO-USE (P7.2)
+1 #CURR-COST-BASIS (N7.2)
+*
+1 #KEY-1099           (A14)
+1 REDEFINE #KEY-1099
+  2 #KEY-1099-YYYY     (N4)
+  2 #KEY-1099-ID       (A1)
+  2 #KEY-1099-SSN      (N9)
+*
+1 IN-V VIEW OF A-INT-1099
+  2 SSN           (N9)    /*TT1
+  2 YEAR          (N4)
+  2 SSN-TAX-ID-IND (A1)
+*  2 NAME          (A25)  /*TT1 BEGIN
+*  2 ADDR-1        (A25)
+*  2 ADDR-1-A      (A25)
+*  2 ADDR-2        (A25)
+*  2 ZIP-CODE      (N9)   /*TT1 END
+  2 AMOUNT        (P9.2)
+  2 GROSS-AMT     (P9.2)
+  2 RELATED-ID-NUMBER (N6)
+  2 INT-TYPE       (A1)
+  2 policy-number  (a16)                        /* vt1  \/
+  2 contact-id     (n8)
+  2 claimant-id    (n8)
+  2 date-entered   (n8)                        
+  2 last-upd-user   
+  2 last-upd-date 
+  2 last-upd-time                               /* vt1  /\
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID              /* TT2
+  2 NAME
+  2 INTRO-FLAG
+  2 X-FIRST-PLACE-FEE (9)
+  2 X-BILL-ADJUST     (9)
+*   2 DATE-OF-BIRTH                /* TT2
+  2 ANNUAL-PREM       (9)
+  2 TOT-PREMIUMS-PAID (9)
+  2 PAID-TO-DATE      (9)
+  2 ISSUE-DATE        (9)
+  2 MODE              (9)
+  2 PLAN              (9)
+  2 MONTH-ALLOC-AMT   (9)
+*
+1 #I1          (I2)
+1 #I2          (I2)
+1 #I3          (I2)
+1 #I4          (I2)
+1 #COST-BASIS-GROWTH (P7.2)     /* PM2
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY   (N4)
+    3 #MM     (N2)
+  2 #DD     (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A (A4)
+  2 #MM-A   (A2)
+  2 #DD-A   (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A (A8)
+*
+1 #TODAY   (N8)
+1 REDEFINE #TODAY
+  2 #TODAY-YYYY  (N4)
+  2 #TODAY-MM    (N2)
+  2 #TODAY-DD    (N2)
+*
+* BELOW for CALC-PREMS-PAID
+1 #PP-DATE-OF-BIRTH  (N8)
+1 #PP-ANNUAL-PREM    (N5.2)
+1 #PP-PAY-STATUS     (A2)
+1 #PP-TOT-PREMIUMS-PAID (N7.2)
+1 #PP-PAID-TO-DATE   (N8)
+1 #PP-ISSUE-DATE     (N8)
+1 #PP-MODE           (A1)
+1 #PP-PLAN           (A3)
+1 #PP-COST-BASIS      (N7.2)
+1 #PP-MONTH-ALLOC-AMT (N7.2)          /*TT1
+1 #PP-INTRO-FLAG     (A1)
+1 #PP-FIRST-PLACE-FEE (N7.2)
+1 #PREMS-PAID       (P7.2)
+1 #SUB-PREMS-PAID   (P7.2)
+1 #PP-BADJ          (P5.2)
+* ABOVE for CALC-PREMS-PAID
+1 DATE-OF-BIRTH     (N8.0)            /* TT2
+*
+END-DEFINE
+*
+MOVE *DATN TO #TODAY
+FIND (1) ST-V WITH MEMBER-KEY = #ID-NUMBER-A
+END-FIND
+*
+PERFORM CALC-PREMS-PAID-SETUP
+*
+* IF #COST-BASIS = 0                                  /* PM2
+*   MOVE #PREMS-PAID TO #CURR-COST-BASIS              /* PM2
+* ELSE                                                /* PM2
+*   COMPUTE #CURR-COST-BASIS = #COST-BASIS            /* PM2
+*      + (#PREMS-PAID - TOT-PREMIUMS-PAID (#IFL))     /* PM2
+* END-IF                                              /* PM2
+*
+#CURR-COST-BASIS := FUNCTION-CURRENT-CB (<ST-V.ID-NUMBER,#IFL,#TODAY>)   /* PM2
+*
+* IF #PAY-STATUS  = '47' OR = '48'
+*   MOVE #COST-BASIS  TO #TPP-TO-USE
+* ELSE
+*   MOVE #PREMS-PAID TO #TPP-TO-USE
+*   ADD #COST-BASIS  TO #TPP-TO-USE
+* END-IF
+*  WRITE 'cost-basis' #COST-BASIS
+*  WRITE 'curr cost-basis' #CURR-COST-BASIS
+*  WRITE 'TPP' #PREMS-PAID
+*  WRITE 'csv' #CSV
+*  WRITE 'addl-loan=' #ADDL-LOAN
+*
+COMPUTE #COST-BASIS-GROWTH = #CSV - #CURR-COST-BASIS
+* WRITE 'cost-basis-growth before =' #COST-BASIS-GROWTH
+*
+IF #ADDL-LOAN LT #COST-BASIS-GROWTH
+  MOVE #ADDL-LOAN TO #COST-BASIS-GROWTH
+END-IF
+* WRITE 'final cost-basis growth=' #COST-BASIS-GROWTH
+*
+ADD #COST-BASIS-GROWTH TO #COST-BASIS
+* WRITE 'new cost-basis=' #COST-BASIS
+*
+* * * * * * * * PUT OUT INT-1099 RECORD * * * *
+*
+IF #COST-BASIS-GROWTH GT 0
+  MOVE #ID-NUMBER TO #CGA-SCR-ID
+  MOVE #IFL TO #CONTACT-SEG
+  CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD /* get owner ssn
+  MOVE 'M'               TO #KEY-1099-ID
+  MOVE #TODAY-YYYY       TO #KEY-1099-YYYY
+  MOVE #SSN TO #KEY-1099-SSN
+  WRITE 'key=' #KEY-1099
+  FIND (1) IN-V WITH YEAR-INT-TYPE-ID-KEY = #KEY-1099
+    IF NO RECORD FOUND
+*       WRITE 'rec not found'
+      RESET IN-V
+      MOVE #SSN TO IN-V.SSN                          /*TT1 BEGIN
+      MOVE #ID-NUMBER  TO IN-V.RELATED-ID-NUMBER
+      MOVE #TODAY-YYYY TO IN-V.YEAR
+*
+      MOVE 'S'    TO IN-V.SSN-TAX-ID-IND
+*       MOVE #NAME  TO IN-V.NAME
+*       IF #ADDR-3 NE ' '
+*         MOVE #ADDR-3 TO IN-V.ADDR-2
+*         MOVE #ADDR-2 TO IN-V.ADDR-1-A
+*         MOVE #FIRST-ADDRESS  TO IN-V.ADDR-1
+*       ELSE
+*         IF #ADDR-2 NE ' '
+*           MOVE #ADDR-2 TO IN-V.ADDR-2
+*           MOVE #FIRST-ADDRESS TO IN-V.ADDR-1
+*           RESET IN-V.ADDR-1-A
+*         ELSE
+*           MOVE #FIRST-ADDRESS TO IN-V.ADDR-2
+*           RESET IN-V.ADDR-1
+*           RESET IN-V.ADDR-1-A
+*         END-IF
+*       END-IF
+*       MOVE #ZIP-CODE  TO IN-V.ZIP-CODE                /*TT1 END
+      MOVE #COST-BASIS-GROWTH  TO IN-V.AMOUNT
+      MOVE #ADDL-LOAN          TO IN-V.GROSS-AMT
+*     MOVE 'M'                 TO IN-V.INT-TYPE                  /* PM1
+      MOVE 'L'                 TO IN-V.INT-TYPE                  /* PM1
+      move #policy-id          to IN-v.policy-number                               /* vt1  \/
+      move #insured-contact-id to in-v.contact-id
+      move #owner-contact-id   to in-v.claimant-id
+      move #CGA-CLERK          to in-v.last-upd-user
+      move *datn               to in-v.DATE-ENTERED                                /* vt1  /\
+      WRITE 'new 1099' IN-V.AMOUNT IN-V.GROSS-AMT #NAME         /*TT1
+      STORE IN-V
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    if #policy-id eq in-v.policy-number                               /* vt1  
+      ADD #COST-BASIS-GROWTH TO IN-V.AMOUNT
+      ADD #ADDL-LOAN         TO IN-V.GROSS-AMT
+      move *datn                             to in-v.last-upd-date                       /* vt1 
+      move #CGA-CLERK                        to in-v.last-upd-user                       /* vt1 
+      move *timn                             to in-v.last-upd-time                       /* vt1 
+      WRITE 'upd 1099' IN-V.AMOUNT IN-V.GROSS-AMT #NAME
+      UPDATE (0176)
+    else                                                             /* vt1  \/
+      RESET IN-V
+      MOVE #SSN TO IN-V.SSN
+      MOVE #ID-NUMBER  TO IN-V.RELATED-ID-NUMBER
+      MOVE #TODAY-YYYY TO IN-V.YEAR
+      MOVE 'S'    TO IN-V.SSN-TAX-ID-IND
+      MOVE #COST-BASIS-GROWTH  TO IN-V.AMOUNT
+      MOVE #ADDL-LOAN          TO IN-V.GROSS-AMT
+      MOVE 'L'                 TO IN-V.INT-TYPE
+      move #policy-id          to IN-v.policy-number
+      move #insured-contact-id to in-v.contact-id
+      move #owner-contact-id   to in-v.claimant-id
+      move #CGA-CLERK          to in-v.last-upd-user                        
+      move *datn               to in-v.DATE-ENTERED
+      WRITE 'new 1099' IN-V.AMOUNT IN-V.GROSS-AMT #NAME
+      STORE IN-V
+    end-if                                                          /* vt1  /\
+  END-FIND
+  WRITE '1099 name' #NAME #FIRST-ADDRESS
+END-IF
+*
+* * * * * * * * * * * * * * *
+DEFINE CALC-PREMS-PAID-SETUP
+* * * * * * * * * * * * * * *
+*
+RESET #PREMS-PAID DATE-OF-BIRTH                               /* TT2
+DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<ST-V.MEMBER-CONTACT-ID>)  /* TT2
+*
+MOVE DATE-OF-BIRTH            TO #PP-DATE-OF-BIRTH
+MOVE ANNUAL-PREM (#IFL)       TO #PP-ANNUAL-PREM
+MOVE #PAY-STATUS              TO #PP-PAY-STATUS
+MOVE TOT-PREMIUMS-PAID (#IFL) TO #PP-TOT-PREMIUMS-PAID
+MOVE PAID-TO-DATE (#IFL)      TO #PP-PAID-TO-DATE
+MOVE ISSUE-DATE (#IFL)        TO #PP-ISSUE-DATE
+MOVE MODE (#IFL)              TO #PP-MODE
+MOVE PLAN (#IFL)              TO #PP-PLAN
+MOVE #COST-BASIS              TO #PP-COST-BASIS
+MOVE MONTH-ALLOC-AMT (#IFL)   TO #PP-MONTH-ALLOC-AMT
+MOVE INTRO-FLAG               TO #PP-INTRO-FLAG
+MOVE X-FIRST-PLACE-FEE (#IFL) TO #PP-FIRST-PLACE-FEE
+MOVE X-BILL-ADJUST     (#IFL) TO #PP-BADJ
+*
+CALLNAT 'GPRPDSCO'
+  #PP-DATE-OF-BIRTH
+  #PP-ANNUAL-PREM
+  #PP-PAY-STATUS
+  #PP-TOT-PREMIUMS-PAID
+  #PP-PAID-TO-DATE
+  #PP-ISSUE-DATE
+  #PP-MODE
+  #PP-PLAN
+  #PP-COST-BASIS
+  #PP-MONTH-ALLOC-AMT
+  #PP-INTRO-FLAG
+  #PP-FIRST-PLACE-FEE
+  #PREMS-PAID
+  #SUB-PREMS-PAID
+  #PP-BADJ
+*
+END-SUBROUTINE
+*
+*
+END

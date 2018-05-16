@@ -1,0 +1,1279 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: ATHPZP9U - UPDATE DATABASE TO 9-DIGIT ZIP with dpb
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* DRW  11162004 DW1  call ATHPWACC when updating addresses       *
+* SAG  12092005 RH1  SS - Modified the call to external object ABEND &
+*                    replaced with copycode GABNDCX6.
+* DRW  04262006 DW2  Add AFSC/AAFMAA sync processing
+* DRW  04272006 DW3  Change logic for certain conditions
+* DRW  05072006 DW4  Remove ALOT-SW logiconditions
+* DRW  06302006 DW5  Add Addr-chg-code to sync processing
+* DRW  07302006 DW6  Clear SYNC-FLD area prior to each TR CREATE
+* DRW  07302006 DW7  MOVE DPB CODE even it zero
+* DRW  10012006 DW8  Fix 4-char zip-codes
+* YAK  09292010 YAK  Create input file for syncronization with new
+*                    address files
+* JNT  09302013 JT1  Address normalization
+************************************************************************
+*
+*                 dpb = delivery-point bar-code
+* **** Check all input PARMS carefully
+* SCAN FOR 'DECOMPRESS-REC' TO SEE INPUT PROCESS
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL  USING GONERLXX
+LOCAL  USING ADDA0001                                         /* JT1
+LOCAL
+1 #PARM-RECORD    (A80)
+1 REDEFINE #PARM-RECORD
+  2 #PARM-DATE      (N8)     /* EXTRACT DATE
+  2 #PARM-FILL-1    (A1)
+  2 #PARM-ADDR-CODE (A1)     /* ADDRESS CHANGE CODE
+  2 #PARM-FILL-2    (A1)
+  2 #PARM-PROC-TYPE (A3)     /* TYPE OF RUN (AUT=AUDIT TRAIL)
+*                           /*             (NAT=NOT AUDIT TRAIL)
+  2 #PARM-FILL-3    (A1)
+  2 #PARM-UNDL-FIX  (A10)    /* (UNDLIV-FIX  OR NORMAL-FIX)
+  2 #PARM-FILL-4    (A55)
+*
+1 #DATE-EXTRACT   (N8) INIT <20031126>  /* REMEMBER TO UPDATE ATHPZIP9
+*
+1 TR-V VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 NAME
+  2 DATE-LAST-UPDATE
+  2 TERMINAL-ID  (A8)
+  2 CLERK-ID
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 OLD-DATA        (A125/32)
+  2 NEW-DATA        (A125/32)
+  2 REDEFINE NEW-DATA
+    3 NEW-DATA-OCC    (32)
+      4 NEW-DATA-NCOA   (A8)
+      4 NEW-DATA-REST   (A117)
+  2 SYNC-FLD-NUM      (60)
+  2 SYNC-FLD-OLD-DATA (60)
+  2 SYNC-FLD-NEW-DATA (60)
+*
+1 #SFX           (I2)   /* DW2
+1 #TRX           (I2)
+1 #W-OLD-NEW-DATA  (A125)
+1 REDEFINE #W-OLD-NEW-DATA
+  2 #W-DESCRIPTION (A10)
+  2 #W-DATA        (A115)
+*                                       /* with new last cn number
+1 ST-ISN-V VIEW OF A-STATUS
+1 #ISN    (P8)
+*                                       /* with new last cn number
+1 ST-CHG-V VIEW OF A-STATUS
+*  2 ADDRESS-1                          /* JT1 start
+*  2 ADDRESS-2
+*  2 ADDRESS-3
+  2 MEMBER-CONTACT-ID                    /* JT1 end
+*
+1 ST-V VIEW OF A-STATUS
+  2 WIDOW-FLAG            (A1)
+  2 ID-NUMBER             (N6)
+  2 PROCESS-IND
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 DATE-ACCT-UPDATE      (N8)
+*  2 DATE-LAST-ADDR-UPDT   (N8)          /* JT1
+  2 DATE-OTHER-UPDATE
+*  2 ADDRESS-CHG-CODE      (A1)          /* JT1
+  2 DATE-OF-DEATH
+  2 NAME
+*  2 ADDRESS-1             (A25)         /* JT1 start
+*  2 ADDRESS-2             (A25)
+*  2 ADDRESS-3             (A25)
+*  2 ZIP-CODE-DPB          (N2)
+*  2 REDEFINE ZIP-CODE-DPB
+*   3 ZIP-CODE-DPB-A       (A2)
+*  2 ZIP-CODE              (N9)
+*  2 REDEFINE ZIP-CODE
+*   3 ZIP-CODE-5           (A5)
+*   3 ZIP-CODE-4           (A4)
+*  2 REDEFINE ZIP-CODE
+*   3 ZIP-CODE-A9          (A9)
+  2 MEMBER-CONTACT-ID                     /* JT1 end
+*
+1 IM-V VIEW OF A-INTRO-MEMBER
+  2 ID-NUMBER             (N6)
+  2 DTS-DATN              (P9)
+  2 ADDRESS-1             (A25)
+  2 ADDRESS-2             (A25)
+  2 ADDRESS-3             (A25)
+  2 ZIP-CODE              (N9)
+  2 REDEFINE ZIP-CODE
+    3 ZIP-CODE-5           (A5)
+    3 ZIP-CODE-4           (A4)
+*
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 NOTE-DATE (N8/3)
+  2 DTS-DATN  (P9)
+  2 DTS-TIMN  (P7)
+  2 NOTE-CLERK-ID (A3/3)
+  2 NOTE-LINE-NUM (P1/3)
+  2 NOTE-TEXT (A60/3)
+  2 REDEFINE NOTE-TEXT
+    3 ANN-MTG-CNT   (N5)
+*
+1 #INT      (I2)
+1 #NOTE-TEXT (A60/10)
+1 #NOTE-NUM (N6)
+1 #USER-TO-RECEIVE (A3)
+1 #TO-INIT     (A3)
+1 #HOLD-SUFFIX (A3)
+1 #HOLD-ADDR-CODE  (A1)
+1 #HOLD-LAST-ADDR-UPDT (N8)
+1 #SUBTYPE    (A1)
+*
+1 #DATE-DISP (A10)
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY  (N4)
+  2 #MM    (N2)
+  2 #DD    (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A (A4)
+  2 #MM-A   (A2)
+  2 #DD-A   (A2)
+*
+1 #FLD-#    (P3)   /* to identify content of field
+1 #FLD-X    (I2)
+*
+1 #FIELD     (A35)
+1 REDEFINE #FIELD
+  2  #FIELD-X (A1/35)
+1 REDEFINE #FIELD
+  2  #FIELD-1 (N1)
+1 REDEFINE #FIELD
+  2  #FIELD-2 (N2)
+1 REDEFINE #FIELD
+  2  #FIELD-3 (N3)
+1 REDEFINE #FIELD
+  2  #FIELD-4 (N4)
+1 REDEFINE #FIELD
+  2  #FIELD-5 (N5)
+1 REDEFINE #FIELD
+  2  #FIELD-6 (N6)
+1 REDEFINE #FIELD
+  2  #FIELD-9 (N9)
+1 REDEFINE #FIELD
+  2 #FIELD-ZIP-5 (N5)
+  2 #FIELD-ZIP-- (A1)
+  2 #FIELD-ZIP-4 (N4)
+1 REDEFINE #FIELD
+  2  #FIELD-25 (A25)
+  2  #FIELD-10 (A10)
+*
+1 #ZIP-9-EXTR-80 (A80)
+1 REDEFINE #ZIP-9-EXTR-80
+  2 #ZIP-9-X  (A1/80)
+*
+1 #ID-NUMBER            (N6)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-A         (A6)
+1 #FIRST-ADDRESS        (A25)
+1 #FIRST-ADDRESS-35     (A35)
+1 REDEFINE #FIRST-ADDRESS-35
+  2 #1ST-ADDR-X     (A1/35)
+1 #SECOND-ADDRESS       (A25)
+1 #SECOND-ADDRESS-35    (A35)
+1 #CITY                 (A22)
+1 #CITY-35              (A35)
+1 #STATE                (A2)
+1 #ZIP-CODE             (N9)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-CODE-5          (A5)
+  2 #ZIP-CODE-4          (A4)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-CODE-5N         (N5)
+  2 #ZIP-CODE-4N         (N4)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-CODE-A9         (A9)
+1 #ZIP-CODE-DPB         (N2)
+1 REDEFINE #ZIP-CODE-DPB
+  2 #ZIP-CODE-DPB-A      (A2)
+*
+1 #OLD-ZIP               (A13)
+1 #NEW-ZIP               (A13)
+*
+1 #NAME          (A35)
+1 #FOUND-MEMBER  (L)
+1 #FOUND-WIDOW   (L)
+1 #OVER-25-REC   (L)
+1 #OVER-25-ADDR1 (L)
+1 #OVER-25-ADDR2 (L)
+1 #OVER-25-CITY  (L)
+1 #COUNTERS
+  2 #RECS-READ        (P7)
+  2 #RECS-WRITTEN     (P7)
+  2 #NUM-RECS         (P7)
+  2 #CNT              (P7)
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #I3               (I2)
+  2 #I4               (I2)
+  2 #I5               (I2)
+  2 #TOT-ZIP-9-NOT-FND (P5)
+  2 #TOT-ALREADY-HAD-9 (P5)
+  2 #NO-CHG           (P5)
+  2 #ERRORS           (P5)
+  2 #UPDATES          (P5)
+  2 #RECENT-CHGS      (P5)
+  2 #TOT-ZIP-5-CHG    (P5)
+  2 #TOT-ADDR-CHG     (P5)
+  2 #TOT-CITY-ST-CHG  (P5)
+  2 #TOT-NU-ZIP-4     (P5)
+  2 #TOT-NU-ZIP-DPB   (P5)
+  2 #NOT-FOUND        (P5)
+  2 #TOT-ZIP-9-IN     (P5)
+  2 #TOT-ZIP-11-IN    (P5)
+  2 #TOT-DPB-CHG      (P5)
+  2 #TOT-ZIP4-CHG     (P5)
+  2 #TOT-NON-FOREIGN-IN (P5)
+*
+1 #FILE-CITY-STATE            (A25)
+1 #CITY-STATE            (A25)
+1 #CITY-1                (A25)
+1 #CITY-2                (A25)
+1 #CITY-3                (A25)
+1 #CITY-4                (A25)
+1 #CITY-5                (A25)
+1 #CITY-6                (A25)
+1 #CITY-7                (A25)
+1 #CITY-8                (A25)
+1 #CITY-9                (A25)
+*
+1 #FE-EXTRACT-125   (A125)
+1 #REC-OVERFLOW (A250)
+1 REDEFINE #REC-OVERFLOW
+  2 #REC-OVF-1ST-125   (A125)
+  2 #REC-OVF-2ND-125   (A125)
+*
+1 #CNT-2   (N6)
+1 #CNT-3   (N6)
+1 #CNT-4   (N6)
+1 #CNT-5   (N6)
+1 #CNT-6   (N6)
+1 #CNT-7   (N6)
+1 #CNT-8   (N6)
+1 #UPDATE-ADDR   (L)
+*
+1 #LETTER-TABLE
+  2 #1T (A26) INIT <'AaBbCcDdEeFfGgHhIiJjKkLlMm'>
+  2 #2T (A26) INIT <'NnOoPpQqRrSsTtUuVvWwXxYyZz'>
+1 REDEFINE #LETTER-TABLE
+  2 #LETTER-OCC  (26)
+    3 #UPPER     (A1)
+    3 #LOWER     (A1)
+*
+1 #ABEND-CODE    (I4)
+1 #ADD-LINE1     (A25)
+1 #ADD-LINE2     (A25)
+1 #ADD-LINE3     (A25)
+*
+END-DEFINE
+* * * * * * * * *
+INCLUDE GONERCXX
+* * * * * * * * *
+*
+* * * * * * * REPORT HEADER * * * * * *
+FORMAT      LS=145 PS=76
+FORMAT (1)  LS=145 PS=76
+FORMAT (2)  LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(2) ZIP-CODE 11 UPDATE DETAIL'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+FORMAT (3)  LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(3) ZIP-CODE 11 UPDATE - NOT FOUNDS AND RECENT CHANGES'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+FORMAT (4)  LS=133 PS=76
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(4) Address/ZIP changes'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+FORMAT (5)  LS=133 PS=76
+WRITE  (5) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(5) Addresses with no change'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+FORMAT (6)  LS=133 PS=76
+WRITE  (6) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(6) UNUSED'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+FORMAT (7)  LS=133 PS=76
+WRITE  (7) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(7) CURRENT ZIP-11"S NOT UPDATED BECAUSE ADDR NOT FOUND'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+FORMAT (8)  LS=133 PS=76
+WRITE  (8) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(8) CASS CREATED LARGE ADDRESSES - UPDATE NOT PERFORMED'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+FORMAT (9)  LS=133 PS=76
+WRITE  (9) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  '(9) TRLOG Entries'
+  5X 'DATE: '*DATX 5X 'TIME: ' *TIMX  //
+*
+INPUT #PARM-RECORD       /* FROM STACK
+*
+IF #PARM-DATE NE MASK(YYYYMMDD)
+*   WRITE 'PARM DATE NOT VALID FORMAT (YYYYMMDD)'   /* SAG 12092005 RH1 SS - BEGIN
+*   MOVE +10 TO #ABEND-CODE
+*   CALL 'ABEND' USING #ABEND-CODE
+  #BATCH-LITERAL-1 := '#PARM-DATE'
+  #BATCH-LITERAL-4 := 'PARM DATE NOT VALID FORMAT (YYYYMMDD)'
+  INCLUDE GABNDCX6
+  TERMINATE                                         /* SAG 12092005 RH1 SS - END
+ELSE
+  WRITE 'PARM DATE = ' #PARM-DATE
+  MOVE #PARM-DATE TO #DATE-EXTRACT
+END-IF
+*
+IF #PARM-ADDR-CODE = 'P' OR = 'G' OR = 'E'
+  WRITE 'PARM ADDRESS CODE = ' #PARM-ADDR-CODE
+ELSE
+*   WRITE 'PARM ADDRESS CODE NOT VALID ( G OR P)'   /* SAG 12092005 RH1 SS - BEGIN
+*   MOVE +10 TO #ABEND-CODE
+*   CALL 'ABEND' USING #ABEND-CODE
+  #BATCH-LITERAL-1 := '#PARM-ADDR-CODE'
+  #BATCH-LITERAL-4 := 'PARM ADDRESS CODE NOT VALID ( G OR P)'
+  INCLUDE GABNDCX6
+  TERMINATE                                         /* SAG 12092005 RH1 SS - END
+END-IF
+*
+IF #PARM-PROC-TYPE = 'AUT' OR = 'NAT'
+  WRITE 'PARM PROCESS TYPE = ' #PARM-PROC-TYPE
+ELSE
+*   WRITE 'PARM PROCESS TYPE NOT VALID(AUT OR NAT)' /* SAG 12092005 RH1 SS - BEGIN
+*   MOVE +10 TO #ABEND-CODE
+*   CALL 'ABEND' USING #ABEND-CODE
+  #BATCH-LITERAL-1 := '#PARM-PROC-TYPE'
+  #BATCH-LITERAL-4 := 'PARM PROCESS TYPE NOT VALID(AUT OR NAT)'
+  INCLUDE GABNDCX6
+  TERMINATE                                         /* SAG 12092005 RH1 SS - END
+END-IF
+*
+IF #PARM-UNDL-FIX = 'UNDLIV-FIX' OR = 'NORMAL-FIX'
+  WRITE 'PARM UNDL FIX = ' #PARM-UNDL-FIX
+ELSE
+*   WRITE 'PARM UNDL FIX NOT VALID(UNDLIV-FIX OR NORMAL-FIX)' /* SAG 12092005 RH1 SS - BEGIN
+*   MOVE +10 TO #ABEND-CODE
+*   CALL 'ABEND' USING #ABEND-CODE
+  #BATCH-LITERAL-1 := '#PARM-UNDL-FIX'
+  #BATCH-LITERAL-4 := 'PARM UNDL FIX NOT VALID(UNDLIV-FIX OR NORMAL-FIX)'
+  INCLUDE GABNDCX6
+  TERMINATE                                     /* SAG 12092005 RH1 SS - END
+END-IF
+*
+READ WORK 2 RECORD #ZIP-9-EXTR-80
+  IF #ZIP-9-EXTR-80 = MASK ('CN')
+    ESCAPE TOP
+  END-IF
+*
+* IF #RECS-READ GT 100
+*   ESCAPE BOTTOM
+* END-IF
+*
+  ADD +1 TO #RECS-READ
+  PERFORM DECOMPRESS-REC
+*
+*  IF #ID-NUMBER GT 10904
+*    ESCAPE BOTTOM
+*  END-IF
+END-WORK
+*
+WRITE  'TOTAL RECS READ    =' #RECS-READ
+WRITE  'TOTAL NOT FOUNDS   =' #NOT-FOUND
+WRITE  'TOTAL ZIP NO CHANGE=' #NO-CHG
+WRITE  'TOTAL RECENT CHGES =' #RECENT-CHGS
+WRITE  'TOT addr NOT FOUND =' #TOT-ZIP-9-NOT-FND
+WRITE  'TOT org had 9 above=' #TOT-ALREADY-HAD-9
+WRITE  'TOTAL UPDATES      =' #UPDATES
+WRITE  'TOTAL ZIP-5 CHGES  =' #TOT-ZIP-5-CHG
+WRITE  'TOTAL addr CHGES   =' #TOT-ADDR-CHG
+WRITE  'TOTAL city-st CHGES=' #TOT-CITY-ST-CHG
+WRITE  'TOTAL ZIP-4 CHGES  =' #TOT-ZIP4-CHG
+WRITE  'TOTAL ZIP-DPB chgs =' #TOT-DPB-CHG
+WRITE  'TOTAL NON-FORIN IN =' #TOT-NON-FOREIGN-IN
+WRITE  'TOTAL ZIP-9 IN     =' #TOT-ZIP-9-IN
+WRITE  'TOTAL ZIP-11 IN    =' #TOT-ZIP-11-IN
+WRITE  'TOTAL nu zip-4     =' #TOT-NU-ZIP-4
+WRITE  'TOTAL nu zip-dpb   =' #TOT-NU-ZIP-DPB
+*
+WRITE  (3) 'TOTAL RECS READ    =' #RECS-READ
+WRITE  (3) 'TOTAL NOT FOUNDS   =' #NOT-FOUND
+WRITE  (3) 'TOTAL ZIP NO CHANGE=' #NO-CHG
+WRITE  (3) 'TOTAL RECENT CHGES =' #RECENT-CHGS
+WRITE  (3) 'TOT addr NOT FOUND =' #TOT-ZIP-9-NOT-FND
+WRITE  (3) 'TOT org had 9 above=' #TOT-ALREADY-HAD-9
+WRITE  (3) 'TOTAL UPDATES      =' #UPDATES
+WRITE  (3) 'TOTAL ZIP-5 CHGES  =' #TOT-ZIP-5-CHG
+WRITE  (3) 'TOTAL addr CHGES   =' #TOT-ADDR-CHG
+WRITE  (3) 'TOTAL city-st CHGES=' #TOT-CITY-ST-CHG
+WRITE  (3) 'TOTAL ZIP-4 CHGES  =' #TOT-ZIP4-CHG
+WRITE  (3) 'TOTAL ZIP-DPB chgs =' #TOT-DPB-CHG
+WRITE  (3) 'TOTAL NON-FORIN IN =' #TOT-NON-FOREIGN-IN
+WRITE  (3) 'TOTAL ZIP-9 IN     =' #TOT-ZIP-9-IN
+WRITE  (3) 'TOTAL ZIP-11 IN    =' #TOT-ZIP-11-IN
+WRITE  (3) 'TOTAL nu zip-4     =' #TOT-NU-ZIP-4
+WRITE  (3) 'TOTAL nu zip-dpb   =' #TOT-NU-ZIP-DPB
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DECOMPRESS-REC
+* * * * * * * * * * * * * * * * *
+*
+RESET #OVER-25-REC #OVER-25-ADDR1 #OVER-25-ADDR2 #OVER-25-CITY
+RESET #FIRST-ADDRESS #SECOND-ADDRESS
+RESET #UPDATE-ADDR
+FOR #I1 1 TO 80
+*  WRITE 'LOOP' #I1 #ZIP-9-X (#I1) #FLD-X #FLD-#
+  IF (#ZIP-9-X (#I1) = ' ') AND (#FLD-# = 6) /* FINISHED ZIP-9 AND
+    IGNORE                                   /* at end of DPB
+  ELSE
+*   IF NOT #ZIP-9-X (#I1) = '{'    /* field delimeter
+    IF NOT #ZIP-9-X (#I1) LT ' '    /* field delimeter
+      IF   (#ZIP-9-X (#I1) NE '"')  /* ignore '"'
+          AND (#FLD-X LT 35)
+        ADD 1 TO #FLD-X
+        MOVE #ZIP-9-X (#I1) TO #FIELD-X (#FLD-X)
+      END-IF
+*
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  PERFORM LOWER-UPPER
+  ADD 1 TO #FLD-#
+*  WRITE 'FIELD' #FLD-# 'LENGH=' #FLD-X #FIELD
+  IF  ((#FLD-# = 4) AND (#FLD-X GT 22))   /* city
+      OR  (#FLD-X GT 25)
+    IF #FLD-# = 2 MOVE TRUE TO #OVER-25-ADDR1 ELSE
+      IF #FLD-# = 3 MOVE TRUE TO #OVER-25-ADDR2 ELSE
+        IF #FLD-# = 4 MOVE TRUE TO #OVER-25-CITY  ELSE
+          WRITE #ID-NUMBER ' Oversized field not CITY/ADDRESS 1 or 2'
+            #FLD-# #FLD-X
+        END-IF END-IF END-IF
+    MOVE TRUE TO #OVER-25-REC
+  END-IF
+*
+  IF #FLD-# LE 7
+    DECIDE ON FIRST VALUE #FLD-#
+      VALUE 1 IF #FLD-X = 3 MOVE #FIELD-3 TO #ID-NUMBER END-IF
+        IF #FLD-X = 4 MOVE #FIELD-4 TO #ID-NUMBER END-IF
+        IF #FLD-X = 5 MOVE #FIELD-5 TO #ID-NUMBER END-IF
+        IF #FLD-X = 6 MOVE #FIELD-6 TO #ID-NUMBER END-IF
+      VALUE 2 MOVE #FIELD TO #FIRST-ADDRESS  #FIRST-ADDRESS-35
+      VALUE 3 IF #FIRST-ADDRESS = ' '
+          MOVE #FIELD TO #FIRST-ADDRESS #FIRST-ADDRESS-35
+          IF #OVER-25-ADDR2
+            RESET #OVER-25-ADDR2
+            MOVE TRUE TO #OVER-25-ADDR1
+          END-IF
+        ELSE
+          IF #FIELD NE ' ' /* do not replace fixed #second-addr
+            MOVE #FIELD TO #SECOND-ADDRESS #SECOND-ADDRESS-35
+          END-IF
+        END-IF
+      VALUE 4 MOVE #FIELD TO #CITY #CITY-35
+      VALUE 5 MOVE #FIELD TO #STATE
+      VALUE 6 RESET #ZIP-CODE
+        IF      #FLD-X = 3 MOVE #FIELD-3 TO #ZIP-CODE-5N  /* DW8
+        ELSE IF #FLD-X = 4 MOVE #FIELD-4 TO #ZIP-CODE-5N /* DW8
+              ELSE MOVE #FIELD-ZIP-5 TO #ZIP-CODE-5N END-IF END-IF
+        MOVE #FIELD-ZIP-4 TO #ZIP-CODE-4N
+      VALUE 7 IF #FLD-X = 1
+*              DISPLAY (8) #ID-NUMBER
+          MOVE #FIELD-1 TO #ZIP-CODE-DPB /* put 0 in front
+        ELSE
+          MOVE #FIELD-2 TO #ZIP-CODE-DPB /* only need 2 dig
+        END-IF                           /* ignore check-digit
+*
+      NONE IGNORE
+    END-DECIDE
+*
+    IF #OVER-25-CITY AND #FLD-# = 4
+      IF #FIELD = 'ABERDEEN PROVING GROUND'
+        MOVE 'ABERDEEN PROVING GRND' TO #CITY #CITY-35
+        WRITE #ID-NUMBER 'FIXED ABERDEEN etc WITH' #CITY-35
+        RESET #OVER-25-CITY
+      END-IF
+*
+      IF #FIELD = 'HOT SPRINGS NATIONAL PARK'
+        MOVE 'HOT SPRINGS NATL PARK' TO #CITY #CITY-35
+        WRITE #ID-NUMBER 'FIXED HOT SPRINGS etc WITH' #CITY-35
+        RESET #OVER-25-CITY
+      END-IF
+*
+      IF #OVER-25-ADDR1 OR #OVER-25-ADDR2 OR #OVER-25-CITY
+        IGNORE
+      ELSE
+        RESET #OVER-25-REC
+      END-IF
+    END-IF
+*
+    IF #OVER-25-ADDR1 AND (#SECOND-ADDRESS = ' ')
+      FOR #I2 32 TO 15 STEP -1
+        IF ((#1ST-ADDR-X (#I2) = 'A') AND (#1ST-ADDR-X (#I2 + 1) = 'P')
+            AND (#1ST-ADDR-X (#I2 + 2) = 'T'))
+            OR ((#1ST-ADDR-X (#I2) = 'L') AND (#1ST-ADDR-X (#I2 + 1) = 'O')
+            AND (#1ST-ADDR-X (#I2 + 2) = 'T'))
+            OR ((#1ST-ADDR-X (#I2) = 'B') AND (#1ST-ADDR-X (#I2 + 1) = 'O')
+            AND (#1ST-ADDR-X (#I2 + 2) = 'X'))
+            OR ((#1ST-ADDR-X (#I2) = 'U') AND (#1ST-ADDR-X (#I2 + 1) = 'N')
+            AND (#1ST-ADDR-X (#I2 + 2) = 'I'))
+            OR ((#1ST-ADDR-X (#I2) = 'S') AND (#1ST-ADDR-X (#I2 + 1) = 'T')
+            AND (#1ST-ADDR-X (#I2 + 2) = 'E'))
+            OR ((#1ST-ADDR-X (#I2) = 'T') AND (#1ST-ADDR-X (#I2 + 1) = 'R')
+            AND (#1ST-ADDR-X (#I2 + 2) = 'L'))
+            OR ((#1ST-ADDR-X (#I2) = '#'))
+*     WRITE 'FOUND MATCH' #FIRST-ADDRESS-35
+          IF  (#I2 LE 26)
+              OR ((#I2 = 27) AND (#1ST-ADDR-X (26) = ' '))
+            RESET #I3 #FIELD
+            FOR #I2 #I2 TO 35
+              ADD 1 TO #I3
+              MOVE #1ST-ADDR-X (#I2) TO #FIELD-X (#I3)
+              RESET #1ST-ADDR-X (#I2)
+            END-FOR
+*
+            MOVE #FIRST-ADDRESS-35 TO #FIRST-ADDRESS
+            MOVE #FIELD TO #SECOND-ADDRESS #SECOND-ADDRESS-35
+            WRITE 'XXXXX' #ID-NUMBER 'FIXED addr' #FIRST-ADDRESS
+              #SECOND-ADDRESS
+            RESET #OVER-25-ADDR1
+*
+            IF #OVER-25-ADDR1 OR #OVER-25-ADDR2 OR #OVER-25-CITY
+              IGNORE
+            ELSE
+              RESET #OVER-25-REC
+            END-IF
+          END-IF
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-IF
+*
+    RESET #FIELD #FLD-X
+    IF #FLD-# = 7     /* ON LAST FIELD
+*      DISPLAY #ID-NUMBER #FIRST-ADDRESS
+*      #CITY 'ST' #STATE #ZIP-CODE 'DPB' #ZIP-CODE-DPB-A #SECOND-ADDRESS
+*
+      IF #OVER-25-REC
+        MOVE TRUE TO #FOUND-WIDOW #FOUND-MEMBER
+        FIND (1) ST-CHG-V WITH MEMBER-KEY = #ID-NUMBER-A
+          IF NO RECORDS FOUND
+            FIND (1) ST-CHG-V WITH WIDOW-KEY = #ID-NUMBER-A
+              IF NO RECORDS FOUND
+                RESET #FOUND-WIDOW #FOUND-MEMBER
+              END-NOREC
+            END-FIND
+          END-NOREC
+        END-FIND
+*
+        RESET #PDA-ADDRESS                                                  /* JT1 start
+        #ADD-TYPE        := 'P'
+        #ADD-CONTACT-ID := ST-CHG-V.MEMBER-CONTACT-ID
+        CALLNAT 'ADDN0001' #PDA-ADDRESS                                     
+        MOVE #ADD-LINE-1 TO #ADD-LINE1
+        MOVE #ADD-LINE-2 TO #ADD-LINE2
+        MOVE #ADD-LINE-3 TO #ADD-LINE3                                      /* JT1 end
+*
+        ADD 1 TO #CNT-8
+        IF #OVER-25-CITY
+          MOVE #CITY-35 TO #FIELD
+          DISPLAY (8) #CNT-8 #ID-NUMBER #FIELD-25 #FIELD-10
+        END-IF
+*
+        IF #OVER-25-ADDR1
+          MOVE #FIRST-ADDRESS-35 TO #FIELD
+          DISPLAY (8) #CNT-8 #ID-NUMBER #FIELD-25 #FIELD-10
+        END-IF
+*
+        IF #OVER-25-ADDR2
+          MOVE #SECOND-ADDRESS-35 TO #FIELD
+          DISPLAY (8) #CNT-8 #ID-NUMBER #FIELD-25 #FIELD-10
+        END-IF
+*
+        RESET #FIELD
+        IF #OVER-25-CITY
+          WRITE (8) '           *** ABOVE IS A CITY'
+        END-IF
+        IF #OVER-25-ADDR2
+          WRITE (8) '           *** ABOVE IS AN ADDRESS-2'
+        END-IF
+        WRITE (8) '      *** current = '
+*          ST-CHG-V.ADDRESS-1 ST-CHG-V.ADDRESS-2 ST-CHG-V.ADDRESS-3         /* JT1
+          #ADD-LINE-1  #ADD-LINE-2  #ADD-LINE-3                             /* JT1
+      END-IF
+*
+      RESET #FLD-#
+*
+      MOVE LEFT #FIRST-ADDRESS  TO #FIRST-ADDRESS
+      MOVE LEFT #SECOND-ADDRESS TO #SECOND-ADDRESS
+      MOVE LEFT #CITY-STATE     TO #CITY-STATE
+*
+      PERFORM PROCESS-REC
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PROCESS-REC
+* * * * * * * * * * * * * * *
+*
+COMPRESS #CITY #STATE INTO #CITY-STATE
+*
+IF #ZIP-CODE-5 = ' ' OR = '    0'
+  MOVE '00000' TO #ZIP-CODE-5
+END-IF
+*
+IF #ZIP-CODE-4 = ' ' OR = '    0'
+  MOVE '0000' TO #ZIP-CODE-4
+END-IF
+*
+IF #ZIP-CODE-DPB-A = ' ' OR = ' 0'
+  MOVE '00' TO #ZIP-CODE-DPB-A
+END-IF
+*
+IF #ID-NUMBER LT 700000
+  PERFORM UPDATE-ST
+ELSE
+  PERFORM UPDATE-IM
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE UPDATE-ST
+* * * * * * * * * * * * * * *
+*
+MOVE TRUE TO #FOUND-WIDOW #FOUND-MEMBER
+FIND (1) ST-ISN-V WITH MEMBER-KEY = #ID-NUMBER-A
+  IF NO RECORDS FOUND
+    RESET #FOUND-MEMBER
+    FIND (1) ST-ISN-V WITH WIDOW-KEY = #ID-NUMBER-A
+      IF NO RECORDS FOUND
+        RESET #FOUND-WIDOW
+        ADD 1 TO #CNT-3
+        WRITE  (3) #CNT-3 #ID-NUMBER-A ' ID NOT FOUND **********'
+          #FIRST-ADDRESS ' ' #SECOND-ADDRESS
+          ' '#CITY-STATE ' ' #ZIP-CODE
+        WRITE  (3) ' '
+        ADD 1 TO #NOT-FOUND
+      END-NOREC
+*
+      IF #FOUND-WIDOW
+        MOVE *ISN TO #ISN
+      END-IF
+    END-FIND
+  END-NOREC
+*
+  IF #FOUND-MEMBER
+    MOVE *ISN TO #ISN
+  END-IF
+END-FIND
+*
+IF #FOUND-MEMBER OR #FOUND-WIDOW
+  IGNORE
+ELSE
+* END TRANSACTION
+  ESCAPE ROUTINE
+END-IF
+*
+GET ST-V #ISN
+*
+RESET #PDA-ADDRESS                                                                       /* JT1 start
+#ADD-TYPE        := 'P'
+#ADD-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+CALLNAT 'ADDN0001' #PDA-ADDRESS                                  
+*
+* MOVE ST-V.DATE-LAST-ADDR-UPDT TO #HOLD-LAST-ADDR-UPDT                                  
+MOVE ADDRESS-DATE-LAST-UPDT (< ST-V.MEMBER-CONTACT-ID >) TO #HOLD-LAST-ADDR-UPDT         
+* MOVE ST-V.ADDRESS-CHG-CODE    TO #HOLD-ADDR-CODE                                      
+MOVE ADDRESS-CHANGE-CODE (< ST-V.MEMBER-CONTACT-ID >) TO #HOLD-ADDR-CODE                
+*
+* IF ST-V.ZIP-CODE NE 0
+IF #ADD-ZIP-CODE NE 0                                                           
+  ADD 1 TO #TOT-NON-FOREIGN-IN
+END-IF
+*
+* IF (ST-V.ZIP-CODE-5 NE '00000') AND (ST-V.ZIP-CODE-4 NE '0000')
+IF (#ADD-ZIP5 NE 0) AND (#ADD-ZIP4 NE 0)
+  ADD 1 TO #TOT-ZIP-9-IN
+END-IF
+*
+* IF (ST-V.ZIP-CODE-5 NE '00000') AND (ST-V.ZIP-CODE-4 NE '0000')
+*     AND (ST-V.ZIP-CODE-DPB-A NE '00')                                     /* JT1 obsolete
+IF (#ADD-ZIP5 NE 0) AND (#ADD-ZIP4 NE 0)
+  ADD 1 TO #TOT-ZIP-11-IN
+END-IF
+*
+IF  ((WIDOW-FLAG =  'Y') AND (DATE-ACCT-UPDATE GE #DATE-EXTRACT))
+*     OR (DATE-LAST-ADDR-UPDT GE #DATE-EXTRACT)
+*     OR (ADDRESS-CHG-CODE = 'N')  /* do not chg addr at PO's request
+*     OR (ADDRESS-CHG-CODE = 'X')  /* can be changed only by certain users
+  OR (#HOLD-LAST-ADDR-UPDT GE #DATE-EXTRACT)
+  OR (#HOLD-ADDR-CODE = 'N')
+  OR (#HOLD-ADDR-CODE = 'X')
+  ADD 1 TO #CNT-3
+  WRITE (3) #CNT-3 ST-V.ID-NUMBER
+*     'RECENT ADDR CHG-CHG NOT APPLIED - LAST UPD=' DATE-LAST-ADDR-UPDT
+*     'ADDR-CHG-CODE=' ADDRESS-CHG-CODE
+     'RECENT ADDR CHG-CHG NOT APPLIED - LAST UPD=' #HOLD-LAST-ADDR-UPDT   
+     'ADDR-CHG-CODE=' #HOLD-ADDR-CODE      
+  IF  (WIDOW-FLAG =  'Y')
+    WRITE (3) '        LAST-WIDOW-UPDATE' DATE-ACCT-UPDATE
+  END-IF
+*
+*   WRITE (3) '     CURRENT ADDR = ' ST-V.ZIP-CODE ST-V.ZIP-CODE-DPB-A
+*     ST-V.ADDRESS-1 ST-V.ADDRESS-2 ST-V.ADDRESS-3
+   WRITE (3) '     CURRENT ADDR = ' #ADD-ZIP-CODE        /* ST-V.ZIP-CODE-DPB-A
+    #ADD-LINE-1  #ADD-LINE-2  #ADD-LINE-3 
+  WRITE (3) '     EXTRACT ADDR = ' #ZIP-CODE #ZIP-CODE-DPB-A
+    #FIRST-ADDRESS #SECOND-ADDRESS ' '#CITY-STATE ' '
+  WRITE (3) ' '
+  ADD 1 TO #RECENT-CHGS
+  END TRANSACTION
+*
+  ESCAPE BOTTOM
+END-IF
+*
+* IF (((ST-V.ZIP-CODE-5     NE '00000') AND (#ZIP-CODE-5     = '00000'))
+*     OR ((ST-V.ZIP-CODE-4     NE '0000')  AND (#ZIP-CODE-4     = '0000')))
+* *   AND (#PARM-UNDL-FIX = 'NORMAL-FIX')  /* BYPASS IF FIXING UNDLIV
+* *                    I do not think above line should ever be used
+*   ADD 1 TO #CNT-7
+*   WRITE (7) #CNT-7 ST-V.ID-NUMBER 'NOT UPDTD SINCE ZIP NOT FOND BY CASS'
+*   WRITE (7) '     CURRENT ADDR = ' ST-V.ZIP-CODE ST-V.ZIP-CODE-DPB
+*     ST-V.ADDRESS-1 ST-V.ADDRESS-2 ST-V.ADDRESS-3
+*   WRITE (7) '     EXTRACT ADDR = ' #ZIP-CODE #ZIP-CODE-DPB-A
+*     #FIRST-ADDRESS #SECOND-ADDRESS ' ' #CITY-STATE ' '
+*   WRITE (7) ' '
+*   ADD 1 TO #TOT-ZIP-9-NOT-FND
+* *
+*   IF (ST-V.ZIP-CODE-5 NE '00000') AND (ST-V.ZIP-CODE-4 NE '0000')
+*     ADD 1 TO #TOT-ALREADY-HAD-9
+*   END-IF
+IF (((#ADD-ZIP5  NE 0 ) AND (#ZIP-CODE-5     = '00000'))
+    OR ((#ADD-ZIP4 NE 0 )  AND (#ZIP-CODE-4     = '0000')))
+*   AND (#PARM-UNDL-FIX = 'NORMAL-FIX')  /* BYPASS IF FIXING UNDLIV
+*                    I do not think above line should ever be used
+  ADD 1 TO #CNT-7
+  WRITE (7) #CNT-7 ST-V.ID-NUMBER 'NOT UPDTD SINCE ZIP NOT FOND BY CASS'
+  WRITE (7) '     CURRENT ADDR = ' #ADD-ZIP-CODE                  /*  ST-V.ZIP-CODE-DPB
+    #ADD-LINE-1  #ADD-LINE-2  #ADD-LINE-3  
+  WRITE (7) '     EXTRACT ADDR = ' #ZIP-CODE #ZIP-CODE-DPB-A
+    #FIRST-ADDRESS #SECOND-ADDRESS ' ' #CITY-STATE ' '
+  WRITE (7) ' '
+  ADD 1 TO #TOT-ZIP-9-NOT-FND
+*
+  IF (#ADD-ZIP5 NE 0 ) AND (#ADD-ZIP4 NE 0 )
+    ADD 1 TO #TOT-ALREADY-HAD-9
+  END-IF
+ELSE
+  IF #OVER-25-REC      /* DW3
+    END TRANSACTION
+    ESCAPE ROUTINE
+  END-IF
+*
+*   IF ST-V.ZIP-CODE-4 NE #ZIP-CODE-4
+  IF #ADD-ZIP4 NE #ZIP-CODE-4N
+    MOVE TRUE TO #UPDATE-ADDR
+    ADD 1 TO #TOT-ZIP4-CHG
+  END-IF
+*
+*   IF ST-V.ZIP-CODE-DPB NE #ZIP-CODE-DPB                         /* JT1 obsolete
+*    MOVE TRUE TO #UPDATE-ADDR
+*    ADD 1 TO #TOT-DPB-CHG
+*   END-IF
+*
+*  IF #ZIP-CODE-5 NE ST-V.ZIP-CODE-5
+  IF #ZIP-CODE-5N NE #ADD-ZIP5
+    MOVE TRUE TO #UPDATE-ADDR
+    ADD 1 TO #TOT-ZIP-5-CHG
+  END-IF
+*
+*   IF  (ST-V.ADDRESS-1 NE #FIRST-ADDRESS)
+*       OR ((ST-V.ADDRESS-3 NE ' ')
+*       AND (ST-V.ADDRESS-2 NE #SECOND-ADDRESS))
+  IF  (#ADD-LINE-1 NE #FIRST-ADDRESS)
+      OR ((#ADD-LINE-3 NE ' ')
+      AND (#ADD-LINE-2 NE #SECOND-ADDRESS))
+    MOVE TRUE TO #UPDATE-ADDR
+    ADD 1 TO #TOT-ADDR-CHG
+  END-IF
+*
+*   IF ST-V.ADDRESS-3 =  ' '
+*     MOVE ST-V.ADDRESS-2 TO #FILE-CITY-STATE
+*   ELSE
+*     MOVE ST-V.ADDRESS-3 TO #FILE-CITY-STATE
+*   END-IF
+  IF #ADD-LINE-3 =  ' '
+    MOVE #ADD-LINE-2 TO #FILE-CITY-STATE
+  ELSE
+    MOVE #ADD-LINE-3 TO #FILE-CITY-STATE
+  END-IF
+*
+  RESET #CITY-1 #CITY-2 #CITY-3 #CITY-4 #CITY-5
+    #CITY-6 #CITY-7 #CITY-8 #CITY-9
+  SEPARATE #FILE-CITY-STATE LEFT INTO #CITY-1 #CITY-2 #CITY-3
+    #CITY-4 #CITY-5 #CITY-6 #CITY-7 #CITY-8 #CITY-9
+    WITH DELIMITER ' '
+  COMPRESS #CITY-1 #CITY-2 #CITY-3 #CITY-4 #CITY-5 #CITY-6 #CITY-7
+    #CITY-8 #CITY-9 INTO #FILE-CITY-STATE
+*
+  IF #FILE-CITY-STATE NE #CITY-STATE
+    MOVE TRUE TO #UPDATE-ADDR
+    ADD 1 TO #TOT-CITY-ST-CHG
+  END-IF
+*
+*   IF (ST-V.ZIP-CODE-4 = '0000') AND (#ZIP-CODE-4 NE '0000')
+*     ADD 1 TO #TOT-NU-ZIP-4
+*   END-IF
+  IF (#ADD-ZIP4 = 0 ) AND (#ZIP-CODE-4 NE '0000')
+    ADD 1 TO #TOT-NU-ZIP-4
+  END-IF
+*
+*  IF (ST-V.ZIP-CODE-DPB = 0) AND (#ZIP-CODE-DPB NE 0)                        /*JT1 obsolete
+*    ADD 1 TO #TOT-NU-ZIP-DPB
+*  END-IF
+*
+*   IF ((#SECOND-ADDRESS = ' ')
+*       AND ((ST-V.ADDRESS-1 = #FIRST-ADDRESS)
+*       AND (ST-V.ADDRESS-2 = #CITY-STATE)
+*       AND (ST-V.ZIP-CODE  = #ZIP-CODE)
+*       AND (ST-V.ZIP-CODE-DPB = #ZIP-CODE-DPB)))
+*       OR ((#SECOND-ADDRESS NE ' ')
+*       AND ((ST-V.ADDRESS-1 = #FIRST-ADDRESS)
+*       AND (ST-V.ADDRESS-2 = #SECOND-ADDRESS)
+*       AND (ST-V.ADDRESS-3 = #CITY-STATE)
+*       AND (ST-V.ZIP-CODE  = #ZIP-CODE)
+*       AND (ST-V.ZIP-CODE-DPB = #ZIP-CODE-DPB)))
+*     ADD 1 TO #CNT-5
+*     WRITE (5) #CNT-5 ST-V.ID-NUMBER
+*     WRITE (5) ' ' ST-V.ZIP-CODE ST-V.ZIP-CODE-DPB ST-V.ADDRESS-1
+*       ST-V.ADDRESS-2 ST-V.ADDRESS-3
+*     IF #SECOND-ADDRESS = ' '   /* DW2
+*       WRITE (5) ' ' #ZIP-CODE #ZIP-CODE-DPB #FIRST-ADDRESS
+*         #CITY-STATE
+*     ELSE
+*       WRITE (5) ' ' #ZIP-CODE #ZIP-CODE-DPB #FIRST-ADDRESS
+*         #SECOND-ADDRESS #CITY-STATE
+*     END-IF
+*   END-IF
+*
+ IF ((#SECOND-ADDRESS = ' ')
+      AND ((#ADD-LINE-1  = #FIRST-ADDRESS)
+      AND (#ADD-LINE-2  = #CITY-STATE)
+      AND (#ADD-ZIP-CODE   = #ZIP-CODE)))
+*      AND (ST-V.ZIP-CODE-DPB = #ZIP-CODE-DPB)))                          /* JT1 obsolete
+      OR ((#SECOND-ADDRESS NE ' ')
+      AND ((#ADD-LINE-1 = #FIRST-ADDRESS)
+      AND (#ADD-LINE-2 = #SECOND-ADDRESS)
+      AND (#ADD-LINE-3 = #CITY-STATE)
+      AND (#ADD-ZIP-CODE  = #ZIP-CODE)))
+*      AND (ST-V.ZIP-CODE-DPB = #ZIP-CODE-DPB)))                          /* JT1 obsolete
+    ADD 1 TO #CNT-5
+    WRITE (5) #CNT-5 ST-V.ID-NUMBER
+*     WRITE (5) ' ' ST-V.ZIP-CODE ST-V.ZIP-CODE-DPB ST-V.ADDRESS-1
+*       ST-V.ADDRESS-2 ST-V.ADDRESS-3
+     WRITE (5) ' ' #ADD-ZIP-CODE                                     /* JT1 obsolete  ST-V.ZIP-CODE-DPB
+        #ADD-LINE-1  #ADD-LINE-2  #ADD-LINE-3     
+    IF #SECOND-ADDRESS = ' '   /* DW2
+      WRITE (5) ' ' #ZIP-CODE #ZIP-CODE-DPB #FIRST-ADDRESS
+        #CITY-STATE
+    ELSE
+      WRITE (5) ' ' #ZIP-CODE #ZIP-CODE-DPB #FIRST-ADDRESS
+        #SECOND-ADDRESS #CITY-STATE
+    END-IF
+  END-IF
+*
+  IF #UPDATE-ADDR
+    PERFORM CREATE-TR-UPDT-INFO   /* if AUT it stores TR  /* DW3
+    PERFORM PRINT-DETAIL          /* TO SEE ALL UPDATES
+*   create input file for syncronization with new address files    YAK
+    WRITE WORK FILE 3 #ZIP-9-EXTR-80   /* Added after CR249 implementation
+*
+    MOVE *DATN TO ST-V.DTS-DATN
+    MOVE *TIMN TO ST-V.DTS-TIMN
+*
+    IF #PARM-PROC-TYPE = 'AUT'  /* chges if an audut trail is needed
+      MOVE *DATN TO ST-V.DATE-OTHER-UPDATE
+*      MOVE *DATN TO ST-V.DATE-LAST-ADDR-UPDT                                  /* JT1 obsolete 
+*      MOVE #PARM-ADDR-CODE TO ST-V.ADDRESS-CHG-CODE                           /* JT1 obsolete
+    END-IF
+*   Below NS logic used only for 11/2002  harris addr updateing
+*   IF #HOLD-ADDR-CODE = 'U' OR = 'V' OR = 'G'
+*   IF #HOLD-ADDR-CODE = 'U' OR = 'V'
+*    AND #HOLD-LAST-ADDR-UPDT < #DATE-EXTRACT
+*   IF ST-V.ADDRESS-CHG-CODE = 'U' OR = 'V'
+*   IF ST-V.ADDRESS-CHG-CODE = 'G' OR = 'P'
+*   below to add an NS note   **************************************
+*     MOVE 'EDS' TO #CGA-CLERK
+*     MOVE *DATN TO #YYYYMMDD
+*     COMPRESS #MM-A #DD-A #YYYY-A INTO #DATE-DISP WITH '/'
+*     MOVE '*#ADDRESS UPDATED VIA HARRIS & ASSOC DATA' TO #NOTE-TEXT (1)
+*     WRITE  ST-V.ID-NUMBER 'NOTE UPDATED FOR THIS MEMBER'
+*
+*     MOVE 1 TO #INT
+*     CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK
+*             #NOTE-TEXT (1:10)
+*
+*      WRITE ST-V.ID-NUMBER 'ZIP UPDATE BUT CURRENTLY UNDELIVERABLE'
+*   END-IF
+*
+*    IF #SECOND-ADDRESS = ' '                                                   /* JT1 start obsolete
+*       MOVE #FIRST-ADDRESS TO ST-V.ADDRESS-1
+*       MOVE #CITY-STATE    TO ST-V.ADDRESS-2
+*       RESET                  ST-V.ADDRESS-3
+*     ELSE
+*       MOVE #FIRST-ADDRESS  TO ST-V.ADDRESS-1
+*       MOVE #SECOND-ADDRESS TO ST-V.ADDRESS-2
+*       MOVE #CITY-STATE     TO ST-V.ADDRESS-3
+*     END-IF                                                              
+*
+*   IF (#ZIP-CODE-5 NE '00000') AND (#ZIP-CODE-4 NE '0000') /* DW99 *****
+*     IF (#ZIP-CODE-5 NE '00000')
+*       MOVE #ZIP-CODE TO ST-V.ZIP-CODE
+*       MOVE #ZIP-CODE-DPB TO ST-V.ZIP-CODE-DPB   /* DW7
+*     END-IF
+*
+*   IF #ZIP-CODE-DPB NE 0                 /* DW7
+*     MOVE #ZIP-CODE-DPB TO ST-V.ZIP-CODE-DPB
+*   END-IF                                                                      /* JT1 end obsolete 
+*
+    ADD 1 TO #UPDATES
+*   DISPLAY (1) 'XXX' ST-V.ADDRESS-1 ST-V.ADDRESS-2 ST-V.ADDRESS-3
+*   WRITE 'UPDATED' ST-V.ID-NUMBER
+*
+    UPDATE (0697)
+  END-IF
+END-IF
+*
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE UPDATE-IM
+* * * * * * * * * * * * * * *
+*
+MOVE TRUE TO #FOUND-MEMBER
+FIND (1) IM-V WITH ID-NUMBER = #ID-NUMBER
+  IF NO RECORDS FOUND
+    ADD 1 TO #CNT-3
+    WRITE  (3) #CNT-3 #ID-NUMBER-A ' ID NOT FOUND **********'
+      #FIRST-ADDRESS ' ' #SECOND-ADDRESS
+      ' '#CITY-STATE ' ' #ZIP-CODE
+    WRITE  (3) ' '
+    ADD 1 TO #NOT-FOUND
+    RESET #FOUND-MEMBER
+  END-NOREC
+*
+  MOVE *ISN TO #ISN
+END-FIND
+*
+IF #FOUND-MEMBER
+  IGNORE
+ELSE
+  END TRANSACTION
+  ESCAPE ROUTINE
+END-IF
+*
+GET IM-V #ISN
+*
+IF IM-V.ZIP-CODE NE 0
+  ADD 1 TO #TOT-NON-FOREIGN-IN
+END-IF
+*
+IF (IM-V.ZIP-CODE-5 NE '00000') AND (IM-V.ZIP-CODE-4 NE '0000')
+  ADD 1 TO #TOT-ZIP-9-IN
+END-IF
+*
+IF (IM-V.ZIP-CODE-5 NE '00000') AND (IM-V.ZIP-CODE-4 NE '0000')
+  ADD 1 TO #TOT-ZIP-11-IN
+END-IF
+*
+IF  (IM-V.DTS-DATN GE #DATE-EXTRACT)
+  ADD 1 TO #CNT-3
+  WRITE (3) #CNT-3 IM-V.ID-NUMBER
+    'RECENT ADDR CHG-CHG NOT APPLIED - LAST UPD=' IM-V.DTS-DATN
+*
+  WRITE (3) '     CURRENT ADDR = ' IM-V.ZIP-CODE
+    IM-V.ADDRESS-1 IM-V.ADDRESS-2 IM-V.ADDRESS-3
+  WRITE (3) '     EXTRACT ADDR = ' #ZIP-CODE #ZIP-CODE-DPB-A
+    #FIRST-ADDRESS #SECOND-ADDRESS ' '#CITY-STATE ' '
+  WRITE (3) ' '
+  ADD 1 TO #RECENT-CHGS
+  END TRANSACTION
+*
+* RESET #FIRST-ADDRESS #SECOND-ADDRESS
+* RESET #OVER-25-CITY
+*       #OVER-25-ADDR1
+*       #OVER-25-ADDR2
+*       #OVER-25-REC
+*  ESCAPE TOP
+  ESCAPE BOTTOM
+END-IF
+*
+IF  ((IM-V.ZIP-CODE-5     NE '00000') AND (#ZIP-CODE-5     = '00000'))
+    OR ((IM-V.ZIP-CODE-4     NE '0000')  AND (#ZIP-CODE-4     = '0000'))
+  ADD 1 TO #CNT-7
+  WRITE (7) #CNT-7 IM-V.ID-NUMBER ' NOT UPDATED SINCE ZIP NOT FOUND'
+  WRITE (7) '     CURRENT ADDR = ' IM-V.ZIP-CODE
+    IM-V.ADDRESS-1 IM-V.ADDRESS-2 IM-V.ADDRESS-3
+  WRITE (7) '     EXTRACT ADDR = ' #ZIP-CODE #ZIP-CODE-DPB-A
+    #FIRST-ADDRESS #SECOND-ADDRESS ' ' #CITY-STATE ' '
+  WRITE (7) ' '
+  ADD 1 TO #TOT-ZIP-9-NOT-FND
+*
+  IF (IM-V.ZIP-CODE-5 NE '00000') AND (IM-V.ZIP-CODE-4 NE '0000')
+    ADD 1 TO #TOT-ALREADY-HAD-9
+  END-IF
+ELSE
+  IF ZIP-CODE-4 NE #ZIP-CODE-4
+    ADD 1 TO #TOT-ZIP4-CHG
+  END-IF
+*
+  IF #ZIP-CODE-5 NE IM-V.ZIP-CODE-5
+    ADD 1 TO #CNT-6
+    ADD 1 TO #TOT-ZIP-5-CHG
+  END-IF
+*
+  IF NOT #OVER-25-REC
+    IF  (IM-V.ADDRESS-1 NE #FIRST-ADDRESS)
+        OR ((IM-V.ADDRESS-3 NE ' ')
+        AND (IM-V.ADDRESS-2 NE #SECOND-ADDRESS))
+      ADD 1 TO #TOT-ADDR-CHG
+    END-IF
+*
+    IF IM-V.ADDRESS-3 =  ' '
+      MOVE IM-V.ADDRESS-2 TO #FILE-CITY-STATE
+    ELSE
+      MOVE IM-V.ADDRESS-3 TO #FILE-CITY-STATE
+    END-IF
+*
+    RESET #CITY-1 #CITY-2 #CITY-3 #CITY-4 #CITY-5
+      #CITY-6 #CITY-7 #CITY-8 #CITY-9
+    SEPARATE #FILE-CITY-STATE LEFT INTO #CITY-1 #CITY-2 #CITY-3
+      #CITY-4 #CITY-5 #CITY-6 #CITY-7 #CITY-8 #CITY-9
+      WITH DELIMITER ' '
+    COMPRESS #CITY-1 #CITY-2 #CITY-3 #CITY-4 #CITY-5 #CITY-6 #CITY-7
+      #CITY-8 #CITY-9 INTO #FILE-CITY-STATE
+    IF #FILE-CITY-STATE NE #CITY-STATE
+      ADD 1 TO #TOT-CITY-ST-CHG
+    END-IF
+  END-IF
+*
+  IF (IM-V.ZIP-CODE-4 = '0000') AND (#ZIP-CODE-4 NE '0000')
+    ADD 1 TO #TOT-NU-ZIP-4
+  END-IF
+*
+  PERFORM PRINT-DETAIL    /* TO SEE ALL UPDATES
+*
+  IF NOT #OVER-25-REC
+    IF #SECOND-ADDRESS = ' '
+      MOVE #FIRST-ADDRESS TO IM-V.ADDRESS-1
+      MOVE #CITY-STATE    TO IM-V.ADDRESS-2
+      RESET                  IM-V.ADDRESS-3
+    ELSE
+      MOVE #FIRST-ADDRESS  TO IM-V.ADDRESS-1
+      MOVE #SECOND-ADDRESS TO IM-V.ADDRESS-2
+      MOVE #CITY-STATE     TO IM-V.ADDRESS-3
+    END-IF
+  END-IF
+*
+  IF (#ZIP-CODE-5 NE '00000') AND (#ZIP-CODE-4 NE '0000')
+    MOVE #ZIP-CODE TO IM-V.ZIP-CODE
+  END-IF
+*
+  ADD 1 TO #UPDATES
+  UPDATE (0997)
+END-IF
+*
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PRINT-DETAIL
+* * * * * * * * * * * * * * * *
+*
+*                                      /* JT1 start replace all st-v fields with pda fields
+ADD 1 TO #CNT-2
+COMPRESS #ADD-ZIP5 #ADD-ZIP4     /* JT1 obsolete  ST-V.ZIP-CODE-DPB-A
+  INTO #OLD-ZIP WITH '-'
+COMPRESS #ZIP-CODE-5 #ZIP-CODE-4 #ZIP-CODE-DPB-A INTO #NEW-ZIP WITH '-'
+*
+WRITE (2) #CNT-2 ST-V.ID-NUMBER
+WRITE (2) 10T #ADD-LINE1 50T #FIRST-ADDRESS
+IF #SECOND-ADDRESS = ' '     /* DW3
+  WRITE (2) 10T #ADD-LINE2 50T #CITY-STATE
+  WRITE (2) 10T #ADD-LINE3 
+ELSE
+  WRITE (2) 10T #ADD-LINE2 50T #SECOND-ADDRESS
+  WRITE (2) 10T #ADD-LINE3 50T #CITY-STATE
+END-IF
+WRITE (2) 10T #OLD-ZIP       50T #NEW-ZIP
+WRITE (2) ' '
+*
+ADD 1 TO #CNT-4
+WRITE (4) #CNT-4 ST-V.ID-NUMBER
+WRITE (4) ' ' #ADD-ZIP-CODE          /* JT1 obsolete  ST-V.ZIP-CODE-DPB 
+  #ADD-LINE1  #ADD-LINE2  #ADD-LINE3 
+IF #SECOND-ADDRESS = ' '   /* DW2
+  WRITE (4) ' ' #ZIP-CODE #ZIP-CODE-DPB #FIRST-ADDRESS
+    #CITY-STATE
+ELSE
+  WRITE (4) ' ' #ZIP-CODE #ZIP-CODE-DPB #FIRST-ADDRESS #SECOND-ADDRESS
+    #CITY-STATE
+END-IF                                /* JT1 end replace all st-v fields with pda fields
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CREATE-TR-UPDT-INFO
+* * * * * * * * * * * * * * * *
+*
+IF #PARM-PROC-TYPE NE 'AUT'  /* DW3
+  ESCAPE ROUTINE
+END-IF
+*
+RESET #TRX OLD-DATA (*) NEW-DATA (*)
+RESET SYNC-FLD-NUM(*) SYNC-FLD-OLD-DATA(*) SYNC-FLD-NEW-DATA(*) /* DW6
+RESET #SFX    /* DW2
+*
+ADD 1 TO #TRX
+MOVE 'AD-CHG-CD:'  TO #W-DESCRIPTION
+ADD 1 TO #SFX           /* DW2 /* DW5
+MOVE 29 TO SYNC-FLD-NUM (#SFX)
+* MOVE ST-V.ADDRESS-CHG-CODE TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)               /* JT1
+MOVE #HOLD-ADDR-CODE TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)                       /* JT1
+MOVE #W-OLD-NEW-DATA TO TR-V.OLD-DATA (#TRX)
+* MOVE #PARM-ADDR-CODE TO #W-DATA SYNC-FLD-NEW-DATA (#SFX)                     /* JT1 obsolete
+MOVE #W-OLD-NEW-DATA TO TR-V.NEW-DATA (#TRX)
+*
+ADD 1 TO #TRX
+MOVE 'ADDR-1:'  TO #W-DESCRIPTION
+*
+ADD 1 TO #SFX     /* DW2
+MOVE 2 TO SYNC-FLD-NUM (#SFX)
+* MOVE ST-V.ADDRESS-1  TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)                     /* JT1
+MOVE #ADD-LINE1 TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)                            /* JT1
+MOVE #W-OLD-NEW-DATA TO TR-V.OLD-DATA (#TRX)
+MOVE #FIRST-ADDRESS  TO #W-DATA SYNC-FLD-NEW-DATA (#SFX)
+MOVE #W-OLD-NEW-DATA TO TR-V.NEW-DATA (#TRX)
+*
+ADD 1 TO #TRX
+MOVE 'ADDR-2:'  TO #W-DESCRIPTION
+*
+ADD 1 TO #SFX     /* DW2
+MOVE 3 TO SYNC-FLD-NUM (#SFX)
+* MOVE ST-V.ADDRESS-2  TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)                       /* JT1
+MOVE #ADD-LINE2  TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)                             /* JT1
+MOVE #W-OLD-NEW-DATA TO TR-V.OLD-DATA (#TRX)
+*
+IF #SECOND-ADDRESS = ' '
+  MOVE #CITY-STATE TO #W-DATA SYNC-FLD-NEW-DATA (#SFX)
+ELSE
+  MOVE #SECOND-ADDRESS TO #W-DATA SYNC-FLD-NEW-DATA (#SFX)
+END-IF
+*
+MOVE #W-OLD-NEW-DATA TO TR-V.NEW-DATA (#TRX)
+*
+ADD 1 TO #TRX
+MOVE 'ADDR-3:' TO #W-DESCRIPTION
+*
+ADD 1 TO #SFX     /* DW2
+MOVE 4 TO SYNC-FLD-NUM (#SFX)
+* MOVE ST-V.ADDRESS-3  TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)                       /* JT1
+MOVE #ADD-LINE3  TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)                             /* JT1
+MOVE #W-OLD-NEW-DATA TO TR-V.OLD-DATA (#TRX)
+*
+IF #SECOND-ADDRESS = ' '
+  RESET #W-DATA SYNC-FLD-NEW-DATA (#SFX)
+ELSE
+  MOVE #CITY-STATE TO #W-DATA SYNC-FLD-NEW-DATA (#SFX)
+END-IF
+*
+MOVE #W-OLD-NEW-DATA TO TR-V.NEW-DATA (#TRX)
+*
+ADD 1 TO #TRX
+MOVE 'ZIP-CODE:'  TO #W-DESCRIPTION
+*
+ADD 1 TO #SFX     /* DW2
+MOVE 5 TO SYNC-FLD-NUM (#SFX)
+*
+* COMPRESS ST-V.ZIP-CODE ST-V.ZIP-CODE-DPB  INTO #W-DATA                      
+* MOVE ST-V.ZIP-CODE-A9 TO SYNC-FLD-OLD-DATA (#SFX)
+* MOVE #W-OLD-NEW-DATA TO TR-V.OLD-DATA (#TRX)
+* COMPRESS #ZIP-CODE #ZIP-CODE-DPB INTO #W-DATA
+* MOVE #ZIP-CODE-A9 TO SYNC-FLD-NEW-DATA (#SFX)
+* MOVE #W-OLD-NEW-DATA TO TR-V.NEW-DATA (#TRX)
+* *
+* IF ST-V.ZIP-CODE-DPB NE #ZIP-CODE-DPB
+*   ADD 1 TO #SFX     /* DW2
+*   MOVE 68 TO SYNC-FLD-NUM (#SFX)
+*   MOVE ST-V.ZIP-CODE-DPB-A TO SYNC-FLD-OLD-DATA (#SFX)
+*   MOVE #ZIP-CODE-DPB-A TO SYNC-FLD-NEW-DATA (#SFX)
+* END-IF
+* *
+* IF ST-V.ADDRESS-CHG-CODE NE #HOLD-ADDR-CODE
+*   ADD 1 TO #SFX     /* DW2
+*   MOVE 29 TO SYNC-FLD-NUM (#SFX)
+*   MOVE #HOLD-ADDR-CODE       TO #W-DATA SYNC-FLD-OLD-DATA (#SFX)
+*   MOVE ST-V.ADDRESS-CHG-CODE TO #W-DATA SYNC-FLD-NEW-DATA (#SFX)
+* END-IF
+*
+MOVE ST-V.ID-NUMBER   TO TR-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND TO TR-V.PROCESS-IND  /* PM 06/2000-SPLIT COMP
+MOVE ST-V.NAME        TO TR-V.NAME
+*
+MOVE ST-V.DATE-OTHER-UPDATE TO TR-V.DATE-LAST-UPDATE
+*
+MOVE 'EDS'            TO TR-V.CLERK-ID
+MOVE *INIT-ID         TO TR-V.TERMINAL-ID
+MOVE *DATN            TO TR-V.TRANSACTION-DATN
+MOVE *TIMN            TO TR-V.TRANSACTION-TIMN
+*
+MOVE 'CG-NCOA-' TO NEW-DATA-NCOA (1)
+*
+WRITE (9) 'TR' TR-V.ID-NUMBER   '      PRIOR                     NEW'
+FOR #I1 1 TO 6
+  WRITE (9) OLD-DATA (#I1) (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+    NEW-DATA (#I1) (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+END-FOR
+*
+STORE TR-V
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * *
+DEFINE LOWER-UPPER
+* * * * * * * * *
+*
+FOR #I3 1 TO 35
+  FOR #I4 1 TO 26
+    IF #FIELD-X (#I3) = #LOWER (#I4)
+      MOVE #UPPER (#I4) TO #FIELD-X (#I3)
+    END-IF
+  END-FOR
+END-FOR
+*
+END-SUBROUTINE
+*
+END

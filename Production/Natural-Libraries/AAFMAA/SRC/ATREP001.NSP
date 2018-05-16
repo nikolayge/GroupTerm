@@ -1,0 +1,182 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+***************************************************************************
+* NAME         : ATREP001                                                 *
+* DESCRIPTION  : Create nightly REPORT of the policies issued today       *
+*              : Monday shall include Saturday and Sunday issued policies *
+***************************************************************************
+*        MODIFICATION LOG                                                 *
+***************************************************************************
+* USER   DATE        TAG   REASON                                         *
+* YAK    05/06/2011  None  Program Written                                *
+***************************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLCONT       /* Status file
+*
+LOCAL
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER
+  2 CONTACT-ID
+  2 SSN
+  2 PLAN
+  2 NAME
+  2 C*ST-NOTE-TBL
+  2 ST-NOTE-STATUS  (50)
+  2 ST-NOTE-USER    (50)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 SSN
+  2 C*ACTIVE-SEGMENTS
+  2 DATE-ENTERED (9)
+  2 NUM-MBRSHIPS (9)
+  2 PLAN         (9)
+  2 PAY-STATUS   (9)
+1 #DATN                  (N8)
+1 REDEFINE #DATN
+  2 #DATN-A              (A8)
+1 #DATX     (D)
+1 #DAY      (A) DYNAMIC
+1 #FRIDAY   (A) DYNAMIC CONST <'Friday'>
+1 #SATURDAY (A) DYNAMIC CONST <'Saturday'>
+1 #SUNDAY   (A) DYNAMIC CONST <'Sunday'>
+1 #AGING-KEY             (A9)
+1 #I                     (I2)
+1 #II                    (I2)
+1 #POLICY-INDEX          (N1)
+1 #OUTPUT-RECORD         (A150)
+1 REDEFINE #OUTPUT-RECORD
+  2 #INSURED-NAME        (A30)
+  2 #SSN                 (A9)
+  2 #AT-NUMBER           (A6)
+  2 #POLICY-NUMBER       (A16)
+1 #TAB                   (A1)   INIT <H'09'>
+1 #ACTIVE-STATUS         (A2)   CONST <'A '>
+1 #SSN_D                 (A)    DYNAMIC
+1 #MASK                  (A1)   CONST <'X'>
+1 #COMMA                 (A1)   CONST <','>
+1 #DATE-ENTERED          (A8/9)
+1 #PLAN                  (A3)
+1 #REPORT-FILE           (A) DYNAMIC
+  INIT <'/usr/SAG/tmp/POL_ISSUED.txt'>
+1 #FTP-SCRIPT-NAME       (A) DYNAMIC
+  INIT <'/usr/SAG/cronus/.scripts/ftpAafmaaLocal'>
+1 #WIN-FILE-NAME         (A) DYNAMIC
+  INIT <'FTP/NewBiz/APP2DAL/Policies_issued_'>
+1 #WORK (A70)
+*
+END-DEFINE
+*
+#DATN := *DATN
+MOVE EDITED #DATN-A TO #DATX (EM=YYYYMMDD)
+MOVE EDITED #DATX (EM=N(10)) TO #DAY
+*
+IF #DAY = #SUNDAY
+  DEFINE WORK FILE 1 #REPORT-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+ELSE
+  DEFINE WORK FILE 1 #REPORT-FILE TYPE 'ASCII-COMPRESSED'
+END-IF
+*
+COMPRESS #ACTIVE-STATUS #DATN INTO #AGING-KEY LEAVING NO
+FIND AT-V WITH AGING-KEY = #AGING-KEY
+  IF NO RECORDS FOUND
+    WRITE WORK FILE 1 VARIABLE #OUTPUT-RECORD
+    ESCAPE BOTTOM
+  END-NOREC
+  #I := C*ST-NOTE-TBL
+  IF ST-NOTE-USER(#I) = 'EDS'
+    ESCAPE TOP
+  END-IF
+  RESET #OUTPUT-RECORD #SSN_D #DATE-ENTERED(*) #PLAN
+  IF AT-V.CONTACT-ID <> 0
+    FIND(1) CT-V WITH CONTACT-ID = AT-V.CONTACT-ID
+      COMPRESS CT-V.LAST-NAME #COMMA INTO #INSURED-NAME LEAVING NO
+      COMPRESS #INSURED-NAME CT-V.FIRST-NAME CT-V.MIDDLE-NAME INTO #INSURED-NAME
+      IF CT-V.SUFFIX <> ' '
+        COMPRESS #INSURED-NAME #COMMA INTO #INSURED-NAME LEAVING NO
+        COMPRESS #INSURED-NAME CT-V.SUFFIX INTO #INSURED-NAME
+      END-IF
+    END-FIND
+  ELSE
+    #INSURED-NAME := AT-V.NAME
+  END-IF
+  MOVE EDITED AT-V.SSN (EM=999999999) TO #SSN_D
+  #AT-NUMBER    := AT-V.ID-NUMBER
+  MOVE LEFT #AT-NUMBER TO #AT-NUMBER
+  PERFORM FIND-POLICY-NUMBER
+  #SSN_D := FUNCTION-MASK(<#SSN_D,#MASK>)
+  #SSN   := #SSN_D
+  WRITE WORK FILE 1 VARIABLE #INSURED-NAME #SSN #AT-NUMBER #POLICY-NUMBER
+END-FIND
+*
+IF #DAY = #SATURDAY
+  ESCAPE ROUTINE
+END-IF
+CLOSE WORK FILE 1
+*
+IF #DAY = #SUNDAY
+  DEFINE WORK FILE 1 #REPORT-FILE TYPE 'ASCII-COMPRESSED'
+END-IF
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+SORT BY #INSURED-NAME USING #SSN #AT-NUMBER #POLICY-NUMBER
+  AT START OF DATA
+    WRITE WORK FILE 1 VARIABLE 'Insured"s Name' #TAB 'Insured"s SSN' #TAB
+      'AT Number' #TAB 'Policy Number'
+  END-START
+  WRITE WORK FILE 1 VARIABLE #INSURED-NAME #TAB #SSN #TAB #AT-NUMBER #TAB #POLICY-NUMBER
+END-SORT
+CLOSE WORK FILE 1
+*
+* FTP to Application Processing folder Monday - Friday
+*
+COMPRESS #WIN-FILE-NAME #DATN '.txt' INTO #WIN-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #REPORT-FILE #WIN-FILE-NAME
+*
+************************************
+DEFINE SUBROUTINE FIND-POLICY-NUMBER
+************************************
+* Translate AT plan type to ST plan type
+FIND(1) ST-V WITH SSN = AT-V.SSN
+  #DATE-ENTERED(*) := ST-V.DATE-ENTERED(*)
+  EXAMINE #DATE-ENTERED(*) FOR #DATN-A NUMBER #II INDEX #I
+  IF #II = 1
+    #POLICY-INDEX   := NUM-MBRSHIPS(#I)
+    ESCAPE BOTTOM
+  END-IF
+* If more than one policy issued today for this CN/SSN
+* try to match policy with application by date and plan
+  IF AT-V.PLAN = MASK (N) OR AT-V.PLAN = MASK (NN)
+    DECIDE ON FIRST VALUE AT-V.PLAN
+      VALUE '7','20','30'
+        COMPRESS AT-V.PLAN 'P' INTO AT-V.PLAN LEAVING NO
+      VALUE '7P'
+        IGNORE
+      NONE VALUE
+        COMPRESS AT-V.PLAN  'F' INTO AT-V.PLAN LEAVING NO
+    END-DECIDE
+  END-IF
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+    RESET #PLAN #POLICY-INDEX
+* For policies with PLAN = 'SP' and outstanding FPF Plan is being changed
+* to 'OL' when issued  (AT record stll has SP)
+    IF (ST-V.PLAN(#I) = 'OL' AND PAY-STATUS(#I) = '47') OR ST-V.PLAN(#I) = 'SPF'
+      #PLAN := 'SP'
+    ELSE
+      #PLAN := ST-V.PLAN(#I)
+    END-IF
+    IF ST-V.DATE-ENTERED(#I) = #DATN AND #PLAN = AT-V.PLAN
+      #POLICY-INDEX   := NUM-MBRSHIPS(#I)
+      #AT-NUMBER      := AT-V.ID-NUMBER
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FIND
+* if not match - policy number will be -0
+COMPRESS ST-V.ID-NUMBER '-' #POLICY-INDEX INTO #POLICY-NUMBER LEAVING NO
+END-SUBROUTINE
+*
+END

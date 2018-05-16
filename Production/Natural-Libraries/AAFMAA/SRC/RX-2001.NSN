@@ -1,0 +1,232 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* RX-20 RX Parse Details sent in p_Message
+* bz Aug 29, 2017. Ver-1(08/29/2017)
+* ----------------------------------------
+* Input: p_Message - xml response
+*        Summary in updated DB record
+* Output: p_Parms-Det
+DEFINE DATA
+PARAMETER USING RX000PDA
+PARAMETER
+1 p_Parms-Det
+  2 El_B  (A10/300)
+  2 El_E  (A10/300)
+  2 Fills (999)
+    3 Fl_r      (A/17) DYNAMIC
+    3 it_Name   (A58/20)
+    3 it_Cd     (A20/20)
+LOCAL USING RX000LDA
+LOCAL
+* -----------------
+1 XML                   (A) DYNAMIC
+1 #i                    (I2)
+1 #j                    (I2)
+1 #r                    (I2)
+1 #b                    (I4)
+1 #e                    (I4)
+1 #l                    (I4)
+1 v_A                   (A) DYNAMIC
+* -----------------
+1 v_RC                  (I4)
+1 elm  (A/17)  DYNAMIC INIT
+  <'<FillDate>',                    /*  01
+  '<NDC>',                         /*  02
+  '<DrugBrandName>',               /*  03
+  '<DrugGenericName>',             /*  04
+  '<DrugGenericNameAndDosage>',    /*  05
+  '<Quantity>',                    /*  06
+  '<DaysSupply>',                  /*  07
+  '<DrugPriority>',                /*  08
+  '<PhysicianName>',               /*  09
+  '<PhysicianSpecialty>',          /*  10
+  '<PhysicianAddress1>',           /*  11
+  '<PhysicianAddress2>',           /*  12
+  '<PhysicianAddress3>',           /*  13
+  '<PhysicianAddress4>',           /*  14
+  '<PhysicianPhone>',              /*  15
+  '<PharmacyId>',                  /*  16
+  '<Indications>'>                 /*  17
+* -----------------------------------------
+1 elm_E  (A) DYNAMIC
+1 elm_L  (N2)
+END-DEFINE
+
+ON ERROR
+*    PRINT *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /                    /* --db
+*    '***' '='#r(EM=z9) '='#i(EM=z9)  '='#b '='#e          /
+*    / v_A                                                                      /* --db
+  COMPRESS *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR INTO p_Message
+  p_RC := 9
+END-ERROR
+* - - - - - - - - - - - - - - - - - -
+FIND(1) RX-V WITH RX-AT = p_AT END-FIND
+/* S-ELIG S-RX
+XML := p_Message
+IF S-ELIG > 0
+  PERFORM sbr_Elig
+END-IF
+IF S-RX > 0
+  PERFORM sbr_Fills
+END-IF
+* -------------------------------------------------------------------------------------------
+DEFINE sbr_Elig
+EXAMINE XML FOR '<Eligibility>' POSITION #b
+elm_L     := 13
+EXAMINE XML FOR '</Eligibility>'    POSITION #e
+#b := #b + elm_L
+#l := #e - #b
+v_A := SUBSTRING(XML, #b, #l)
+
+FOR #i = 1 TO S-ELIG
+  EXAMINE v_A FOR '<BeginDate>' POSITION #b
+  IF #b > 0
+    elm_L     := 11
+    EXAMINE v_A FOR '</BeginDate>'    POSITION #e
+    #b := #b + elm_L
+    #l := #e - #b
+    El_B(#i) := SUBSTRING(v_A, #b, #l)
+  ELSE
+    El_B(#i) := ' '
+  END-IF
+
+  EXAMINE v_A FOR '<EndDate>' POSITION #b
+  IF #b > 0
+    elm_L     := 11
+    EXAMINE v_A FOR '</EndDate>'    POSITION #e
+    #b := #b + elm_L
+    #l := #e - #b
+    El_E(#i) := SUBSTRING(v_A, #b, #l)
+  ELSE
+    El_E(#i) := ' '
+  END-IF
+
+  IF #i < S-ELIG
+    EXAMINE v_A FOR '</DateSpan>' POSITION #e
+    #e := #e + 12 - 1
+    v_A := SUBSTRING(v_A, #e)
+  END-IF
+END-FOR
+END-SUBROUTINE
+* -------------------------------------------------------------------------------------------
+DEFINE sbr_Fills
+
+EXAMINE XML FOR '<Fills>'  POSITION #b
+elm_L     := 7
+EXAMINE XML FOR '</Fills>' POSITION #e
+#b := #b + elm_L
+#l := #e - #b
+XML := SUBSTRING(XML, #b, #l)
+* ------------ Mannualy altered result ---------------
+* FIND(1) RX-V WITH RX-AT = p_AT
+*   EXAMINE XML FOR '<DrugFill>' NUMBER #r
+*   S-RX := #r
+*   EXAMINE XML FOR  '<DrugPriority>LOW' NUMBER #r
+*   S-LOW := #r
+*   EXAMINE XML FOR  '<DrugPriority>HIGH' NUMBER #r
+*   S-HIGH := #r
+*   EXAMINE XML FOR  '<DrugPriority>MEDIUM' NUMBER #r
+*   S-MEDIUM := #r
+*  UPDATE
+* END-FIND
+* -----------------------------------------------------
+FOR #r = 1 TO S-RX
+  EXAMINE XML FOR '<DrugFill>'  POSITION #b
+  elm_L     := 10
+  EXAMINE XML FOR '</DrugFill>' POSITION #e
+  #b := #b + elm_L
+  #l := #e - #b
+  v_A := SUBSTRING(XML, #b, #l)
+*   PRINT 'Fills' / v_A                             /*  --db
+  #e := #e + 11
+  IF #r < S-RX
+    XML := SUBSTRING(XML, #e)
+  END-IF
+
+  FOR #i = 1 TO 17
+    EXAMINE v_A FOR elm(#i) POSITION #b
+    IF #b = 0
+      Fl_r(#r,#i) := ' '
+    ELSE
+      elm_L     := *LENGTH(elm(#i))
+      elm_E     := elm(#i)
+      EXAMINE elm_E  FOR '<' REPLACE '</'
+      EXAMINE v_A FOR elm_E   POSITION #e
+      #b := #b + elm_L
+      #l := #e - #b
+      Fl_r(#r,#i) := SUBSTRING(v_A, #b, #l)
+*        IF #i = 17 PRINT *LINE(EM=ZZZ9) '17' #r Fl_r(#r,#i) END-IF                /* --db
+    END-IF
+  END-FOR
+  /* Items
+  IF Fl_r(#r,17) <> ' '
+    v_A := Fl_r(#r,17)
+    EXAMINE v_A FOR '</Item>' NUMBER #j
+    FOR #i = 1 TO #j
+      EXAMINE v_A FOR '<ConditionName>' POSITION #b
+      IF #b > 0
+        elm_L     := 15
+        EXAMINE v_A FOR '</ConditionName>' POSITION #e
+        #b := #b + elm_L
+        #l := #e - #b
+        it_Name(#r,#i)  := SUBSTRING(v_A, #b, #l)
+      ELSE
+        it_Name(#r,#i) := ' '
+      END-IF
+
+      EXAMINE v_A FOR '<ICDCode>' POSITION #b
+      IF #b > 0
+        elm_L     := 9
+        EXAMINE v_A FOR '</ICDCode>' POSITION #e
+        #b := #b + elm_L
+        #l := #e - #b
+        it_Cd(#r,#i)  := SUBSTRING(v_A, #b, #l)
+      ELSE
+        it_Cd(#r,#i)  := ' '
+      END-IF
+
+      EXAMINE v_A FOR '</Item>' POSITION #e
+      IF #i < #j
+        #e := #e + 7 + 1
+        v_A := SUBSTRING(v_A, #e)
+      END-IF
+    END-FOR
+  END-IF
+END-FOR
+END-SUBROUTINE
+* -------------------------------------------------------------------------------------------
+END
+* Layout
+*     '<Eligibility>'     /* N
+*        '<DateSpan>'
+*           '<BeginDate>'
+*           '<EndDate>'
+*        '</DateSpan>'
+*     '</Eligibility>'
+*     '<DrugFill>'         /* N
+*         '<FillDate>',
+*         '<NDC>',
+*         '<DrugBrandName>',
+*         '<DrugGenericName>',
+*         '<DrugGenericNameAndDosage>',
+*         '<Quantity>',
+*         '<DaysSupply>',
+*         '<DrugPriority>',
+*         '<PhysicianName>',
+*         '<PhysicianSpecialty>',
+*         '<PhysicianAddress1>',
+*         '<PhysicianAddress2>',
+*         '<PhysicianAddress3>',
+*         '<PhysicianAddress4>',
+*         '<PhysicianPhone>',
+*         '<PharmacyId>',
+*         '<Indications>'     /* N
+*            '<Item>'
+*              '<ConditionName>'
+*              '<ICDCode>'
+*            '</Item>'
+*         '</Indications>'
+*     '</DrugFill>'

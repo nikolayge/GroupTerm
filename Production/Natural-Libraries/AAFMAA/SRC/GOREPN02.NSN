@@ -1,0 +1,277 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* GOREPN02
+* Create BA collection for GIFT OF MEMBERSHIP
+* bz - 04/20/2011 created
+* 
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX  WITH MASTER-BLOCK.BENEFIT-ANALYSIS-BLOCK
+PARAMETER
+1 p_CN_A (A6)
+  1 REDEFINE p_CN_A 
+    2 p_CN(N6)
+1 p_SBP   (A1)
+1 p_Upd   (A1)
+1 p_Clerk  (A3)            
+1 p_Err   (A4)             
+1 p_MSG   (A)  DYNAMIC     
+1 p_Print (A1)             OPTIONAL
+*
+LOCAL
+  1 ST-V VIEW OF A-STATUS
+    2 ID-NUMBER
+    2 REDEFINE ID-NUMBER 
+      3 ID-NUMBER_A  (A6) 
+    2 MIL-SBP-OPT
+    2 PROCESS-IND
+    2 MEMBER-CONTACT-ID
+*
+  1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+    2 CONTACT-1-ID 
+    2 ROLE-1-CD    
+    2 CONTACT-2-ID 
+    2 ROLE-2-CD 
+*
+  01 P_PARMS
+    02 P_ERROR_NUM           (I4)
+    02 P_ERROR_LINE          (I4)
+    02 P_ERROR_PROGRAM       (A32)
+    02 P_ERROR_LIB           (A32)
+    02 P_ERROR_DBID          (I4)
+    02 P_ERROR_FNR           (I4)
+    02 P_ERROR_TIME          (T)
+    02 P_ERROR_PGM_TYPE      (A1)
+    02 P_ERROR_PGM_TYPE_LONG (A11)
+    02 P_ERROR_LANG          (I4)
+    02 P_ERROR_LEVEL         (I4)
+    02 P_ERROR_CLASS         (I1)
+    02 P_ERROR_TYPE          (I1)    
+*
+*****  
+  1 v_PN                (I1)   INIT  <1>
+  1 v_RC                (N3)
+*****  
+  1 v_File  (A80)
+  1 v_A                 (A)    DYNAMIC
+  1 f_NAME              (A)    DYNAMIC
+  1 #i                  (I2)
+  1 v_Hold_MIL-SBP-OPT  (A1)
+  1 v_SBP_Ind
+    2 v_SBP_S           (L) INIT <FALSE>  (EM=N/Y)
+    2 v_SBP_X           (L) INIT <FALSE>  (EM=N/Y)
+    2 v_SBP_K           (L) INIT <FALSE>  (EM=N/Y)
+  1 l_SBP_Updated       (L) INIT <FALSE> 
+*
+  1 v_TEST              (L)    INIT <FALSE>
+*   1 v_TEST             (L)    INIT <TRUE>
+   1 v_TEST_Point       (A)    DYNAMIC
+END-DEFINE
+  ON ERROR 
+* PRINT  *PROGRAM *LINE 'Got Error' *ERROR-NR *ERROR-LINE   /*  --db
+     IF *ERROR-NR = 3145 
+        p_Err := '3145'
+        p_MSG := 'Record is held by someone else. Please try later.'
+        ESCAPE ROUTINE
+     END-IF
+      p_Err:= '9999'
+      COMPRESS  'Natural Error:' *PROGRAM  *ERROR-NR  'Line:' *ERROR-LINE  INTO p_MSG
+      PERFORM DO-RETURN
+     ESCAPE ROUTINE
+  END-ERROR
+* 
+
+v_File := p_MSG
+l_SBP_Updated := FALSE
+v_PN := 11
+v_RC := PRT_FN_PUT(<v_PN, v_File>)
+     IF v_RC <> 0         /* Error in Get_Printer_Name
+         p_MSG := " Warning: Automated process is not available"
+         p_Err := '2016'
+         PERFORM DO-RETURN
+         ESCAPE ROUTINE
+     END-IF
+       F_ST-V.
+         FIND (1) ST-V WITH ST-V.ID-NUMBER = p_CN 
+                IF NO RECORD FOUND
+                      p_Err:= '2001'
+                      p_MSG := 'Invalid CN'
+                      ESCAPE ROUTINE
+                 END-NOREC
+         IF PROCESS-IND <> 'S'
+             p_Err:= '2002'
+             p_MSG := 'Invalid Member Plan'
+             ESCAPE ROUTINE
+         END-IF 
+         p_Err := '0000'
+         PERFORM VALIDATE_SBP 
+         IF p_Err <> '0000' ESCAPE ROUTINE END-IF
+               v_Hold_MIL-SBP-OPT :=  ST-V.MIL-SBP-OPT
+            IF ST-V.MIL-SBP-OPT <> p_SBP
+                ST-V.MIL-SBP-OPT :=  p_SBP 
+                UPDATE
+                END TRANSACTION
+                l_SBP_Updated := TRUE
+            END-IF   
+       END-FIND
+       IF p_Print SPECIFIED AND p_Print <> ' '   #CGA-CLERK := 'BZP'
+       ELSE                                      #CGA-CLERK := 'BZX'
+       END-IF
+       #CGA-ISN := *ISN (F_ST-V.)
+       #CGA-SCR-COMMAND   :=  'WO'
+       #CGA-ORIG-COMMAND  :=  'WO'
+       #CGA-SCR-SUFFIX    :=  'NEW'
+       #CGA-ORIG-SUFFIX   :=  'NEW'
+       #CGA-SCR-ID        :=  ST-V.ID-NUMBER
+       #CGA-ORIG-ID       :=  ST-V.ID-NUMBER
+       #CGA-ID-G          :=  ID-NUMBER_A 
+       #CGA-ISN           :=  *ISN (F_ST-V.)
+       #CGA-SBP-OPTION    :=  p_SBP
+       #CGA-ORIG-SBP-OPT  :=  p_SBP
+       #CGA-SCR-SBP-OPTION:=  p_SBP
+       PERFORM DO-PARTS
+       CLOSE PRINTER (11)
+       PERFORM DO-RETURN
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE DO-PARTS
+  SET GLOBALS ZD=OFF
+*
+*       PRINT (11) NOTITLE 6x '-'(10)  'CN:' p_CN_A 'SBP:' #CGA-SBP-OPTION 3x *DAT4U 2x *TIME '-'(10)
+       v_TEST_Point :=   'D3000PBA'  PERFORM D-TEST 
+       FETCH RETURN 'D3000PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF 
+       v_TEST_Point :=  'D3400PBA'  PERFORM D-TEST  
+       #CGA-SBP-OPTION    :=  p_SBP
+       FETCH RETURN 'D3400PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF 
+       v_TEST_Point :=  'D3070PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3070PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF        
+       v_TEST_Point :=  'D3080PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3080PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF        
+       v_TEST_Point :=  'D3100PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3100PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF        
+       v_TEST_Point :=  'D3110PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3110PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF        
+       v_TEST_Point :=  'D3120PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3120PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF        
+       v_TEST_Point :=  'D3130PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3130PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF              
+       v_TEST_Point :=  'D3160PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3160PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF        
+       #CGA-ORIG-SUFFIX  :=  'ENX'
+       v_TEST_Point :=  'D3152PBA'  PERFORM D-TEST         
+       FETCH RETURN 'D3152PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF 
+       v_TEST_Point :=  'D3154PBA'  PERFORM D-TEST         
+       FETCH RETURN 'D3154PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF      
+       v_TEST_Point :=  'D3140PBA'  PERFORM D-TEST
+       FETCH RETURN 'D3140PBA'
+             IF #CGA-CLERK = 'ERR' PERFORM DO-NAT-ERROR END-IF   
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE VALIDATE_SBP
+   RESET   p_MSG v_SBP_Ind
+         FIND CR-V WITH CONTACT-1-ID = MEMBER-CONTACT-ID
+                      IF NO RECORD FOUND 
+                        p_MSG:= '2012'
+                        p_MSG := 'Invalid COntact ID'
+                      ESCAPE ROUTINE
+                      END-NOREC
+              DECIDE ON FIRST VALUE ROLE-2-CD
+                  VALUE 'S'           v_SBP_S  := TRUE
+                  VALUE 'X'           v_SBP_X  := TRUE
+                  VALUE 'K', 'G', 'D' v_SBP_K  := TRUE
+                NONE IGNORE            
+              END-DECIDE
+            END-FIND 
+            DECIDE ON FIRST VALUE OF p_SBP
+               VALUE 'A'        
+                    IF NOT v_SBP_S   
+                       p_MSG:= '2004' 
+                       COMPRESS 'SBP:' p_SBP 'Invalid SBP. No spouse on record'  INTO p_MSG
+                    END-IF
+               VALUE 'B'        
+                   IF NOT v_SBP_S OR NOT v_SBP_K 
+                      p_Err:= '2004' 
+                      COMPRESS 'SBP:' p_SBP 'Invaid - No spouse or children on record' INTO p_MSG
+                   END-IF
+               VALUE 'C'        
+                   IF NOT v_SBP_K    
+                      p_Err:= '2004'
+                      COMPRESS 'SBP:' p_SBP 'Invalid SBP. No children on record' INTO p_MSG
+                   END-IF
+               VALUE 'E'        
+                   IF NOT v_SBP_X    
+                      p_Err:= '2004'
+                      COMPRESS 'SBP:' p_SBP 'Invalid SBP. No former spouse on record' INTO p_MSG                      
+                   END-IF
+               VALUE 'F'        
+                   IF NOT v_SBP_X OR NOT v_SBP_K
+                      p_Err:= '2004'
+                      COMPRESS 'SBP:' p_SBP 'Invalid SBP. No former spouse or children on record' INTO p_MSG                                            
+                   END-IF
+               NONE 
+                 IF NOT v_SBP_X OR NOT v_SBP_K
+                     p_Err:= '2004' COMPRESS 'Invalid SBP option:' p_SBP INTO p_MSG 
+                 END-IF
+            END-DECIDE
+END-SUBROUTINE 
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE DO-RETURN
+   IF l_SBP_Updated  
+      IF  p_Upd <> 'Y'
+           FIND (1) ST-V WITH ST-V.ID-NUMBER = p_CN
+               ST-V.MIL-SBP-OPT :=  v_Hold_MIL-SBP-OPT
+               UPDATE
+               END TRANSACTION
+               l_SBP_Updated := FALSE         /* bz1
+           END-FIND               
+       ELSE
+           PERFORM DO-TRLOG
+       END-IF
+   END-IF
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE DO-TRLOG
+CALLNAT 'GOREPNT2' p_CN v_Hold_MIL-SBP-OPT p_SBP p_Clerk PROCESS-IND
+END TRANSACTION
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE DO-NAT-ERROR
+     CALLNAT 'USR2001N' P_PARMS
+     p_Err:= '9999'
+     COMPRESS  'Natural Error' *PROGRAM  'Object:'  P_ERROR_PROGRAM 'Err:' *ERROR-NR  'Line:' *ERROR-LINE INTO p_MSG
+     PERFORM DO-RETURN
+     ESCAPE MODULE
+END-SUBROUTINE
+
+DEFINE E-TEST
+*************************************************
+p_Err   := '7703'
+COMPRESS 'Pgm:' *PROGRAM 'Ln:' *LINE INTO  p_MSG
+ESCAPE MODULE
+************************************************* 
+END-SUBROUTINE
+************************************************* 
+DEFINE D-TEST
+IF v_TEST 
+  PRINT (11) '---' v_TEST_Point  'SBP:' #CGA-SBP-OPTION  
+                           'C:'   #CGA-SCR-COMMAND
+                           'S:'   #CGA-SCR-SUFFIX
+                           'Cl:' #CGA-CLERK
+                           *DEVICE
+END-IF
+END-SUBROUTINE
+************************************************* 
+END

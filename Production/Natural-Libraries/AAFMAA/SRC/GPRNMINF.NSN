@@ -1,0 +1,602 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************************
+* SUBPROGRAM-ID: GPRNMINF
+* DESCRIPTION: Common module to validate military fields based on certain
+*              business rules; called by Admin System (UNIX), CRM, and
+*              Member Center. May be expanded in the future to include
+*              Death and Personal/Family info.
+*              The error message codes below are grouped according to category:
+*              Gen-Table Primary Code: ERRD
+*              Gen-Table Secondary Code: 100-199 Military
+*                                        201-299 Death
+*                                        300-399 Personal/Family
+*              Please note the following very well before using this module:
+*              1. This program can validate all fields at the same time.
+*                 If this is the purpose, calling program must populate the
+*                 #VALIDATE-FLAG array with "Y".
+*              2. This program can validate one field or more at a time. If this
+*                 is the purpose, populate with "Y" the occurrence(s) in the
+*                 #VALIDATE-FLAG array that correspond(s) to the field in
+*                 #MILITARY-INFO.
+*              3. Dates passed to this program must be in YYYYMMDD format.
+**************************************************************************
+*        MODIFICATION LOG
+**************************************************************************
+* USER   DATE      TAG  REASON
+* RSE  04-15-2011  None Creation
+* YAK  04-24-2011  YK1  Add logic to process dynamic array
+* RSE  04-25-2011  RE1  Don't validate Branch/Rank for Member Center and CRM
+* RSE  06-02-2011  RE2  Require Branch/Rank when Military Status is Active or Retired
+* RSE  06-17-2011  RE3  Don't require Rank/Status when Branch is 'V'
+* RSE  09-23-2011  RE4  Don't validate Military Status for EMP and non-CN members
+* YAK  07-15-2011  YK2  Add rules for validating Social Security and Other Benefits
+* YAK  07-20-2011  YK3  Correct logic for BASD/PEBD validation
+**************************************************************************
+DEFINE DATA
+PARAMETER USING GPRAMINF
+LOCAL
+1 RANK-V VIEW OF A-RANK-REFERENCE
+  2 MIL-ABBR-KEY
+  2 MILITARY-ID
+  2 RANK-ID
+*
+1 GEN-V VIEW OF A-GEN-TABLE
+  2 GEN-ALPHA-VALUE
+*
+1 #I                  (I2)
+1 #MIL-ID             (A1)
+1 #MIL-ABBR-KEY       (A26)
+1 #YYYYMMDD
+  2 #YYYY             (N4)
+  2 #MM               (N2)
+  2 #DD               (N2)
+1 #VALID              (L)
+1 #FOUND              (L)
+1 #SEC-KEY            (A7)
+1 #AGE                (N6)
+END-DEFINE
+*
+IF #SYSTEM = 'CRM' OR = 'MemberCenter'
+  IF DATE-OF-DEATH > 0
+    WIDOW-FLAG := 'Y'
+  END-IF
+END-IF
+*
+DECIDE FOR EVERY CONDITION
+  WHEN MILITARY-STATUS NE ' ' AND #VALIDATE-FLAG(1) = 'Y'                /* Mil Status    RE2 START
+    PERFORM VALIDATE-MIL-STATUS
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      IF #ERROR-CODE(#I) = '101'
+        #VAL-FIELD := 'BRANCH'
+        #POS := POS(MILITARY-SERVICE)
+      ELSE
+        #VAL-FIELD := 'MIL-STATUS'
+        #POS := POS(MILITARY-STATUS)
+      END-IF
+      ESCAPE ROUTINE
+    END-IF
+  WHEN MILITARY-SERVICE NE ' ' AND #VALIDATE-FLAG(2) = 'Y'              /* Mil Service/Branch
+    PERFORM VALIDATE-MIL-SVC/RANK
+  WHEN DATE-INIT-ENTRY-MIL-SVC > 0 AND #VALIDATE-FLAG(3) = 'Y'          /* DIEMS
+    PERFORM VALIDATE-DIEMS
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'DIEMS'
+      #POS := POS(DATE-INIT-ENTRY-MIL-SVC)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN BASE-PAY-EF-DATE > 0 AND #VALIDATE-FLAG(4) = 'Y'                 /* PEBD
+    PERFORM VALIDATE-PEBD
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'PEBD'
+      #POS := POS(BASE-PAY-EF-DATE)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN ACTIVE-DUTY-BASE-DATE > 0 AND #VALIDATE-FLAG(5) = 'Y'            /* BASD
+    PERFORM VALIDATE-BASD
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'BASD'
+      #POS := POS(ACTIVE-DUTY-BASE-DATE)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN DATE-OF-RANK > 0 AND #VALIDATE-FLAG(6) = 'Y'                     /* DOP
+    PERFORM VALIDATE-DOP
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'DOP'
+      #POS := POS(DATE-OF-RANK)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN SERVICE-DATE-1405 > 0 AND #VALIDATE-FLAG(7) = 'Y'                /* Service Date 1405
+    PERFORM VALIDATE-1405
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := '1405'
+      #POS := POS(SERVICE-DATE-1405)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN PRIOR-DATE-OF-RANK > 0 AND #VALIDATE-FLAG(8) = 'Y'               /* Prev-DOP
+    PERFORM VALIDATE-PDOP
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'PDOP'
+      #POS := POS(PRIOR-DATE-OF-RANK)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN DATE-RETIRED > 0 AND #VALIDATE-FLAG(9) = 'Y'                     /* Retirement Date
+    PERFORM VALIDATE-RETD
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'RETD'
+      #POS := POS(DATE-RETIRED)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN VA-DISABILITY-PCT > 0 AND #VALIDATE-FLAG(11) = 'Y'                /* VA Disability Pct
+    PERFORM VALIDATE-DIS-PCT
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'DIS-PCT'
+      #POS := POS(VA-DISABILITY-PCT)
+      ESCAPE ROUTINE
+    END-IF
+*  WHEN VA-DISABLE-DATE > 0 AND #VALIDATE-FLAG(12) = 'Y'               /* VA Disability Date
+*    PERFORM VALIDATE-DIS-DATE
+*    IF #SYSTEM = 'UNIX' AND #ERROR-CODE(#I) NE ' '
+*      #POS := POS(VA-DISABLE-DATE)
+*      ESCAPE ROUTINE
+*    END-IF
+  WHEN RSV-NG-20-YR-CERT-LTR-DATE > 0 AND #VALIDATE-FLAG(13) = 'Y'       /* Reservist/National Guard 20-Year
+    PERFORM VALIDATE-20-YR-DATE                                          /* Certificate Letter Date
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'CERT'
+      #POS := POS(RSV-NG-20-YR-CERT-LTR-DATE)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN RET-RSV-DATE > 0 AND #VALIDATE-FLAG(14) = 'Y'                     /* Reservist Retirement Date
+    PERFORM VALIDATE-RET-RSV-DATE
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'RSV-RETD'
+      #POS := POS(RET-RSV-DATE)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN RETIRED-PAY-AMT = 0 AND #VALIDATE-FLAG(15) = 'Y'                  /* Retired Pay Amount
+    PERFORM VALIDATE-RET-PAY-AMT
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'RETP'
+      #POS := POS(RETIRED-PAY-AMT)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN MIL-SBP-OPT NE ' ' OR MIL-SBP-OPT = ' ' AND #VALIDATE-FLAG(16) = 'Y' /* Military SBP Option
+    PERFORM VALIDATE-SBP-OPT
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'MIL-SBPO'
+      #POS := POS(MIL-SBP-OPT)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN MIL-SBP-AMT > 0 AND #VALIDATE-FLAG(17) = 'Y'                      /* Military SBP Amount
+    PERFORM VALIDATE-SBP-AMT
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'MIL-SBPA'
+      #POS := POS(MIL-SBP-AMT)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN #MILITARY-INFO.RANK-ABBR NE ' ' AND #VALIDATE-FLAG(18) = 'Y'                        /* Rank Abbreviation
+    PERFORM VALIDATE-MIL-SVC/RANK
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      #VAL-FIELD := 'RANK-ABBR'
+      #POS := POS(#MILITARY-INFO.RANK-ABBR)
+      ESCAPE ROUTINE
+    END-IF
+  WHEN #VALIDATE-FLAG(27) = 'Y' OR #VALIDATE-FLAG(28) = 'Y' OR
+       #VALIDATE-FLAG(29) = 'Y' OR #VALIDATE-FLAG(30) = 'Y'
+    PERFORM VALIDATE-SS-BENEFITS   
+  WHEN #VALIDATE-FLAG(36) = 'Y' 
+    PERFORM VALIDATE-OTHER-BENEFITS   
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF #SYSTEM = 'MemberCenter'                /* YK1
+  IF #I = 0 THEN #I := 1 END-IF            /* YK1
+  RESIZE ARRAY #ERROR-CODE TO (*:#I)       /* YK1
+END-IF
+*************************************      /* RE2 START
+DEFINE SUBROUTINE VALIDATE-MIL-STATUS
+*************************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN NOT(MILITARY-STATUS = 'A' OR = 'R' OR = 'C')
+    MOVE 100 TO #ERROR-CODE(#I)
+  WHEN (MILITARY-STATUS = 'A' OR = 'R') AND MILITARY-SERVICE = ' '
+    MOVE 101 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE                              /* RE2 END
+***************************************
+DEFINE SUBROUTINE VALIDATE-MIL-SVC/RANK
+***************************************
+**display RANK-ID MILITARY-SERVICE RANK-ABBR
+IF #SYSTEM = 'MemberCenter' OR #MILITARY-INFO.RANK-ID > 0         /* RE1
+    OR (MILITARY-SERVICE = 'V' AND #MILITARY-INFO.RANK-ABBR = ' ')  /* RE3
+  ESCAPE ROUTINE                                   /* RE1
+END-IF
+*
+FIND (1) GEN-V WITH SEC-KEY = 'CODE024' WHERE GEN-ALPHA-VALUE = MILITARY-SERVICE
+  IF NO RECORD FOUND
+    ADD 1 TO #I
+    MOVE 'BRANCH' TO #VAL-FIELD
+    #POS := POS(MILITARY-SERVICE)
+    MOVE 101 TO #ERROR-CODE(#I)
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+*                                                           NG1 \/
+RESET #VALID
+MOVE MILITARY-SERVICE TO #MIL-ID
+COMPRESS #MIL-ID #MILITARY-INFO.RANK-ABBR INTO #MIL-ABBR-KEY LEAVING NO
+#MIL-ABBR-KEY := *TRANSLATE(#MIL-ABBR-KEY,UPPER)
+READ RANK-V WITH MIL-ABBR-KEY = #MIL-ABBR-KEY
+  IF SUBSTR(RANK-V.MILITARY-ID,1,1) <> #MIL-ID
+    ESCAPE BOTTOM
+  END-IF
+  IF #MIL-ABBR-KEY = *TRANSLATE( RANK-V.MIL-ABBR-KEY,UPPER )
+    MOVE TRUE TO #VALID
+    ESCAPE BOTTOM
+  END-IF
+END-READ
+*
+IF NOT #VALID
+  ADD 1 TO #I
+  MOVE 'RANK' TO #VAL-FIELD
+  #POS := POS(RANK-ABBR)
+  MOVE 145 TO #ERROR-CODE(#I)
+ELSE
+  #MILITARY-INFO.RANK-ID := RANK-V.RANK-ID
+*  IF MILITARY-STATUS = ' ' AND MILITARY-SERVICE NE 'V'      /* RE4
+  IF MILITARY-SERVICE = 'V' OR = 'EMP' OR ID-NUMBER = 0      /* RE4
+    IGNORE                                                   /* RE4
+  ELSE                                                       /* RE4
+    IF MILITARY-STATUS = ' '
+      ADD 1 TO #I
+      MOVE 'MIL-STATUS' TO #VAL-FIELD
+      #POS := POS(MILITARY-STATUS)
+      MOVE 146 TO #ERROR-CODE(#I)
+      ESCAPE ROUTINE
+    END-IF
+  END-IF  
+END-IF
+*                                                           NG1 /\
+END-SUBROUTINE
+********************************
+DEFINE SUBROUTINE VALIDATE-DIEMS
+********************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN DATE-INIT-ENTRY-MIL-SVC NE MASK(YYYYMMDD)
+    MOVE 102 TO #ERROR-CODE(#I)
+  WHEN DATE-INIT-ENTRY-MIL-SVC < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN (DATE-INIT-ENTRY-MIL-SVC - 130000) < DATE-OF-BIRTH
+    MOVE 103 TO #ERROR-CODE(#I)
+  WHEN DATE-INIT-ENTRY-MIL-SVC > BASE-PAY-EF-DATE AND BASE-PAY-EF-DATE > 0
+    MOVE 104 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+*******************************
+DEFINE SUBROUTINE VALIDATE-PEBD
+*******************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN BASE-PAY-EF-DATE NE MASK(YYYYMMDD)
+    MOVE 102 TO #ERROR-CODE(#I)
+  WHEN BASE-PAY-EF-DATE < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN (BASE-PAY-EF-DATE - 130000) < DATE-OF-BIRTH
+    MOVE 106 TO #ERROR-CODE(#I)
+  WHEN BASE-PAY-EF-DATE > ACTIVE-DUTY-BASE-DATE AND ACTIVE-DUTY-BASE-DATE > 0
+    MOVE 107 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+*******************************
+DEFINE SUBROUTINE VALIDATE-BASD
+*******************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN ACTIVE-DUTY-BASE-DATE NE MASK(YYYYMMDD)
+    MOVE 102 TO #ERROR-CODE(#I)
+  WHEN ACTIVE-DUTY-BASE-DATE < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN (ACTIVE-DUTY-BASE-DATE - 130000) < DATE-OF-BIRTH
+    MOVE 109 TO #ERROR-CODE(#I)
+  WHEN (BASE-PAY-EF-DATE > 0 ) AND                             /* YK3
+     ACTIVE-DUTY-BASE-DATE - BASE-PAY-EF-DATE > 200000
+    MOVE 110 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+******************************
+DEFINE SUBROUTINE VALIDATE-DOP
+******************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN DATE-OF-RANK NE MASK(YYYYMMDD)
+    MOVE 102 TO #ERROR-CODE(#I)
+  WHEN DATE-OF-RANK > *DATN
+    MOVE 112 TO #ERROR-CODE(#I)
+  WHEN DATE-OF-RANK < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN DATE-OF-RANK < BASE-PAY-EF-DATE AND BASE-PAY-EF-DATE > 0
+    MOVE 113 TO #ERROR-CODE(#I)
+  WHEN DATE-OF-RANK > DATE-RETIRED AND DATE-RETIRED > 0
+    MOVE 114 TO #ERROR-CODE(#I)
+  WHEN DATE-OF-RANK < PRIOR-DATE-OF-RANK AND PRIOR-DATE-OF-RANK > 0
+    MOVE 115 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+*******************************
+DEFINE SUBROUTINE VALIDATE-1405
+*******************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN SERVICE-DATE-1405 NE MASK(YYYYMMDD)
+    MOVE 102 TO #ERROR-CODE(#I)
+  WHEN SERVICE-DATE-1405 < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN (SERVICE-DATE-1405 - 130000) < DATE-OF-BIRTH
+    MOVE 117 TO #ERROR-CODE(#I)
+  WHEN ((ACTIVE-DUTY-BASE-DATE NE 0)
+      AND (ACTIVE-DUTY-BASE-DATE < SERVICE-DATE-1405))
+      OR   ((BASE-PAY-EF-DATE NE 0)
+      AND (BASE-PAY-EF-DATE > SERVICE-DATE-1405))
+    MOVE 118 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+*******************************
+DEFINE SUBROUTINE VALIDATE-PDOP
+*******************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN PRIOR-DATE-OF-RANK NE MASK(YYYYMMDD)
+    MOVE 102 TO #ERROR-CODE(#I)
+  WHEN PRIOR-DATE-OF-RANK > *DATN
+    MOVE 120 TO #ERROR-CODE(#I)
+  WHEN PRIOR-DATE-OF-RANK < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN PRIOR-DATE-OF-RANK > DATE-RETIRED AND DATE-RETIRED > 0
+    MOVE 121 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+*******************************
+DEFINE SUBROUTINE VALIDATE-RETD
+*******************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN DATE-RETIRED NE MASK(YYYYMMDD)
+    MOVE 102 TO #ERROR-CODE(#I)
+  WHEN DATE-RETIRED > *DATN
+    MOVE 123 TO #ERROR-CODE(#I)
+  WHEN DATE-RETIRED < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN MILITARY-STATUS = 'A'
+    MOVE 124 TO #ERROR-CODE(#I)
+  WHEN NOT (MILITARY-SERVICE = 'AR ' OR = 'FR ' OR = 'MR ' OR = 'NR'
+      OR = 'AG ' OR = 'FG ') AND #DD > 1
+    MOVE 125 TO #ERROR-CODE(#I)
+  WHEN (MILITARY-SERVICE = 'AR ' OR = 'FR ' OR = 'MR ' OR = 'NR'
+      OR = 'AG ' OR = 'FG ') AND DISABILITY-PCT = 0 AND
+      MILITARY-STATUS = 'R' OR = 'A'
+    IF CHIEF-OF-STAFF-IND = 'H'
+      IF DATE-RETIRED < DATE-OF-BIRTH + 550000
+        MOVE 126 TO #ERROR-CODE(#I)
+      END-IF
+    ELSE
+      IF DATE-RETIRED < DATE-OF-BIRTH + 600000
+        MOVE 127 TO #ERROR-CODE(#I)
+      END-IF
+    END-IF
+  WHEN DATE-RETIRED < BASE-PAY-EF-DATE OR DATE-RETIRED < ACTIVE-DUTY-BASE-DATE
+    MOVE 128 TO #ERROR-CODE(#I)
+  WHEN DATE-RETIRED < 19400101 AND RETIRED-PAY-AMT = 0 AND MIL-SBP-OPT NE 'N'
+    MOVE 129 TO #ERROR-CODE(#I)
+  WHEN CHIEF-OF-STAFF-IND = 'U' AND (DATE-RETIRED < 19921023 OR DATE-RETIRED > 20020901)
+    MOVE 130 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+**********************************
+DEFINE SUBROUTINE VALIDATE-DIS-PCT
+**********************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN NOT (VA-DISABILITY-PCT = 1.00 OR = .90 OR = .80 OR = .70 OR = .60 OR = .50 OR = .40
+      OR = .30 OR = .20 OR = .10 OR = .01 OR = 9.99)
+    MOVE 131 TO #ERROR-CODE(#I)
+  WHEN #MILITARY-INFO.ID-NUMBER > 1499 AND MILITARY-STATUS = 'A' AND NOT (MILITARY-SERVICE = 'A' OR = 'F' OR = 'M' OR = 'N')
+    MOVE 132 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+***********************************
+**DEFINE SUBROUTINE VALIDATE-DIS-DATE
+***********************************
+**IF DATE-RETIRED NE MASK(YYYYMMDD)
+*  ADD 1 TO #I
+*  MOVE 133 TO #ERROR-CODE(#I)
+**END-IF
+*
+**END-SUBROUTINE
+*************************************
+DEFINE SUBROUTINE VALIDATE-20-YR-DATE
+*************************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN RSV-NG-20-YR-CERT-LTR-DATE < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)
+  WHEN RETIRED-PAY-AMT = 0 AND RSV-NG-RETIRE-PTS = 0
+    MOVE 135 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+**************************************
+DEFINE SUBROUTINE VALIDATE-RET-PAY-AMT
+**************************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN RSV-NG-20-YR-CERT-LTR-DATE > 0 AND RSV-NG-TYPE-ANNUITY NE ' ' AND
+      RSV-NG-RETIRE-PTS = 0
+    MOVE 136 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+***************************************
+DEFINE SUBROUTINE VALIDATE-RET-RSV-DATE
+***************************************
+IF (NOT MILITARY-SERVICE = 'AG' OR = 'AR' OR = 'FG' OR = 'FR'
+    OR = 'MR' OR = 'NR' OR = 'CGR' OR = 'FRA'
+    OR = 'AGA' OR = 'FGA' OR = 'ARA'
+    OR = 'NRA' OR = 'MRA' OR = 'CGA')
+    OR  MILITARY-STATUS NE 'R'
+  ADD 1 TO #I
+  MOVE 144 TO #ERROR-CODE(#I)
+ELSE
+  IF RET-RSV-DATE < 19000000
+    ADD 1 TO #I
+    MOVE 202 TO #ERROR-CODE(#I)
+  ELSE
+    MOVE TRUE TO #VALID
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+**********************************
+DEFINE SUBROUTINE VALIDATE-SBP-OPT
+**********************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN NOT (MIL-SBP-OPT = 'A' OR = 'B' OR = 'C' OR = 'D' OR = 'E' OR = 'F'
+      OR = 'N' OR = 'O' OR = 'X' OR = 'N' OR = ' ')
+    MOVE 137 TO #ERROR-CODE(#I)
+  WHEN MILITARY-STATUS = 'A' AND WIDOW-FLAG NE 'Y' AND
+      NOT (MILITARY-SERVICE = 'AR ' OR = 'FR ' OR = 'MR ' OR = 'NR'
+      OR = 'AG ' OR = 'FG ')AND NOT (MIL-SBP-OPT = 'D' OR = 'E' OR = 'F' OR = ' ')
+    MOVE 138 TO #ERROR-CODE(#I)
+  WHEN MIL-SBP-OPT = ' ' OR = 'N' AND (MIL-SBP-AMT > 0 OR #SBP-COST > 0)
+    MOVE 139 TO #ERROR-CODE(#I)
+  WHEN MIL-SBP-OPT NE 'N' AND RSV-NG-TYPE-ANNUITY = 'A' AND
+      (DATE-OF-BIRTH > *DATN - 600000)
+    MOVE 140 TO #ERROR-CODE(#I)
+  WHEN MIL-SBP-OPT = ' ' OR = 'N' AND RSV-NG-TYPE-ANNUITY = 'B' OR = 'C'
+    MOVE 141 TO #ERROR-CODE(#I)
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+**********************************
+DEFINE SUBROUTINE VALIDATE-SBP-AMT
+**********************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN RETIRED-PAY-AMT > 0 AND (MIL-SBP-AMT > (RETIRED-PAY-AMT * .560)) AND
+      NOT (MILITARY-SERVICE = 'AR ' OR = 'FR ' OR = 'MR ' OR = 'NR'
+      OR = 'AG ' OR = 'FG ')
+    MOVE 142 TO #ERROR-CODE(#I)
+*  WHEN STATUS-V.RSFPP-AMT NE 0 AND NOT (MILITARY-SERVICE = 'AR ' OR = 'FR ' OR = 'MR ' OR = 'NR'
+*    OR = 'AG ' OR = 'FG ')
+*    IF RETIRED-PAY-AMT > 0 AND ((STATUS-V.RSFPP-AMT + MIL-SBP-AMT) * 1.01 > RETIRED-PAY-AMT)
+*      MOVE 143 TO #ERROR-CODE(#I)
+*    END-IF
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE VALIDATE-SS-BENEFITS
+**************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN MBR-SS NE 0 AND SOC-SEC-ST-DATE = 0
+* 150  'SS START DATE MUST BE ENTERED IF SS BENE IS ENTERED' 
+    #I := #I + 1
+    #ERROR-CODE(#I) := 150
+  WHEN SOC-SEC-ST-DATE <> 0 AND STATUS-CODE <> 'D'
+    #AGE := (SOC-SEC-ST-DATE * 100 + 1) - DATE-OF-BIRTH
+* 151 SS-ST-DT must result in at least age 62 unless SS-CODE is "D"   IAS
+* If you are younger than 62 years old and receive social security... Member Center
+    IF  (#AGE < 620000)
+      #I := #I + 1
+      IF #SYSTEM = 'MemberCenter'
+        #ERROR-CODE(#I) := 153
+      ELSE
+        #ERROR-CODE(#I) := 151  
+      END-IF  
+    END-IF
+  WHEN NONE
+    IGNORE
+END-DECIDE    
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE VALIDATE-OTHER-BENEFITS
+*****************************************
+*
+IF SPS-GOVT-ANNUITY NE 0 AND SPS-CSRS-IND = ' '
+* 152 'SPS-CSRS-IND MUST BE ENTERED'
+  #I := #I + 1
+  #ERROR-CODE(#I) := 152 
+END-IF
+END-SUBROUTINE
+***
+END
+
+
+
+
+
+
+
+
+
+
+
+

@@ -1,0 +1,2700 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 2
+* <Natural Source Header
+* PROGRAM-ID: ATHPWACC - WEB Access Information
+* Parm of:
+*  ALLMBRS = FTP all 3 files (Party/POLS/REL) & today's OL trans
+*  DAILY   = FTP all 3 files if Time is prior to 12:00 noon (so it is
+*     not done on M/E nite when DSDCTH10 is run @7PM) & today's OL trns
+*  MONTHLY = FTP all 3 files & M/E Sungard trns & Maint Trans
+*  OLTRANS = Only todays Online (OL) trans
+*  METRANS = Only M/E DFAS & EZPAY Trans
+************************************************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* SAG  12012005 RH1  SS - Replaced HEX constant '05' with HEX '09' ASCII
+* YAK  03072007 YK1  To reschedule job DSDCTH10 to run daily at 9:00 p.m.
+*                    commented out logic to skip this step for 'daily' after noon.
+* YAK  04122007 YK2  Use new value (SKIP)  for the DAILY-MONTHLY parm to skip
+*                     this step in job DSDCTH10 for the Month End process
+* YAK  12052007 YK3  Remove hardcording for interest rates
+*                    (Read GEN-TABLE through OBJNGENT)
+* PAM  01082008 PM4  Ignore ME transactions for Accounting Register
+* YAK  02052008 YK4  Change code to use FUNCTION-INT-RATE
+*                        to get rate from GEN-TABLE
+* PAM  02282008 PM5  Bypass non-insured members for DFAS Sungard records
+* PAM  03072008 PM6  Pull all transactions from AR.
+* DRW 03/24/2008 DW7 Check for iss dt format yyyymmdd in description
+* DRW 03/30/2008 DW8 Process Parm MONTHLY & METRANS properly & no more CASH Trans
+* DRW 03/30/2008 DW9 Use status file ALOT-AMT for the M/E DFAS extract
+* DRW 06/30/2008 DW10 Fix paid-up date with bad day
+* DRW 07/02/2008 DW11 Use Pol # from TR file if it exists for the WEbTRANS
+* DRW 07/14/2008 DW12 Process ABF file for CAP lns & CC Applied file for CC
+* PAM 08/06/2008 PM13 Added '-' for loan and interest balances
+* DRW 08/28/2008 DW14 Gen Plus Processing
+* DRW 08/29/2008 DW15 Create DFAS file removed in DW9 & put on a separate file
+* PAM 01/07/2009 PM16 Match G5000PTR code for ADDL loans
+* DRW 04/30/2009 DW17 Accept new format of CC_APPLIED file
+* DRW 05/01/2009 DW18 Chg starting date for Month-End trans from 28 to 26
+* PAM 01/01/2010 PM19 Increased AVL-TDIV
+* RSE 04/30/2010 RE1  Get Formated Name, SSN, & DOB from Contacts file
+* YAK 10/11/2012 YK5  Use function to identify Level Term II plans
+*                     Add NEW Term II plan codes
+* YAK 11/08/2012 YK6  Add No Medical Term plan (EZ)
+* JNT 08/30/2013 JT1  account for address deletion in databases
+* TMT 01/09/2014 TT1  1 MILLION RECONCILIATION
+* TMT 01/03/2014 TT2  ADDED GP2 POLICY SUPPORT
+* bz  01/29/2014 bz   add Four Phones (OI-2505) item 26 in party
+* vxt 04/02/2014 vt1  Add term refund column to the party file /Ticket 2424 /
+* vxt 04/09/2014 vt2  /ticket 2711/
+* YAK 05/16/2014 YK7   Email/Phone contact normalization
+* TMT 06/11/2104 TT3  Contact Normalization - DOB and SEX
+* bz  08-14-2014 bz_OI-2975
+* bz  10-09-2015 bz OI-3923
+* NG  03/01/2016 NG1 VAWL VERSION
+* vxt 06/08/2017 vt3 Group Term Project
+* vxt 06/14/2017 vt4 /Ticket 4395/
+* vxt 04/19/2018 vt5 /Ticket 8138/
+*************************************************************************
+DEFINE DATA
+LOCAL USING A-CTDATA
+LOCAL USING ADDA0001                 /* JT1
+LOCAL
+1 #DASH                   (A1) CONST <'-'>
+1 #JCL-PARM               (A32)
+1 REDEFINE #JCL-PARM
+  2 #JCL-DAILY-MONTHLY     (A7) /* 'DAILY' OR 'MONTHLY' or 'METRANS' or 'ALLMBRS'
+*                                   OR 'SKIP'       /* YK2
+1 #DAILY-MONTHLY          (A7)
+1 #ME-DATE                (N8)
+1 #ME-DATE-DISP           (A10)
+*
+1 #AMT                    (P7.2)
+1 #DC-IND                 (A1)
+1 #MATCHES-A-DUP-ACT-POL  (L)
+1 #PAY                    (A2)
+* 1 #TOT-CASH               (P7.2)   /* DW8
+1 #CC-APPLIED      (A500)                            /* DW12  DW17
+1 #CC-CN           (A6)
+1 #CC-POL-NUM      (A16)
+1 #CC-TRAN-CODE    (A4)
+1 #CC-TRAN-AMT     (A9)
+1 #CC-CNT          (N5)
+*
+1 #AFB-CNT   (N5)
+1 #POL-NUM   (A16)
+1 #AFB-FILE        (A100)                           /* DW12
+1 #AFB-SSN-A    (A9)
+1 REDEFINE #AFB-SSN-A
+  2 #AFB-SSN     (N9)
+1 #AFB-LNAME    (A25)
+1 #AFB-FNAME    (A25)
+1 #AB-MNAME     (A25)
+1 #AFB-ACCOUNT  (A10)
+1 #AFB-CHECK    (A10)
+1 #AFB-TRANCODE (A4)
+1 #AFB-AMOUNT   (A11)
+1 #AFB-EFFDATE  (A8)
+1 #AFB-DESC     (A25)                                  /* END DW12
+*
+1 #SUFF                   (A3)
+1 #LOAN-BAL               (N7.2/9)
+1 #LOAN-BAL-2             (N7.2/9)
+1 #ACC-INT                (N7.2/9)
+1 #ACC-INT-2              (N7.2/9)
+1 #CSVALU                 (N7.2/9)
+1 #CVALUE                 (N7.2/9)
+1 #LVALUE                 (N7.2/9)
+1 #MCSV                   (N7.2/9)
+1 #DB                     (N7.2/9)
+1 #ANN-PREMIUM            (N7.2/9)
+1 #FACE-AMT               (N7.2/9)                   /* DW6
+1 #TPP                    (N7.2/9)                   /* DW6
+1 #CSV-P                  (P7.2/9)
+1 #DUES                   (N3.2)
+1 #ANN-DUES               (N5.2)
+*
+1 #LAST-TR-CN             (N6)
+1 #TR-SEQ                 (N5)
+1 #TRAN-CODE-IN           (A4)
+1 #ACCT-NUM-IN            (A4)
+1 #CAT-1-IN               (A2)
+1 #AMT-SIGN-IN            (A1)
+*
+1 #ACCT-NUM-OUT           (A4)
+1 #D-C-OUT                (A1)
+1 #CN-IN                  (N6)
+1 #AMT-IN                 (N6.2)
+1 #SOURCE-IN              (A2)
+*
+1 #ACTIVE                 (A1)     /*    (D/P/I/A)
+1 #CSV-DB-CHG-TODAY       (L)
+1 #MBR-RESTRICT-CODE      (A1)     /* must be programmed
+1 #POL-RESTRICT-CODE      (A1/9)   /* must be programmed
+1 #CN-TO-USE              (N6)
+1 #MBR-CN                 (N6)
+1 REDEFINE #MBR-CN
+  2 #MBR-CN-A              (A6)
+1 #PAYOR                  (A6)
+1 REDEFINE #PAYOR
+  2 #PAYOR-N               (N6)
+1 #OWNER                  (A66)
+*
+1 #CURR-VAR-INT-RATE      (P2.3)                     /* YK3
+*
+1 #ST-FND                 (L)
+1 #LK-FND                 (L)
+1 #MULTIPLE-OWNER         (L)
+1 #NON-INS-OWNER          (L)
+1 #OWNER-OCC-9            (9)
+  2 #OWNER-FLAG            (A1)
+  2 #OWNER-CN              (N6/10)
+  2 #OWNER-CN-BY-POL       (N6)
+  2 #OWNER-CN-SEG          (I2/9)
+  2 #ISS-DATE              (N8/9)
+  2 #ISS-DATE-DISP         (A10/9)
+*
+  2 #BENE-TYPE             (A1/2)
+  2 #BENE-TEXT             (A60/10)
+*
+1 NT-V VIEW OF A-NOTES
+  2 NOTE-TEXT              (A60/60)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC         (60)
+      4 ALOT-PAID-BY         (A17)
+      4 ALOT-PAID-BY-CN      (N06)
+      4 ALOT-PAID-BY-FL      (A37)
+*
+1 TR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER             (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A          (A6)
+  2 CLERK-ID              (A3)
+  2 TRANSACTION-DATN      (P9)
+  2 TRANSACTION-TIMN      (P7)
+  2 SEQUENCE-NUM        (N1)
+  2 TXN-CODE              (A4)
+  2 CASH-CODE             (A1)
+  2 DEBIT-AMOUNT          (P7.2)
+  2 CREDIT-AMOUNT         (P7.2)
+  2 POLICY-NUMBER         (A16)                   /* DW11
+  2 MONTH-END             (A1)                       /* PM4
+  2 DESCRIPTION           (A20)
+  2 REDEFINE DESCRIPTION
+    3 DESC-YYYY            (A4)
+    3 DESC-1               (A1)
+    3 DESC-MM              (A2)
+    3 DESC-2               (A1)
+    3 DESC-DD              (A2)
+  2 REDEFINE DESCRIPTION
+    3 DESC-MM-X            (A2)
+    3 DESC-DD-X            (A2)
+    3 DESC-YYYY-X          (A4)
+  2 REDEFINE DESCRIPTION
+    3 DESC-YYYY-Y          (A4)                /* DW7
+    3 DESC-MM-Y            (A2)
+    3 DESC-DD-Y            (A2)
+  2 REDEFINE DESCRIPTION
+    3 DESC-CAP             (A8)
+    3 DESC-MM-CAP          (A2)
+    3 DESC-DD-CAP          (A2)
+    3 DESC-YYYY-CAP        (A4)
+  2 REDEFINE DESCRIPTION
+    3 DESC-IRT             (A10)
+    3 DESC-MM-IRT          (A2)
+    3 DESC-DD-IRT          (A2)
+    3 DESC-YYYY-IRT        (A4)
+  2 AALP-FLAG             (A1)
+  2 SG-CATEGORY-1         (A2/15)
+  2 SG-CATEGORY-2         (A2/15)
+  2 SG-AMOUNT             (N6.2/15)
+*
+1 LK-V VIEW OF A-STATUS
+  2 WIDOW-FLAG
+  2 NUMBER-MEMBERSHIPS
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A           (A6)
+  2 MEMBER-CONTACT-ID      (N8)      /* RE1
+  2 PROCESS-IND
+  2 MBR-SINCE
+  2 SUSPEND-CODE
+  2 ALOT-AMT            /* DW9
+  2 DATE-OF-DEATH
+  2 ANNUAL-RPT-FLAG
+  2 ACCESS-AUTH-CODE
+  2 INS-MAIL-CODE
+  2 LINKED-CN              (1)
+  2 REDEFINE LINKED-CN
+    3 LINKED-CN-A           (A6/1)
+  2 INTRO-FLAG
+  2 NAME
+  2 NAME-SP
+  2 SPOUSE-CONTACT-ID      (N8)      /* RE1
+  2 FORMER-SPOUSE-NAME
+  2 SSN                    (N9)
+  2 REDEFINE SSN
+    3 SSN-A                 (A9)
+  2 SSN-SP
+  2 REDEFINE SSN-SP
+    3 SSN-SP-A              (A9)
+  2 FORMER-SPOUSE-CONTACT-ID(N8)     /* RE1
+  2 FORMER-SPOUSE-SSN
+  2 REDEFINE FORMER-SPOUSE-SSN
+    3 FORMER-SPOUSE-SSN-A   (A9)
+  2 TITLE-SP
+  2 CHIEF-OF-STAFF-IND
+  2 DEBIT-CREDIT-AMT
+  2 BASE-PAY-EF-DATE
+  2 ACTIVE-DUTY-BASE-DATE
+  2 DATE-OF-RANK
+  2 RANK
+  2 PROXY
+  2 MILITARY-SERVICE
+  2 MILITARY-STATUS
+  2 X-LOAN-AMOUNT          (9)
+  2 X-INTEREST-RATE        (9)
+  2 X-LOAN-DATE            (9)
+  2 X-LOAN-AMOUNT-2        (9)
+  2 X-LOAN-DATE-2          (9)
+  2 X-ALT-LP-IND           (9)
+  2 X-ALT-LP-IND-2         (9)
+  2 X-FIRST-PLACE-FEE      (9)
+  2 X-BILL-ADJUST          (9)
+  2 DATE-BOOK                                   /* PM99
+  2 PAD-CODE
+  2 PAD-ABA-NBR
+  2 PAD-ACCT-NUM
+  2 CAP-CONV-ACV
+  2 ONLINE-ACTION-GN
+  2 NUMBER-MEMBERSHIPS
+  2 NUM-MBRSHIPS           (9)
+  2 ONLINE-ACTION          (9)
+  2 STATUS                 (9)
+  2 SMOKER-FLAG            (9)
+  2 FACE-AMOUNT            (P7.2/9)
+  2 ANNUAL-PREM            (9)
+  2 EXPIRY-DAY             (9)
+  2 OWNERSHIP-FLAG         (9)
+  2 PAY-STATUS             (9)
+  2 PAID-UP-DATE           (9)
+  2 TOT-PREMIUMS-PAID      (9)
+  2 PAID-TO-DATE           (9)
+  2 MODE                   (9)
+  2 COST-BASIS             (9)
+  2 PLAN                   (9)
+  2 REDEFINE PLAN
+    3 PLAN-OCC              (9)
+      4 PLAN-A1              (A1)
+      4 PLAN-N2              (N2)
+  2 VERSION                (9)
+  2 CASH-VALUE             (9)
+  2 ACC-CASH-VALUE         (9)
+  2 NXT-MON-CASH-VALUE     (9)
+  2 DEATH-BENEFIT          (9)
+  2 NXT-MON-DEATH-BENEFIT  (9)
+  2 CONV-DURATION          (9)
+  2 ISSUE-AGE              (9)
+  2 REDEFINE ISSUE-AGE
+    3 ISSUE-AGE-OCC         (9)
+      4 ISSUE-AGE-N          (N2)
+  2 ISSUE-DATE             (9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DATE-OCC        (9)
+      4 ISSUE-DATE-YYYYMMDD  (N8)
+      4 REDEFINE ISSUE-DATE-YYYYMMDD
+        5 ISSUE-DATE-YYYY     (N4)
+        5 REDEFINE ISSUE-DATE-YYYY
+          6 ISSUE-DATE-CT      (A2)
+          6 ISSUE-DATE-YY      (A2)
+        5 ISSUE-DATE-MM       (A2)
+        5 ISSUE-DATE-DD       (N2)
+  2 SPLIT-IND              (9)
+  2 MONTH-ALLOC-AMT        (9)
+  2 BEG-CASH-VALUE         (9)
+  2 RID-PLAN               (9)
+  2 MEC-IND                (9)
+  2 PREM-RATING            (9)
+  2 LAST-ANN-CASH-VALUE    (9)
+  2 MTD-ACV-PREM-ADJ       (9)
+  2 MTD-ACV-COI-ADJ        (9)
+  2 MTD-ACV-INT-ADJ        (9)
+  2 DURATION               (9)
+  2 C*out-term-ref-group                               /* vt1 \/
+  2 out-term-ref-group
+    3 out-term-ref-amount(99)
+1 #tot-trmf-amt            (n9.2)
+1 #tot-trmf-amt-a          (a14)                       /* vt1 /\
+*
+* 1 FR-V VIEW OF A-FIRS
+*   2 DP-LAST-FM-DATE
+*   2 DOCU-LAST-FM-DATE
+*   2 INS-LAST-FM-DATE
+*   2 DEPN-CONTACT-ID        (14)           /* RE1
+*   2 DEPN-NAME              (14)
+*   2 DEPN-STATUS-CD         (14)
+*   2 DEPN-DATE-OF-BIRTH     (14)
+*   2 DEPN-SSN               (N9/14)
+*   2 REDEFINE DEPN-SSN
+*     3 DEPN-SSN-OCC          (14)
+*       4 DEPN-SSN-A           (A9)
+*
+1 VA-V VIEW OF A-VA-HISTORY
+  2 YEAR-MONTH-M           (P7/13)
+  2 PREMIUM-M              (13)
+*
+1 PH-V VIEW OF A-CONTACT-PHONE
+  2 CONTACT-ID (N8)
+  2 PHONE-TYPE-CODE (A1)
+  2 TYPE (A1)
+  2 INTL-ACCESS-CODE (N3)
+  2 INTL-DIAL-NUMBER (N20)
+  2 AREA-CODE (N3)
+  2 DIAL-NUMBER (N7)
+  2 REDEFINE DIAL-NUMBER
+    3 DIAL-NUMBER-3   (A3)  /* bz1
+    3 DIAL-NUMBER-4   (A4)  /* bz1
+  2 EXT (N6)
+*
+1 #DFAS   (A45)
+1 REDEFINE #DFAS
+  2 AL-SSN-A    (A9)
+  2 REDEFINE AL-SSN-A
+    3 AL-SSN     (N9)
+  2 AL-SERV     (A1)
+  2 AL-STATUS   (A1)
+  2 AL-AMOUNT-A (A6)
+  2 REDEFINE AL-AMOUNT-A
+    3 AL-AMOUNT  (N4.2)
+  2 AL-NAME     (A22)
+  2 AL-EFF-DT   (N06)
+*
+1 #PADFILE                    (A94)
+1 REDEFINE #PADFILE
+  2 #PAD-REC-TYPE            (A1)
+  2 #PAD-TRAN-CODE        (A2)
+  2 #PAD-RCV-DFI-ID       (A9)
+  2 #PAD-DFI-ACCT-NUM     (A17)
+  2 #PAD-AMT              (N8.2)
+  2 #PAD-CN               (N6)
+  2 REDEFINE #PAD-CN
+    3 #PAD-CN-A            (A6)
+  2 #PAD-INDIV-ID         (A9)
+  2 #PAD-INDIV-NAME       (A22)
+  2 #PAD-DISC-DATA        (A2)
+  2 #PAD-ADD-REC-IND      (N1)
+  2 #PAD-TRACE-NUMBER-ABA (A8)
+  2 #PAD-TRACE-NUMBER     (N7)
+*
+
+1 #HIST-KEY               (N15)
+1 REDEFINE #HIST-KEY
+  2 #HIST-KEY-ID           (N6)
+  2 #HIST-KEY-ISS          (N8)
+  2 #HIST-KEY-SPL          (N1)
+1 #CAP-LOAN-MONS          (N3)
+1 #CAP-CSV-MONS           (N3)
+1 #CAP-REMAIN-MONS        (N3)
+1 #ZIP-CODE               (N9)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-CODE-5-A          (A5)
+  2 #ZIP-CODE-4-A          (A4)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-CODE-5            (N5)
+  2 #ZIP-CODE-4            (N4)
+*
+1 #TAB                    (A1) INIT <H'09'>        /* SAG RH1 12012005 SS
+*
+1 #TR-START-DT            (N8)
+1 #TR-END-DT              (N8)
+1 #TR-DATE                (N8)
+1 #TODAY-YYYYMMDD         (N8)
+1 REDEFINE #TODAY-YYYYMMDD
+  2 #TODAY-YYYY            (N4)
+  2 #TODAY-MM              (N2)
+  2 #TODAY-DD              (N2)
+1 #WORK-CAP-CONV-ACV      (P9.2)
+1 #CAP-LOAN-END-DATE      (N8)
+1 #CAP-CONV-ACV           (P7.2)
+1 #CSV                    (P7.2)
+1 #CAP-CSV                (P7.2)
+1 #WORK-AMT               (A76)
+1 #ARTIFICIAL-DB          (P7.2)
+*
+1 #TERM                   (L)
+1 #SPLIT                  (A1)
+1 #NAME                   (A25)
+1 #LAST                   (A25)
+1 #FIRST-20               (A20)
+1 #MI                     (A1)
+1 #STREET                 (A70)  /* bz OI-3923
+1 #STREET-2               (A70)  /* bz OI-3923
+1 #CITY                   (A22)
+1 #STATE                  (A2)
+1 #PARTY-CD               (A1)
+1 #INTRO-CD               (A1)
+1 #SVC-CD                 (A1)
+1 #CAP-CD                 (A1)
+*
+1 #FORMATED-NAME          (A45)
+1 #DEAR-NAME              (A28)
+1 #LAST-NAME              (A25)
+1 #FIRST/MID              (A25)
+1 #FIRST-NAME             (A25)
+1 #MIDDLE-INIT            (A25)
+1 #SUFFIX                 (A25)
+1 #EXTRA1                 (A25)
+1 #EXTRA2                 (A25)
+1 #EXTRA3                 (A25)
+1 #EXTRA4                 (A25)
+1 #NAME-SP                (A50)    /* RE1
+*
+1 #FULL-RANK              (A23)
+1 #XXX                    (A3)   INIT <'XXX'>
+1 #EDIT-INVALID           (L)
+1 #RANK-LITERAL           (A23)
+1 #HOLD-RANK-5            (A5)
+1 #DISPL                  (P2)
+1 #PASS-COMMAND           (A2)   INIT <'AD'>
+*
+1 #ERROR-MESSAGE          (A25)
+1 #EXTRACTS               (P6)
+*
+1 #NUM-RECS               (P7)
+1 #REC-250                (A250)
+1 REDEFINE #REC-250
+  2 #REC-125-1             (A125)
+  2 #REC-125-2             (A125)
+*
+* below for party file
+1 #NUM-RECS-PARTY         (P6)
+1 #PARTY-FILE
+  2 #PAR-125-1             (A125)
+  2 #PAR-125-2             (A125)
+  2 #PAR-125-3             (A125)
+*
+* below for policy-file
+1 #NUM-RECS-POL           (P6)
+1 #POLICY-FILE
+  2 #POL-125-1             (A125)
+  2 #POL-125-2             (A125)
+  2 #POL-125-3             (A125)
+*
+* below for relations-file
+1 #NUM-RECS-REL           (P6)
+1 #RELATIONS-FILE         (A150)
+1 #REL-DATA               (L)
+*
+* below for accounting trans file
+1 #NUM-RECS-ACC-TRN       (P6)
+1 #ACC-TRN-FILE           (A100)
+*
+1 #SCR-STATUS             (A4)
+1 #EFF-DATE               (N8)
+* 1 #AVL-TDIV               (P5.2)     /* PM19
+1 #AVL-TDIV               (P7.2)       /* PM19
+1 #FAC-AMT                (P7.2)
+1 #DEATH-BENEFIT          (P7.2)
+1 #CURR-DB                (P7.2)
+1 #CURR-CSV               (P7.2)
+1 #DISP-2                 (A2)
+1 #DISP-6                 (A6)
+1 #DISP-10                (A10)
+1 #DISP-11                (A11)
+1 #DOB-DISP               (A11)
+1 #SSN-DISP               (A12)
+1 #INITIAL-DB             (P7.2)
+*
+1 #ID-NUMBER              (N6)
+1 #PLAN                   (A3)
+1 REDEFINE #PLAN
+  2 #PLAN-A1               (A1)
+  2 REDEFINE #PLAN-A1
+    3 #PLAN-A1-N            (N1)
+  2 #PLAN-LT2-TERM         (N2)
+1 REDEFINE #PLAN
+  2 #PLAN-A2               (A2)
+  2 REDEFINE #PLAN-A2
+    3 #PLAN-A2-N            (N2)
+  2 #PLAN-FIL-2            (A1)
+1 #PLAN-X                 (A2)
+1 #CLASS                  (A2)
+1 #DURATION               (A2)
+1 REDEFINE #DURATION
+  2 #DURATION-N            (N2)
+1 #ISSUE-DATE             (N8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-YYYY       (N4)
+  2 #ISSUE-DATE-MM         (N2)
+  2 #ISSUE-DATE-DD         (N2)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-CENT       (N2)
+  2 #ISSUE-DATE-YYMMDD     (N6)
+*
+1 #MONTHS                 (A36) INIT <'JanFebMarAprMayJunJulAugSepOctNovDec'>
+1 REDEFINE #MONTHS
+  2 #MON                   (A3/12)
+*
+1 #COUNTERS
+  2 #RECS-READ             (P7)
+  2 #RECS-UPDATED          (P7)
+  2 #ME-SUNGARD-READ       (P7)
+  2 #CNT                   (P6)
+  2 #CNT-2                 (P6)
+  2 #CNT-3                 (P6)
+  2 #CNT-4                 (P6)
+  2 #CNT-5                 (P6)
+  2 #CNT-6                 (P6)
+  2 #I1                    (I2)
+  2 #I2                    (I2)
+  2 #I3                    (I2)
+  2 #I5                    (I2)
+  2 #DP-X                  (N2)
+  2 REDEFINE #DP-X
+    3 #DP-X-A2              (A2)
+*
+* BELOW for CALC-PREMS-PAID
+1 #PP-DATE-OF-BIRTH       (N8)
+1 #PP-ANNUAL-PREM         (N5.2)
+1 #PP-PAY-STATUS          (A2)
+1 #PP-TOT-PREMIUMS-PAID   (N7.2)
+1 #PP-PAID-TO-DATE        (N8)
+1 #PP-ISSUE-DATE          (N8)
+1 #PP-MODE                (A1)
+1 #PP-PLAN                (A3)
+1 #PP-COST-BASIS          (N7.2)
+1 #PP-MONTH-ALLOC-AMT     (N7.2)            /* TT1
+1 #PP-INTRO-FLAG          (A1)
+1 #PP-FIRST-PLACE-FEE     (N7.2)
+1 #PREMS-PAID             (P7.2)
+1 #SUB-PREMS-PAID         (P7.2)
+1 #PP-BADJ                (P5.2)
+* ABOVE for CALC-PREMS-PAID
+*
+1 #DATE-DISP              (A10)
+1 #YYYYMMDD               (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A               (A4)
+  2 REDEFINE #YYYY-A
+    3 #CT-A               (A2)
+    3 #YY-A               (A2)
+  2 #MM-A                 (A2)
+  2 #DD-A                 (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM               (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY                (N4)
+    3 #MM                  (N2)
+  2 #DD                   (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A           (A8)
+
+*
+1 #TOT-OLD                (N5)
+1 #TOT-NEW                (N5)
+1 #TOT-NXT                (N5)
+1 #TOT-TRM                (N7)        /* vt05/19/2015 was n5
+1 #TOT-SO                 (N5)
+* #POL-TYPE               (A3)
+1 #VERSION                (A5)
+1 #PAY-STATUS             (A4)
+1 #FR-FOUND               (L)
+1 #INVALID                (L)
+1 #ERR-MSG                (A60)
+1 #SSN                    (A9)
+1 #ST-CD                  (A1)
+1 #BYPASS                 (L)
+1 #POL#                   (A16)
+1 #PHONE#                 (A17)
+1 #INTERNET-ADDR          (A60)                /* PM
+*
+1 #1035-SUFFIX            (A3) INIT <'135'>
+1 #MAX-7-PAY              (P6.2)
+1 #MEC-PREMS-PAID-TO-DATE (P7.2)                     /* TT1
+1 #EXCEEDS-MEC            (P7.2)                     /* TT1
+1 #1035-NX                (A60)
+1 #1035-EXCH-AMT          (P6.2)
+1 #LUMP-PMT               (P6.2)
+1 #XTRA-PREMS-PAID        (P7.2)
+1 #DISPLAY-1035-AMT       (A9)
+1 #DISPLAY-LUMP-PMT       (A9)
+*
+1 #TO-DATE                (N8)                 /* PM6
+1 #FROM-DATE              (N8) INIT <00000001> /* PM6
+1 #RETURN-CALC            (N8)                 /* PM6
+1 #REQUEST                (A1)                 /* PM6
+*
+1 #CC-CNT-3            (A25)  /* 5                        /* DW17
+1 #CC-ID-NUMBER        (A6)   /* 6
+1 #CC-POL-NUMBER       (A18)  /* 18
+1 #CC-INP-DT-APPLIED-N (A8)   /* 8
+1 #CC-INP-TR-CD        (A4)   /* 4
+1 #CC-INP-ISS-DT       (A8)   /* 8
+1 #CC-INP-PLAN         (A8)   /* 8
+1 #CC-AMOUNT           (A10)  /* 10
+1 #CC-NAME             (A25)  /* 25
+1 #CC-MASK-CC-NUM      (A)  DYNAMIC
+1 #CC-CC-EXP-DT        (A8)   /* 8
+1 #CC-AVC-DESCRIPTION  (A)  DYNAMIC                /* END DW17
+1 #k                   (i2)                         /* vt1
+1 #x-alt-lp-ind        (a1)                         /* vt2
+1 #x-alt-lp-ind-2      (a1)                         /* vt2
+*
+1 p_Name               (A)  DYNAMIC
+1 Phones
+  2 v_PH_C        (A) DYNAMIC
+  2 v_PH_H        (A) DYNAMIC
+  2 v_PH_B        (A) DYNAMIC
+  2 v_PH_O        (A) DYNAMIC
+1 v_A             (A)    DYNAMIC
+*
+1 DATE-OF-BIRTH     (N8.0)                        /* TT3
+*
+1 #termlt2           (l)                           /* vt4
+1 #termlt2plus       (l)                           /* vt4
+*
+* * *********************************************************************
+*  1 f_1     (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/W_1.txt">
+*  1 f_2     (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/W_2.txt">
+*  1 f_3     (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/W_3.txt">
+*  1 f_4     (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/W_4.txt">
+*  1 f_5     (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/W_5.txt">
+*  1 v_PN            (I1)
+*  1 v_RC            (N3)
+* * ******************************************************************
+END-DEFINE
+* ********************************************************************
+* IF *DEVICE <> 'BATCH'
+*  DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/ATHLB/DAILY.TXT'
+*  DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/WORK/WACC_Par_2.TXT' TYPE 'ASCII-COMPRESSED'
+*  DEFINE WORK FILE 3 '/usr/SAG/AAFMAA/batch/workfiles/WORK/WACC_Rel_3.TXT' TYPE 'ASCII-COMPRESSED'
+*  DEFINE WORK FILE 4 '/usr/SAG/AAFMAA/batch/workfiles/WORK/WACC_Pol_4.TXT' TYPE 'ASCII-COMPRESSED'
+*  DEFINE WORK FILE 5 '/usr/SAG/AAFMAA/batch/workfiles/WORK/WACC_Trn_5.TXT' TYPE 'ASCII-COMPRESSED'
+*  v_PN := 1
+*  v_RC := PRT_FN_PUT(<v_PN, f_1>)
+*  v_PN := 2
+*  v_RC := PRT_FN_PUT(<v_PN, f_2>)
+*  v_PN := 3
+*  v_RC := PRT_FN_PUT(<v_PN, f_3>)
+*  v_PN := 4
+*  v_RC := PRT_FN_PUT(<v_PN, f_4>)
+*  v_PN := 5
+*  v_RC := PRT_FN_PUT(<v_PN, f_5>)
+* END-IF
+* *********************************************************************
+
+READ WORK 1 ONCE RECORD #JCL-PARM
+MOVE #JCL-DAILY-MONTHLY TO #DAILY-MONTHLY
+
+WRITE 'DAILY/MONTHLY/ALLMBRS/METRANS =' #DAILY-MONTHLY
+*
+
+MOVE *DATN TO #YYYYMMDD                     /* DW8
+IF #DD GT 15
+  ADD 1 TO #MM
+  IF #MM GT 12
+    SUBTRACT 12 FROM #MM
+    ADD 1 TO #YYYY
+  END-IF
+END-IF
+*
+MOVE 1 TO #DD
+
+COMPRESS #MM-A #DD-A #YYYY-A INTO #ME-DATE-DISP WITH '/'
+*
+MOVE *DATN TO #YYYYMMDD
+IF *TIMN LT 1200000                 /* between midnite and noon
+  MOVE *DATN TO #TODAY-YYYYMMDD     /* today is system date
+*
+  #TO-DATE   := *DATN
+  #REQUEST   := 'E'
+*
+  CALLNAT 'GDATESXX'
+    #TO-DATE
+    #FROM-DATE
+    #RETURN-CALC
+    #REQUEST
+*
+  #TR-DATE := #TO-DATE
+ELSE                               /* noon till midnite (if job is run early)
+  MOVE *DATN TO #TR-DATE           /* system date is tran date
+  #TO-DATE   := *DATN
+  #REQUEST   := 'G'
+*
+  CALLNAT 'GDATESXX'               /* get tomorrow for today
+    #TO-DATE
+    #FROM-DATE
+    #RETURN-CALC
+    #REQUEST
+*
+  #TODAY-YYYYMMDD := #TO-DATE
+END-IF
+*
+WRITE 'Tran Date =' #TR-DATE
+WRITE 'Today     =' #TODAY-YYYYMMDD
+*
+* * * * * * * REPORT HEADER * * * * * *
+FORMAT  LS=133 PS=76
+WRITE  TITLE LEFT 'PROGRAM 1.2:' *PROGRAM 5X 'WEB Access Extract Exceptions'
+  5X 'DATE: '*DAT4U 5X 'TIME: ' *TIMX
+FORMAT(2) LS=133 PS=76
+WRITE (2) TITLE LEFT 'PROGRAM 1.2:' *PROGRAM 5X 'WEB Access Parties'
+  5X 'DATE: '*DAT4U 5X 'TIME: ' *TIMX
+FORMAT(3) LS=133 PS=76
+WRITE (3) TITLE LEFT 'PROGRAM 1.2: ' *PROGRAM 5X 'WEB Access Relations'
+  5X 'DATE: '*DAT4U 5X 'TIME: ' *TIMX
+FORMAT(4) LS=133 PS=76
+WRITE (4) TITLE LEFT 'PROGRAM 1.2: ' *PROGRAM 5X 'WEB Access Policies'
+  5X 'DATE: '*DAT4U 5X 'TIME: ' *TIMX
+FORMAT(5) LS=133 PS=76
+WRITE (5) TITLE LEFT 'PROGRAM 1.2: ' *PROGRAM 5X 'WEB Access Acct trans'
+  5X 'DATE: '*DAT4U 5X 'TIME: ' *TIMX
+*
+#CURR-VAR-INT-RATE := FUNCTION-INT-RATE(<'RATE5AB'>)  /* YK4
+*
+* label party-file fields   len
+COMPRESS  'CN'         /* (1)  7
+  #TAB 'SSN'          /* (2)  12
+  #TAB 'LName'        /* (3)  26
+  #TAB 'FName'        /* (4)  20
+  #TAB 'MName'        /* (5)  15
+  #TAB 'Suf'          /* (6)  10
+  #TAB 'Rank'         /* (7)  4
+  #TAB 'Street1'      /* (8)  26
+  #TAB 'Street2'      /* (9)  26
+  #TAB 'City'         /* (10) 22
+  #TAB 'State'        /* (11)  3
+  #TAB 'Zip'          /* (12)  10
+  #TAB 'DOB'          /* (13)  11
+  #TAB 'Party-Cd'     /* (14)  2 /* Mbr/Sps/Chld/Emp/Other
+  #TAB 'Cap-Cd'       /* (15)  2 /* Y/N
+  #TAB 'Int-Cd'       /* (16)  2 /* Y/N
+  #TAB 'Svc-Cd'       /* (17)  2 /* G-f/De-gf/Ins-pls/Optot/Non
+  #TAB 'Sex'          /* (18)  2
+  #TAB 'Proxy'        /* (19)  2
+  #TAB 'MilStatus'    /* (20)  2
+  #TAB 'MilService'   /* (21)  2
+  #TAB 'PEBD'         /* (22)  10
+  #TAB 'BASD'         /* (23)  10
+  #TAB 'DOP'          /* (24)  10
+  #TAB 'EMail'        /* (25)  61
+  #TAB 'TelHome'      /* (26)  11
+  #TAB 'TelWork'      /* (27)  11
+  #TAB 'TelCell'      /* (28)  11
+  #TAB 'TelOther'     /* (29)  11
+  #TAB 'DB-CR'        /* (30)  12
+  #TAB 'Mbr-Since'    /* (31)  8
+  #TAB 'DOD'          /* (32)  10
+  #TAB 'Med-Cd'       /* (33)  2  /* Suspend Code
+  #TAB 'Restr-Cd'     /* (34)  2  /* Member Restricted Code
+  #TAB 'Ann-Rpt-Code' /* (35)  2
+  INTO #REC-250 LEAVING NO       /* PM99
+PERFORM CHECK-OVER-125                 /* PM99
+*
+COMPRESS #REC-250                      /* PM99
+  #TAB 'Mail-Cd'     /* (36)  2  /* Ins Mail Code
+  #TAB 'Status'      /* (37)  2
+  #TAB 'Acc-Cd'      /* (38)  2
+  #TAB 'Ann-Meet-Cd' /* (39)          /* PM99
+  #TAB 'Salutation'  /* (40)
+  #tab 'Term Refund' /* (41)          /*  vt1
+  INTO #REC-250 LEAVING NO
+PERFORM CHECK-OVER-125
+PERFORM BUILD-CONTACT-FILE
+WRITE WORK FILE 2 #PARTY-FILE
+*
+* label policy-file fields
+*
+COMPRESS  'Pol#'     /* (1)
+  #TAB 'CN'          /* (2)
+  #TAB 'Iss-Dt'      /* (3)
+  #TAB 'Plan'        /* (4)
+  #TAB 'Class'       /* (5)
+  #TAB 'Subrated'    /*                              /* vt2
+  #TAB 'Duration'    /* (6)
+  #TAB 'Version'     /* "OLD/NEW/NXT /* (7)          /* vt4 was 'Type'
+  #TAB 'Mode'        /* (8)
+  #TAB 'Tobac'       /* (9)
+  #TAB 'IssAge'      /* (10)
+  #TAB 'Stat'        /* (11)
+  #TAB 'Pad-Cd'      /* (12)
+  #TAB 'PaySt'       /* (13)
+  #TAB 'PdToDt'      /* (14)
+  #TAB 'PdUpDt'      /* (15)
+  #TAB 'AnnPrem'     /* (16)
+  #TAB 'FaceAmt'     /* (17)
+  #TAB 'CAP'         /* (18)
+  #TAB 'FxLnDt'      /* (19)
+  #TAB 'FxLnAmt'     /* (20)
+  #TAB 'FxAccInt'    /* (21)
+  #TAB 'FxIntRt'     /* (22)
+  #TAB 'VrLnDt'      /* (23)
+  #TAB 'VrLnAmt'     /* (24)
+  #TAB 'VrAccInt'    /* (25)
+  #TAB 'VrIntRt'     /* (26)
+  #TAB 'CSV'         /* (27)
+  #TAB 'DB'          /* (28)
+  INTO #REC-250 LEAVING NO
+PERFORM CHECK-OVER-125-POL
+*
+COMPRESS #REC-250
+  #TAB 'Art-DB'      /* (29)    Artificilally Inflated DB
+  #TAB 'Unpaid-Dep'  /* (30)    FPF
+  #TAB 'Pol-Restr'   /* (31)    Policy WEB Restrict Code
+  #TAB 'Rated-Prem'  /* (32)    Premium Rating
+  #TAB 'Rid-Code'    /* (33)    Rider Code
+  #TAB 'MEC-Ind'     /* (34)    MEC Indicator
+  #TAB 'Payor'       /* (35)    Payor CN or "N" for 2nd addr
+  #TAB 'Owner-CN'    /* (36)    OWNER CN(S)
+  #TAB 'Mbr-cn'      /* (37)    Linked Mbr or Member
+  #TAB '1035amt'     /* (38)    1035 exchange amount
+  #TAB 'LumpSum'     /* (39)    Additional Lump Sum
+  #TAB 'ExtraPrms'   /* (40)    Extra Premiums Paid
+  INTO #REC-250 LEAVING NO
+PERFORM CHECK-OVER-125-POL
+*
+COMPRESS #REC-250
+  #TAB 'Ann Dues'    /* (41)    Annual Dues
+  #TAB 'BADJ'        /* (42)    Billing Adjustment
+  #TAB 'TPP'         /* (43)    Tot-Prem-Pd
+  #TAB 'F-ALP-IND'   /* (44)    Fixed ALP-IND
+  #TAB 'V-ALP-IND'   /* (45)    Var ALP-IND
+  INTO #REC-250 LEAVING NO
+PERFORM CHECK-OVER-125-POL
+PERFORM BUILD-POLICY-FILE
+WRITE WORK FILE 4 #POLICY-FILE
+*
+* label relations file fields
+*
+COMPRESS  'CN-Key'       /* (1)  10 XXXXX-1-SPS 2-FMR SPS 3-KID1 4-KID2
+  #TAB 'CN'              /* (2)  2  S-SPS X-fmr sps D-DEPN
+  #TAB 'Rel'             /* (3)  2  S-SPS X-fmr sps D-DEPN
+  #TAB 'SSN'             /* (4)  12
+  #TAB 'Name'            /* (5)  26
+  #TAB 'DOB'             /* (6)  11
+  INTO #RELATIONS-FILE LEAVING NO
+WRITE WORK FILE 3 #RELATIONS-FILE
+*
+* label Acct-Tran-file fields
+COMPRESS  'Pol#'      /* (1)
+  #TAB 'CN'          /* (2)
+  #TAB 'Date'        /* (3)
+  #TAB 'TR-Cd'       /* (4)
+  #TAB 'User'        /* (5)
+  #TAB 'Debit-amt'   /* (6)
+  #TAB 'DebitCredit' /* (7)
+  #TAB 'Pay'         /* (8)
+  #TAB 'G/LAcct#'    /* (9)
+  #TAB 'Seq-#'       /* (10)
+  #TAB 'Desc'        /* (11)
+  INTO #ACC-TRN-FILE LEAVING NO
+WRITE WORK FILE 5 #ACC-TRN-FILE
+*
+IF #DAILY-MONTHLY = 'MONTHLY' OR = 'METRANS'                  /* DW8
+*   WRITE 'Doing New CAP Loan Processing'
+*   READ WORK 9 RECORD #AFB-FILE                 /* DW12
+*     ADD 1 TO #AFB-CNT
+*     IF #AFB-CNT = 1  /* bypass header rec
+*       ESCAPE TOP
+*     END-IF
+* * write #afb-ssn-a #afb-lname #afb-fname #afb-account #afb-amount #afb-effdate
+*     SEPARATE #AFB-FILE LEFT INTO
+*       #AFB-SSN-A
+*       #AFB-LNAME
+*       #AFB-FNAME
+*       #AB-MNAME
+*       #AFB-ACCOUNT
+*       #AFB-CHECK
+*       #AFB-TRANCODE
+*       #AFB-AMOUNT
+*       #AFB-EFFDATE
+*       #AFB-DESC
+*       WITH DELIMITER #TAB
+* *
+*     RESET #ST-FND
+*     FIND ST-V WITH SSN = #AFB-SSN
+*       MOVE ST-V.ID-NUMBER TO #CN-TO-USE
+*       MOVE TRUE TO #ST-FND
+*       ESCAPE BOTTOM
+*     END-FIND
+* *
+*     IF NOT #ST-FND
+*       MOVE 999999 TO #CN-TO-USE
+*       RESET ST-V
+*     END-IF
+* *
+*     FOR #I1 1 TO 9
+*       IF CONV-DURATION (#I1) = 999  /* CAP policy should always exist
+*         ESCAPE BOTTOM
+*       END-IF
+*     END-FOR
+* *
+*     IF #I1 GT 9
+*       MOVE 1 TO #I1
+*     END-IF
+* *
+*     CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1
+*     MOVE #AFB-AMOUNT TO #DISP-11
+*     MOVE 1 TO #TR-SEQ
+* *
+*     COMPRESS #POL-NUM      /* (1)
+*       #TAB #CN-TO-USE      /* (2)
+*       #TAB #ME-DATE-DISP   /* (3)    entry-date
+*       #TAB 'CASH'          /* (4)
+*       #TAB 'EDS'           /* (5)
+*       #TAB #DISP-11        /* (6)
+*       #TAB 'C'             /* (7)
+*       #TAB '$'             /* (8)
+*       #TAB '1010'          /* (9)  G/L Account #
+*       #TAB #TR-SEQ         /* (10)
+*       #TAB 'CAPLOANS'       /* (11)
+*       INTO #ACC-TRN-FILE LEAVING NO
+* *
+*     WRITE WORK FILE 5 #ACC-TRN-FILE
+*     ADD 1 TO #NUM-RECS-ACC-TRN
+*   END-WORK
+* *
+*   WRITE 'Doing Crd Card Processing'
+*   READ WORK 10 RECORD #CC-APPLIED                 /* DW12
+*     ADD 1 TO #CC-CNT
+*     IF #CC-CNT = 1  /* bypass header rec
+*       ESCAPE TOP
+*     END-IF
+* *
+* *   write #cc-cn #cc-pol-num #cc-tran-code #cc-tran-amt
+* *
+*     SEPARATE #CC-APPLIED LEFT INTO               /* DW17
+*       #CC-CNT-3
+*       #CC-ID-NUMBER
+*       #CC-POL-NUMBER
+*       #CC-INP-DT-APPLIED-N
+*       #CC-INP-TR-CD
+*       #CC-INP-ISS-DT
+*       #CC-INP-PLAN
+*       #CC-AMOUNT
+*       #CC-NAME
+*       #CC-MASK-CC-NUM
+*       #CC-CC-EXP-DT
+*       #CC-AVC-DESCRIPTION
+*       WITH DELIMITER #TAB
+*     COMPRESS '-' #CC-AMOUNT INTO #DISP-11 LEAVING NO   /* END DW17
+* *
+*     IF  (#CC-CNT-3 = '#N')
+*         OR (#CC-CNT-3 = MASK ('Total'))
+*         OR (#CC-CNT-3 = MASK ('Grand'))
+*       ESCAPE TOP
+*     END-IF
+* *
+*     MOVE 1 TO #TR-SEQ
+* *
+*     COMPRESS #CC-POL-NUMBER /* (1)    POL #        /* DW17
+* *    #TAB #CC-CN             /* (2)
+*       #TAB #CC-ID-NUMBER      /* (2)                 /* DW17
+*       #TAB #ME-DATE-DISP      /* (3)    entry-date
+*       #TAB 'CASH'             /* (4)
+*       #TAB 'EDS'              /* (5)
+*       #TAB #DISP-11           /* (6)
+*       #TAB 'D'                /* (7)
+*       #TAB 'C'                /* (8)
+*       #TAB '1010'             /* (9)  G/L Account #
+*       #TAB #TR-SEQ            /* (10)
+*       #TAB 'CC TRANS'         /* (11)
+*       INTO #ACC-TRN-FILE LEAVING NO
+* *
+*     WRITE WORK FILE 5 #ACC-TRN-FILE
+*     ADD 1 TO #NUM-RECS-ACC-TRN
+*   END-WORK                                    /* END DW12
+* *
+* * stop /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+* *
+*   READ WORK 7 RECORD #DFAS     /* No longer used  put back in
+*     PERFORM DFAS-REC    /* Writes Output to File 11
+*   END-WORK
+* *
+*   READ WORK 8 RECORD #PADFILE                            /* DW8
+*    ADD 1 TO #NUM-pad-REC
+*    PERFORM PADFILE-REC
+*  END-WORK
+/* Do Next month M/E otherwise do last Month M/E
+  MOVE *DATN TO #YYYYMMDD
+  IF #DD GT 15
+    ADD 1 TO #MM
+    IF #MM GT 12
+      SUBTRACT 12 FROM #MM
+      ADD 1 TO #YYYY
+    END-IF
+  END-IF
+*
+  MOVE 1 TO #DD
+  MOVE #YYYYMMDD TO #TR-END-DT
+*
+  SUBTRACT 1 FROM #MM
+  IF #MM LT 1
+    ADD 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+  MOVE 26 TO #DD     /* To get end of month trans    DW18
+  MOVE #YYYYMMDD TO #TR-START-DT
+  WRITE 'Month-End TR Start-Date =' #TR-START-DT
+    'TR End-Date =' #TR-END-DT
+ELSE                                                 /* END DW8
+  MOVE #TR-DATE TO #TR-START-DT
+  MOVE #TR-DATE TO #TR-END-DT
+END-IF
+*
+* RESET #LAST-TR-CN #TR-SEQ
+* READ MULTI-FETCH OF 20 TR-V LOGICAL BY TRANSACTION-DATN
+*     STARTING FROM #TR-START-DT TO #TR-END-DT
+* **READ  TR-V BY TRANSACTION-DATN FROM #TR-START-DT THRU #TR-END-DT   /* --db
+*   IF #DAILY-MONTHLY = 'MONTHLY' OR = 'METRANS'                  /* DW8
+*     IF TR-V.MONTH-END NE 'Y'     /* ONLY do M/E trans on the TR File
+*       ESCAPE TOP
+*     END-IF
+*   ELSE      /* Daily
+*     IF TR-V.MONTH-END NE ' '                             /* PM4
+*       ESCAPE TOP                                         /* PM4
+*     END-IF                                               /* PM4
+*   END-IF
+* *
+*   IF TR-V.DESCRIPTION = 'TOTAL CASH'                   /* PM6
+*     ESCAPE TOP                                         /* PM6
+*   END-IF                                               /* PM6
+* *
+*   IF TR-V.ID-NUMBER = #LAST-TR-CN
+*     ADD 1 TO #TR-SEQ
+*   ELSE
+* *   PERFORM CHECK-TOT-CASH     /* No More Cash Trans   DW8
+*     MOVE 1 TO #TR-SEQ
+*   END-IF
+* *
+*   MOVE TR-V.ID-NUMBER TO #LAST-TR-CN
+* *
+*   IF ((DEBIT-AMOUNT = 0) AND (CREDIT-AMOUNT = 0))
+*     SUBTRACT 1 FROM #TR-SEQ
+*     ESCAPE TOP
+*   END-IF
+* *
+*   RESET #YYYYMMDD
+*   MOVE 1 TO #I1
+*   IF DESCRIPTION = MASK (MMDDYYYY)
+*     COMPRESS DESC-YYYY-X DESC-MM-X DESC-DD-X INTO #YYYYMMDD-A LEAVING NO
+*   ELSE
+*   IF DESCRIPTION = MASK (YYYYMMDD)                                /* DW7
+*     COMPRESS DESC-YYYY-Y DESC-MM-Y DESC-DD-Y INTO #YYYYMMDD-A LEAVING NO
+*     ELSE
+*       IF DESCRIPTION = MASK ('IRT')
+*         COMPRESS DESC-YYYY-IRT DESC-MM-IRT DESC-DD-IRT
+*           INTO #YYYYMMDD-A LEAVING NO
+*       ELSE
+*         IF DESCRIPTION = MASK ('CAP MBR')
+*           COMPRESS DESC-YYYY-CAP DESC-MM-CAP DESC-DD-CAP
+*             INTO #YYYYMMDD-A LEAVING NO
+*         ELSE
+*           IF DESCRIPTION = MASK (YYYY'/'MM'/'DD)
+*           COMPRESS DESC-YYYY DESC-MM DESC-DD INTO #YYYYMMDD-A LEAVING NO
+*           END-IF
+*         END-IF
+*       END-IF
+*     END-IF
+*   END-IF
+* *
+*   MOVE 1 TO #I1
+*   IF #YYYYMMDD-A = MASK (YYYYMMDD)
+*     FIND (1) ST-V WITH MEMBER-KEY = TR-V.ID-NUMBER-A
+*       FOR #I1 1 TO 9
+*         RESET #TERM
+*         IF FUNCTION-TERM-POLICY(<PLAN(#I1)>)                     /* YK5
+*           MOVE TRUE TO #TERM
+*         END-IF
+* *
+*         IF  ((ST-V.ISSUE-DATE (#I1) = #YYYYMMDD)
+*             AND (AALP-FLAG = 'T') AND #TERM)
+*             OR ((ST-V.ISSUE-DATE (#I1) = #YYYYMMDD)
+*             AND (AALP-FLAG = 'W') AND NOT #TERM)
+*             OR ((ST-V.ISSUE-DATE (#I1) = #YYYYMMDD)
+*             AND (NOT AALP-FLAG = 'W' OR =' T'))
+*           ESCAPE BOTTOM
+*         END-IF
+*       END-FOR
+* *
+*       IF #I1 GT 9
+*         MOVE 1 TO #I1
+*       END-IF
+*     END-FIND
+*   END-IF
+* *
+*   MOVE TR-V.TRANSACTION-DATN TO #YYYYMMDD
+*   COMPRESS #MM-A #DD-A #YYYY-A INTO #DATE-DISP WITH '/'
+*   MOVE TR-V.TXN-CODE TO #TRAN-CODE-IN
+* *
+*   IF SG-CATEGORY-1 (2) NE ' '
+*     WRITE TR-V.ID-NUMBER TR-V.TXN-CODE 'Multiple SG Breakout'
+*   END-IF
+* *
+*   IF   (TR-V.TXN-CODE = 'BADJ')                               /* DW8
+*       AND (SG-CATEGORY-1 (1) = 'UN')
+*     RESET SG-CATEGORY-1 (1)
+*   END-IF
+* *
+*   IF SG-CATEGORY-1 (1) = '**' OR = 'DC'
+*     RESET #CAT-1-IN
+*   ELSE
+*     MOVE SG-CATEGORY-1 (1) TO #CAT-1-IN
+*   END-IF
+* *
+*   MOVE TR-V.ID-NUMBER TO #CN-IN
+*   PERFORM GET-ACCT#
+* *
+*   IF TR-V.POLICY-NUMBER NE ' '                  /* DW11
+*     MOVE TR-V.POLICY-NUMBER TO #POL#   /* Use POL # from TR FILE
+*   ELSE
+*     CALLNAT 'GPLNMSXX' #POL# TR-V.ID-NUMBER #I1 /* build POL-#
+*   END-IF
+* *
+*   COMPRESS  #POL#              /* (1)
+*     #TAB TR-V.ID-NUMBER         /* (2)
+*     #TAB #DATE-DISP             /* (3)
+*     #TAB #TRAN-CODE-IN          /* 4            /* PM16
+*     #TAB TR-V.CLERK-ID          /* (5)
+*     INTO #ACC-TRN-FILE LEAVING NO
+* *
+*   IF SG-AMOUNT (2) NE 0
+*     DISPLAY TR-V.ID-NUMBER TXN-CODE
+*       'CAT/1'  SG-CATEGORY-1 (1:3)
+*       'CAT/2'  SG-CATEGORY-2 (1:3)
+*       'amt'    SG-AMOUNT (1:3)
+*       'Debit'  TR-V.DEBIT-AMOUNT
+*       'Credit' TR-V.CREDIT-AMOUNT
+*       'DESC'   DESCRIPTION
+*   END-IF
+* *
+*   RESET #DISP-11 #DC-IND
+*   IF TR-V.DEBIT-AMOUNT NE 0
+*     MOVE 'D' TO #DC-IND
+*     MOVE EDITED TR-V.DEBIT-AMOUNT (EM=ZZZ,ZZZ.99) TO #DISP-11
+*     MOVE LEFT #DISP-11 TO #DISP-11
+*     COMPRESS '-' #DISP-11 INTO #DISP-11 LEAVING NO
+* *
+*   ELSE
+*     IF TR-V.CREDIT-AMOUNT NE 0
+*       MOVE 'C' TO #DC-IND
+*       MOVE EDITED TR-V.CREDIT-AMOUNT (EM=ZZZ,ZZZ.99) TO #DISP-11
+* *
+*     END-IF
+*   END-IF
+*   MOVE LEFT #DISP-11 TO #DISP-11
+* *
+*   MOVE CASH-CODE TO #PAY
+*   IF CASH-CODE = 'G' MOVE 'AL' TO #PAY END-IF     /* DW8
+*   IF CASH-CODE = 'E' MOVE 'EZ' TO #PAY END-IF     /* DW8
+* *
+*   COMPRESS #ACC-TRN-FILE #TAB #DISP-11 /* (6)
+*     #TAB #DC-IND          /* (7)
+*     #TAB #PAY             /* (8)
+*     #TAB #ACCT-NUM-OUT    /* (9)
+*     #TAB #TR-SEQ          /* (10)
+*     #TAB TR-V.DESCRIPTION /* (11)
+*     INTO #ACC-TRN-FILE LEAVING NO
+* *
+*   WRITE WORK FILE 5 #ACC-TRN-FILE
+*   ADD 1 TO #NUM-RECS-ACC-TRN
+* *
+*   PERFORM DISPLAY-5
+* END-READ
+*
+READ MULTI-FETCH OF 20 ST-V LOGICAL BY ID-NUMBER
+    STARTING FROM 1900
+
+**READ ST-V BY ID-NUMBER FROM  1900              /* --db
+*   IF #DAILY-MONTHLY = 'MONTHLY' OR = 'METRANS'                /* DW9
+*     IF ST-V.ALOT-AMT NE 0
+*       MOVE EDITED ST-V.ALOT-AMT (EM=Z,ZZZ.99) TO #DISP-11
+*       MOVE LEFT #DISP-11 TO #DISP-11
+*       COMPRESS '-' #DISP-11 INTO #DISP-11 LEAVING NO
+*       MOVE 1 TO #TR-SEQ
+* *
+*       COMPRESS              /* (1)  POL # Does not apply
+*         #TAB ST-V.ID-NUMBER  /* (2)
+*         #TAB #ME-DATE-DISP   /* (3)    entry-date
+*         #TAB 'CASH'          /* (4)
+*         #TAB 'EDS'           /* (5)
+*         #TAB #DISP-11        /* (6)
+*         #TAB 'D'             /* (7)
+*         #TAB 'AL'            /* (8)
+*         #TAB '1010'          /* (9)  G/L Account #
+*         #TAB #TR-SEQ         /* (10)
+*         #TAB 'DFAS'          /* (11)
+*         INTO #ACC-TRN-FILE LEAVING NO
+*       WRITE WORK FILE 5 #ACC-TRN-FILE
+*       ADD 1 TO #NUM-RECS-ACC-TRN
+*     END-IF
+*   END-IF
+*
+  IF #DAILY-MONTHLY = 'METRANS'                /* DW9
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #RECS-READ
+*
+  CALLNAT 'CVALUSXX'
+    ST-V.ID-NUMBER
+    #SUFF
+    #TODAY-YYYYMMDD  /* use the next day for acc interest
+    #LOAN-BAL   (1:9)
+    #LOAN-BAL-2 (1:9)
+    #ACC-INT    (1:9)
+    #ACC-INT-2  (1:9)
+    #CSVALU     (1:9)
+    #CVALUE     (1:9)
+    #LVALUE     (1:9)
+    #MCSV       (1:9)
+    #DB         (1:9)
+    #ANN-PREMIUM  (1:9)
+    #FACE-AMT   (1:9)
+    #TPP        (1:9)
+*
+  MOVE ST-V.ID-NUMBER TO #ID-NUMBER
+*
+  MOVE ST-V.NAME TO #NAME
+  RESET #LAST #MI #FIRST-20
+  CALLNAT 'GFMLNSXX' /* split name
+    #NAME
+    #FIRST-20
+    #MI
+    #LAST
+    #ERR-MSG
+*
+  SEPARATE #LAST INTO #LAST #SUFFIX WITH DELIMITER ','
+*
+  RESET #STREET #STREET-2 #CITY #STATE
+*
+  RESET #PDA-ADDRESS                           /* JT1
+  #ADD-TYPE        := 'P'                      /* JT1
+  #ADD-CONTACT-ID := ST-V.MEMBER-CONTACT-ID    /* JT1
+  CALLNAT 'ADDN0001' #PDA-ADDRESS              /* JT1
+*
+  #CITY     := #ADD-CITY
+  #STREET := #ADD-LINE-1
+*
+  IF #ADD-LINE-3 = ' '                /*  bz_OI-2975
+    RESET #ADD-LINE-2                 /*  bz_OI-2975
+  ELSE                                /*  bz_OI-2975
+    #STREET-2 := #ADD-LINE-2          /*  bz_OI-2975
+  END-IF                              /*  bz_OI-2975
+
+  IF #ADD-COUNTRY = 'UNITED STATES'
+    #STATE    := #ADD-STATE
+    #ZIP-CODE := #ADD-ZIP-CODE
+  ELSE
+    #CITY := #ADD-LINE-3
+    RESET #STATE #ZIP-CODE
+  END-IF
+*   MOVE TRUE TO #FR-FOUND
+*   FIND (1) FR-V WITH MEMBER-KEY = ST-V.ID-NUMBER-A
+*     IF NO RECORDS FOUND
+*       RESET #FR-FOUND
+*     END-NOREC
+*   END-FIND
+*
+  RESET #PAR-125-1 #PAR-125-2 #PAR-125-3
+  RESET #RELATIONS-FILE #POLICY-FILE
+*
+  IF  (#DAILY-MONTHLY = 'OLTRANS' OR = 'METRANS'
+      OR = 'SKIP')                        /* YK2
+*   OR (#DAILY-MONTHLY = 'DAILY') AND (*TIMN GT 1200000)  /* YK1
+/* commented out to reschedule job DSDCTH10 to run daily at 9:00 p.m.
+    ESCAPE BOTTOM
+  END-IF
+*
+  PERFORM PARTY-DATA
+*
+*  PERFORM RELATIONS-DATA
+*
+  CALLNAT 'GOWNRSXX' ST-V.ID-NUMBER
+    #NON-INS-OWNER
+    #MULTIPLE-OWNER
+    #OWNER-OCC-9 (1:9)
+*
+  FOR #I1 1 TO 9
+    IF STATUS (#I1) NE ' '  /* give active & terminated pols
+      PERFORM POLICY-DATA
+    END-IF
+  END-FOR
+END-READ
+
+*
+WRITE  'TOT-RECS-READ         =' #RECS-READ
+WRITE  'TOT-RECS-updated      =' #RECS-UPDATED
+WRITE  'NUMBER Party recs     =' #NUM-RECS-PARTY
+WRITE  'NUMBER Policy    recs =' #NUM-RECS-POL
+WRITE  'NUMBER Relations recs =' #NUM-RECS-REL
+WRITE  'NUMBER Acc Trns  recs =' #NUM-RECS-ACC-TRN
+WRITE  'NUMBER M/E sungard recs' #ME-SUNGARD-READ
+*
+WRITE  'Num OLD pols       = ' #TOT-OLD
+WRITE  'Num NEW pols       = ' #TOT-NEW
+WRITE  'Num NXT pols       = ' #TOT-NXT
+WRITE  'Num TERM pols      = ' #TOT-TRM
+WRITE  'Num SO pols        = ' #TOT-SO
+*
+***********************************************************************
+DEFINE SUBROUTINE PARTY-DATA
+***********************************************************************
+*
+IF F-CONTACT-INFO(<MEMBER-CONTACT-ID,F-CONTACT-DATA>)       /* RE1 Start
+  IGNORE
+END-IF
+*
+IF #CONT-SSN = 0                                           /* RE1 End
+  RESET #SSN-DISP
+ELSE
+  MOVE EDITED #CONT-SSN (EM=999-99-9999) TO #SSN-DISP      /* RE1
+END-IF
+*
+IF #CONT-DOB = 0                                           /* RE1
+  RESET #DOB-DISP
+ELSE
+  MOVE #CONT-DOB TO #YYYYMMDD                              /* RE1
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #DOB-DISP WITH '/'
+END-IF
+*
+COMPRESS
+  ST-V.ID-NUMBER                            /* (1)
+  #TAB #SSN-DISP                                 /* (2)   /* RE1 Start
+  #TAB #CONT-LAST-NAME
+  #TAB #CONT-FIRST-NAME
+  #TAB #CONT-MIDDLE-NAME
+  #TAB #CONT-SUFFIX                                       /* RE1 End
+  #TAB ST-V.RANK                                 /* (7)
+  #TAB #STREET  #TAB #STREET-2                   /* (8/9)
+  #TAB #CITY #TAB #STATE #TAB  #ZIP-CODE-5-A     /* (10/11/12)
+  INTO #REC-250 LEAVING NO
+IF #ZIP-CODE-4 NE 0
+  COMPRESS #REC-250 '-' #ZIP-CODE-4-A             /* (12)
+    INTO #REC-250 LEAVING NO
+END-IF
+*
+IF PROCESS-IND = 'C'
+  IF INTRO-FLAG = 'A'  /* PENDING APP
+    MOVE 'A' TO #PARTY-CD
+  ELSE
+    MOVE 'O' TO #PARTY-CD
+  END-IF
+ELSE
+  IF INTRO-FLAG = 'S'
+    MOVE 'S' TO #PARTY-CD
+  ELSE
+    IF INTRO-FLAG = 'K'
+      MOVE 'C' TO #PARTY-CD
+    ELSE
+      IF INTRO-FLAG = 'G'
+        MOVE 'G' TO #PARTY-CD
+      ELSE
+        IF MILITARY-SERVICE = 'EMP'
+          MOVE 'E' TO #PARTY-CD
+        ELSE
+          MOVE 'M' TO #PARTY-CD
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+IF INTRO-FLAG = 'C' OR = 'I' OR = 'P' OR = 'Q'
+  MOVE 'Y' TO #CAP-CD
+ELSE
+  MOVE 'N' TO #CAP-CD
+END-IF
+*
+IF INTRO-FLAG = 'I' OR = 'B' OR = 'Q'
+  MOVE 'Y' TO #INTRO-CD
+ELSE
+  MOVE 'N' TO #INTRO-CD
+END-IF
+*
+IF PROCESS-IND = 'G'
+  MOVE 'G' TO #SVC-CD
+ELSE
+  IF PROCESS-IND = 'D'
+    MOVE 'D' TO #SVC-CD
+  ELSE
+    IF PROCESS-IND = 'O'
+      MOVE 'O' TO #SVC-CD
+    ELSE
+      IF  (INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+          OR (MILITARY-SERVICE  = 'EMP')
+          OR (PROCESS-IND = 'C')
+        MOVE 'N' TO #SVC-CD
+      ELSE
+        MOVE 'I' TO #SVC-CD
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DOB-DISP                               /* (13)
+  #TAB #PARTY-CD                               /* (14)
+  #TAB #CAP-CD                                 /* (15)
+  #TAB #INTRO-CD                               /* (16)
+  #TAB #SVC-CD                                 /* (17)
+*  #TAB ST-V.SEX                                /* (18)
+  #TAB #CONT-GENDER-CD                  /* RE1
+  #TAB ST-V.PROXY                              /* (19)
+  #TAB ST-V.MILITARY-STATUS                    /* (20)
+  #TAB ST-V.MILITARY-SERVICE                   /* (21)
+  INTO #REC-250 LEAVING NO
+PERFORM CHECK-OVER-125
+*
+MOVE BASE-PAY-EF-DATE TO #YYYYMMDD
+PERFORM DATE-CONVERT
+COMPRESS #REC-250
+  #TAB #DATE-DISP   /* PEBD                    /* (22)
+  INTO #REC-250 LEAVING NO
+MOVE ACTIVE-DUTY-BASE-DATE TO #YYYYMMDD
+PERFORM DATE-CONVERT
+COMPRESS #REC-250
+  #TAB #DATE-DISP   /* BASD                    /* (23)
+  INTO #REC-250 LEAVING NO
+MOVE DATE-OF-RANK TO #YYYYMMDD
+PERFORM DATE-CONVERT
+COMPRESS #REC-250
+  #TAB #DATE-DISP    /* date-of-rank           /* (24)
+  INTO #REC-250 LEAVING NO
+
+* YK7
+* RESET #INTERNET-ADDR                    /* PM
+* IF INTERNET-ADDR NE MASK ('999')        /* PM
+*   MOVE INTERNET-ADDR TO #INTERNET-ADDR  /* PM
+* END-IF                                  /* PM
+#INTERNET-ADDR := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)
+PERFORM CHECK-OVER-125
+
+COMPRESS #REC-250 #TAB #INTERNET-ADDR                     /* (25)
+  INTO #REC-250 LEAVING NO
+PERFORM CHECK-OVER-125
+
+PERFORM sbr_Get_CHBO_Phones                           /* bz
+COMPRESS #REC-250 #TAB  v_PH_H
+  #TAB  v_PH_B
+  #TAB  v_PH_C
+  #TAB  v_PH_O     /* (26,27,28,29)
+  INTO #REC-250 LEAVING NO
+* ------------------------------------------------------------------ Phones
+*
+IF DEBIT-CREDIT-AMT = 0
+  RESET #DISP-11
+ELSE
+  MOVE EDITED DEBIT-CREDIT-AMT (EM=-ZZZ,ZZZ.99) TO #DISP-11
+  MOVE LEFT #DISP-11 TO #DISP-11
+END-IF
+*
+COMPRESS #REC-250 #TAB  #DISP-11                       /* (30)
+  INTO #REC-250 LEAVING NO
+*
+MOVE MBR-SINCE TO #YYYYMM
+COMPRESS #MM-A #YYYY-A INTO #DATE-DISP WITH '/'
+COMPRESS #REC-250 #TAB  #DATE-DISP                      /* 31)
+  INTO #REC-250 LEAVING NO
+*
+**IF DATE-OF-DEATH NE 0
+IF #CONT-DOD NE 0                               /* RE1
+  MOVE 'D' TO #ACTIVE
+ELSE
+  IF PROCESS-IND = 'C' AND INTRO-FLAG = 'A'
+    MOVE 'P' TO #ACTIVE
+  ELSE
+    IF   (ST-V.NUMBER-MEMBERSHIPS = 0)
+        AND (PROCESS-IND NE 'C')
+      MOVE 'I' TO #ACTIVE
+    ELSE
+      MOVE 'A' TO #ACTIVE
+    END-IF
+  END-IF
+END-IF
+*
+**MOVE DATE-OF-DEATH TO #YYYYMMDD
+MOVE #CONT-DOD TO #YYYYMMDD                     /* RE1
+PERFORM DATE-CONVERT
+
+p_Name := 'S0'
+CALLNAT 'GPRS0CNT' ST-V.MEMBER-CONTACT-ID p_Name
+EXAMINE p_Name FOR 'Dear' DELETE
+p_Name := *TRIM(p_Name)
+*
+reset #tot-trmf-amt  #tot-trmf-amt-a                                      /* vt1 \/
+for #k 1 to ST-v.C*out-term-ref-group
+  add st-v.out-term-ref-amount  (#k) to #TOT-trmf-amt
+end-for
+IF  #tot-trmf-amt NE 0
+  move edited #tot-trmf-amt (em=zzz,zzz,zz9.99) to #tot-trmf-amt-a
+END-IF                                                                    /* vt1 /\
+*
+COMPRESS #REC-250
+  #TAB #DATE-DISP      /* DOD                           /* (32)
+  #TAB SUSPEND-CODE    /* Suspend-Code                  /* (33)
+  #TAB #MBR-RESTRICT-CODE /* WEB Restricvted Code       /* (34)
+  #TAB ANNUAL-RPT-FLAG /* Ann Rpt Code                  /* (35)
+  #TAB INS-MAIL-CODE   /* Insurance Mail Code           /* (36)
+*  #TAB ADDRESS-CHG-CODE                                 /* (37)    /* JT1 PENDING RESEARCH
+  #TAB #ACTIVE         /* Actice/Inactive IND           /* (38)
+  #TAB ACCESS-AUTH-CODE                                 /* (39)
+  #TAB DATE-BOOK                       /* PM99 /*          (40)
+  #TAB p_Name                         /* bz                (41)
+  #tab #tot-trmf-amt-a                                                  /* vt1
+  INTO #REC-250 LEAVING NO
+*
+PERFORM CHECK-OVER-125
+PERFORM BUILD-CONTACT-FILE
+WRITE WORK FILE 2 #PARTY-FILE
+ADD 1 TO #NUM-RECS-PARTY
+ADD 1 TO #CNT-2
+DISPLAY (2) #CNT-2 'CN' ST-V.ID-NUMBER
+*            'name' NAME
+  'name' #CONT-FMTD-NAME             /* RE1
+  'Proc/Ind' ST-V.PROCESS-IND
+  'Int/Flag' INTRO-FLAG
+  'MBR/Since' MBR-SINCE
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE RELATIONS-DATA
+***********************************************************************
+*
+IF  (MILITARY-SERVICE = 'EMP')             /* Employee
+    OR (INTRO-FLAG = 'S' OR = 'K' OR = 'G')   /* sps/gen
+    OR (INTRO-FLAG = 'A')                     /* Pending AT
+    OR (PROCESS-IND = 'C')                    /* Owner or Pending at
+  ESCAPE ROUTINE
+END-IF
+*
+RESET #REL-DATA
+IF NAME-SP NE ' '
+  IF F-CONTACT-INFO(<SPOUSE-CONTACT-ID,F-CONTACT-DATA>)       /* RE1 Start
+    IGNORE
+  END-IF
+  IF #CONT-FMTD-NAME NE ' '
+    MOVE #CONT-FMTD-NAME TO #NAME-SP
+  ELSE
+    MOVE ALL 'X' TO #NAME-SP
+    MOVE ALL 'X' TO #CONT-FMTD-NAME
+  END-IF
+*
+  IF #CONT-FIRST-NAME NE 'NONE'
+    MOVE TRUE TO #REL-DATA
+    IF #CONT-SSN = 0
+      RESET #SSN-DISP
+    ELSE
+      MOVE EDITED #CONT-SSN (EM=999-99-9999) TO #SSN-DISP
+    END-IF
+*
+    IF #CONT-DOB = 0
+      RESET #DOB-DISP
+    ELSE
+      MOVE #CONT-DOB TO #YYYYMMDD
+      COMPRESS #MM-A #DD-A #YYYY-A INTO #DOB-DISP WITH '/'
+    END-IF                                                    /* RE1 End
+*
+    COMPRESS ST-V.ID-NUMBER '-F1'
+      #TAB ST-V.ID-NUMBER
+      #TAB 'S'         /* Spouse
+      #TAB #SSN-DISP
+*      #TAB NAME-SP                             /* RE1
+      #TAB #CONT-FMTD-NAME                      /* RE1
+      #TAB #DOB-DISP
+      INTO #RELATIONS-FILE LEAVING NO
+    WRITE WORK FILE 3 #RELATIONS-FILE
+    ADD 1 TO #NUM-RECS-REL
+  END-IF
+END-IF
+*
+IF FORMER-SPOUSE-NAME NE ' '
+  IF F-CONTACT-INFO(<FORMER-SPOUSE-CONTACT-ID,F-CONTACT-DATA>)       /* RE1 Start
+    IGNORE
+  END-IF
+  IF #CONT-FMTD-NAME = ' '
+    MOVE ALL 'X' TO #CONT-FMTD-NAME
+  END-IF
+*
+  IF #CONT-FIRST-NAME NE 'NONE'
+    MOVE TRUE TO #REL-DATA
+    IF #CONT-SSN = 0
+      RESET #SSN-DISP
+    ELSE
+      MOVE EDITED #CONT-SSN (EM=999-99-9999) TO #SSN-DISP
+    END-IF
+*
+    IF #CONT-DOB = 0
+      RESET #DOB-DISP
+    ELSE
+      MOVE #CONT-DOB TO #YYYYMMDD
+      COMPRESS #MM-A #DD-A #YYYY-A INTO #DOB-DISP WITH '/'
+    END-IF                                                    /* RE1 End
+*
+    COMPRESS ST-V.ID-NUMBER '-F2'
+      #TAB ST-V.ID-NUMBER
+      #TAB 'X'         /* Former Spouse
+      #TAB #SSN-DISP
+*      #TAB FORMER-SPOUSE-NAME
+      #TAB #CONT-FMTD-NAME                                    /* RE1
+      #TAB #DOB-DISP
+      INTO #RELATIONS-FILE LEAVING NO
+    WRITE WORK FILE 3 #RELATIONS-FILE
+    ADD 1 TO #NUM-RECS-REL
+  END-IF
+END-IF
+*
+* IF #FR-FOUND
+*   MOVE 2 TO #I2
+*   FOR #I1 1 TO 14
+*     IF (FR-V.DEPN-SSN (#I1) NE 0) OR (FR-V.DEPN-NAME (#I1) NE ' ')
+* IF F-CONTACT-INFO(<DEPN-CONTACT-ID(#I1),F-CONTACT-DATA>)       /* RE1 Start
+*         IGNORE
+*       END-IF
+*       MOVE TRUE TO #REL-DATA
+*       ADD 1 TO #I2
+*       MOVE EDITED #I2 (EM=Z9) TO #DISP-2
+*       MOVE LEFT #DISP-2 TO #DISP-2
+* *
+*       IF #CONT-SSN = 0
+*         RESET #SSN-DISP
+*       ELSE
+*         MOVE EDITED #CONT-SSN (EM=999-99-9999) TO #SSN-DISP
+*       END-IF
+* *
+*       IF #CONT-DOB = 0
+*         RESET #DOB-DISP
+*       ELSE
+*         MOVE #CONT-DOB TO #YYYYMMDD
+*         COMPRESS #MM-A #DD-A #YYYY-A INTO #DOB-DISP WITH '/'
+*     END-IF                                                    /* RE1 End
+* *
+*       IF #CONT-FMTD-NAME = ' '
+*         MOVE ALL 'X' TO #CONT-FMTD-NAME
+*       END-IF
+* *
+*       COMPRESS ST-V.ID-NUMBER '-F' #DISP-2
+*         #TAB ST-V.ID-NUMBER
+*         #TAB 'D'            /* Dependant
+*         #TAB #SSN-DISP
+*         #TAB #CONT-FMTD-NAME
+*         #TAB #DOB-DISP
+*         INTO #RELATIONS-FILE LEAVING NO
+*       WRITE WORK FILE 3 #RELATIONS-FILE
+*       ADD 1 TO #NUM-RECS-REL
+* *
+*     END-IF
+*   END-FOR
+* END-IF
+*
+IF #REL-DATA
+  ADD 1 TO #CNT-3
+  DISPLAY (3) #CNT-3 'CN' ST-V.ID-NUMBER
+    'SPS/Name' #NAME-SP                /* RE1  Formerly NAME-SP
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE POLICY-DATA
+***********************************************************************
+*
+IF STATUS (#I1) = 'E' OR = 'F' OR = 'G' /* Inactive
+  RESET #MATCHES-A-DUP-ACT-POL
+  FOR #I2 1 TO 9
+    IF   (STATUS (#I2) = 'D')    /* Must be a split policy
+        AND (ISSUE-DATE (#I2) = ISSUE-DATE (#I1))
+        AND (PLAN       (#I2) = PLAN (#I1))
+      MOVE TRUE TO #MATCHES-A-DUP-ACT-POL
+      WRITE ST-V.ID-NUMBER ISSUE-DATE (#I1) PLAN (#I1) 'Dupl iss Date'
+        '- POL bypassed on WACC'
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF #MATCHES-A-DUP-ACT-POL
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+RESET #ANN-DUES
+CALLNAT 'GDUESSXX' ST-V.ID-NUMBER #I1 #DUES
+IF #DUES NE 0
+  COMPUTE #ANN-DUES = #DUES * 12
+END-IF
+*
+RESET #TERM
+IF FUNCTION-TERM-POLICY(<PLAN(#I1)>)                          /* YK5
+  MOVE TRUE TO #TERM
+END-IF
+*
+reset #termlt2                                     /* vt4 \/
+if f-lt2l-true(<plan(#i1)>)
+  move TRUE to #termlt2
+end-if
+*
+reset #termlt2plus
+if f-lt2plus-true(<plan(#i1)>)
+  move TRUE to #termlt2plus
+end-if                                             /* vt4 /\
+write '=' #termlt2  '=' #termlt2PLUS '=' #term
+*
+MOVE ST-V.ISSUE-DATE (#I1) TO #ISSUE-DATE
+MOVE ST-V.PLAN       (#I1) TO #PLAN
+*
+RESET #PLAN-X #CLASS #DURATION
+DECIDE ON FIRST VALUE #PLAN
+  VALUE 'SO' MOVE 'SO' TO #PLAN-X
+  VALUE 'AL' MOVE 'AL' TO #PLAN-X
+  VALUE 'AL2' MOVE 'AL' TO #PLAN-X
+  VALUE 'LT' MOVE 'L1' TO #PLAN-X
+  VALUE 'RT' MOVE 'RT' TO #PLAN-X
+  VALUE 'GP2' MOVE 'GP' TO #PLAN-X      /* TT2
+  VALUE 'EZ' MOVE 'EZ' TO #PLAN-X      /* YK6
+  VALUE 'GPL' MOVE 'GP' TO #PLAN-X     /* DW14
+  value 'GT1' move 'GT' to #plan-x                          /* vt3
+*
+  NONE
+*   IF (#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z')   /* LT2    /* YK5
+    IF F-LT2-TRUE(<#PLAN>)                                 /* YK5
+      MOVE 'L2' TO #PLAN-X
+      MOVE #PLAN-LT2-TERM TO #DURATION
+      IF (#PLAN-A1 = 'U' OR = 'X' OR = 'S')                /* YK5
+        MOVE 'ST' TO #CLASS
+      ELSE
+        IF (#PLAN-A1 = 'V' OR = 'Y' OR = 'R')              /* YK5
+          MOVE 'SE' TO #CLASS
+        ELSE
+          if #plan-a1 = 'T'                           /* vt5
+            move 'AR' to #class                       /* vt5
+          else                                        /* vt5
+            MOVE 'SS' TO #CLASS
+          end-if                                      /* vt5
+        END-IF
+      END-IF
+    ELSE
+      IF  (#PLAN = 'OL' OR = 'SPF')    /* all types
+          OR (#PLAN = MASK (NN.))         /* if OL's
+          OR (#PLAN = MASK (N'P'.))
+        MOVE 'OL' TO #PLAN-X
+*
+        IF  (#PLAN = 'SPF')
+            OR (PAY-STATUS (#I1) = '47')
+          MOVE 0 TO #DURATION-N
+        ELSE
+          IF #PLAN = 'OL'
+            IGNORE
+          ELSE
+            IF #PLAN = MASK (NN.)
+              MOVE #PLAN-A2-N TO #DURATION
+            ELSE
+              IF #PLAN = MASK (N'P'.)
+                MOVE #PLAN-A1-N TO #DURATION
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+END-DECIDE
+*
+IF  (#PLAN = MASK (NN'F'))
+    OR (#PLAN = MASK (N'PF'))
+    OR (#PLAN = 'SPF')
+  MOVE 'FL' TO #CLASS
+END-IF
+*
+PERFORM FIND-CSV-DB
+*
+* RESET #POL-TYPE
+* IF #TERM
+*   ADD 1 TO #TOT-TRM
+*   MOVE 'TRM' TO #POL-TYPE
+* ELSE
+*   IF PLAN (#I1) = 'SO'
+*     ADD 1 TO #TOT-SO
+*     MOVE 'SO' TO #POL-TYPE
+*   ELSE
+*     IF   (ST-V.ISSUE-DATE (#I1) GE 19970101)
+*         AND (ST-V.MONTH-ALLOC-AMT (#I1) NE 999.99)
+*       ADD 1 TO #TOT-NXT
+*       MOVE 'NXT' TO #POL-TYPE
+*     ELSE
+*       IF ST-V.ISSUE-DATE (#I1) GE 19860701
+*         ADD 1 TO #TOT-NEW
+*         MOVE 'NEW' TO #POL-TYPE
+*       ELSE
+*         ADD 1 TO #TOT-OLD
+*         MOVE 'OLD' TO #POL-TYPE
+*       END-IF
+*     END-IF
+*   END-IF
+* END-IF
+*
+RESET #VERSION
+IF #TERM and not(#termlt2 or #termlt2plus)                       /* vt4
+  ADD 1 TO #TOT-TRM
+  MOVE 'TRM' TO #VERSION
+ELSE
+  IF PLAN (#I1) = 'SO'
+    ADD 1 TO #TOT-SO
+    COMPRESS VERSION (#I1) PLAN (#I1) INTO #VERSION WITH DELIMITER #DASH
+  ELSE
+    if plan(#i1) = 'GPL' or = 'AL' or #termlt2                     /* vt4 \/
+      #version := 1
+    else
+      if plan(#i1) = 'GP2' or = 'AL2' or #termlt2plus
+        #version := 2
+      else                                                        /* vt4 /\
+        IF   (ST-V.ISSUE-DATE (#I1) GE 19970101)
+            AND (ST-V.MONTH-ALLOC-AMT (#I1) NE 999.99)
+          ADD 1 TO #TOT-NXT
+          COMPRESS VERSION (#I1) 'NXT' INTO #VERSION WITH DELIMITER #DASH
+        ELSE
+          IF ST-V.ISSUE-DATE (#I1) GE 19860701
+            ADD 1 TO #TOT-NEW
+            COMPRESS VERSION (#I1) 'NEW' INTO #VERSION WITH DELIMITER #DASH
+          ELSE
+            ADD 1 TO #TOT-OLD
+            COMPRESS VERSION (#I1) 'OLD' INTO #VERSION WITH DELIMITER #DASH
+          END-IF
+        END-IF
+      end-if                                                      /* vt4
+    end-if                                                        /* vt4
+  END-IF
+END-IF
+*
+MOVE 'N' TO #CAP-CD
+IF CONV-DURATION (#I1) = 999
+  MOVE 'Y' TO #CAP-CD
+END-IF
+*
+CALLNAT 'GPYSTSXX' PAY-STATUS (#I1) #PAY-STATUS #INVALID #ERR-MSG
+*
+CALLNAT 'GPLNMSXX' #POL# ST-V.ID-NUMBER #I1 /* build POL-#
+MOVE #ISSUE-DATE TO #YYYYMMDD
+PERFORM DATE-CONVERT
+*
+COMPRESS
+  #POL#                                   /* (1)
+  #TAB #ID-NUMBER                              /* (2)
+  #TAB #DATE-DISP   /* ISSUE-DATE              /* (3)
+  #TAB #PLAN-X                                 /* (4)
+  #TAB #CLASS                                  /* (5)
+  #tab ST-V.prem-rating (#i1)                                  /* vt2
+  #TAB #DURATION                               /* (6)
+*  #TAB #POL-TYPE              /* "OLD/NEW/NXT  /* (7)
+  #TAB #VERSION  /* VERSION-OLD/NEW/NXT  /* (7)
+  #TAB ST-V.MODE (#I1)                         /* (8)
+  #TAB ST-V.SMOKER-FLAG (#I1)                  /* (9)
+  #TAB ISSUE-AGE (#I1)                         /* (10)
+  #TAB STATUS (#I1)                            /* (11)
+  #TAB PAD-CODE                                /* (12)
+  #TAB #PAY-STATUS                             /* (13)
+  INTO #REC-250 LEAVING NO
+*
+RESET #YYYYMMDD
+CALLNAT 'GPDTOSXX'
+  ST-V.ISSUE-DATE (#I1)
+  ST-V.MONTH-ALLOC-AMT (#I1)
+  ST-V.PAID-TO-DATE (#I1)
+  #YYYYMMDD
+PERFORM DATE-CONVERT
+COMPRESS #REC-250
+  #TAB #DATE-DISP                              /* (14)
+  INTO #REC-250 LEAVING NO
+*
+MOVE PAID-UP-DATE (#I1) TO #YYYYMMDD
+*
+IF #YYYYMMDD NE MASK (YYYYMMDD)                          /* DW10
+  IF   (#MM = 04 OR = 06 OR = 09 OR = 11) AND (#DD = 31)
+    MOVE 30 TO #DD
+    WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1) 'Fixed PD UP date' #YYYYMMDD
+  ELSE
+    IF (#MM = 02) AND (#DD GT 28)
+      MOVE 28 TO #DD
+      WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1) 'Fixed PD UP date' #YYYYMMDD
+    ELSE
+      WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE(#I1) 'Invalid PD UP Date' #YYYYMMDD
+    END-IF
+  END-IF
+END-IF
+*
+PERFORM DATE-CONVERT
+COMPRESS #REC-250
+  #TAB #DATE-DISP                              /* (15)
+  INTO #REC-250 LEAVING NO
+*
+MOVE EDITED ST-V.ANNUAL-PREM (#I1) (EM=ZZZZZZ9.99) TO #DISP-10                   /* vt4
+MOVE LEFT #DISP-10 TO #DISP-10
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* ann-prem       /* (16)
+  INTO #REC-250 LEAVING NO
+*
+MOVE EDITED FACE-AMOUNT (#I1) (EM=ZZZZZZZ.99) TO #DISP-10                          /* vt4
+MOVE LEFT #DISP-10 TO #DISP-10
+COMPRESS #REC-250
+  #TAB #DISP-10            /* face-amount      /* (17)
+  INTO #REC-250 LEAVING NO
+COMPRESS #REC-250
+  #TAB #CAP-CD              /* CAP INd (Y/N)    /* (18)
+  INTO #REC-250 LEAVING NO
+*
+IF ((X-LOAN-AMOUNT (#I1) = 0)    /* has paid off CAP loan
+    AND (CONV-DURATION (#I1) = 999))
+    OR (X-LOAN-DATE (#I1) = 0)
+  RESET #DATE-DISP
+ELSE
+  MOVE X-LOAN-DATE (#I1) TO #YYYYMMDD
+  PERFORM DATE-CONVERT
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DATE-DISP   /* loan-DATE               /* (19)
+  INTO #REC-250 LEAVING NO
+*
+IF X-LOAN-AMOUNT (#I1) = 0
+  RESET #DISP-10
+  RESET #DISP-6
+ELSE
+  MOVE EDITED X-LOAN-AMOUNT (#I1) (EM=-ZZZZZZ.99) TO #DISP-10 /* PM13
+  MOVE LEFT #DISP-10 TO #DISP-10
+  MOVE EDITED X-INTEREST-RATE (#I1) (EM=ZZ.999) TO #DISP-6
+  MOVE LEFT #DISP-6 TO #DISP-6
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* loan-amt      /* (20)
+  INTO #REC-250 LEAVING NO
+*
+IF #ACC-INT (#I1) = 0
+  RESET #DISP-10
+ELSE
+  MOVE EDITED #ACC-INT (#I1) (EM=-ZZZZZZ.99) TO #DISP-10     /* PM13
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* ACCUM-INTEREST   /* (21)
+  #TAB #DISP-6               /* fixed int rate   /* (22)
+  INTO #REC-250 LEAVING NO
+*
+MOVE X-LOAN-DATE-2 (#I1) TO #YYYYMMDD
+PERFORM DATE-CONVERT
+COMPRESS #REC-250
+  #TAB #DATE-DISP   /* LOAN-DATE-2            /* (23)
+  INTO #REC-250 LEAVING NO
+*
+IF X-LOAN-AMOUNT-2 (#I1) = 0
+  RESET #DISP-10
+  RESET #DISP-6
+ELSE
+  MOVE EDITED X-LOAN-AMOUNT-2 (#I1) (EM=-ZZZZZZ.99) TO #DISP-10 /* PM13
+  MOVE LEFT #DISP-10 TO #DISP-10
+  MOVE EDITED #CURR-VAR-INT-RATE (EM=ZZ.999) TO #DISP-6
+  MOVE LEFT #DISP-6 TO #DISP-6
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* loan-amt-2    /* (24)
+  INTO #REC-250 LEAVING NO
+*
+IF #ACC-INT-2 (#I1) = 0
+  RESET #DISP-10
+ELSE
+  MOVE EDITED #ACC-INT-2 (#I1) (EM=-ZZZZZZ.99) TO #DISP-10     /* PM13
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* ACCUM-INTEREST-2   /* (25)
+  #TAB #DISP-6               /* VAR Interest rate  /* (26)
+  INTO #REC-250 LEAVING NO
+*
+IF #CURR-CSV = 0
+  RESET #DISP-10
+ELSE
+  MOVE EDITED #CURR-CSV (EM=ZZZZZZZ.99) TO #DISP-10                      /* vt4
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* curr-csv       /* (27)
+  INTO #REC-250 LEAVING NO
+*
+IF #CURR-DB = 0
+  RESET #DISP-10
+ELSE
+  MOVE EDITED #CURR-DB (EM=ZZZZZZZ.99) TO #DISP-10                       /* vt4
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* curr-db        /* (28)
+  INTO #REC-250 LEAVING NO
+*
+IF #ARTIFICIAL-DB = 0
+  RESET #DISP-10
+ELSE
+  MOVE EDITED #ARTIFICIAL-DB (EM=ZZZZZZZ.99) TO #DISP-10                  /* vt4
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10              /* Artificial-db        /* (29)
+  INTO #REC-250 LEAVING NO
+*
+PERFORM CHECK-OVER-125-POL
+*
+IF X-FIRST-PLACE-FEE (#I1) = 0
+  RESET #DISP-10
+ELSE
+  MOVE EDITED X-FIRST-PLACE-FEE (#I1) (EM=ZZZZZZ.99) TO #DISP-10
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+MOVE ST-V.ID-NUMBER TO #MBR-CN
+IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+  MOVE TRUE TO #LK-FND
+  FIND (1) LK-V WITH MEMBER-KEY = LINKED-CN-A (1)
+    IF NO RECORD FOUND
+      FIND (1) LK-V WITH WIDOW-KEY = LINKED-CN-A (1)
+        IF NO RECORD FOUND
+          RESET #LK-FND
+          WRITE ST-V.ID-NUMBER 'has linked CN not fnd of' LINKED-CN (1)
+        END-NOREC
+      END-FIND
+    END-NOREC
+  END-FIND
+*
+  IF #LK-FND
+    MOVE LINKED-CN (1) TO #MBR-CN
+    IF LK-V.WIDOW-FLAG = 'Y'
+      WRITE ST-V.ID-NUMBER 'Linked-mbr is dead' #MBR-CN
+    ELSE
+      IF LK-V.NUMBER-MEMBERSHIPS = 0
+        WRITE ST-V.ID-NUMBER 'Linked-mbr is Inactive' #MBR-CN
+      END-IF
+    END-IF
+  ELSE
+    MOVE 999999 TO #MBR-CN
+  END-IF
+END-IF
+*
+RESET #PDA-ADDRESS                           /* JT1
+#ADD-TYPE        := 'S'                      /* JT1
+#ADD-CONTACT-ID := ST-V.MEMBER-CONTACT-ID    /* JT1
+CALLNAT 'ADDN0001' #PDA-ADDRESS              /* JT1
+*
+IF #ADD-LINE-3 NE ' '                        /* JT1
+  #STREET := #ADD-LINE-1                     /* JT1
+  #STREET-2 := #ADD-LINE-2                   /* JT1
+ELSE                                         /* JT1
+  #STREET := #ADD-LINE-1                     /* JT1
+  RESET #STREET-2                            /* JT1
+END-IF                                       /* JT1
+*
+MOVE ST-V.ID-NUMBER TO #PAYOR-N
+IF MODE (#I1) = 'G'
+  FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+    FOR #I2 1 TO 60
+      IF NOTE-TEXT (#I2) = MASK ('*#ALOT:PAID BY CN')
+        MOVE ALOT-PAID-BY-CN (#I2) TO #PAYOR-N
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+ELSE
+  IF   (MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M')
+      AND (OWNERSHIP-FLAG (#I1) = 'N')
+      AND #ADD-LINE-1 NE ' '                     /* JT1
+*    AND (S-ADDRESS-1 NE ' ')                   /* JT1
+    MOVE 'N' TO #PAYOR
+  ELSE
+    IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+      IF #MBR-CN = 999999
+        MOVE 999999 TO #PAYOR-N
+      ELSE
+        MOVE LINKED-CN (1) TO #PAYOR-N
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+RESET #OWNER
+IF #OWNER-FLAG (#I1) = ' '
+  MOVE ST-V.ID-NUMBER TO #OWNER
+ELSE
+  FOR #I2 1 TO 10
+    IF #OWNER-CN (#I1, #I2) NE 0
+      IF #I2 GT 1
+        COMPRESS #OWNER '/' INTO #OWNER LEAVING NO
+      END-IF
+*
+      COMPRESS #OWNER #OWNER-CN (#I1, #I2) INTO #OWNER LEAVING NO
+    END-IF
+  END-FOR
+END-IF
+*
+IF #OWNER = ' '
+  MOVE ST-V.ID-NUMBER TO #OWNER
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10                  /* UNPD DEP (FPF)      /* (30)
+  #TAB #POL-RESTRICT-CODE (#I1)  /* Pol Restricted Code /* (31)
+  #TAB PREM-RATING        (#I1)  /* Premium Rating     /* (32)
+  #TAB RID-PLAN           (#I1)  /* Rider Code         /* (33)
+  #TAB MEC-IND            (#I1)  /* MEC Ind            /* (34)
+  #TAB #PAYOR                    /* Payor CN or Ind    /* (35)
+  #TAB #OWNER                    /* Owner CN's         /* (36)
+  #TAB #MBR-CN                   /* mbr cn             /* (37)
+  INTO #REC-250 LEAVING NO
+*
+MOVE ST-V.TOT-PREMIUMS-PAID (#I1) TO #XTRA-PREMS-PAID
+*
+RESET #1035-EXCH-AMT #LUMP-PMT #DISPLAY-1035-AMT
+  #DISPLAY-LUMP-PMT #DISP-10
+*
+IF  #CLASS = 'FL'
+  CALLNAT 'GMECCSXX'
+    ST-V.ID-NUMBER
+    #1035-SUFFIX
+    ST-V.PLAN          (#I1)
+    ST-V.ISSUE-DATE    (#I1)
+    ST-V.PAID-TO-DATE  (#I1)
+    ST-V.PAID-UP-DATE  (#I1)
+    ST-V.ISSUE-AGE     (#I1)
+    ST-V.ANNUAL-PREM   (#I1)
+    ST-V.SMOKER-FLAG   (#I1)
+    ST-V.FACE-AMOUNT   (#I1)
+    ST-V.DURATION      (#I1)
+    ST-V.PAY-STATUS    (#I1)
+    ST-V.TOT-PREMIUMS-PAID (#I1)
+    #PREMS-PAID
+*
+    #MAX-7-PAY
+    #MEC-PREMS-PAID-TO-DATE
+    #EXCEEDS-MEC
+    #1035-NX
+    #1035-EXCH-AMT
+    #LUMP-PMT
+*
+  IF #1035-EXCH-AMT NE 0
+    MOVE EDITED #1035-EXCH-AMT (EM=ZZZZZ9.99) TO #DISPLAY-1035-AMT
+    MOVE LEFT #DISPLAY-1035-AMT TO #DISPLAY-1035-AMT
+  END-IF
+  IF #LUMP-PMT NE 0
+    MOVE EDITED #LUMP-PMT (EM=ZZZZZ9.99) TO #DISPLAY-LUMP-PMT
+    MOVE LEFT #DISPLAY-LUMP-PMT TO #DISPLAY-LUMP-PMT
+  END-IF
+  COMPUTE #XTRA-PREMS-PAID = #XTRA-PREMS-PAID - #1035-EXCH-AMT
+    - #LUMP-PMT
+END-IF
+*
+RESET #DISP-10
+IF #XTRA-PREMS-PAID GT 0
+  MOVE EDITED #XTRA-PREMS-PAID (EM=ZZZZZZ9.99) TO #DISP-10
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISPLAY-1035-AMT    /* (38)
+  #TAB #DISPLAY-LUMP-PMT    /* (39)
+  #TAB #DISP-10             /* (40)
+  INTO #REC-250 LEAVING NO
+*
+RESET #DISP-10
+IF #ANN-DUES GT 0
+  MOVE EDITED #ANN-DUES (EM=ZZZZ9.99) TO #DISP-10
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+COMPRESS #REC-250
+  #TAB #DISP-10             /* (41)
+  INTO #REC-250 LEAVING NO
+*
+RESET #DISP-11
+IF X-BILL-ADJUST (#I1) NE 0
+  MOVE EDITED X-BILL-ADJUST (#I1) (EM=-ZZZ,ZZ9.99) TO #DISP-11
+  MOVE LEFT #DISP-11 TO #DISP-11
+END-IF
+*
+RESET #DISP-10
+IF #TPP (#I1) NE 0
+  MOVE EDITED #TPP (#I1) (EM=ZZZZZZ9.99) TO #DISP-10     /* vt4  em was (EM=ZZZ,ZZ9.99)
+  MOVE LEFT #DISP-10 TO #DISP-10
+END-IF
+*
+if x-alt-lp-ind(#i1) ne ' '                                /* vt2 \/
+  move x-alt-lp-ind(#i1) to #x-alt-lp-ind
+end-if
+*
+if x-alt-lp-ind-2(#i1) ne ' '
+  move x-alt-lp-ind-2(#i1) to #x-alt-lp-ind-2
+end-if                                                     /* vt2  /\
+*
+
+COMPRESS #REC-250
+  #TAB #DISP-11             /* (42)
+  #TAB #DISP-10             /* (43)
+  #tab #x-alt-lp-ind             /* (44)                    /* vt2 \/   /* vt4
+  #tab #x-alt-lp-ind-2           /* (45)                                /* vt4
+*   #TAB X-ALT-LP-IND (#I1)   /* (44)
+*   #TAB X-ALT-LP-IND-2 (#I1) /* (45)                      /* vt2 /\
+  INTO #REC-250 LEAVING NO
+*
+PERFORM CHECK-OVER-125-POL
+PERFORM BUILD-POLICY-FILE
+WRITE WORK FILE 4 #POLICY-FILE
+RESET #POLICY-FILE
+*
+ADD 1 TO #NUM-RECS-POL
+*
+ADD 1 TO #CNT-4
+DISPLAY (4) #CNT-4 'CN' ST-V.ID-NUMBER
+  'Iss/date' ISSUE-DATE (#I1)
+  'STAT'     STATUS     (#I1)
+  PLAN       (#I1)
+  'CSV'     #CURR-CSV
+  'DB'      #CURR-DB
+  'Mbr/CN'  #MBR-CN
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE FIND-CSV-DB
+***********************************************************************
+*
+RESET #AVL-TDIV #ARTIFICIAL-DB #CURR-CSV
+IF   (ISSUE-DATE (#I1) GE 19970101)
+    AND (MONTH-ALLOC-AMT (#I1) NE 999.99)
+    AND (NOT #TERM)
+  COMPUTE #AVL-TDIV = BEG-CASH-VALUE (#I1) - MONTH-ALLOC-AMT (#I1)
+  IF #AVL-TDIV LE 0
+    RESET #AVL-TDIV
+  END-IF
+*
+  IF ST-V.ID-NUMBER = 124156
+      AND ST-V.ISSUE-DATE (#I1) = 20040413
+      AND ST-V.DEATH-BENEFIT (#I1) = 226000
+    MOVE 10150.58 TO #AVL-TDIV
+  END-IF
+END-IF
+*
+IF  (ONLINE-ACTION (#I1) = '1') OR (ONLINE-ACTION-GN = '2')
+  MOVE FACE-AMOUNT (#I1) TO #CURR-DB
+ELSE
+  IF  (ISSUE-DATE-DD (#I1) = 01)
+      OR (ISSUE-DATE-DD (#I1) LE #TODAY-DD)   /* WAS GE
+      OR (#TERM)
+    MOVE DEATH-BENEFIT (#I1) TO #CURR-DB   /* USE CURR DB
+    ADD #AVL-TDIV TO #CURR-DB
+*
+    IF (ISSUE-DATE (#I1) GE 19970101)
+        AND (MONTH-ALLOC-AMT (#I1) NE 999.99)
+        AND (LAST-ANN-CASH-VALUE (#I1) GT #CURR-DB)
+        AND (NOT #TERM)
+      MOVE LAST-ANN-CASH-VALUE (#I1) TO #ARTIFICIAL-DB
+    END-IF
+  ELSE
+    MOVE NXT-MON-DEATH-BENEFIT(#I1) TO #CURR-DB /*<<added10/18/06
+*
+    IF (ISSUE-DATE (#I1) GE 19970101)
+        AND (MONTH-ALLOC-AMT (#I1) NE 999.99)
+        AND (LAST-ANN-CASH-VALUE (#I1) GT NXT-MON-DEATH-BENEFIT (#I1))
+      MOVE LAST-ANN-CASH-VALUE (#I1) TO #ARTIFICIAL-DB
+    END-IF
+  END-IF
+END-IF
+*
+MOVE #TODAY-YYYYMMDD TO #EFF-DATE
+*
+RESET DATE-OF-BIRTH
+DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<ST-V.MEMBER-CONTACT-ID>)        /* TT3
+*
+IF ((PLAN (#I1) = 'LT') AND (DATE-OF-BIRTH LE #EFF-DATE - 400000))
+    OR ((PLAN (#I1) = 'RT') AND (ISSUE-AGE (#I1) GT '65'))
+    OR ((PLAN (#I1) = 'EZ') AND (PAID-UP-DATE(#I1) LE #EFF-DATE))    /* YK6
+* OR  (((PLAN-A1 (#I1) GE 'U') AND (PLAN-A1 (#I1) LE 'Z'))        /* YK5
+    OR (F-LT2-TRUE(<PLAN(#I1)>)                                      /* YK5
+    AND ((ISSUE-DATE(#I1) + 40000) LE #EFF-DATE))
+    OR (IS-ANNUITY-LIFE(<PLAN (#I1)>))                                 /* TT4
+*
+  MOVE FACE-AMOUNT (#I1) TO #FAC-AMT
+  MOVE DEATH-BENEFIT (#I1) TO #DEATH-BENEFIT
+  CALLNAT 'GDROPSTM'
+    PLAN          (#I1)
+    SMOKER-FLAG   (#I1)
+    DATE-OF-BIRTH
+    ISSUE-DATE    (#I1)
+    PAID-UP-DATE  (#I1)
+    #EFF-DATE
+    ISSUE-AGE     (#I1)
+    #SCR-STATUS
+    #FAC-AMT
+    #DEATH-BENEFIT
+    CASH-VALUE (#I1)
+    BEG-CASH-VALUE (#I1)
+  MOVE #DEATH-BENEFIT TO #CURR-DB
+END-IF
+*
+IF #TERM
+  ESCAPE ROUTINE
+END-IF
+*
+IF  (ISSUE-DATE-DD (#I1) = 01)
+    OR (ISSUE-DATE-DD (#I1) LE #TODAY-DD)        /* WAS GE
+  MOVE CASH-VALUE (#I1) TO #CURR-CSV          /* use curr csv
+ELSE
+  MOVE NXT-MON-CASH-VALUE(#I1) TO #CURR-CSV   /* USE LAST CSV
+  MOVE ST-V.ID-NUMBER TO #HIST-KEY-ID
+  MOVE ST-V.ISSUE-DATE (#I1) TO #HIST-KEY-ISS
+  MOVE ST-V.SPLIT-IND (#I1) TO #HIST-KEY-SPL
+  MOVE #TODAY-YYYYMMDD TO #YYYYMMDD
+  SUBTRACT 1 FROM #MM
+  IF #MM LT 1
+    MOVE 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+  FIND VA-V WITH RECORD-KEY = #HIST-KEY
+    IF  YEAR-MONTH-M (13) = #YYYYMM
+      ADD PREMIUM-M (13) TO #CURR-CSV
+    END-IF
+  END-FIND
+END-IF
+*
+IF MTD-ACV-PREM-ADJ (#I1) NE 9999999.99
+  ADD MTD-ACV-PREM-ADJ (#I1) TO #CURR-CSV
+END-IF
+*
+IF MTD-ACV-INT-ADJ (#I1) NE 99999.99
+  ADD MTD-ACV-INT-ADJ (#I1) TO #CURR-CSV
+END-IF
+*
+IF MTD-ACV-COI-ADJ (#I1) NE 99999.99
+  SUBTRACT MTD-ACV-COI-ADJ (#I1) FROM #CURR-CSV
+END-IF
+*
+PERFORM CALC-PREMS-PAID-SETUP
+IF   (ISSUE-DATE (#I1) GE 19970101)        /* nxt policy
+    AND (MONTH-ALLOC-AMT  (#I1) NE 999.99)
+    AND (#PREMS-PAID GT #CURR-CSV)            /* reset csv if nxy pol
+    AND ((CONV-DURATION (#I1) NE 999)         /* CAPS AFTER 1/1/1999 DO NOT USE
+    OR  (ISSUE-DATE (#I1) LT 19990101))      /* TOT PREMS PAID
+    AND (X-FIRST-PLACE-FEE (#I1) = 0)
+    AND (PAY-STATUS (#I1) NE '45')            /* RPU
+  MOVE #PREMS-PAID TO #CURR-CSV
+END-IF
+*
+IF CONV-DURATION (#I1) = 999 /* CAP POLICY - not doing capa/o 1/2001
+  MOVE #CURR-CSV TO #CSV
+  MOVE ST-V.CAP-CONV-ACV TO #CAP-CONV-ACV
+  PERFORM CALC-CAP-CSV
+  MOVE #CAP-CSV TO #CURR-CSV
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE CALC-PREMS-PAID-SETUP
+***********************************************************************
+*
+RESET #PREMS-PAID
+MOVE DATE-OF-BIRTH           TO #PP-DATE-OF-BIRTH
+MOVE ANNUAL-PREM (#I1)       TO #PP-ANNUAL-PREM
+MOVE PAY-STATUS (#I1)        TO #PP-PAY-STATUS
+MOVE TOT-PREMIUMS-PAID (#I1) TO #PP-TOT-PREMIUMS-PAID
+MOVE PAID-TO-DATE (#I1)      TO #PP-PAID-TO-DATE
+MOVE ISSUE-DATE (#I1)        TO #PP-ISSUE-DATE
+MOVE MODE (#I1)              TO #PP-MODE
+MOVE PLAN (#I1)              TO #PP-PLAN
+MOVE COST-BASIS (#I1)        TO #PP-COST-BASIS
+MOVE MONTH-ALLOC-AMT (#I1)   TO #PP-MONTH-ALLOC-AMT
+MOVE ST-V.INTRO-FLAG         TO #PP-INTRO-FLAG
+MOVE X-FIRST-PLACE-FEE (#I1) TO #PP-FIRST-PLACE-FEE
+MOVE X-BILL-ADJUST     (#I1) TO #PP-BADJ
+*
+CALLNAT 'GPRPDSCO'
+  #PP-DATE-OF-BIRTH
+  #PP-ANNUAL-PREM
+  #PP-PAY-STATUS
+  #PP-TOT-PREMIUMS-PAID
+  #PP-PAID-TO-DATE
+  #PP-ISSUE-DATE
+  #PP-MODE
+  #PP-PLAN
+  #PP-COST-BASIS
+  #PP-MONTH-ALLOC-AMT
+  #PP-INTRO-FLAG
+  #PP-FIRST-PLACE-FEE
+  #PREMS-PAID
+  #SUB-PREMS-PAID
+  #PP-BADJ
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CALC-CAP-CSV
+***********************************************************************
+*
+IF PAY-STATUS (#I1) GE '40'
+  MOVE #CSV TO #CAP-CSV
+  ESCAPE ROUTINE
+END-IF
+*
+IF FACE-AMOUNT (#I1) GT 10000.00
+  COMPUTE ROUNDED #WORK-CAP-CONV-ACV =
+    ((#CSV - #CAP-CONV-ACV) * (FACE-AMOUNT (#I1) - 10000))
+    / FACE-AMOUNT (#I1)
+  ADD #WORK-CAP-CONV-ACV TO #CAP-CONV-ACV
+END-IF
+*
+IF ST-V.X-LOAN-AMOUNT (#I1) = 0
+  MOVE ST-V.X-LOAN-DATE (#I1) TO #CAP-LOAN-END-DATE
+ELSE
+  RESET #CAP-LOAN-END-DATE
+END-IF
+*
+CALLNAT 'CCAPCSVP'
+  #ID-NUMBER
+  ST-V.ISSUE-DATE (#I1)
+  #CAP-LOAN-END-DATE
+  #TODAY-YYYYMMDD
+  #CAP-CONV-ACV
+  #CSV
+  #CAP-CSV
+  #CAP-LOAN-MONS
+  #CAP-CSV-MONS
+  #CAP-REMAIN-MONS
+*
+END-SUBROUTINE  /* (2444)
+*
+***********************************************************************
+DEFINE SUBROUTINE DATE-CONVERT
+***********************************************************************
+*
+IF #YYYYMMDD = 0
+  RESET #DATE-DISP
+ELSE
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #DATE-DISP WITH '/'
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CHECK-OVER-125
+***********************************************************************
+*
+IF #REC-125-2 NE ' '
+  PERFORM BUILD-CONTACT-FILE
+  MOVE #REC-125-2 TO #REC-125-1
+  RESET #REC-125-2
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE BUILD-CONTACT-FILE
+***********************************************************************
+*
+IF #PAR-125-1 = ' '
+  MOVE #REC-125-1 TO #PAR-125-1
+ELSE
+  IF #PAR-125-2 = ' '
+    MOVE #REC-125-1 TO #PAR-125-2
+  ELSE
+    MOVE #REC-125-1 TO #PAR-125-3
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CHECK-OVER-125-POL
+***********************************************************************
+*
+IF #REC-125-2 NE ' '
+  PERFORM BUILD-POLICY-FILE
+  MOVE #REC-125-2 TO #REC-125-1
+  RESET #REC-125-2
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE BUILD-POLICY-FILE
+***********************************************************************
+*
+IF #POL-125-1 = ' '
+  MOVE #REC-125-1 TO #POL-125-1
+ELSE
+  IF #POL-125-2 = ' '
+    MOVE #REC-125-1 TO #POL-125-2
+  ELSE
+    MOVE #REC-125-1 TO #POL-125-3
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE GET-ACCT#
+***********************************************************************
+CALLNAT 'ATHS03P2'
+  #TRAN-CODE-IN
+  #ACCT-NUM-IN
+  #CAT-1-IN
+  #AMT-SIGN-IN
+*
+  #ACCT-NUM-OUT
+  #D-C-OUT
+  #CN-IN
+  #AMT-IN
+  #SOURCE-IN
+*
+IF   (#TRAN-CODE-IN = 'ADDL')                    /* PM16
+    AND (TR-V.SEQUENCE-NUM = 2)                     /* PM16
+  MOVE '4315' TO #ACCT-NUM-OUT                   /* PM16
+  MOVE 'INTV' TO #TRAN-CODE-IN                   /* PM16
+END-IF                                           /* PM16
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE DISPLAY-5
+***********************************************************************
+*
+ADD 1 TO #CNT-5
+DISPLAY (5) #CNT-5
+  'CN' TR-V.ID-NUMBER
+  'SEQ' #TR-SEQ
+  'Code' TXN-CODE
+  'AALP/FLAG' AALP-FLAG
+  'DB/AMT' DEBIT-AMOUNT
+  'CR/AMT' CREDIT-AMOUNT
+  'Pay'    #PAY
+  'DC/IND' #DC-IND
+  'User' CLERK-ID
+  'G/L#' #ACCT-NUM-OUT
+  'DESC' DESCRIPTION   (EM=XXXXXXXXXXXXXXXX)
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * *
+DEFINE SUBROUTINE DFAS-REC  /* as of 8/30/2008 is again performed      /* DW8
+* * * * * * * * * * * * *
+RESET #ST-FND
+FIND ST-V WITH SSN = AL-SSN
+  IF PROCESS-IND = 'C'                 /* PM5
+      AND ST-V.INTRO-FLAG NE 'A'          /* PM5
+    ESCAPE TOP
+  END-IF
+*
+  MOVE ST-V.ID-NUMBER TO #CN-TO-USE
+  MOVE TRUE TO #ST-FND
+  ESCAPE BOTTOM
+END-FIND
+*
+IF NOT #ST-FND
+  MOVE 999999 TO #CN-TO-USE
+END-IF
+*
+MOVE EDITED AL-AMOUNT (EM=Z,ZZZ.99) TO #DISP-11
+MOVE LEFT #DISP-11 TO #DISP-11
+COMPRESS '-' #DISP-11 INTO #DISP-11 LEAVING NO
+MOVE 1 TO #TR-SEQ
+*
+COMPRESS              /* (1)  POL # Does not apply
+  #TAB #CN-TO-USE      /* (2)
+  #TAB #ME-DATE-DISP   /* (3)    entry-date
+  #TAB 'CASH'          /* (4)
+  #TAB 'EDS'           /* (5)
+  #TAB #DISP-11        /* (6)
+  #TAB 'D'             /* (7)
+  #TAB 'AL'            /* (8)
+  #TAB '1010'          /* (9)  G/L Account #
+  #TAB #TR-SEQ         /* (10)
+  #TAB 'DFAS'          /* (11)
+  INTO #ACC-TRN-FILE LEAVING NO
+*
+WRITE WORK FILE 11 #ACC-TRN-FILE      /* Put on a separate file    DW5
+* WRITE WORK FILE 5 #ACC-TRN-FILE
+* ADD 1 TO #NUM-RECS-ACC-TRN
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * *
+DEFINE SUBROUTINE PADFILE-REC                    /* DW8
+* * * * * * * * * * * * *
+*
+IF NOT #PAD-TRAN-CODE = '27' OR = '37'
+  ESCAPE ROUTINE
+END-IF
+*
+RESET #ST-FND
+FIND ST-V WITH MEMBER-KEY = #PAD-CN-A
+  MOVE #PAD-CN TO #CN-TO-USE
+  MOVE TRUE TO #ST-FND
+  ESCAPE BOTTOM
+END-FIND
+*
+IF NOT #ST-FND
+  MOVE 999999 TO #CN-TO-USE
+END-IF
+*
+MOVE EDITED #PAD-AMT (EM=ZZZ,ZZZ.99) TO #DISP-11
+MOVE LEFT #DISP-11 TO #DISP-11
+COMPRESS '-' #DISP-11 INTO #DISP-11 LEAVING NO
+MOVE 1 TO #TR-SEQ
+*
+COMPRESS              /* (1)  POL # Does not apply
+  #TAB #CN-TO-USE      /* (2)
+  #TAB #ME-DATE-DISP   /* (3)    entry-date
+  #TAB 'CASH'          /* (4)
+  #TAB 'EDS'           /* (5)
+  #TAB #DISP-11        /* (6)
+  #TAB 'D'             /* (7)
+  #TAB 'EZ'            /* (8)
+  #TAB '1010'          /* (9)  G/L Account #
+  #TAB #TR-SEQ         /* (10)
+  #TAB 'PADFILE'       /* (11)
+  INTO #ACC-TRN-FILE LEAVING NO
+*
+WRITE WORK FILE 5 #ACC-TRN-FILE
+ADD 1 TO #NUM-RECS-ACC-TRN
+*
+END-SUBROUTINE
+* ==============================================================================================
+DEFINE sbr_Get_CHBO_Phones
+RESET Phones
+FIND PH-V WITH PH-V.CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+  IF NO RECORD FOUND ESCAPE BOTTOM END-NOREC
+  v_A := ' '
+  IF PH-V.TYPE = 'D'      /* domestic phones
+    COMPRESS '(' PH-V.AREA-CODE ')' PH-V.DIAL-NUMBER-3 '-' PH-V.DIAL-NUMBER-4 INTO v_A  LEAVING NO SPACE
+    IF EXT <> 0
+      COMPRESS v_A 'Ext' PH-V.EXT INTO  v_A
+    END-IF
+  END-IF
+  IF PH-V.TYPE = 'I'   /* international
+    COMPRESS '(' PH-V.INTL-ACCESS-CODE ')' INTO v_A   LEAVING NO SPACE
+    COMPRESS     v_A PH-V.INTL-DIAL-NUMBER INTO v_A
+  END-IF
+  v_A := *TRIM(v_A)
+  DECIDE ON FIRST VALUE PHONE-TYPE-CODE
+    VALUE 'C'   v_PH_C := v_A
+    VALUE 'H'   v_PH_H := v_A
+    VALUE 'B'   v_PH_B := v_A
+    NONE        COMPRESS v_PH_O PHONE-TYPE-CODE v_A INTO v_PH_O
+  END-DECIDE
+END-FIND
+END-SUBROUTINE
+* ==============================================================================================
+END

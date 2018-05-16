@@ -1,0 +1,133 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  GOSTCN02 - Clone of GOSTCN01 (doesn't populate spouse/former spouse)
+* 1. Populate Contact Info  in STATUS 
+* Prerequisites: Field MEMBER-CONTACT-ID must has correct value
+* Usage 
+* CALLNAT 'GOSTCN01' p_CN p_Err p_Err_Dscr p_Mod
+* Parameters: 
+*  p_CN       (N6)        
+*  p_Err      (N4)  
+*  p_Err_Dscr (A78)   
+*  p_Mod      (A1)  
+* RE created 04/24/2012 
+* TMT Contact Normalization - removed DOB and Sex
+DEFINE DATA 
+PARAMETER 
+1 p_CN       (N6)
+1 p_Err      (N4) 
+1 p_Err_Dscr (A78)
+1 p_Mod      (A1)  
+LOCAL
+1 ST-V VIEW OF A-STATUS
+   2 ID-NUMBER
+   2 MEMBER-CONTACT-ID
+   2 SPOUSE-CONTACT-ID
+   2 NAME
+*    2 SEX                      /* TT1
+   2 SSN  
+*    2 DATE-OF-BIRTH            /* TT1
+   2 DATE-OF-MARRIAGE
+   2 DATE-OF-DIVORCE
+   2 DATE-OF-DEATH
+   2 BIRTH-CERT-CODE
+   2 DEATH-CERT-CODE 
+   2 MARRIAGE-CERT-CODE               
+*
+1 ST-SP-V VIEW OF A-STATUS
+   2 DATE-OF-MARRIAGE
+   2 MARRIAGE-CERT-CODE               
+*
+1 CNT-V VIEW OF A-CONTACTS
+   2 ID-NUMBER
+   2 CONTACT-ID       (N8)         /* D
+   2 PREFIX-TITLE
+   2  FULL-NAME
+      3  FIRST-NAME
+      3  MIDDLE-NAME
+      3  LAST-NAME
+      3  SUFFIX
+   2  DATE-OF-BIRTH
+   2  BIRTH-CERT-CODE
+   2  DATE-OF-DEATH
+   2  DEATH-CERT-CODE
+   2  SSN
+   2  GENDER-CD
+*
+1 v_A25                   (A25)
+1 v_YYYYMMDD              (N8) INIT <*DATN>
+1 REDEFINE v_YYYYMMDD     
+  2 v_YYYYMM              (N6) 
+END-DEFINE
+*
+  ON ERROR 
+     p_Err := *ERROR-NR
+     COMPRESS 'Natural Error:'  *PROGRAM *ERROR-NR  'Error Line:' *ERROR-LINE INTO p_Err_Dscr
+     ESCAPE ROUTINE 
+  END-ERROR 
+* 
+  IF p_CN = 0
+     p_Err := 0001  COMPRESS 'CN = 0' INTO p_Err_Dscr  ESCAPE ROUTINE 
+  END-IF
+*   
+FST.
+FIND (1) ST-V WITH ID-NUMBER = p_CN
+*
+     IF NO RECORD FOUND
+          p_Err := 0002  COMPRESS 'CN:' p_CN 'NOT FOUND' INTO p_Err_Dscr  ESCAPE ROUTINE 
+     END-NOREC
+*
+     IF MEMBER-CONTACT-ID = 0
+        p_Err := 0003  COMPRESS 'CN:' p_CN 'MEMBER-CONTACT-ID = 0' INTO p_Err_Dscr  ESCAPE ROUTINE 
+     END-IF 
+*
+     FIND (1) CNT-V WITH CNT-V.CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+         IF NO RECORD FOUND 
+                   p_Err := 0004
+                   COMPRESS 'CN:' p_CN 'CI:' MEMBER-CONTACT-ID 'Not Found' INTO p_Err_Dscr
+                   ESCAPE ROUTINE
+         END-NOREC
+         PERFORM CNT-TO-STATUS-MEM
+     END-FIND
+     PERFORM SYNC-MARRIAGE-DATE
+  UPDATE (FST.)
+END-FIND  
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE CNT-TO-STATUS-MEM
+        PERFORM DO-NAME-25
+        ST-V.NAME              := v_A25
+*         ST-V.SEX               := CNT-V.GENDER-CD              /* TT1
+        ST-V.SSN               := CNT-V.SSN
+*         ST-V.DATE-OF-BIRTH     := CNT-V.DATE-OF-BIRTH          /* TT1
+        ST-V.BIRTH-CERT-CODE   := CNT-V.BIRTH-CERT-CODE
+        ST-V.DATE-OF-DEATH     := CNT-V.DATE-OF-DEATH        
+        ST-V.DEATH-CERT-CODE   := CNT-V.DEATH-CERT-CODE     
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE DO-NAME-25
+ COMPRESS LAST-NAME ",@" FIRST-NAME "@" MIDDLE-NAME ",@" SUFFIX INTO v_A25 LEAVING NO SPACE
+ EXAMINE v_A25 FOR "@@" REPLACE ' '
+ EXAMINE v_A25 FOR '@' REPLACE ' '
+ EXAMINE v_A25 FOR ' ,' REPLACE ','
+ IF v_A25 = MASK (*','/) EXAMINE DIRECTION  BACKWARD v_A25 FOR "," DELETE FIRST END-IF
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE SYNC-MARRIAGE-DATE
+FIND (1) ST-SP-V WITH MEMBER-CONTACT-ID = ST-V.SPOUSE-CONTACT-ID
+  DECIDE FOR EVERY CONDITION
+    WHEN ST-SP-V.DATE-OF-MARRIAGE NE ST-V.DATE-OF-MARRIAGE
+      ST-SP-V.DATE-OF-MARRIAGE := ST-V.DATE-OF-MARRIAGE
+    WHEN ST-SP-V.MARRIAGE-CERT-CODE NE ST-V.MARRIAGE-CERT-CODE
+      ST-SP-V.MARRIAGE-CERT-CODE := ST-V.MARRIAGE-CERT-CODE
+    WHEN ANY
+      UPDATE (0119)
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FIND
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+END

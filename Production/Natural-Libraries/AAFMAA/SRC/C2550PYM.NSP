@@ -1,0 +1,322 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2550PYM
+DEFINE DATA
+ GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+ LOCAL  USING GONERLXX    /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+*
+ LOCAL
+  1 #SCR-LINES
+   2 #SCR-CV               (C/15)
+   2 #SCR-ID-SSN           (N9/15)
+   2 #SCR-MODE             (A1/15)
+   2 #SCR-TRAN-AMT         (N5.2/15)
+   2 #SCR-NAME             (A25/15)
+   2 #SCR-SSN              (A11/15)
+*
+  1 #SCR-TERMID        (A8)
+  1 #SCR-BTCH-TOT      (N8.2)
+  1 #SCR-BATCH-TOTAL   (N8.2)
+  1 #SCR-BATCH-TOTAL-CV (C)
+  1 #SCR-BTCH-PREM     (N8.2)
+  1 #SCR-BATCH-PREM    (N8.2)
+  1 #BATCH-PREM    (N8.2)
+  1 #SUB-BATCH-PREM    (N8.2)
+*
+  1 IM-V VIEW OF A-INTRO-MEMBER
+   2 ID-NUMBER            (N6)
+   2 DTS-DATN             (P9)
+   2 DTS-TIMN             (P7)
+   2 NAME                 (A25)
+   2 INS-MODE             (A1)
+   2 SSN                  (N9)
+   2 REDEFINE SSN
+    3 SSN-1               (A3)
+    3 SSN-2               (A2)
+    3 SSN-3               (A4)
+   2 ANNUAL-PREMIUM       (P5.2)
+   2 FIRST-PLACE-FEE-PAID (P7.2)
+*
+  1 #DATE-OF-UPDATE    (N8)
+  1 #TIME-OF-UPDATE    (N7)
+*
+  1 #TODAY-YYYYMMDD
+   2 #TODAY-YYYY    (N4)
+   2 REDEFINE #TODAY-YYYY
+    3 #TODAY-CENT    (N2)
+    3 #TODAY-YY      (N2)
+   2 #TODAY-MM      (N2)
+   2 #TODAY-DD      (N2)
+  1 REDEFINE #TODAY-YYYYMMDD
+   2 #TODAY-YYYYMMDD-N (N8)
+*
+  1 #I1         (I2)
+  1 #ILN1       (I2)
+  1 #ILN2       (I2)
+  1 #EDIT-MODE   (L)     /* TO INDICATE IN EDIT MODE
+  1 #UPDATE-MODE (L)     /* TO INDICATE IN UPDATE MODE
+  1 #DISP-MSG            (A75)    /* ERROR LINE MESSAGES
+  1 #ID-N6               (N6)
+  1 #TOTAL-AMT           (P8.2)
+  1 #TOTAL-AMT-DISP      (A11)
+  1 #SUB-TOTAL-AMT       (P8.2)
+  1 #TMP-TOTAL-AMT       (P8.2)
+  1 #START-PROT-LINE     (P2)
+  1 #ISN                 (P8)
+  1 #FPF-DUE             (P5.2)
+*
+1 #INIT-ID    (A8)
+1 REDEFINE #INIT-ID
+  2 #TERM-ID  (A4)
+  2 #TERM-FIL (A4)
+1 #TERMID-LIT (A5)
+1 #INVALID    (L)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+INCLUDE GONERCXX       /* NATURAL ERROR ROUTINE
+*
+* * * * * * * * EDIT SCREENS  * * * * * * * * * * * * *
+*
+MOVE *DATN TO #TODAY-YYYYMMDD-N
+MOVE *DATN TO #DATE-OF-UPDATE
+MOVE *TIMN TO #TIME-OF-UPDATE
+MOVE *INIT-ID TO #INIT-ID
+RESET #SCR-BATCH-TOTAL
+RESET #TOTAL-AMT
+MOVE TRUE  TO #EDIT-MODE
+MOVE FALSE TO #UPDATE-MODE
+*
+CALLNAT 'GTMIDSXX' #TERM-ID #INVALID #TERMID-LIT
+IF #INVALID
+  MOVE 'XXXXXXXX'     TO #SCR-TERMID
+ELSE
+  COMPRESS 'TDC' #TERMID-LIT INTO #SCR-TERMID LEAVING NO SPACE
+END-IF
+*
+PERFORM EDIT-APPLY
+*
+RESET #BATCH-PREM
+RESET #TOTAL-AMT
+MOVE FALSE TO #EDIT-MODE
+MOVE TRUE  TO #UPDATE-MODE
+*
+PERFORM EDIT-APPLY
+*
+FETCH 'G1000PXX'
+*
+************************************************************************
+*
+DEFINE SUBROUTINE EDIT-APPLY
+*
+RESET #DISP-MSG #SCR-BATCH-TOTAL-CV
+*
+IF #EDIT-MODE
+  RESET #SCR-BATCH-PREM
+  MOVE 'ENTER INTRO-MBR FPF PAYMENTS' TO #DISP-MSG
+ELSE
+  MOVE 1 TO #START-PROT-LINE         /* PROTECT FIELDS
+  PERFORM PROTECT-LINES              /* FROM REENTRY
+  MOVE #SCR-BTCH-PREM TO #SCR-BATCH-PREM
+  MOVE (AD=P) TO #SCR-BATCH-TOTAL-CV
+  MOVE
+     'PRINT SCREEN, PRESS ENTER TO APPLY, AND TRANS WILL BE  COMPLETED'
+                                                           TO #DISP-MSG
+END-IF /*(0117)
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+RESET       #CGA-SCR-ID
+RESET       #CGA-SCR-SUFFIX
+INPUT TEXT #DISP-MSG MARK *#SCR-ID-SSN (1) USING MAP 'C2550MYM'
+*
+IF #CGA-SCR-COMMAND = '##' OR = '..'    /* THE ONLY WAY OUT OF AN AM
+  BACKOUT TRANSACTION     /*<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+*
+  FETCH 'G1000PXX'
+END-IF
+*
+* * * * * * * * * EDIT SCREEN * * * * * * * * * * * * *
+*
+RESET #SUB-TOTAL-AMT
+      #SUB-BATCH-PREM
+*
+FOR #ILN1 1 TO 15
+  IF   (#SCR-ID-SSN    (#ILN1) = 0)     /* BYPASS BLANK LINES
+   AND (#SCR-MODE      (#ILN1) = ' ')
+   AND (#SCR-TRAN-AMT  (#ILN1) = 0)
+   AND (#SCR-NAME      (#ILN1) = ' ')
+    ADD 1 TO #ILN2
+    ESCAPE TOP /*(0146)
+  END-IF /*(0147)
+*
+  IF #SCR-ID-SSN (#ILN1) GT 999999
+    FIND (1) IM-V WITH SSN = #SCR-ID-SSN (#ILN1)
+      IF NO RECORDS FOUND
+        IF #UPDATE-MODE           /* BACKOUT TRANSACTION *
+          BACKOUT TRANSACTION     /* IF IN UPDATE MODE   *
+        END-IF                    /* *********************
+        REINPUT 'SSN NOT FOUND'
+        MARK *#SCR-ID-SSN (#ILN1)
+      END-NOREC
+*
+      MOVE ID-NUMBER TO #SCR-ID-SSN (#ILN1)
+      MOVE *ISN TO #ISN                   /* SAVE ISN
+    END-FIND /*(0156)
+  ELSE
+    IF #SCR-ID-SSN (#ILN1) LT 100000
+      ADD 700000 TO #SCR-ID-SSN (#ILN1)
+    END-IF
+*
+    MOVE #SCR-ID-SSN (#ILN1) TO #ID-N6
+    FIND (1) IM-V WITH ID-NUMBER = #ID-N6
+      IF NO RECORDS FOUND
+        IF #UPDATE-MODE           /* BACKOUT TRANSACTION *
+          BACKOUT TRANSACTION     /* IF IN UPDATE MODE   *
+        END-IF                    /* *********************
+        REINPUT 'YN NOT FOUND'
+        MARK *#SCR-ID-SSN (#ILN1)
+      END-NOREC
+*
+      MOVE *ISN TO #ISN                   /* SAVE ISN
+    END-FIND /*(0148)
+  END-IF /*(0155)
+*
+  GET IM-V #ISN         /* REREAD RECORD
+  IF SSN NE 0
+    COMPRESS SSN-1 SSN-2 SSN-3 INTO #SCR-SSN (#ILN1) WITH '-'
+  END-IF
+*
+* * * * * * * * * EDIT SCREEN FIELDS * * * * * * * * * *
+*
+  IF IM-V.NAME = MASK (XXX) #SCR-NAME (#ILN1)
+    MOVE IM-V.NAME TO #SCR-NAME (#ILN1)
+  ELSE
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    COMPRESS 'NAME VERIFICATION ERROR - NAME =' IM-V.NAME TO #DISP-MSG
+    REINPUT #DISP-MSG
+    MARK *#SCR-NAME (#ILN1)
+  END-IF
+*
+  IF NOT #SCR-MODE (#ILN1) = 'A' OR = 'S' OR = 'Q'
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    REINPUT 'MODE MUST BE A, S, OR Q'
+    MARK *#SCR-MODE (#ILN1)
+  END-IF
+*
+  IF #SCR-TRAN-AMT (#ILN1) = 0
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    REINPUT 'TRAN AMT MUST BE ENTERED'
+    MARK *#SCR-TRAN-AMT (#ILN1)
+  END-IF
+*
+  RESET #FPF-DUE
+  IF #SCR-MODE (#ILN1) = 'A'
+    MOVE IM-V.ANNUAL-PREMIUM TO #FPF-DUE
+  ELSE
+    IF #SCR-MODE (#ILN1) = 'S'
+      COMPUTE #FPF-DUE = IM-V.ANNUAL-PREMIUM / 2
+    ELSE
+      COMPUTE #FPF-DUE = IM-V.ANNUAL-PREMIUM / 4
+    END-IF
+  END-IF
+*
+  IF #SCR-TRAN-AMT (#ILN1) LT (#FPF-DUE - 1.00)
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    REINPUT 'TRAN AMT MUST BE AT LEAST $1.00 LESS THAN THE FPF'
+    MARK *#SCR-TRAN-AMT (#ILN1)
+  END-IF
+*
+  IF #UPDATE-MODE                   /* UPDATE RECORD IF IN UPDATE MODE
+    MOVE #DATE-OF-UPDATE       TO IM-V.DTS-DATN
+    MOVE #TIME-OF-UPDATE       TO IM-V.DTS-TIMN
+    ADD  #SCR-TRAN-AMT (#ILN1) TO IM-V.FIRST-PLACE-FEE-PAID
+    MOVE #SCR-MODE     (#ILN1) TO IM-V.INS-MODE
+    UPDATE RECORD (0187)    /* END TRANSACTION IS DONE AT END OF SCREEN
+  END-IF /*(0240)
+*
+  PERFORM ACCUM-TOTALS
+END-FOR /*(0146)
+*
+COMPUTE #TMP-TOTAL-AMT = #TOTAL-AMT + #SUB-TOTAL-AMT /* FOR BATCH EDIT
+ADD #SUB-BATCH-PREM  TO #BATCH-PREM
+*
+IF  #SCR-BATCH-TOTAL NE #TMP-TOTAL-AMT
+  RESET #BATCH-PREM
+  MOVE EDITED #TMP-TOTAL-AMT (EM=ZZZZZZZZ.99) TO #TOTAL-AMT-DISP
+  COMPRESS 'UNBALANCED BATCH TOTAL - ACCUM TRANS AMT ='
+                       #TOTAL-AMT-DISP      INTO #DISP-MSG
+  REINPUT #DISP-MSG
+  MARK *#SCR-BATCH-TOTAL
+END-IF
+*
+IF #UPDATE-MODE           /*************
+  END TRANSACTION         /*>>>>>>>>>>>>>  END TRANSACTION <<<<<<<<
+END-IF                    /*************
+*
+ADD #SUB-TOTAL-AMT TO #TOTAL-AMT              /* ACCUM BATCH TOTAL
+*
+MOVE #SCR-BATCH-TOTAL TO #SCR-BTCH-TOT
+MOVE #BATCH-PREM  TO #SCR-BTCH-PREM
+*
+IF  #EDIT-MODE                   /* GO IMMEDIATELY TO UPDATE MODE
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE #SCR-BATCH-TOTAL TO #SCR-BTCH-TOT
+*
+MOVE 1 TO #START-PROT-LINE         /* PROTECT FIELDS
+PERFORM PROTECT-LINES              /* FROM REENTRY
+MOVE (AD=P) TO #SCR-BATCH-TOTAL-CV
+*
+MOVE #SCR-BTCH-PREM  TO #SCR-BATCH-PREM
+*
+MOVE 'TRANSACTION COMPLETED' TO #DISP-MSG
+MOVE 1 TO #START-PROT-LINE         /* PROTECT FIELDS
+PERFORM PROTECT-LINES              /* FROM REENTRY
+*
+MOVE #CGA-ORIG-COMMAND TO #CGA-SCR-COMMAND
+RESET #CGA-SCR-ID
+RESET #CGA-SCR-SUFFIX
+*
+INPUT TEXT #DISP-MSG MARK *#SCR-ID-SSN (1) USING MAP 'C2550MYM'
+*
+IF (#CGA-SCR-COMMAND = '##' OR = '..')  /* THE ONLY WAY OUT OF AN AM
+  BACKOUT TRANSACTION     /*<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+  FETCH 'G1000PXX'
+END-IF
+*
+END-SUBROUTINE /*(0113)
+*
+* * * * * * * * PROTECT LINES * * * * * * * * * * * * * * * * * * *
+*
+DEFINE SUBROUTINE PROTECT-LINES
+*
+FOR #I1 #START-PROT-LINE TO 15
+  MOVE (AD=P) TO #SCR-CV    (#I1)
+END-FOR /*(5065)
+*
+END-SUBROUTINE /*(0303)
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCUM-TOTALS
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+ADD #SCR-TRAN-AMT (#ILN1) TO #SUB-TOTAL-AMT /*ACCUM SCREEN TOTAL
+ADD #SCR-TRAN-AMT (#ILN1) TO #SUB-BATCH-PREM /*ACCUM PREM TOTAL
+*
+ADD 1 TO #ILN2
+*
+END-SUBROUTINE /*(8535)
+*
+END

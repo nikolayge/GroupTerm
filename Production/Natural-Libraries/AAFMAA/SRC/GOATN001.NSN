@@ -1,0 +1,321 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GOATN001 - The application tracking synch
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* NGG    05/18/2011  None    Program written                           *
+*
+* NGG    08/18/2011  NG1  Prevent CN cteation if already exist. Synch Status
+* NGG    08/23/2011  NG2  Create contact relation and GEN defaults
+* NGG    11/16/2011  NG3  Create FIR record
+* TMT    10/07/2013  TT1  ADDRESS NORMALIZATION
+* NGG    05/07/2014  NG4  MEMBERSHIP EXPANSION
+* vxt    09/10/2015  vt1  /Ticket 3580/
+* YK1    01/13/2017  YK1  Add call to CC file to populate CN
+* bz HD-3056 203/10/2017 added Create Dummy WEB Account
+* bz-Name-C 07/07/2017     Fine Names
+* YAK    06/26/2017  YK2  Add call to CC file to populate CN when coming
+*                         from Online Application
+************************************************************************
+DEFINE DATA
+PARAMETER
+1 #CONTACT-ID       (N8)
+1 #AT-NUMBER        (N6)
+1 #FROM-ONLINE-APP  (A1)          /* YK2
+1 #RESPONCE         (A) DYNAMIC
+LOCAL USING ADDA0001
+LOCAL USING GOSTMA01
+LOCAL USING OBJACC01
+LOCAL
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 CONTACT-ID      (N8)
+  2 NAME            (A25)
+  2 FIRST-NAME      (A25)
+  2 MIDDLE-NAME     (A25)
+  2 LAST-NAME       (A25)
+  2 SUFFIX          (A10)
+  2 SSN             (N9.0)
+  2 SEX             (A1)
+  2 DATE-OF-BIRTH   (N8.0)
+  2 HOME-PHONE      (N10.0) 2 REDEFINE HOME-PHONE
+    3 HOME-AREA-CODE (N3)
+    3 HOME-PHONE-3   (N3)
+    3 HOME-PHONE-4   (N4)
+  2 HOME-PHONE-INTR (A6)
+  2 WORK-PHONE      (N10.0) 2 REDEFINE WORK-PHONE
+    3 WORK-AREA-CODE (N3)
+    3 WORK-PHONE-3   (N3)
+    3 WORK-PHONE-4   (N4)
+  2 WORK-PHONE-INTR (A6)
+  2 INTERNET-ADDR   (A60)
+  2 MEMBER-CN      (A6) 2 REDEFINE MEMBER-CN
+    3 MEMBER-CN-N  (N6)
+  2 MIL-SERVICE    (A3)
+  2 MIL-STATUS     (A1)
+  2 RANK           (A3)
+  2 APPL-SOURCE    (A7)
+  2 REFERING-ID-NUMBER (1)
+  2 INTRO-FLAG     (A1)
+*
+1 CONTACT VIEW OF A-CONTACTS
+  2 ID-NUMBER       (N6)
+  2 MILITARY-STATUS (A1)
+  2 RANK-ID         (N6)
+  2 FIRST-NAME      (A25)
+  2 MIDDLE-NAME     (A25)
+  2 LAST-NAME       (A25)
+  2 SUFFIX          (A10)
+  2 SSN             (N9.0)
+  2 GENDER-CD       (A1)
+  2 DATE-OF-BIRTH   (N8.0)
+  2 CRM-CONTACT-GUI (A50)
+*
+1 RR VIEW OF A-RANK-REFERENCE
+  2 RANK-IN-SAS
+*
+1 ST-V VIEW OF A-STATUS       /* NG4
+  2 MEMBER-FLAG
+  2 INTRO-FLAG
+  2 PROCESS-IND
+*
+1 #DEFAULT-HOME  (A) DYNAMIC
+1 #DEFAULT-WORK  (A) DYNAMIC
+1 #DEFAULT-EMAIL (A) DYNAMIC
+1 #PHONE         (A10)
+*
+1 #L             (I4)
+1 BLANK          (A1) CONST <' '>
+1 #PH
+  2 #HOME
+    3 #H_PH1             (N3)
+    3 #H_PH2             (N3)
+    3 #H_PH3             (N4)
+    3 #H_PH4             (N6)
+    3 #H-PH-ID           (N8)
+  2 #WORK
+    3 #W_PH1             (N3)
+    3 #W_PH2             (N3)
+    3 #W_PH3             (N4)
+    3 #W_PH4             (N6)
+    3 #W-PH-ID           (N8)
+  2 #CELL
+    3 #C_PH1             (N3)
+    3 #C_PH2             (N3)
+    3 #C_PH3             (N4)
+    3 #C-PH-ID           (N8)
+  2 #pref              (a1)     /* vt1
+1 #AT-ISN                (P8)
+1 p_GOST0N01
+  2 p_CN       (N6)
+  2 p_Err      (N4)
+  2 p_Err_Dscr (A78)
+  2 p_Mod      (A1)
+*
+1 #CN-PARMS
+  2 CN                   (N6)
+  2 ERR                  (N4)
+  2 ERR-DESC             (A78)
+  2 MOD                  (A1)
+*
+1 #CC-CRM-REQUEST     (A) DYNAMIC CONST <'CRM-ADD-REQUEST'>     /* YK1
+END-DEFINE
+*
+IF #CONTACT-ID = 0
+    OR #AT-NUMBER = 0
+  ESCAPE ROUTINE
+END-IF
+*
+FIND (1) AT-V WITH ID-NUMBER = #AT-NUMBER
+  IF NO RECORDS FOUND
+    RESET #AT-ISN
+    ESCAPE BOTTOM
+  END-NOREC
+  #AT-ISN := *ISN (0134)
+END-FIND
+*
+IF #AT-ISN > 0
+  GET AT-V #AT-ISN
+  FIND (1) CONTACT WITH CONTACT-ID = #CONTACT-ID
+    MOVE BY NAME CONTACT TO AT-V
+    AT-V.SEX := CONTACT.GENDER-CD
+    AT-V.MIL-STATUS := CONTACT.MILITARY-STATUS
+    FIND RR WITH RANK-ID = CONTACT.RANK-ID
+      AT-V.RANK := RR.RANK-IN-SAS
+    END-FIND
+  END-FIND
+  AT-V.NAME := FUNCTION-CONTACT-NAME (< #CONTACT-ID >)
+  AT-V.NAME := *TRANSLATE(AT-V.NAME , UPPER)           /* bz-Name
+  UPDATE (0143)
+  IF AT-V.REFERING-ID-NUMBER (1) NE 0            /* NG2
+      AND AT-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    CALLNAT 'GOATN002'       /* Create Contact relation and defaults for GEN
+      #AT-ISN
+  END-IF
+*
+  INTERNET-ADDR := FUNCTION-DEFAULT-EMAIL (< #CONTACT-ID >)
+*                                  Phones
+  CALLNAT 'C1005NAT' #CONTACT-ID #PH
+  HOME-AREA-CODE  := #H_PH1
+  HOME-PHONE-3    := #H_PH2
+  HOME-PHONE-4    := #H_PH3
+  HOME-PHONE-INTR := #H_PH4
+  WORK-AREA-CODE  := #W_PH1
+  WORK-PHONE-3    := #W_PH2
+  WORK-PHONE-4    := #W_PH3
+  WORK-PHONE-INTR := #W_PH4
+  UPDATE (0143)
+  IF AT-V.MEMBER-CN-N <= 0
+    PERFORM STATUS-RECORD
+    UPDATE (0143)
+  ELSE                                   /* NG4
+    PERFORM CHECK-IF-SVC-ONLY
+  END-IF
+
+END-IF
+*
+DEFINE STATUS-RECORD
+/*     =============
+FIND CONTACT WITH CONTACT-ID = #CONTACT-ID     /* NG1
+  IF CONTACT.ID-NUMBER > 0
+    AT-V.MEMBER-CN-N := CONTACT.ID-NUMBER
+  END-IF
+END-FIND
+IF AT-V.MEMBER-CN-N > 0
+  PERFORM CHECK-IF-SVC-ONLY             /* NG4
+  ESCAPE ROUTINE
+END-IF
+*
+CALLNAT 'GOST0N01' p_GOST0N01     /* Get New CN, Create DUMMY STATUS*
+CALLNAT 'GOWEB001' p_CN  p_Err    /* bz-HD-3056 Create Dummy WebAccount
+*
+#STATUS.ID-NUMBER := p_CN
+AT-V.MEMBER-CN-N  := p_CN
+IF #STATUS.ID-NUMBER > 0
+  FIND CONTACT WITH CONTACT-ID = AT-V.CONTACT-ID
+    CONTACT.ID-NUMBER := #STATUS.ID-NUMBER
+    UPDATE
+  END-FIND
+END-IF
+#STATUS.MEMBER-CONTACT-ID       := AT-V.CONTACT-ID
+#STATUS.MEMBER-FLAG             := 'Y'
+#STATUS.INTRO-FLAG              := 'A'
+#STATUS.PROCESS-IND             := 'C'
+#STATUS.RANK                    := AT-V.RANK
+#STATUS.MILITARY-SERVICE        := AT-V.MIL-SERVICE
+#STATUS.MILITARY-STATUS         := AT-V.MIL-STATUS
+#STATUS.APPL-SOURCE             := AT-V.APPL-SOURCE
+*
+CALLNAT 'GOSTMN01' #STATUS p_Err  p_Err_Dscr p_Mod
+#CN-PARMS.CN := p_CN            /* Synch contact information with Status
+CALLNAT 'GOSTCN01'
+  #CN-PARMS
+*                         NG1 Start
+* CALLNAT 'GOSTAN01'                        /* Synch addresses
+*   #CN-PARMS
+*
+* CALLNAT 'GOSTPN01'                        /* Synch phone
+*   #CN-PARMS
+* *
+* CALLNAT 'GOSTEN01'                        /* Synch email
+*   #CN-PARMS
+* *                         NG1 End
+RESET p_GOST0N01
+p_CN := #STATUS.ID-NUMBER                 /* Create FIR  NG3
+CALLNAT 'S0FIRN01' p_GOST0N01
+  IF #FROM-ONLINE-APP = 'Y'       /* YK2
+* Find CC information by CRM Contact ID and populate CN if 0
+* Or create an empty record with CN and CRM Contact ID populated
+* Credit Card info will be added later with request through MOANCC40
+* YK1 >
+    PARM-CC-DATA.#ACTION := #CC-CRM-REQUEST
+    PARM-CC-INFO.ID-NUMBER := AT-V.MEMBER-CN-N
+    PARM-CC-INFO.CRM-CONTACT-ID := CONTACT.CRM-CONTACT-GUI
+    CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+* < YK1
+  END-IF                     /* YK2 
+END-SUBROUTINE
+/*                          NG4 \/\/\/
+DEFINE CHECK-IF-SVC-ONLY
+/*     =================
+FIND ST-V WITH ID-NUMBER = AT-V.MEMBER-CN-N
+  IF ST-V.INTRO-FLAG =  'O'
+      AND ST-V.PROCESS-IND =  'S'  /* SERVICE ONLY
+    ST-V.MEMBER-FLAG  := 'Y'
+    ST-V.INTRO-FLAG   := 'A'
+    ST-V.PROCESS-IND  := 'C'
+    UPDATE
+  END-IF
+END-FIND
+END-SUBROUTINE
+/*
+DEFINE HOME-PHONE
+/*     ==========
+#DEFAULT-HOME  := FUNCTION-DEFAULT-HOME  (< #CONTACT-ID >)
+IF #DEFAULT-HOME NE BLANK
+  #L := *LENGTH ( #DEFAULT-HOME )
+  IF #L <= 10
+    #PHONE := #DEFAULT-HOME
+    RESET HOME-PHONE-INTR
+  ELSE
+    MOVE SUBSTR(#DEFAULT-HOME,1,10) TO #PHONE
+    MOVE SUBSTR(#DEFAULT-HOME,11) TO HOME-PHONE-INTR
+  END-IF
+  AT-V.HOME-PHONE := VAL ( #PHONE )
+ELSE
+  RESET AT-V.HOME-PHONE
+END-IF
+END-SUBROUTINE
+*
+DEFINE WORK-PHONE
+/*     ==========
+#DEFAULT-WORK  := FUNCTION-DEFAULT-WORK  (< #CONTACT-ID >)
+IF #DEFAULT-WORK NE BLANK
+  #L := *LENGTH ( #DEFAULT-WORK )
+  IF #L <= 10
+    #PHONE := #DEFAULT-WORK
+    RESET WORK-PHONE-INTR
+  ELSE
+    MOVE SUBSTR ( #DEFAULT-WORK,1,10 ) TO #PHONE
+    MOVE SUBSTR ( #DEFAULT-WORK,11) TO WORK-PHONE-INTR
+  END-IF
+  AT-V.WORK-PHONE := VAL ( #PHONE )
+ELSE
+  RESET AT-V.WORK-PHONE
+END-IF
+END-SUBROUTINE
+*
+* DEFINE PRIMARY-AND-SECONDART-ADDR                                    /*TT1 BEGIN
+* /*     ==========================
+* RESET #PDA-ADDRESS
+* #ADD-TYPE := 'P'
+* #ADD-CONTACT-ID := #CONTACT-ID
+* #ADD-OLD-FORMAT := 'Y'
+* CALLNAT 'ADDN0001' #PDA-ADDRESS
+* MOVE *TRANSLATE(#ADD-LINE-1,UPPER)        TO AT-V.ADDRESS-1
+* MOVE *TRANSLATE(#ADD-LINE-3-NO-ZIP,UPPER) TO AT-V.ADDRESS-2  /* NG1
+* MOVE *TRANSLATE(#ADD-LINE-3-NO-ZIP,UPPER) TO AT-V.ADDRESS-3  /* NG1
+* AT-V.ZIP-CODE         := #ADD-ZIP-CODE
+* *
+* RESET #PDA-ADDRESS
+* #ADD-TYPE := 'S'
+* #ADD-CONTACT-ID := #CONTACT-ID
+* #ADD-OLD-FORMAT := 'Y'
+* CALLNAT 'ADDN0001' #PDA-ADDRESS
+* MOVE *TRANSLATE(#ADD-LINE-1,UPPER)        TO AT-V.S-ADDRESS-1
+* MOVE *TRANSLATE(#ADD-LINE-2-NO-ZIP,UPPER) TO AT-V.S-ADDRESS-2  /* NG1
+* MOVE *TRANSLATE(#ADD-LINE-3-NO-ZIP,UPPER) TO AT-V.S-ADDRESS-3  /* NG1
+* AT-V.S-ZIP-CODE         := #ADD-ZIP-CODE
+* END-SUBROUTINE                                                       /*TT1 END
+*
+ON ERROR
+  #RESPONCE := 'Natural abend'
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

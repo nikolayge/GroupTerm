@@ -1,0 +1,235 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: CSTOPSAM
+* UPDATER FOR AM STOP TRAN (STOP ALLOTMENT - OLD TRAN CODE413)
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE       TAG     REASON                                     *
+* DRW    09292004   DW1     add CREDIT CARD processing                 *
+* PAM    03/23/2009 PM2     Removed policy adjustments                 *
+************************************************************************
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #ST-V-STATUS            (A1/9)
+1 #ST-V-PAY-STATUS        (A2/9)
+1 #ST-V-MODE              (A1/9)
+1 #ST-V-PLAN              (A3/9)
+1 REDEFINE #ST-V-PLAN
+2 #ST-V-PLAN-OCC  (9)
+ 3 #ST-V-PLAN-A1    (A1)
+ 3 #ST-V-PLAN-A2    (A2)
+*
+1 #ST-V-ISSUE-DATE        (N8/9)
+1 REDEFINE #ST-V-ISSUE-DATE
+ 2 #ST-V-ISSUE-DATE-GR    (9)
+  3 #ST-V-ISSUE-DATE-YYY   (N4)
+  3 #ST-V-ISSUE-DATE-MM    (N2)
+  3 #ST-V-ISSUE-DATE-DD    (N2)
+*
+1 #ST-V-PAID-TO-DATE      (N8/9)
+1 REDEFINE #ST-V-PAID-TO-DATE
+ 2 #ST-V-PAID-TO-DATE-GR  (9)
+  3 #ST-V-PAID-TO-DATE-YYYY (N4)
+  3 #ST-V-PAID-TO-DATE-MM   (N2)
+  3 #ST-V-PAID-TO-DATE-DD   (N2)
+*
+1 #ST-V-PAID-UP-DATE      (N8/9)
+1 REDEFINE #ST-V-PAID-UP-DATE
+ 2 #ST-V-PAID-UP-DATE-GR  (9)
+  3 #ST-V-PAID-UP-DATE-YYYY (N4)
+  3 #ST-V-PAID-UP-DATE-MM   (N2)
+  3 #ST-V-PAID-UP-DATE-DD   (N2)
+*
+1 #ST-V-ANNUAL-PREM       (P5.2/9)
+1 #ST-V-MTD-ACV-PREM-ADJ  (P7.2/9)
+1 #ST-V-ALOT-AMT          (P5.2)
+1 #ST-V-ALOT-SW           (A1)
+1 #ST-V-STOP-DATE         (N8)
+1 #ST-V-DEBIT-CREDIT-AMT  (P7.2)
+1 #ST-V-AUX-DEBIT-CREDIT-AMT (P7.2)
+1 #ST-V-ALT-LP-IND        (A1/9)
+1 #ST-V-ALT-LP-AMT        (P5.2/9)
+1 #ST-V-PAD-CODE          (A1)
+1 #ST-V-NUMBER-MEMBERSHIPS (P1)
+1 #ST-V-LOAN-DATE          (N8/9)
+1 #ST-V-ALT-LP-IND-2      (A1/9)
+1 #ST-V-ALT-LP-AMT-2      (P5.2/9)
+1 #ST-V-LOAN-DATE-2        (N8/9)
+*
+1 #ILN1       (I2)
+1 #ILN2       (I2)
+1 #UPDATE-MODE (L)
+1 #TT-EFF-DT   (P8)
+*
+LOCAL
+1 #TODAY-YYYYMMDD
+ 2 #TODAY-YYYY    (N4)
+ 2 #TODAY-MM      (N2)
+ 2 #TODAY-DD      (N2)
+1 REDEFINE #TODAY-YYYYMMDD
+ 2 #TODAY-YYYYMMDD-N (N8)
+*
+1 #I1         (I2)
+1 #I2         (I2)
+1 #I3         (I2)
+1 #WORK-FREQ           (P2)
+1 #TOTAL-MODAL-PREMIUM (P5.2)
+1 #MODAL-PREMIUM       (P5.2)
+1 #LAST-MON-MM         (P4)
+1 #LAST-MON-YYYY       (P4)
+1 #TOTAL-AMT-DISP      (A11)
+1 #DISP-MSG            (A75)
+1 #HAS-LOAN            (L)
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+MOVE *DATN TO #TODAY-YYYYMMDD-N
+*
+IF #ST-V-ALOT-AMT NE #SCR-TRAN-AMT (#ILN1)
+  IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+    BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+  END-IF
+  MOVE EDITED #ST-V-ALOT-AMT (EM=ZZZZZ.99) TO #TOTAL-AMT-DISP
+  COMPRESS 'TRAN AMT MUST = EXISTING ALLOTMENT AMT OF ' #TOTAL-AMT-DISP
+                             INTO #DISP-MSG
+  REINPUT #DISP-MSG
+  MARK *#SCR-TRAN-AMT (#ILN1)
+END-IF
+*
+IF #TT-EFF-DT GT #TODAY-YYYYMMDD-N
+  IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+    BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+  END-IF                           /* *********************
+  REINPUT 'TRAN DATE CANNOT BE IN THE FUTURE'
+  MARK *#SCR-EFF-DT (#ILN1)
+END-IF
+*
+MOVE #TT-EFF-DT  TO #ST-V-STOP-DATE
+RESET            #ST-V-ALOT-AMT
+*
+RESET #HAS-LOAN
+FOR #I1 1 TO 9
+  IF  (#ST-V-LOAN-DATE   (#I1) NE 0)
+   OR (#ST-V-LOAN-DATE-2 (#I1) NE 0)
+    MOVE TRUE TO #HAS-LOAN
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF   (#ST-V-NUMBER-MEMBERSHIPS = 0)
+ AND (NOT #HAS-LOAN)
+  ESCAPE ROUTINE /* REST IS DONE IN C2500PAM
+END-IF
+*
+RESET #TOTAL-MODAL-PREMIUM
+*
+IF #TODAY-MM = 1
+  MOVE 12 TO #LAST-MON-MM
+  COMPUTE #LAST-MON-YYYY = #TODAY-YYYY - 1
+ELSE
+  COMPUTE #LAST-MON-MM = #TODAY-MM - 1
+  MOVE #TODAY-YYYY TO #LAST-MON-YYYY
+END-IF
+*
+FOR #I1 1 TO 9
+  IF  (#ST-V-STATUS (#I1) NE 'D')
+   OR (#ST-V-MODE   (#I1) NE 'G')
+   OR (#ST-V-PAY-STATUS (#I1) GT '41')
+      ESCAPE TOP
+  END-IF
+*
+*  IF #ST-V-PAY-STATUS (#I1) = '41'                                   /* PM2
+*    MOVE '42' TO #ST-V-PAY-STATUS (#I1)                              /* PM2
+*  ELSE                                                               /* PM2
+*
+  IF #ST-V-MODE (#I1) = 'A' OR = '1'   /* DW1
+    MOVE  1 TO #WORK-FREQ
+  ELSE
+    IF #ST-V-MODE (#I1) = 'S' OR = '2'   /* DW1
+      MOVE 2 TO #WORK-FREQ
+    ELSE
+      IF #ST-V-MODE (#I1) = 'Q' OR = '4'  /* DW1
+        MOVE 4 TO #WORK-FREQ
+      ELSE
+        MOVE 12 TO #WORK-FREQ
+      END-IF
+    END-IF
+  END-IF
+*
+  COMPUTE #TOTAL-MODAL-PREMIUM = #TOTAL-MODAL-PREMIUM
+     + (#ST-V-ANNUAL-PREM (#I1) / #WORK-FREQ)
+*
+*    IF #ST-V-PAY-STATUS (#I1) = '12' OR = '21' /* NOT PP             /* PM2
+*      IGNORE                                                         /* PM2
+*    ELSE                                                             /* PM2
+*      MOVE #LAST-MON-MM   TO #ST-V-PAID-TO-DATE-MM (#I1)             /* PM2
+*      MOVE 15             TO #ST-V-PAID-TO-DATE-DD (#I1)             /* PM2
+*      MOVE #LAST-MON-YYYY TO #ST-V-PAID-TO-DATE-YYYY (#I1)           /* PM2
+*                                                                     /* PM2
+*      IF #ST-V-PAY-STATUS (#I1) = '20'     /* FPF NOT PAID/PP        /* PM2
+*        MOVE '12' TO #ST-V-PAY-STATUS (#I1) /* FPF NOT PAID/NOT PP   /* PM2
+*      END-IF                                                         /* PM2
+*                                                                     /* PM2
+*      IF #ST-V-PAY-STATUS (#I1) = '22'      /* FPF PAID/PP           /* PM2
+*        MOVE '21' TO #ST-V-PAY-STATUS (#I1) /* FPF PAID/NOT PP       /* PM2
+*      END-IF                                                         /* PM2
+*    END-IF                                                           /* PM2
+*  END-IF                                                             /* PM2
+END-FOR /*(0139)
+*
+FOR #I1 1 TO 9
+  IF #ST-V-ALT-LP-IND (#I1) = '1' OR = '2'
+    #ST-V-ALT-LP-IND (#I1) := '9'                                     /* PM2
+    ADD #ST-V-ALT-LP-AMT (#I1) TO #TOTAL-MODAL-PREMIUM
+*    RESET #ST-V-ALT-LP-IND (#I1)                                     /* PM2
+*    RESET #ST-V-ALT-LP-AMT (#I1)                                     /* PM2
+  END-IF
+*
+  IF #ST-V-ALT-LP-IND-2 (#I1) = '1' OR = '2'
+    #ST-V-ALT-LP-IND-2 (#I1) := '9'                                   /* PM2
+    ADD #ST-V-ALT-LP-AMT-2 (#I1)TO #TOTAL-MODAL-PREMIUM
+*    RESET #ST-V-ALT-LP-IND-2 (#I1)                                   /* PM2
+*    RESET #ST-V-ALT-LP-AMT-2 (#I1)                                   /* PM2
+  END-IF
+END-FOR
+*
+IF #TOTAL-MODAL-PREMIUM NE 0
+  MOVE #TODAY-YYYYMMDD-N TO #ST-V-STOP-DATE
+END-IF
+*
+*    CALCULATE ACV ADJ PRORATION IF ANY
+*
+* FOR #I1 1 TO 9                                                      /* PM2
+*   IF   (#ST-V-STATUS (#I1) = 'D')                                   /* PM2
+*    AND (#ST-V-MODE (#I1)   = 'G')                                   /* PM2
+*    AND (#ST-V-PAY-STATUS (#I1) LE '40')                             /* PM2
+*    AND (NOT #ST-V-PAY-STATUS (#I1) = '12' OR = '21')                /* PM2
+*    AND (NOT #ST-V-PLAN (#I1) = 'LT' OR = 'RT' OR = 'SO')            /* PM2
+*    AND ((#ST-V-PLAN-A1(#I1) LT 'U') OR (#ST-V-PLAN-A1(#I1) GT 'Z')) /* PM2
+*     IF #I1 NE 1            /* FILLUP PRECEEDING MULTIPLE FIELDS     /* PM2
+*       COMPUTE #I3 = #I1 - 1                                         /* PM2
+*       FOR #I2 1 TO #I3                                              /* PM2
+*           MOVE 9999999.99 TO #ST-V-MTD-ACV-PREM-ADJ (#I2)           /* PM2
+*         END-IF                                                      /* PM2
+*       END-FOR                                                       /* PM2
+*     END-IF                                                          /* PM2
+*                                                                     /* PM2
+*     IF #ST-V-MTD-ACV-PREM-ADJ (#I1) = 9999999.99                    /* PM2
+*       RESET #ST-V-MTD-ACV-PREM-ADJ (#I1)                            /* PM2
+*     END-IF                                                          /* PM2
+*                                                                     /* PM2
+*     COMPUTE #MODAL-PREMIUM = #ST-V-ANNUAL-PREM (#I1) / 12           /* PM2
+*     SUBTRACT #MODAL-PREMIUM FROM #ST-V-MTD-ACV-PREM-ADJ (#I1)       /* PM2
+*                                                                     /* PM2
+*     IF #ST-V-MTD-ACV-PREM-ADJ (#I1) = 0                             /* PM2
+*       MOVE 9999999.99 TO #ST-V-MTD-ACV-PREM-ADJ (#I1)               /* PM2
+*     END-IF                                                          /* PM2
+*   END-IF                                                            /* PM2
+* END-FOR                                                             /* PM2
+*
+END

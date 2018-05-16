@@ -1,0 +1,362 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHP05P5   -   LOAN REGISTER
+*
+*  THIS PROGRAM RUNS IN BATCH MODE ONLY AND IS
+*  RUN FOR MONTH-END STATUS FILE MAINTENANCE
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* DRW    09282004  DW1     bypass new CAP loans put on by ATHPCPLN     *
+* DRW    10/18/2004 DW2    use stored M/E loan bal & int for stats     *
+* DRW    10/29/2004 DW3    accum final M/E loan info                   *
+* DRW    12/29/2004 DW4    Increase Var Loan to handle 99,999.99       *
+* SAG  02102005 RHC  AB    Incorporated parameter blocks for 'Cobol'   *
+*                          calls into GDA                              *
+* YAK    12/05/2007 YK1    Remove hardcording for interest rates       *
+*                          (Read GEN-TABLE through OBJNGENT)           *
+* DRW    02/06/2008 DW5    Fix bypass of New CAP members's Loans (DW1) *
+* YAK    02/05/2008 YK2    Change code to use FUNCTION-INT-RATE        *
+*                           to get rate from GEN-TABLE                 *
+* DRW    02/27/2008 DW6    Use Correct Loan-Balance for testing
+* DRW    03/18/2008 DW7    Add Iss date/Plan/split Ind to extract
+* RSE    09/17/2009 RE1    Change PROCESS-IND logic
+* vxt    11/04/2010 vt1    replace status-view name and rank with values from the new files.
+************************************************************************
+*
+*
+DEFINE DATA
+GLOBAL USING ATHG05P0
+*
+LOCAL
+* 1 #CURR-VAR-INT-RATE (P2.3) INIT <8.10>  /* YK1
+1 #CURR-VAR-INT-RATE (P2.3)                /* YK1
+*
+1 #SEG-X            (I2)
+*
+**1 #M-E-LOAN-INFO                        /* DW2
+** 2 #M-E-LOAN-AMT    (N5.2/9)  /* SAG  02102005 RHC  AB
+** 2 #M-E-ACCUM-INT   (N5.2/9)  /* SAG  02102005 RHC  AB
+** 2 #M-E-LOAN-AMT-2  (N6.2/9)  /* SAG  02102005 RHC  AB
+** 2 #M-E-ACCUM-INT-2 (N5.2/9)  /* SAG  02102005 RHC  AB
+*
+1 #TIN1             (A294)                                            /* vt1 was 205
+1 REDEFINE #TIN1
+  2 #TIN1-SECT      (A1)     /* INIT<'J'>
+  2 #TIN1-NAME      (A70)                                             /* vt1 was 25
+  2 #TIN1-CN-NUMBER
+    3 #TIN1-CN-LIT  (A2)     /* INIT<'CN'>
+    3 #TIN1-ID      (N6)
+    3 #TIN1-CN-FILL (A1)
+* 2 #FILL1          (A10)    /* DW7
+  2 #TIN1-ISSUE-DATE (N8)
+  2 #TIN1-SPLIT-IND  (N1)
+  2 #FILL1           (A1)   /* DW7
+*
+  2 #FIXED-LOAN-INFO
+   3 #TIN1-LNDT      (A6)
+   3 #TIN1-PRINC     (N5.2)
+   3 #TIN1-ACCINT    (N5.2)
+   3 #TIN1-BILAMT    (N5.2)
+   3 #TIN1-INTREC    (N5.2)
+   3 #TIN1-LACTDT    (A6)
+   3 #TIN1-LOTHDT    (A6)
+   3 #TIN1-DAYRT     (N2.4)
+   3 #TIN1-CERT      (A6)
+   3 #TIN1-RANK      (A25)                                      /* vt1 was 3
+   3 #TIN1-RET       (A1)
+   3 #TIN1-APL       (N2)
+   3 #TIN1-ALT-LP-AMT(P5.2)
+   3 #TIN1-INTRT     (N2.3)
+   3 #TIN1-CAP-AMT   (N5.1)
+*
+  2 #VARIABLE-LOAN-INFO
+   3 #TIN1-LNDT-2    (A6)
+   3 #TIN1-PRINC-2   (N5.2)
+   3 #TIN1-ACCINT-2  (N5.2)
+   3 #TIN1-BILAMT-2  (N5.2)
+   3 #TIN1-INTREC-2  (N5.2)
+   3 #TIN1-LACTDT-2  (A6)
+   3 #TIN1-LOTHDT-2  (A6)
+   3 #TIN1-DAYRT-2   (N2.4)
+   3 #TIN1-CERT-2    (A6)
+   3 #TIN1-RANK-2    (A25)                                 /* vt1 was 3
+   3 #TIN1-RET-2     (A1)
+   3 #TIN1-APL-2     (N2)
+   3 #TIN1-ALT-LP-AMT-2 (P5.2)
+   3 #TIN1-INTRT-2     (N2.3)
+   3 #TIN1-CAP-AMT-2   (N5.1)
+*
+  2  #TIN1-HOLD-SEG    (N2)
+*
+1 REDEFINE #TIN1
+ 2 #1               (A50)
+ 2 #2               (A50)
+ 2 #3               (A50)
+ 2 #4               (A50)
+ 2 #5               (A50)
+ 2 #6               (A44)
+*
+1 #DATN             (N8)
+1 REDEFINE #DATN
+  2 #CENT           (A2)
+  2 #YY             (A2)
+  2 #MM             (A2)
+  2 #DD             (A2)
+*
+1 #I1     (I2)
+1 #FOUND-INFO     (L)    /* DW6
+*
+1 #CONTACT-ID                (N8)                          /* vt1 \/
+1 #NAME                      (A70)
+1 #FIRST-NAME                (A25)
+1 #MIDDLE-NAME               (A25)
+1 #LAST-NAME                 (A25)
+1 #SUFFIX                    (A10)
+1 #NAME-F                    (A70)
+*
+ 1 #PDA-RANK
+2 #PASS-COMMAND       (A2)
+2 #RANK-PASS          (A3)
+2 #MIL-ID-PASS        (A3)
+2 #INVALID            (L)
+2 #RANK-PAY-TBL-DISPL (P2)
+2 #RANK-LITERAL-PASS  (A23)
+2 #RANK-DISPLAY       (A5)
+*
+2 #CONTACT-ID-R           (N8)
+2 #RANK-ABBR            (A) DYNAMIC
+2 #LETTER-ENV           (A) DYNAMIC
+2 #SALUTATION           (A) DYNAMIC
+2 #SALUTATION-WITH-NAME (A) DYNAMIC
+*
+1 #RANK-W                (A25)                     /* vt1 /\
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+ INPUT #SEG-X   /*  #M-E-LOAN-INFO /* excluded SAG  02102005 RHC  AB
+*
+**IF PROCESS-IND = 'S' OR = 'C'
+IF PROCESS-IND = 'C'               /* RE1
+  ESCAPE ROUTINE
+END-IF
+*
+#CURR-VAR-INT-RATE := FUNCTION-INT-RATE(<'RATE5AB'>)        /* YK2
+*
+*  WRITE 'SEG-X = ' #SEG-X
+FOR #I1 #SEG-X TO 9
+  RESET #FOUND-INFO                 /* DW6
+*  IF (STATUS-VIEW.X-LOAN-AMOUNT     (#I1) = 0)                           /* DW6
+   IF (#M-E-LOAN-AMT                 (#I1) = 0)                           /* DW6
+*     below to bypass new CAP loans put on by ATHPCPLN    /* DW1
+*   AND (STATUS-VIEW.X-LOAN-DATE     (#I1) NE #C-RUN-DT-YYYYMMDD) /* DW1/DW5/DW6
+*   AND (STATUS-VIEW.X-LOAN-DATE     (#I1) = 0)       /* DW5/DW6
+*   and (STATUS-VIEW.X-LOAN-date-2   (#I1) = 0)       /* DW6
+*   AND (STATUS-VIEW.X-LOAN-AMOUNT-2 (#I1) = 0)       /* DW6
+   AND (#M-E-LOAN-AMT-2             (#I1) = 0)                        /* DW6
+      ESCAPE TOP
+  END-IF
+*
+*     below to bypass new CAP loans put on by ATHPCPLN    /* DW5
+*  if   (STATUS-VIEW.X-LOAN-DATE (#I1) ge #C-RUN-DT-YYYYMMDD)        /* DW5
+*   and (STATUS-VIEW.X-LOAN-AMOUNT  (#I1) ne 0)                     /* DW6
+*    ESCAPE TOP
+*  END-IF
+*
+*     below to bypass paid-off-CAP-loans    /* DW5
+*  if   (STATUS-VIEW.X-LOAN-DATE (#I1) ne 0)
+*   and (status-view.x-loan-amount (#i1) = 0)                     /* DW6
+*   and (#M-E-LOAN-AMT             (#i1) = 0)
+*    ESCAPE TOP
+*  END-IF
+*
+ MOVE STATUS-VIEW.MEMBER-CONTACT-ID TO #CONTACT-ID  #CONTACT-ID-R                       /* vt1 \/
+      #NAME-F := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME,#MIDDLE-NAME,#LAST-NAME,#SUFFIX>)
+      COMPRESS #FIRST-NAME #MIDDLE-NAME #LAST-NAME INTO #NAME 
+      CALLNAT 'RANKN001' #PDA-RANK
+      #RANK-W := #RANK-ABBR                                                             /* vt1 /\
+*
+  IF STATUS-VIEW.NUMBER-MEMBERSHIPS = 0
+    IF STATUS-VIEW.STATUS (#I1) NOT = ' '
+      MOVE EDITED STATUS-VIEW.ID-NUMBER (EM=999999) TO #C-E-ID (1)
+      MOVE #NAME                         TO #C-E-NAME (1)                                /* vt1
+*     MOVE STATUS-VIEW.NAME              TO #C-E-NAME    (1)                             /* vt1
+*
+      MOVE #RANK-W                       TO #C-E-RANK (1)                                /* vt1
+*      MOVE STATUS-VIEW.RANK              TO #C-E-RANK    (1)                            /* vt1
+*
+      MOVE STATUS-VIEW.MILITARY-STATUS   TO #C-E-RETIRED (1)
+      MOVE 'HAS LOAN INFO BUT NO INSURANCE ' TO #C-E-MESSAGE (1)
+    ELSE
+      WRITE STATUS-VIEW.ID-NUMBER STATUS-VIEW.ISSUE-DATE (#I1)
+         'Has Loan Info but Terminated now'
+         'SEG =' #I1 'Loan=' STATUS-VIEW.X-LOAN-AMOUNT (#I1)
+                'Fix=' #M-E-LOAN-AMT (#I1) 'VAR' #M-E-LOAN-AMT-2 (#I1)
+    END-IF
+  END-IF
+*
+  MOVE 'J'                           TO #TIN1-SECT
+  MOVE 'CN'                          TO #TIN1-CN-LIT
+   MOVE #NAME                        TO #TIN1-NAME                              /* vt1
+*  MOVE STATUS-VIEW.NAME              TO #TIN1-NAME                             /* vt1
+  MOVE STATUS-VIEW.ID-NUMBER         TO #TIN1-ID
+*
+  MOVE STATUS-VIEW.ISSUE-DATE (#I1)  TO #TIN1-ISSUE-DATE    /* DW7
+  MOVE STATUS-VIEW.SPLIT-IND  (#I1)  TO #TIN1-SPLIT-IND     /* DW7
+*
+  RESET #FIXED-LOAN-INFO
+  RESET #VARIABLE-LOAN-INFO
+*
+*  process fixed loan
+*
+*     below to bypass new CAP loans put on by ATHPCPLN    /* DW5   DW6
+  IF   (STATUS-VIEW.X-LOAN-DATE (#I1) GE #C-RUN-DT-YYYYMMDD)        /* DW5
+   AND (STATUS-VIEW.X-LOAN-AMOUNT (#I1) NE 0) /* to catch loans paid of this Month
+    IGNORE
+  ELSE
+    MOVE TRUE TO #FOUND-INFO               /* DW6
+    MOVE STATUS-VIEW.X-BILL-INTEREST-AMT (#I1) TO #TIN1-BILAMT
+*
+    IF STATUS-VIEW.X-LOAN-DATE (#I1) = 0
+      MOVE 19000101 TO #DATN
+    ELSE
+      MOVE STATUS-VIEW.X-LOAN-DATE (#I1) TO #DATN
+    END-IF
+*
+    COMPRESS #MM #DD #YY INTO #TIN1-LNDT LEAVING NO SPACE
+*
+*   IF  (STATUS-VIEW.X-LOAN-AMOUNT    (#I1) NE #M-E-LOAN-AMT (#I1))
+*    OR (STATUS-VIEW.X-ACCUM-INTEREST (#I1) NE #M-E-ACCUM-INT  (#I1))
+*     WRITE ID-NUMBER 'Not = FX LN' X-LOAN-AMOUNT(#I1) #M-E-LOAN-AMT(#I1)
+*                  'Not = AI' X-ACCUM-INTEREST (#I1) #M-E-ACCUM-INT (#I1)
+*   END-IF
+*   MOVE STATUS-VIEW.X-LOAN-AMOUNT    (#I1) TO #TIN1-PRINC
+    MOVE #M-E-LOAN-AMT                (#I1) TO #TIN1-PRINC  /* DW2
+    MOVE STATUS-VIEW.X-CAP-AMT        (#I1) TO #TIN1-CAP-AMT
+*   MOVE STATUS-VIEW.X-ACCUM-INTEREST (#I1) TO #TIN1-ACCINT
+    MOVE #M-E-ACCUM-INT               (#I1) TO #TIN1-ACCINT /* DW2
+    MOVE STATUS-VIEW.X-INTEREST-RATE  (#I1) TO #TIN1-INTRT
+*
+    COMPUTE ROUNDED #TIN1-DAYRT =
+*       STATUS-VIEW.X-LOAN-AMOUNT (#I1)
+        #M-E-LOAN-AMT (#I1)                      /* DW2
+           * STATUS-VIEW.X-INTEREST-RATE (#I1) / 36500
+*
+    MOVE STATUS-VIEW.X-INTEREST-RECEIVED (#I1) TO #TIN1-INTREC
+    MOVE STATUS-VIEW.DATE-ACCT-UPDATE  TO #DATN
+    COMPRESS #MM #DD #YY INTO #TIN1-LACTDT LEAVING NO SPACE
+*
+    MOVE STATUS-VIEW.DATE-OTHER-UPDATE TO #DATN
+    COMPRESS #MM #DD #YY INTO #TIN1-LOTHDT LEAVING NO SPACE
+*
+    MOVE #RANK-W                       TO #TIN1-RANK                   /* vt1
+*    MOVE STATUS-VIEW.RANK              TO #TIN1-RANK                  /* vt1
+    MOVE STATUS-VIEW.MILITARY-STATUS   TO #TIN1-RET
+    MOVE STATUS-VIEW.X-ALT-LP-AMT (#I1) TO #TIN1-ALT-LP-AMT
+    IF STATUS-VIEW.APL-CNT LT 100
+      MOVE STATUS-VIEW.APL-CNT TO #TIN1-APL
+    ELSE
+      MOVE 99 TO #TIN1-APL
+    END-IF
+*
+*    ACCUM FINAL LOAN INFO _ Below only used for display after EOJ          /* DW3
+    ADD STATUS-VIEW.X-LOAN-AMOUNT    (#I1) TO #TOT-PRINC
+    ADD STATUS-VIEW.X-ACCUM-INTEREST (#I1) TO #TOT-ACCINT
+  END-IF
+*
+*  process variable loan
+*
+  IF #M-E-LOAN-AMT-2 (#I1) = 0      /* DW6
+    IGNORE
+  ELSE
+    MOVE TRUE TO #FOUND-INFO               /* DW6
+*
+    IF STATUS-VIEW.X-LOAN-DATE-2 (#I1) = 0
+      MOVE 19000101 TO #DATN
+    ELSE
+      MOVE STATUS-VIEW.X-LOAN-DATE-2 (#I1) TO #DATN
+    END-IF
+*
+    COMPRESS #MM #DD #YY INTO #TIN1-LNDT-2 LEAVING NO SPACE
+*
+*   IF  (STATUS-VIEW.X-LOAN-AMOUNT-2  (#I1) NE #M-E-LOAN-AMT-2 (#I1))
+*    OR (STATUS-VIEW.X-ACCUM-INTEREST-2 (#I1) NE #M-E-ACCUM-INT-2  (#I1))
+*     WRITE ID-NUMBER 'Not =VR LN'
+*            X-LOAN-AMOUNT-2 (#I1) #M-E-LOAN-AMT-2 (#I1)
+*        'Not = AI' X-ACCUM-INTEREST-2 (#I1) #M-E-ACCUM-INT-2 (#I1)
+*   END-IF
+*
+*   MOVE STATUS-VIEW.X-LOAN-AMOUNT-2   (#I1)  TO #TIN1-PRINC-2
+    IF #M-E-LOAN-AMT-2 (#I1) GT 99999.99     /* DW4
+      WRITE STATUS-VIEW.ID-NUMBER 'loan-amount exceeds 99,999.99' #M-E-LOAN-AMT-2 (#I1)
+      MOVE 99999.99  TO #TIN1-PRINC-2  /* DW4
+    ELSE
+      MOVE #M-E-LOAN-AMT-2 (#I1)  TO #TIN1-PRINC-2  /* DW2
+    END-IF
+*
+    MOVE STATUS-VIEW.X-CAP-AMT-2       (#I1)  TO #TIN1-CAP-AMT-2
+*   MOVE STATUS-VIEW.X-ACCUM-INTEREST-2(#I1)  TO #TIN1-ACCINT-2
+    MOVE #M-E-ACCUM-INT-2              (#I1)  TO #TIN1-ACCINT-2  /* DW2
+    MOVE #CURR-VAR-INT-RATE              TO #TIN1-INTRT-2
+*
+    COMPUTE ROUNDED #TIN1-DAYRT-2 =
+*       STATUS-VIEW.X-LOAN-AMOUNT-2 (#I1) * #CURR-VAR-INT-RATE / 36500
+        #M-E-LOAN-AMT-2 (#I1) * #CURR-VAR-INT-RATE / 36500  /* DW2
+*
+    MOVE STATUS-VIEW.X-INTEREST-RECEIVED-2 (#I1) TO #TIN1-INTREC-2
+    MOVE STATUS-VIEW.DATE-ACCT-UPDATE  TO #DATN
+    COMPRESS #MM #DD #YY INTO #TIN1-LACTDT-2 LEAVING NO SPACE
+*
+    MOVE STATUS-VIEW.DATE-OTHER-UPDATE TO #DATN
+    COMPRESS #MM #DD #YY INTO #TIN1-LOTHDT-2 LEAVING NO SPACE
+*
+     MOVE #RANK-W                       TO #TIN1-RANK-2                   /* vt1
+*    MOVE STATUS-VIEW.RANK              TO #TIN1-RANK-2                   /* vt1
+    MOVE STATUS-VIEW.MILITARY-STATUS   TO #TIN1-RET-2
+    MOVE STATUS-VIEW.X-ALT-LP-AMT-2 (#I1) TO #TIN1-ALT-LP-AMT-2
+*
+    IF STATUS-VIEW.APL-CNT LT 100
+      MOVE STATUS-VIEW.APL-CNT TO #TIN1-APL-2
+    ELSE
+      MOVE 99 TO #TIN1-APL-2
+    END-IF
+*
+*    ACCUM FINAL LOAN INFO _ Below only used for display after EOJ         /* DW3
+    ADD STATUS-VIEW.X-LOAN-AMOUNT-2    (#I1) TO #TOT-PRINC-2
+    ADD STATUS-VIEW.X-ACCUM-INTEREST-2 (#I1) TO #TOT-ACCINT-2
+  END-IF
+*
+  IF NOT #FOUND-INFO       /* DW6
+    ESCAPE TOP
+  END-IF
+*
+  MOVE 1 TO #C-OUTGOING-FLAG
+*
+  COMPUTE #TIN1-HOLD-SEG = #I1 + 1  /* save next seg to process
+*  WRITE 'Loading segment' 1X #TIN1-HOLD-SEG
+   MOVE #TIN1 TO #C-RR-256
+*  WRITE '1 = ' #1
+*  WRITE '2 = ' #2
+*  WRITE '3 = ' #3
+*  WRITE '4 = ' #4
+*  WRITE '5 = ' #5
+*  WRITE '6 = ' #6
+
+* DISPLAY #TIN1-ID
+*    #TIN1-LNDT
+*    #TIN1-PRINC
+*    #TIN1-ACCINT #TIN1-INTRT
+* DISPLAY #TIN1-ID
+*    #TIN1-LNDT-2
+*    #TIN1-PRINC-2
+*    #TIN1-ACCINT-2 #TIN1-INTRT-2
+  ESCAPE ROUTINE
+END-FOR
+*
+MOVE 2 TO #C-OUTGOING-FLAG
+*
+END

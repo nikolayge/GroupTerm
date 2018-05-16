@@ -1,0 +1,174 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Get Member Family Information
+*
+*************************************************************************************
+*        MODIFICATION LOG
+*************************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    01052015       Initial Creation
+* YAK    01072016  YK2  MC-II - FIR Add new fields
+*************************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0006
+PARAMETER 1 #ErrorCode (A3)
+PARAMETER 1 #FamilyMembers     (*)
+  2 ContactId        (N8) OPTIONAL
+  2 Relation         (A1) OPTIONAL
+*
+LOCAL USING OBJACONT
+LOCAL USING OBJACTRL
+LOCAL USING OBJLFINF
+LOCAL USING OBJLFIR
+LOCAL USING ERROR_L
+LOCAL
+*
+1 #GET              (A) DYNAMIC CONST <'GET'>
+1 #GET-FAMILY       (A) DYNAMIC CONST <'GET-FAMILY'>
+1 #SPOUSE           (A) DYNAMIC CONST <'S'>
+1 #FORMER-SPOUSE    (A) DYNAMIC CONST <'X'>
+1 #DECEASED-CD      (A) DYNAMIC CONST <'D'>
+1 #Dynamic_Name     (A) DYNAMIC
+1 #REL              (A1)
+1 #LOOK-UP-DOC-TYPE (A) DYNAMIC CONST <'CODE033'>
+1 #LOOK-UP-KEY      (A7)
+1 #LOOK-UP-VALUE    (A) DYNAMIC
+1 #DEP-CONTACT-ID           (N8)
+1 REDEFINE #DEP-CONTACT-ID
+  2 #DEP-CONTACT-ID_A       (A8)
+1 #I  (I2)
+1 #DISABLED (A) DYNAMIC CONST <'Disabled'>
+1 #DECEASED (A) DYNAMIC CONST <'Deceased'>
+*
+END-DEFINE
+*
+DECIDE ON FIRST VALUE FamilyInformation.ActionType
+  VALUE #GET-FAMILY
+    PERFORM GET-FAMILY
+  VALUE #GET
+    PERFORM GET-CONTACT
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+*****************************
+DEFINE SUBROUTINE GET-CONTACT
+*****************************
+*
+RESET PARM-CONTACT
+PARM-CONTACT.CONTACT-ID := FamilyInformation.ContactId
+PARM-CONTACT.#ACTION    := #GET
+RESET PARM-CONTACT.#RETURN-CODE
+CALLNAT 'OBJNCONT' PARM-CONTACT
+IF PARM-CONTACT.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+* Add check for deceased
+IF PARM-CONTACT.DATE-OF-DEATH <> 0 AND PARM-CONTACT.CONTACT-STATUS = ' '
+  PARM-CONTACT.CONTACT-STATUS := #DECEASED-CD
+END-IF
+FamilyInformation.IdNumber       := PARM-CONTACT.ID-NUMBER
+FamilyInformation.StatusCode     := PARM-CONTACT.CONTACT-STATUS
+FamilyInformation.Prefix         := PARM-CONTACT.PREFIX-TITLE
+FamilyInformation.FirstName      := PARM-CONTACT.FIRST-NAME
+FamilyInformation.MiddleName     := PARM-CONTACT.MIDDLE-NAME
+FamilyInformation.LastName       := PARM-CONTACT.LAST-NAME
+FamilyInformation.Suffix         := PARM-CONTACT.SUFFIX
+FamilyInformation.SSN            := PARM-CONTACT.SSN
+FamilyInformation.GenderCode     := PARM-CONTACT.GENDER-CD
+FamilyInformation.DateOfBirth    := PARM-CONTACT.DATE-OF-BIRTH
+FamilyInformation.DateOfDeath    := PARM-CONTACT.DATE-OF-DEATH
+IF PARM-CONTACT.BIRTH-CERT-CODE <> ' ' AND PARM-CONTACT.BIRTH-CERT-CODE <> 'N'
+  FamilyInformation.BirthCertificateInd := 'true'
+  #LOOK-UP-KEY   := #LOOK-UP-DOC-TYPE
+  #LOOK-UP-VALUE := PARM-CONTACT.BIRTH-CERT-CODE
+  FamilyInformation.BirthCertCodeDescription := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)
+ELSE
+  FamilyInformation.BirthCertificateInd := 'false'
+END-IF
+*
+FamilyInformation.Prefix         := PARM-CONTACT.PREFIX-TITLE
+RESET #Dynamic_Name
+CALLNAT 'GPRS0CNT' PARM-CONTACT.CONTACT-ID #Dynamic_Name
+* #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >)  /* bz-Name
+FamilyInformation.FullName := #Dynamic_Name
+*
+IF FamilyInformation.Prefix = ' '
+  #REL := *TRIM(FamilyInformation.RelationshipCode)
+  FamilyInformation.Prefix :=
+    F-DEF-PREFIX(<FamilyInformation.ContactID,#REL,PARM-CONTACT.LAST-NAME,PARM-CONTACT.GENDER-CD,PARM-CONTACT.DATE-OF-BIRTH>)
+END-IF
+*
+IF FamilyInformation.RelationshipCode = #SPOUSE OR = #FORMER-SPOUSE
+  PERFORM GET-STATUS-INFO
+ELSE
+  PERFORM GET-DEP-STATUS
+END-IF
+* YK2
+DECIDE ON FIRST VALUE FamilyInformation.StatusCode
+  VALUE 'H', 'I', 'J', 'L'
+    FamilyInformation.StatusCodeDescription := #DISABLED
+  VALUE 'D'  
+    FamilyInformation.StatusCodeDescription := #DECEASED
+  NONE VALUE
+    IGNORE  
+END-DECIDE
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE GET-FAMILY
+****************************
+*
+RESET PARM-CONTACT-REL
+PARM-CONTACT-REL.#ACTION := #GET-FAMILY
+PARM-CONTACT-REL.CONTACT-1-ID := FamilyInformation.ContactId
+EXPAND ARRAY #FamilyMembers TO (*:1)
+CALLNAT 'OBJNCTRL' PARM-CONTACT-REL #FamilyMembers(*)
+IF PARM-CONTACT-REL.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT-REL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-STATUS-INFO
+*********************************
+*
+FIND(1) ST-V WITH ID-NUMBER = FamilyInformation.MemberCN
+  DECIDE ON FIRST VALUE FamilyInformation.RelationshipCode
+    VALUE #SPOUSE
+      FamilyInformation.SpouseDateOfMarriage       := ST-V.DATE-OF-MARRIAGE
+      FamilyInformation.SpouseDateOfDivorce        := ST-V.DATE-OF-DIVORCE
+      FamilyInformation.SpouseDateOfDivorce        := ST-V.DATE-OF-DIVORCE
+      FamilyInformation.SpouseDateOfDivorce        := ST-V.DATE-OF-DIVORCE
+      FamilyInformation.StatusCode                 := ST-V.STATUS-CODE-SP
+    VALUE #FORMER-SPOUSE
+      FamilyInformation.FormerSpouseDateOfMarriage := ST-V.FORMER-SPOUSE-DATE-OF-MARRIAGE
+      FamilyInformation.FormerSpouseDateOfDivorce  := ST-V.FORMER-SPOUSE-DATE-OF-DIVORCE
+      FamilyInformation.StatusCode                 := ST-V.FORMER-SPOUSE-STATUS
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+END-FIND
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-DEP-STATUS    /* YK2
+********************************
+*
+FIND(1) FIR-V WITH ID-NUMBER = FamilyInformation.MemberCN
+  #DEP-CONTACT-ID := FamilyInformation.ContactId
+  EXAMINE DEPN-CI_A(*) FOR #DEP-CONTACT-ID_A GIVING INDEX #I
+  IF #I <> 0
+    FamilyInformation.StatusCode := FIR-V.DEPN-STATUS-CD(#I)
+  END-IF
+END-FIND
+END-SUBROUTINE
+*
+END

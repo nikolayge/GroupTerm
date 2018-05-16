@@ -1,0 +1,204 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Show / Print CG data
+* bz 10/21/2010 Ver 1.2
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital  
+DEFINE DATA
+PARAMETER
+1 p_CN (N6)
+1 p_RC (N3)
+1 p_Mod (A1) OPTIONAL
+1 p_Type (A1) OPTIONAL
+LOCAL
+1 #CONTACT-ID (N8)
+1 #_ADDRS
+  2 #ENT-SIZE (I4)
+  2 #Shared   (A1)
+  2 #ENT-ISN  (P8/99)
+  2 #TEXT     (A67/5)
+1 #_Phone
+  2 #ENT-SIZE (I4)
+  2 #ENT-ISN  (P8/99)
+  2 #TEXT     (A67/5)
+1 #_Email
+  2 #ENT-SIZE (I4)
+  2 #ENT-ISN  (P8/99)
+  2 #TEXT     (A67/5)
+1 #_Notes
+  2 #ENT-SIZE (I4)
+  2 #ENT-ISN  (P8/99)
+  2 #TEXT     (A67/5)
+1 p_CONTACT
+   2 p_CID    (N8)
+   2 p_Name   (A)    DYNAMIC
+   2 p_DOB_N  (N8)
+   2 p_DOB    (A10)
+   2 p_DOD_N  (N8)
+   2 p_DOD    (A10)
+   2 p_SEX    (A1)
+1 CNT-V VIEW OF A-CONTACTS
+   2  CONTACT-ID
+   2  ID-NUMBER
+1 CNT-CR-V VIEW OF A-CONTACTS
+   2  CONTACT-ID
+   2  FIRM-ORGANIZATION-NAME   
+1 CNTR-V VIEW OF A-CONTACT-RELATIONSHIPS
+   2 CONTACT-1-ID                      (N8.0) /* Descriptor
+   2 ROLE-1-CD                         (A1)
+   2 CONTACT-2-ID                      (N8.0) /* Descriptor
+   2 ROLE-2-CD                         (A1)
+1 #MSG            (A72)
+1 #J              (N2)
+1 #xx             (N2)
+*
+1 v_Title         (A15)
+1 v_Item          (A11)
+1 REDEFINE v_Item
+  2 v_Item_Name   (A8)
+  2 v_Item_seq    (A3)
+*
+1 #skip    (N1)  INIT <1>
+1 #skip_I  (N1)  INIT <0>
+1 l_Skip_Share   (L) INIT <FALSE>
+1 l_Shared       (L) INIT <FALSE>
+1 l_DQ           (L) INIT <FALSE>
+END-DEFINE
+
+IF p_Mod SPECIFIED  DEFINE PRINTER (1) OUTPUT 'VIDEO' END-IF
+IF p_Type SPECIFIED l_DQ := TRUE END-IF
+
+  FIND CNT-V WITH ID-NUMBER = p_CN
+    IF NO RECORDS FOUND
+       WRITE (1) NOTITLE 1x "Contact for CN=" p_CN "Not Found"
+       p_RC := 404
+       ESCAPE ROUTINE
+    END-NOREC
+  END-FIND
+FORMAT (1) PS=57 LS=90
+* WRITE (1) NOTITLE "CG" ID-NUMBER  15X '-'(5) "Contact view" '-'(5)
+SKIP (1) #skip
+p_CID := CNT-V.CONTACT-ID
+v_Title := "- Member"
+
+l_Skip_Share := FALSE
+IF NOT l_DQ
+  PERFORM DO-ADDR
+END-IF
+FIND CNTR-V WITH CONTACT-1-ID = CNT-V.CONTACT-ID
+COMPRESS '-' FUNCTION-CODE-1-DESC (<'041', ROLE-2-CD>) INTO v_Title
+
+  p_CID := CONTACT-2-ID
+
+  l_Skip_Share := TRUE
+  PERFORM DO-ADDR
+END-FIND
+
+IF l_Shared    WRITE (1) / ' * Shared Address'  END-IF
+
+DEFINE DO-ADDR
+RESET INITIAL   #_ADDRS #_Phone #_Email #_Notes
+CALLNAT 'ADRNE001' p_CID #_ADDRS.#ENT-SIZE #_ADDRS.#ENT-ISN (*)
+CALLNAT 'ADRNE011' p_CID #_Phone.#ENT-SIZE #_Phone.#ENT-ISN (*)
+CALLNAT 'ADRNE021' p_CID #_Email.#ENT-SIZE #_Email.#ENT-ISN (*)
+CALLNAT 'ADRNE031' p_CID #_Notes.#ENT-SIZE #_Notes.#ENT-ISN (*)
+
+* IF #_ADDRS.#ENT-SIZE = 0 AND
+*    #_Phone.#ENT-SIZE = 0 AND
+*    #_Email.#ENT-SIZE = 0 AND
+*    #_Notes.#ENT-SIZE = 0
+*    ESCAPE ROUTINE
+* END-IF
+p_Name := '!'
+CALLNAT 'GPRS0CNT'  p_CONTACT
+SKIP (1) #skip
+WRITE (1) 1x v_Title  p_Name (AL=67) /
+       1x   "Gender:"  p_SEX 2x "DOB:" p_DOB 2x "DOD:" p_DOD
+
+FIND CNT-CR-V WITH CNT-CR-V.CONTACT-ID = p_CID
+  IF  FIRM-ORGANIZATION-NAME <> ' ' 
+      PRINT (1) 2x 'Organization Name:' FIRM-ORGANIZATION-NAME 
+  END-IF
+END-FIND
+
+  PERFORM DO-Address
+IF  ( #_Phone.#ENT-SIZE = 0 ) AND  ( #_Email.#ENT-SIZE = 0 )
+  WRITE (1) 1x "No Phone number and Email Address on record"
+ELSE
+  PERFORM DO-Phone
+  PERFORM DO-Email
+END-IF
+  PERFORM DO-Notes
+IF p_Mod SPECIFIED EJECT (1) END-IF
+END-SUBROUTINE
+* ----------------------------------------------------------------------
+DEFINE DO-Address
+FOR #J 1 TO #_ADDRS.#ENT-SIZE
+  CALLNAT 'ADRNE002' p_CID #_ADDRS.#ENT-ISN(#J) #_ADDRS.#TEXT(*)
+    #_ADDRS.#SHARED
+  IF #_ADDRS.#SHARED = '*' l_Shared := TRUE  END-IF
+  COMPRESS "Address" #_ADDRS.#SHARED INTO v_Item_Name LEAVING NO SPACE
+  MOVE EDITED #J (EM=ZZ9) TO v_Item_Seq
+  FOR #xx = 1 TO 5
+ IF #xx > 1 v_Item := " "  ELSE SKIP (1)  #skip_I  END-IF
+   IF #_ADDRS.#TEXT (#xx) <> " "
+       IF #_ADDRS.#SHARED = "*" AND l_Skip_Share  AND NOT l_DQ   /* Skip Shared Addr. Commented, Might be made optional
+          IGNORE
+       ELSE
+         WRITE (1) 1x v_Item  #_ADDRS.#TEXT (#xx)
+       END-IF
+   END-IF
+ END-FOR
+END-FOR
+END-SUBROUTINE
+* ----------------------------------------------------------------------
+DEFINE DO-Phone
+IF #_Phone.#ENT-SIZE = 0
+  WRITE (1) 1x "No Phone number on record"
+END-IF
+FOR #J 1 TO #_Phone.#ENT-SIZE
+  CALLNAT 'ADRNE012' p_CID #_Phone.#ENT-ISN(#J) #_Phone.#TEXT(*)
+  v_Item_Name := "Phone"
+  MOVE EDITED #J (EM=ZZ9) TO v_Item_Seq
+ FOR #xx = 1 TO 5
+ IF #xx > 1 v_Item := " " ELSE SKIP (1) #skip_I  END-IF
+   IF  #_Phone.#TEXT (#xx) <> " "
+      WRITE (1) 1x v_Item #_Phone.#TEXT (#xx)
+   END-IF
+ END-FOR
+END-FOR
+END-SUBROUTINE
+* ----------------------------------------------------------------------
+DEFINE DO-Email
+IF #_Email.#ENT-SIZE = 0
+  WRITE (1) 1x "No Email Address on record"
+END-IF
+FOR #J 1 TO #_Email.#ENT-SIZE
+  CALLNAT 'ADRNE022' p_CID #_Email.#ENT-ISN(#J) #_Email.#TEXT(*)
+  v_Item_Name := "Email"
+  MOVE EDITED #J (EM=ZZ9) TO v_Item_Seq
+ FOR #xx = 1 TO 5
+ IF #xx > 1 v_Item := " " ELSE SKIP (1) #skip_I  END-IF
+   IF  #_Email.#TEXT (#xx) <> " "
+      WRITE (1) 1x v_Item  #_Email.#TEXT (#xx)
+   END-IF
+ END-FOR
+END-FOR
+END-SUBROUTINE
+* ----------------------------------------------------------------------
+DEFINE DO-Notes
+FOR #J 1 TO #_Notes.#ENT-SIZE
+  CALLNAT 'ADRNE032' p_CID #_Notes.#ENT-ISN(#J) #_Notes.#TEXT(*)
+ v_Item_Name := "Notes"
+ MOVE EDITED #J (EM=ZZ9) TO v_Item_Seq
+ FOR #xx = 1 TO 5
+ IF #xx > 1 v_Item := " "  ELSE SKIP (1) #skip_I END-IF
+   IF  #_Notes.#TEXT (#xx) <> " "
+      WRITE (1) 1x v_Item #_Notes.#TEXT (#xx)
+   END-IF
+ END-FOR
+END-FOR
+END-SUBROUTINE
+END

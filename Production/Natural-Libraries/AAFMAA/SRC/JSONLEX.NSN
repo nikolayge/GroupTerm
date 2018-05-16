@@ -1,0 +1,383 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* <Natural Source Header
+/** New Subprogram JSONLEX.
+/**
+/** :author nguentchev
+/*
+* Main routine to get next token from JSON stream
+* All input characters are coded into Input Codes like WHITES, UPPER ALPHA, DIGIT, ...
+* The FA is table that recognize some tokens like Curly brace,Square bracket
+* There is UNKNOWN Token Type that covers everything out of the scope of defined Tokens
+* There are FINAL States in FA (State < 0) and Temporary state
+* TEMP needs next Input code and jumps to FINAL or TEMP
+*
+* In JSON, values must be one of the following data types:
+* 
+*    a string   S
+*    a number   N
+*    an object (JSON object) J
+*    an array   A
+*    a boolean  B
+*    null
+* Data is in name/value pairs
+* Data is separated by commas
+* Curly braces hold objects
+* Square brackets hold arrays
+*                             Example 1
+*   {
+*   "@odata.context":"http://localhost:61214/$metadata#Policies/$entity",
+*   "Id":2,
+*   "PolicyName":"Whole life",
+*   "IssueDate":"2008-03-01T07:00:00-05:00",
+*   "PolicyProduct":null,
+*   "MonthlyPayment":13.10
+*   }
+*
+*
+DEFINE DATA
+PARAMETER
+1 JOBJECT     (A)     DYNAMIC /* In JSON string
+1 JDATA-NAME  (A/1:V) DYNAMIC /* Out
+1 JDATA-VALUE (A/1:V) DYNAMIC /* Out
+1 JDATA-TYPE  (A1/1:V)        /* Out
+1 J-NBR       (I4)            /* Out
+1 Msg         (A) DYNAMIC
+LOCAL
+1 Token     (I4)
+1 EOD       (L) 
+/*   INPUT CODES
+1 White         (I4) CONST<0>
+1 CurlyStart    (I4) CONST<1>
+1 CurlyEnd      (I4) CONST<2>
+1 BracketStart  (I4) CONST<3>
+1 BracketEnd    (I4) CONST<4>
+1 Comma     (I4) CONST<5>
+1 Colon     (I4) CONST<6>
+1 Letter    (I4) CONST<7>
+1 Digit     (I4) CONST<8>
+1 Quote     (I4) CONST<9>
+1 Other     (I4) CONST<10>
+1 Sign      (I4) CONST<11>
+1 Dot       (I4) CONST<12>
+1 UnderLine (I4) CONST<13>
+/* -------- Letter ----------------------
+1 #SMALL   (A1/27) INIT
+  <'@','a','b','c','d','e','f','g','h',
+  'i','j','k','l','m','n','o','p','q','r',
+  's','t','u','v','w','x','y','z'>
+1 #ALPHA (A1/26) INIT
+  <'A','B','C','D','E','F','G','H',
+  'I','J','K','L','M','N','O','P','Q','R',
+  'S','T','U','V','W','X','Y','Z'>
+1 #QT      (A1/2)  INIT <H'22',H'27'>
+/* ---- Input stream ---------------------
+1 SegmentNumber     (I4)  
+1 SEGMENT  (A1/1:100) 1 REDEFINE SEGMENT
+  2 SEGMENT-I (I1/1:100)
+1 REDEFINE SEGMENT
+  2 SEGMENT-S (A100)
+1 TokenStr    (A100) 1 REDEFINE TokenStr
+  2 TokenStr-1 (A1/100)
+1 AValues (A1/16000) 1 REDEFINE AValues
+  2 AValues-S (A16000)
+1 IC    (I4) /* Input Char Code
+1 CP    (I4) /* Current segment position
+1 JLEN  (I4) /* JSON string length
+1 PS    (I4) /* Previous State
+1 CS    (I4) /* Current State
+*
+*            FA controls token recognition
+*                   0        1            2        3           4           5
+* Input             Begin    NameStart    ArrValues NestedObj  NumValue    StrValue
+* White         0    0          err       2           3        NVend        5
+* CurlyStart    1    ObjStart   err       NestedObj   3        err          err
+* CurlyEnd      2    ObjEnd     err       err         Noend    err          err
+* BracketStart  3    ArrValues  err       err         3        err          err
+* BracketEnd    4    ArrEnd     err       err         3        err          err
+* Comma         5    JComma     err       err         3        NVend        5
+* Colon         6    JColon     5         err         3        err          5
+* Letter        7    Reserved   1         Reserved    3        err          5
+* Digit         8    NumValue   1         NumValue    3        4            5
+* Quote         9    NameStart  NameEnd   StrValue    3        err          StrEnd
+* Other         10    0         StrValue  err         3        err          5
+* Sign          11    err       StrValue  NumValue    3        err          5
+* Dot           12    err       StrValue  NumValue    3        4            5
+* UnderLine     13    err       NameStart err         3        err          5
+*               Final states = token is parsed
+1 ParsingError(I4) CONST <-1>
+1 ObjStart    (I4) CONST <-2>
+1 ArrStart    (I4) CONST <-3>
+1 Jcomma      (I4) CONST <-4>
+1 JColon      (I4) CONST <-5>
+1 ArrEnd      (I4) CONST <-6>
+1 ObjEnd      (I4) CONST <-7>
+1 JSVend      (I4) CONST <-10> /* String value
+1 JVnull      (I4) CONST <-12>
+1 JVbool      (I4) CONST <-13>
+1 JNameEnd    (I4) CONST <-14>
+1 JNOend      (I4) CONST <-15>  /* Nested object
+1 JNVend      (I4) CONST <-16>  /* Numeric Value
+1 JReserved   (I4) CONST <-17>
+*              Temp states = start parsing token like number
+1 NameStart  (I4) CONST <1>
+1 ArrValues  (I4) CONST <2>
+1 NestedObj  (I4) CONST <3>
+1 NumValue   (I4) CONST <4>
+1 StrStart   (I4) CONST <5>
+1 RsrvdStart (I4) CONST <6>
+*              FA table codes
+1 FA (I2/0:13,0:6) CONST
+*          0   1   2   3   4    5   6   7   8
+  (0,V)<   0,  5,  2,  3,-16 ,  5,-17>  /* WHITE
+  (1,V)<  -2, -1,  2,  3,-16 , -1, -1>  /* {
+  (2,V)<  -7, -1, -1,-15,-16 , -1,-17>  /* }
+  (3,V)<  -3, -1, -1,  3, -1 , -1, -1>  /* [
+  (4,V)<  -6, -1, -1,  3, -1 , -1, -1>  /* ]
+  (5,V)<  -4,  5, -1,  3,-16 ,  5,-17>  /* ,
+  (6,V)<  -5,  5, -1,  3, -1 ,  5, -1>  /* :
+  (7,V)<   6,  1,100,  3, -1 ,  5,  6>  /* LETTER
+  (8,V)<   4,  1,  4,  3,  4 ,  5, -1>  /* DIGIT
+  (9,V)<   1,-14,  5,  3, -1 ,-10, -1>  /* "
+  (10,V)<  0,  1, -1,  3, -1 ,  5, -1>  /* OTHER
+  (11,V)<  4,  5,  4,  3, -1 ,  5, -1>  /* + -
+  (12,V)<  4,  1,  4,  3,  4 ,  5, -1>  /* .
+  (13,V)< -1,  1, -1,  3, -1 ,  5, -1>  /* _
+
+1 #ERROR    (L)
+1 L  (I4)
+1 ST (I4)
+END-DEFINE
+/*         ------  Main ---------------
+
+RESET SegmentNumber
+  JDATA-NAME  (*)
+  JDATA-VALUE (*)
+  JDATA-TYPE  (*)        
+  J-NBR     
+  Msg        
+JLEN := *LENGTH ( JOBJECT )
+PERFORM GET-NEXT-SEGMENT 
+PERFORM NEXT-IC
+PERFORM NEXT-TOKEN
+
+IF Token = ObjStart
+  PERFORM NEXT-TOKEN
+  PERFORM JSTRING
+  IF Token = ObjEnd
+    Msg := 'Succsess'
+  END-IF
+ELSE
+  Msg := 'Succsess'
+END-IF
+/*         ------- End -----------------  
+
+DEFINE JSTRING
+/*     -------
+PERFORM J-NAME
+IF Token EQ JColon
+  PERFORM NEXT-TOKEN
+  PERFORM J-VALUE
+ELSE
+  #ERROR := TRUE
+  ESCAPE ROUTINE
+END-IF
+
+REPEAT UNTIL Token NE Jcomma
+  PERFORM NEXT-TOKEN
+  PERFORM J-NAME
+  IF Token EQ JColon
+    PERFORM NEXT-TOKEN
+    PERFORM J-VALUE
+  ELSE
+    #ERROR := TRUE
+    ESCAPE ROUTINE
+  END-IF
+END-REPEAT
+END-SUBROUTINE
+/*
+DEFINE J-NAME
+/*     ------
+IF Token = JNameEnd
+  ADD 1 TO J-NBR
+  JDATA-NAME (J-NBR) := TokenStr
+  PERFORM NEXT-TOKEN  /* COLON expected
+END-IF
+END-SUBROUTINE
+/*
+DEFINE J-VALUE
+/*     ------
+DECIDE ON FIRST VALUE OF Token
+  VALUE JSVend, /* TokenStr without quotes
+      JNameEnd
+    JDATA-VALUE (J-NBR) := TokenStr
+    JDATA-TYPE  (J-NBR) := 'S'
+  VALUE JNVend /* TokenStr is a number
+    JDATA-VALUE (J-NBR) := TokenStr
+    JDATA-TYPE  (J-NBR) := 'N'
+  VALUE JReserved   /* TokenStr = null,true,false
+    IF TokenStr = 'null'
+      SUBTRACT 1 FROM J-NBR
+    END-IF
+    IF TokenStr = 'true' OR= 'false'
+      JDATA-VALUE (J-NBR) := TokenStr
+      JDATA-TYPE  (J-NBR) := 'B'
+    END-IF
+  VALUE ArrStart
+    PERFORM NEXT-TOKEN  
+    PERFORM J-ARRAY
+  VALUE ObjStart
+    PERFORM NEXT-TOKEN
+    PERFORM JSTRING  
+    IF Token NE ObjEnd
+      #ERROR := TRUE
+    END-IF
+  ANY VALUE
+    PERFORM NEXT-TOKEN
+  NONE VALUE
+    Msg := 'Error'
+END-DECIDE
+
+END-SUBROUTINE
+/*
+DEFINE J-ARRAY
+/*     -------
+PERFORM J-VALUE
+REPEAT UNTIL Token NE Jcomma
+  PERFORM NEXT-TOKEN
+  PERFORM J-VALUE
+END-REPEAT
+IF Token EQ BracketEnd
+  PERFORM NEXT-TOKEN
+ELSE
+  Msg := 'Error'
+END-IF
+END-SUBROUTINE
+/*
+DEFINE NEXT-IC
+/*     -------
+RESET IC
+ADD 1 TO CP  /* Next char
+IF CP > 100
+  PERFORM GET-NEXT-SEGMENT
+  IF EOD
+    IC := -1
+    ESCAPE ROUTINE
+  ELSE
+    CP := 1
+  END-IF
+END-IF
+* 
+DECIDE FOR FIRST CONDITION
+  WHEN SEGMENT-I (CP) < 33
+    IC := White
+  WHEN SEGMENT (CP) = '{'
+    IC := CurlyStart 
+  WHEN SEGMENT (CP) = '}'
+    IC := CurlyEnd
+  WHEN SEGMENT (CP) = '['
+    IC := BracketStart
+  WHEN SEGMENT (CP) = ']'
+    IC := BracketEnd
+  WHEN SEGMENT (CP) = ','
+    IC := Comma
+  WHEN SEGMENT (CP) = ':'
+    IC := Colon
+  WHEN SEGMENT (CP) = '.'
+    IC := Dot
+  WHEN SEGMENT (CP) = '+' OR= '-'
+    IC := Sign
+  WHEN SEGMENT (CP) = #SMALL (*) OR= #ALPHA (*)
+    IC := Letter
+  WHEN SEGMENT(CP) >= '0' AND SEGMENT(CP) <= '9'
+    IC := Digit
+  WHEN SEGMENT (CP) = #QT(*)
+    IC := Quote
+  WHEN NONE
+    IC := Other
+END-DECIDE
+END-SUBROUTINE 
+/*
+DEFINE GET-NEXT-SEGMENT
+/*     ----------------
+ADD 1 TO SegmentNumber
+CP := (SegmentNumber - 1) * 100 + 1
+IF CP > JLEN
+  EOD := TRUE
+ELSE
+  L := JLEN - CP
+  IF L > 100
+    L := 100
+  ELSE
+    ADD 1 TO L
+  END-IF
+  MOVE SUBSTR(JOBJECT,CP,L) TO SEGMENT-S
+END-IF
+RESET CP
+END-SUBROUTINE
+/* 
+DEFINE NEXT-TOKEN
+/*     ----------
+RESET ST /* Start position of name or value
+  TokenStr
+  CS /* Current state
+REPEAT
+  PS := CS         /* Previous State := Current State
+  CS := FA(IC,PS)  /* Next state
+  DECIDE ON FIRST VALUE OF CS
+    VALUE ParsingError
+      Msg := 'ParsingError'
+      #ERROR := TRUE
+    VALUE ObjStart
+      PERFORM NEXT-IC
+    VALUE ObjEnd
+      PERFORM NEXT-IC
+    VALUE JColon
+      PERFORM NEXT-IC
+    VALUE Jcomma
+      PERFORM NEXT-IC
+    VALUE JNameEnd
+      PERFORM NEXT-IC
+    VALUE JSVend
+      PERFORM NEXT-IC
+    VALUE JReserved
+      IGNORE
+    VALUE JNVend
+      IGNORE
+    VALUE ArrStart
+      PERFORM NEXT-IC
+    VALUE NameStart  /* Quote
+      IF IC NE Quote
+        ADD 1 TO ST
+        TokenStr-1 (ST) := SEGMENT (CP)
+      END-IF
+      PERFORM NEXT-IC
+    VALUE StrStart  /* Quote
+      IF IC NE Quote
+        ADD 1 TO ST
+        TokenStr-1 (ST) := SEGMENT (CP)
+      END-IF
+      PERFORM NEXT-IC
+    VALUE NumValue
+      ADD 1 TO ST
+      TokenStr-1 (ST) := SEGMENT (CP)
+      PERFORM NEXT-IC
+    VALUE RsrvdStart
+      ADD 1 TO ST
+      TokenStr-1 (ST) := SEGMENT (CP)
+      PERFORM NEXT-IC
+    ANY VALUE
+      IF CS < 0
+        Token := CS
+      END-IF
+    NONE VALUE
+      PERFORM NEXT-IC
+  END-DECIDE
+  UNTIL CS < 0 OR EOD
+END-REPEAT
+END-SUBROUTINE
+/*
+
+
+END

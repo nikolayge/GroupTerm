@@ -1,0 +1,163 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC        /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING GPRA0004                  /* PDA to pass data to TR log subprogram
+LOCAL USING ERROR_L
+LOCAL
+1 MemberInfo
+  2 CN                      (A) DYNAMIC
+  2 AnnualReportMailingCode (A) DYNAMIC
+1 MEMBER-INFO
+  2 CN                (A6)
+  2 ANN-REP-MAIL-CODE (A1)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 NAME
+  2 ANNUAL-RPT-FLAG
+  2 DATE-OTHER-UPDATE
+*
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #WEB-CLERK      (A3) INIT <'WEB'>
+1 #TR-DESCRIPTION (A8) INIT <'CG-'>
+1 #ANN-RPT-FLAG-LABEL (A) DYNAMIC CONST <'ANN-RP-FL'>
+1 #W-OLD-NEW-DATA  (A125)
+1 REDEFINE #W-OLD-NEW-DATA
+  2 #W-DESCRIPTION (A10)
+  2 #W-DATA        (A115)
+1 #ID-NUMBER       (N6)
+*
+1 #I              (I2)
+1 #II             (I2)
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+* Include the Parser
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to repesent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of founld element
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+PERFORM APPLY-UPDATES
+*
+IF #ErrorCode = '0'
+  END TRANSACTION
+END-IF
+*
+PERFORM COMPOSE-XML
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MCMemberInfo'
+    RESET MemberInfo
+    IGNORE
+  VALUE 'MCMemberInfo/AnnualReportMailingCode/$'
+    MemberInfo.AnnualReportMailingCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MCMemberInfo/CN/$'
+    MemberInfo.CN := *TRIM(XML_PARSER_CONTENT)
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+/*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE APPLY-UPDATES
+*******************************
+*
+RESET MEMBER-INFO
+MEMBER-INFO.CN                := MemberInfo.CN
+MEMBER-INFO.ANN-REP-MAIL-CODE := MemberInfo.AnnualReportMailingCode
+*
+IF MEMBER-INFO.CN IS (N6) THEN
+  #ID-NUMBER := VAL(MEMBER-INFO.CN)
+ELSE
+  #ErrorCode := #CN-INVALID
+  ESCAPE ROUTINE
+END-IF
+*
+FIND (1) ST-V WITH ID-NUMBER = #ID-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  IF ANN-REP-MAIL-CODE NE ' '
+    IF NOT (ANN-REP-MAIL-CODE = 'N' OR = 'F' OR = 'S' )
+      RESET ANN-REP-MAIL-CODE
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+  PERFORM UPDATE-STATUS-FILE
+  UPDATE
+END-FIND
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE UPDATE-STATUS-FILE
+************************************
+RESET #I
+IF ST-V.ANNUAL-RPT-FLAG NE MEMBER-INFO.ANN-REP-MAIL-CODE
+    AND ANN-REP-MAIL-CODE NE ' '
+  #I := #I + 1
+  #FIELD-DESCRIPTION(#I) := #ANN-RPT-FLAG-LABEL
+  #OLD-DATA(#I)          := ST-V.ANNUAL-RPT-FLAG
+  #NEW-DATA(#I)          := MEMBER-INFO.ANN-REP-MAIL-CODE
+  ST-V.ANNUAL-RPT-FLAG   := MEMBER-INFO.ANN-REP-MAIL-CODE
+END-IF
+*
+IF #I NE 0
+  #TR-NAME               := ST-V.NAME
+  #TR-ID-NUMBER          := #ID-NUMBER
+  #LOG-DESCRIPTION       := #TR-DESCRIPTION
+  #TR-CLERK-ID           := #WEB-CLERK
+  #TR-DATE-LAST-UPDATE   := ST-V.DATE-OTHER-UPDATE
+  ST-V.DATE-OTHER-UPDATE := *DATN
+  CALLNAT 'GPRN0004'
+    #TR-FIELDS #SYNC-FIELD-TABLE(*)
+    #OLD-DATA-TABLE(*) #NEW-DATA-TABLE(*)
+END-IF
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS '<MCMemberInfo>' '<CN>' MemberInfo.CN '</CN>' -
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '</MCMemberInfo>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,143 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************
+* Program : ATHPTRB1
+*
+* Function: Generate report for all term refund transactions produced
+*           during the month
+* vxt 10/26/2011
+**************************************
+*
+define data local
+1 ACCOUNT VIEW OF A-ACCOUNTING-REGISTER
+  2 ACCTTX
+    3 ID-NUMBER (N6)
+    3 TRANSACTION-DATN (P9)
+    3 TRANSACTION-TIMN (P7)
+    3 TXN-CODE (A4)
+    3 SEQUENCE-NUM (N1)
+    3 NAME (A25)
+    3 TXN-ACCT-NUMBER (N3)
+    3 ACCT-DATE (N8)
+    3 DATE-LAST-ACCT-UPDATE (N8)
+    3 DEBIT-AMOUNT (P7.2)
+    3 CREDIT-AMOUNT (P7.2)
+    3 DESCRIPTION (A20)
+    3 MESSAGE-CODE (A1)
+    3 AALP-FLAG (A1)
+    3 CLERK-ID (A3)
+    3 TERMINAL-ID (A8)
+  2 CASH-CODE (A1)
+  2 PROCESS-IND (A1)
+  2 USER-COMPANY (A1)
+  2 SUNGARD-INFO (1:1)
+    3 SG-CATEGORY-1 (A2)
+    3 SG-CATEGORY-2 (A2)
+    3 SG-AMOUNT (N6.2)
+  2 CLERK-DATE-KEY (A8)
+*
+1 ct-v view of a-contacts
+  2 id-number
+  2 first-name
+  2 middle-name
+  2 last-name
+  2 suffix
+*
+1 #jcl-parm  (a16)
+1 redefine #jcl-parm
+  2 #start-date (n8)
+  2 #end-date   (n8)
+1 #tot-transactions  (p9)
+1 #cnt-atrc (p9)
+1 db-atrc  (p9.2)
+1 KT-atrc  (p9.2)
+1 #cnt-rtrc (p9)
+1 db-rtrc   (p9.2)
+1 KT-rtrc   (p9.2)
+1 #tab      (a1) init<H'09'>
+1 #out-rec (a500)
+1 #amt      (a11)
+1 #name     (a75)
+1 #datn     (n8)
+1 redefine #datn
+  2 #datn-yyyy  (a4)
+  2 #datn-mm   (a2)
+  2 #datn-dd   (a2)
+1 #date      (a10)
+*
+end-define
+*
+input #jcl-parm
+*
+compress
+  'CN #'               #tab
+  'Name'               #tab
+  'Transaction Date'   #tab
+  'Transaction Amount' #tab
+  into #out-rec leaving no
+  write work 1 #out-rec
+read account by transaction-datn starting from  #start-date
+    ending at #end-date
+*
+  find ct-v with ct-v.id-number = account.id-number
+    compress ct-v.first-name ct-v.middle-name ct-v.last-name ct-v.suffix into #name
+  end-find
+*
+  move account.transaction-datn to #datn
+  compress #datn-mm '/' #datn-dd '/' #datn-yyyy into #date leaving no
+*
+  decide on first value of txn-code
+    value 'ATRC'
+      credit-amount := credit-amount * -1
+      move edited credit-amount(em=szzzzzz9.99) to #amt
+      if credit-amount = 0                                            /* vt1   \/
+        move edited debit-amount (em=szzzzzz9.99) to #amt
+      end-if                                                          /* vt1   /\
+      compress
+        id-number        #tab
+        #name            #tab
+        #date            #tab
+        #amt             #tab
+        into #out-rec leaving no
+       write work 1 #out-rec
+
+*
+      add 1 to #cnt-atrc
+      add debit-amount to db-atrc
+      add credit-amount to kt-atrc
+*
+    value 'RTRC'
+      move edited debit-amount (em=szzzzzz9.99)  to #amt
+      if debit-amount = 0                                                      /* vt1 \/
+        move  edited credit-amount (em=szzzzzz9.99) to #amt
+      end-if                                                                   /* vt1 /\
+      compress
+        id-number        #tab
+        #name            #tab
+        #date            #tab
+        #amt             #tab
+        into #out-rec leaving no
+      write work 1 #out-rec
+*
+      add 1 to #cnt-rtrc
+      add debit-amount to db-rtrc
+      add credit-amount to kt-rtrc
+*
+    none value
+      ignore
+  end-decide
+*
+  at end of data
+    write
+      'total refunds            - ATRC :' db-atrc kt-atrc  #cnt-atrc /
+      'total refunds            - RTRC :' db-rtrc kt-rtrc  #cnt-rtrc  /
+  end-enddata
+*
+end-read
+end
+
+
+

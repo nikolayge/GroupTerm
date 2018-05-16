@@ -1,0 +1,170 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2012SNM    ***   Adjust Paid to dates for Term Policies   ***
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    20081006  None    Program written - original C2012SNM for LTII*
+*                          movement to BADJ archived.                  *
+* PAM    20081203  PM1     Subtract 12 from DATN-MM instead of DATN    *
+* YAK    09262012  YK1     Use function to identify Level Term II plan *
+************************************************************************
+DEFINE DATA
+*
+PARAMETER USING C2012LN2
+PARAMETER
+1 #PLAN                          (A3)
+1 REDEFINE #PLAN
+ 2 #PLAN-A1                      (A1)
+ 2 #PLAN-A2                      (A2)
+1 #APREM                         (N7.2)  /* ng99
+1 #EFF-YYYYMMDD                  (N8)
+1 #WORK-DATE-YYYYMMDD            (N8)
+1 REDEFINE #WORK-DATE-YYYYMMDD
+ 2 #WORK-DATE-YYYYMM             (N6)
+ 2 REDEFINE #WORK-DATE-YYYYMM
+  3 #WORK-DATE-YYYY              (N4)
+  3 #WORK-DATE-MM                (N2)
+ 2 #WORK-DATE-DD                 (N2)
+1 #DEP-RCVD                      (N7.2)
+1 #FPF-END                       (N8)
+1 REDEFINE #FPF-END
+ 2 #FPF-END-MM                   (N2)
+ 2 #FPF-END-DD                   (N2)
+ 2 #FPF-END-YYYY                 (N4)
+1 #MODE                          (A1)
+1 #EZPAY-WAITING                 (L)
+*
+LOCAL
+*
+1 #DATN                          (N8)
+1 REDEFINE #DATN
+ 2 #DATN-YYYYMM                  (N6)
+ 2 REDEFINE #DATN-YYYYMM
+  3 #DATN-YYYY                   (N4)
+  3 #DATN-MM                     (N2)
+ 2 #DATN-DD                      (N2)
+1 #FPF-CHECK-DATE                (N8)
+1 REDEFINE #FPF-CHECK-DATE
+ 2 #FPF-CHECK-YYYYMM             (N6)
+ 2 REDEFINE #FPF-CHECK-YYYYMM
+  3 #FPF-CHECK-YYYY              (N4)
+  3 #FPF-CHECK-MM                (N2)
+ 2 #FPF-CHECK-DD                 (N2)
+1 #2-MONTH-PREM                  (N6.2)
+1 #1-MONTH-PREM                  (N6.2)
+1 #MONTHS                        (N5)
+1 #YEARS                         (N5)
+*
+1 #CONSTANTS
+ 2 #RT                           (A3)    INIT <'RT '>
+ 2 #LT                           (A3)    INIT <'LT '>
+* YK1 - Comment out constants for Term II Plan
+*  2 #LTII-ST                      (A1)    INIT <'U'>    
+*  2 #LTII-SE                      (A1)    INIT <'V'>
+*  2 #LTII-SS                      (A1)    INIT <'W'>
+*  2 #LTII-ST-RD                   (A1)    INIT <'X'>
+*  2 #LTII-SE-RD                   (A1)    INIT <'Y'>
+*  2 #LTII-SS-RD                   (A1)    INIT <'Z'>
+ 2 #EZPAY                        (A1)    INIT <'E'>
+ 2 #GA                           (A1)    INIT <'G'>
+*
+END-DEFINE
+************************************************************************
+*
+IF #FPF-END = 0         /* ONLY DO THIS PROCESS WHEN WE HAVE AN FPF-END DATE
+  ESCAPE ROUTINE        /* CALCULATED
+END-IF
+*
+#DATN := *DATN
+ADD +1 TO #DATN-MM
+IF #DATN-MM GT 12
+  SUBTRACT 12 FROM #DATN-MM                                         /* PM1
+  ADD +1 TO #DATN-YYYY
+END-IF
+*
+RESET #C2012SNM-ERROR-INDEX
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #PLAN = #RT OR = #LT
+    COMPUTE ROUNDED #2-MONTH-PREM = #APREM / 12 * 2
+* WHEN #PLAN-A1 = #LTII-ST OR = #LTII-SE OR = #LTII-SS
+*            OR = #LTII-ST-RD OR = #LTII-SE-RD OR = #LTII-SS-RD
+  WHEN F-LT2-TRUE(<#PLAN>)
+    COMPUTE ROUNDED #2-MONTH-PREM = #APREM / 12 * 2
+  WHEN NONE
+    ESCAPE ROUTINE
+END-DECIDE
+*
+IF #MODE = #EZPAY OR = #GA
+ OR #EZPAY-WAITING
+  IGNORE
+ELSE
+  PERFORM ADJUST-FPF-DATES
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #DEP-RCVD LT #1-MONTH-PREM
+    #C2012SNM-ERROR-INDEX := 03
+  WHEN #WORK-DATE-YYYYMM LT #DATN-YYYYMM
+    #C2012SNM-ERROR-INDEX := 03
+*  WHEN (#MODE = #EZPAY OR = #GA) AND (#DEP-RCVD LT #2-MONTH-PREM) removed from
+*    #C2012SNM-ERROR-INDEX := 01                                   requirements
+*  WHEN #EZPAY-WAITING           AND #DEP-RCVD LT #2-MONTH-PREM
+*    #C2012SNM-ERROR-INDEX := 01
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+************************************************************************
+DEFINE SUBROUTINE ADJUST-FPF-DATES
+************************************************************************
+*
+COMPUTE ROUNDED #1-MONTH-PREM = #APREM / 12
+COMPUTE #MONTHS = #DEP-RCVD / #1-MONTH-PREM
+REPEAT
+  IF #MONTHS GT 12
+    ADD +1 TO #YEARS
+    SUBTRACT 12 FROM #MONTHS
+  ELSE
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+#WORK-DATE-YYYYMMDD := #EFF-YYYYMMDD
+ADD #MONTHS TO #WORK-DATE-MM
+IF #WORK-DATE-MM GT 12
+  SUBTRACT 12 FROM #WORK-DATE-MM
+  ADD +1 TO #WORK-DATE-YYYY
+END-IF
+ADD #YEARS TO #WORK-DATE-YYYY
+*
+#FPF-CHECK-YYYY   := #FPF-END-YYYY
+#FPF-CHECK-MM     := #FPF-END-MM
+*
+IF   #WORK-DATE-YYYYMM > #FPF-CHECK-YYYYMM
+ AND #FPF-CHECK-YYYYMM NE 0
+  #WORK-DATE-YYYY := #FPF-END-YYYY
+  #WORK-DATE-MM   := #FPF-END-MM
+  #WORK-DATE-DD   := #FPF-END-DD
+ELSE
+  #FPF-END-MM     := #WORK-DATE-MM
+  #FPF-END-YYYY   := #WORK-DATE-YYYY
+*
+  IF #WORK-DATE-DD = 01
+    SUBTRACT 1 FROM #FPF-END-MM
+  END-IF
+*
+  IF #FPF-END-MM LT 1
+    #FPF-END-MM   := 12
+    SUBTRACT 1 FROM #FPF-END-YYYY
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+END

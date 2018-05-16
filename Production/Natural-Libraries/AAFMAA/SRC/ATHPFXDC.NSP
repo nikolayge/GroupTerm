@@ -1,0 +1,126 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPFXDC - Fix double application of db/cr 8/1/2004
+*
+DEFINE DATA
+LOCAL
+*
+1 SUNGARD-PA      (A33)
+1 REDEFINE SUNGARD-PA
+ 2 SUN-ACCT-TRAN   (A4)
+ 2 SUN-CAT-1       (A2)
+ 2 SUN-CAT-2       (A2)
+ 2 SUN-STATE       (A2)
+ 2 SUN-AMT-SIGN    (A1)
+ 2 SUN-DB-CR       (A1)
+ 2 SUN-AMT         (N6.2)
+ 2 SUN-FILL        (A1)
+ 2 SUN-SOURCE      (A2)
+ 2 SUN-CN          (N6)
+ 2 REDEFINE SUN-CN
+  3 SUN-CN-A       (A6)
+ 2 SUN-TRAN        (A4)
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 DEBIT-CREDIT-AMT
+* 2 X-ALT-LP-AMT   (9)
+* 2 X-ALT-LP-AMT-2 (9)
+* 2 X-ALT-LP-IND   (9)
+* 2 X-ALT-LP-IND-2 (9)
+  2 X-LOAN-DATE    (9)
+  2 STATUS         (9)
+*
+1 #BYPASS    (L)
+1 #PRIOR-DB-CR   (P7.2)
+1 #PRNF    (L)
+1 #AMT-2    (N5.2)
+1 #LAST-CN    (N6)
+1 #CNT-1     (P3)
+*
+1 #I1            (I2)
+1 #PRN-INT       (P7.2)
+1 #TOT-ALP       (P7.2)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X    /* not now used
+          'SUNGARD PA SORT'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+READ WORK 2 RECORD SUNGARD-PA
+*
+  IF SUN-CN NE #LAST-CN
+    RESET #PRNF
+  END-IF
+  MOVE SUN-CN TO #LAST-CN
+*
+  IF SUN-ACCT-TRAN = '1120' OR = '1110'
+*   WRITE 'found 1120' SUN-CN
+    MOVE TRUE TO #PRNF
+    ESCAPE TOP
+  END-IF
+*
+  IF SUN-ACCT-TRAN NE '2336'
+    ESCAPE TOP
+  END-IF
+*
+* WRITE 'found 2336' SUN-CN 'prnf=' #PRNF
+  IF NOT #PRNF
+    ESCAPE TOP
+  END-IF
+*
+  IF SUN-CN = 124415   /* already done
+    OR = 111532 OR = 111622 OR = 111658 OR = 111714 OR = 111836 /* ???
+    WRITE '  bypassed' SUN-CN
+    ESCAPE TOP
+  END-IF
+*
+END-ALL
+*
+SORT BY SUN-CN SUN-TRAN
+  USING SUNGARD-PA
+*
+  RESET #BYPASS
+  FIND ST-V WITH MEMBER-KEY = SUN-CN-A
+    FOR #I1 1 TO 9
+      IF STATUS (#I1) = 'D'
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    IF   (X-LOAN-DATE (#I1) NE 20040801)
+     AND (NOT SUN-CN = 44700 OR = 54750)
+      MOVE TRUE TO #BYPASS
+      ESCAPE BOTTOM
+    END-IF
+*
+    COMPUTE #AMT-2 = SUN-AMT * 2
+    MOVE DEBIT-CREDIT-AMT TO #PRIOR-DB-CR
+    ADD SUN-AMT TO DEBIT-CREDIT-AMT
+*
+*   WRITE '  UPDATED' ST-V.ID-NUMBER
+    UPDATE (0090)
+    END TRANSACTION
+  END-FIND
+*
+  IF #BYPASS
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #CNT-1
+  DISPLAY #CNT-1 SUN-CN
+   'CN' ST-V.ID-NUMBER
+   'Adj/Amt' SUN-AMT (EM=-Z,ZZZ.99)
+   'Final/DB-CR/AMT' DEBIT-CREDIT-AMT (EM=-Z,ZZZ.99)
+   'Double/Amt' #AMT-2 (EM=-ZZ-ZZZ.99)
+   'Prior/DB-CR/AMT' #PRIOR-DB-CR     (EM=-Z,ZZZ.99)
+END-SORT
+*
+END

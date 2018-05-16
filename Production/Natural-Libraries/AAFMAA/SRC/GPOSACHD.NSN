@@ -1,0 +1,653 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPOSACHD                                              *
+* AUTHOR       : Copyright: Electronic Data Systems - an HP company    *
+* DESCRIPTION  : Process ACH EZPay Returns                             *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    06/18/2009  None    Program Written                           *
+* PAM    07/18/2009  PM1     Added ACH Phase II                        *
+* PAM    01/28/2011  PM2     Adjusted PWOF account number for Peachtree*
+* VXT    06/24/2011  VT1     Add 2 parameters to call of C2505SAM      *
+*                            program                                   *
+* PAM    03/20/2012  PM3     Added Sungard Codes (ops 1017)            *
+* PAM    04/02/2012  PM4     Premier Services changes                  *
+* YAK    02/26/2012  YK1     Process $1 discount                       *
+* NG     10/07/2013  NG99    ADDRESS NORMALIZATION                     *
+* vxt    02/13/2014  vt2     /Ticket 2585/                             *
+* TMT    06/16/2014  TT1     Contact Normalization DOb and SEX         *
+* vxt    08/12/2014  vt3     Add pol-nbr to the parms passed to C2520SAM pgm /Ticket 2970/
+* vxt    11/10/2014  vt4     Add new GL accounts to determine correct  Sun Guard  SG-category(1) field
+* vxt    07/10/2015  vt5     fix 936 error in Production               *
+* vxt    10/17/2017  vt6     /Ticket 6076/                             *
+* YAK    01/24/2018  YK2     Fix Premier Services problem              *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING GPOAACHD
+PARAMETER
+1 #DT-IND                              (I4)
+1 #DATE-OF-UPDATE                      (N8)
+1 #TIME-OF-UPDATE                      (N7)
+1 #WINDOWS-FILE-NAME                   (A)   DYNAMIC
+1 #SELECT-FILE-NAME-ONLY               (A50)
+1 #WORK-DATE                           (N8)                     /* PM1
+*
+LOCAL USING C2500AAM
+LOCAL USING OBJLSTAT
+LOCAL USING OBJAGENT
+LOCAL
+*
+1 FR-V VIEW OF A-FIRS                                            /* PM1
+  2 ID-NUMBER                                                     /* PM1
+  2 POLICY-TABLE                        (45)                      /* PM1
+    3 POL-TYPE                                                     /* PM1
+    3 POL-DATE                                                     /* PM1
+    3 DEAD-DB-CR                                                   /* PM1
+    3 DEAD-LOAN-PRIN                                               /* PM1
+    3 DEAD-LOAN-INT                                                /* PM1
+    3 DEAD-PREM-ADJ                                                /* PM1
+*
+1 #I1                                  (I4)
+1 #I2                                  (I4)                      /* PM1
+1 #SEGMENT                             (I2)
+1 #ISN                                 (N8)
+1 #ERROR                               (L)
+1 #TEXT                                (A50)
+1 #HOLD-MODE                           (A1)
+1 #HOLD-STATUS                         (A1)                      /* PM1
+1 #HOLD-ANN-PREM                       (N7.2)                    /* YK1
+*
+1 #WORK-FIELDS
+  2 #MEMBER-CN                          (N6)
+  2 REDEFINE #MEMBER-CN
+    3 #MEMBER-CN-A                       (A6)
+  2 #DATN-MMDDYYYY                      (A8)
+  2 #CURR-VAR-INT-RATE                  (P2.3)
+*
+1 #GDATESXX-FIELDS
+  2 #BEGIN-DATE                         (N8)
+  2 #UNUSED-DATE                        (N8)
+  2 #NEW-DATE                           (N8)
+  2 REDEFINE #NEW-DATE
+    3 #NEW-DATE-A                        (A8)
+  2 REDEFINE #NEW-DATE
+    3 #TODAY-MM                          (A2)
+    3 #TODAY-DD                          (A2)
+    3 #TODAY-CC                          (A2)
+    3 #TODAY-YY                          (A2)
+  2 #REQUEST                            (A1)
+*
+1 #C2520SAM-PARMAMETERS
+  2 #ILN1                               (I2)
+  2 #ILN2                               (I2)   INIT <1>
+  2 #UPDATE-MODE                        (L)    INIT <TRUE>
+  2 #2ND-TIM-EDIT                       (L)
+  2 #DISP-MSG                           (A75)
+  2 #TRANS-TABLE                        (300)
+    3 #TT-TRAN-APPLIED                   (L)
+    3 #TT-ID-NO                          (P6)
+    3 #TT-EFF-DT                         (P8)
+    3 #TT-ISS-DT                         (P8)
+    3 #TT-TRAN-CODE                      (A4)
+    3 #TT-TRAN-AMT                       (P7.2)
+    3 #TT-NAME                           (A25)
+    3 #TT-ADJ                            (A1)
+    3 #TT-ALP-CODE                       (A1)
+    3 #TT-AMT-FLAG                       (A1)
+    3 #TT-CASH-CODE                      (A1)
+  2 #SG-TBL                             (15)
+    3 #SG-CAT1                           (A2)
+    3 #SG-CAT2                           (A2)
+    3 #SG-AMT                            (N6.2)
+  2 #CMBX                               (A4)
+  2 #OLD-ALP-FLG                        (A1)
+  2 #OLD-ALP-AMT                        (P5.2)
+  2 #LX                                 (I2)
+  2 #CGA-CLERK                          (A3)
+  2 #EXTRA-STOP                         (L)
+  2 #APPROVED                           (L/15)
+  2 #CMB2-LOAN-AMT                      (P5.2)
+  2 #CMB3-4-PRIN                        (P5.2)
+  2 #CMB3-4-INT                         (P5.2)
+  2 #CMB3-4-ADCR                        (P5.2)
+  2 #CMB3-4-FLNX                        (L)
+  2 #TOT-CMB3-PRN                       (P5.2)
+  2 #TOT-CMB3-INT                       (P5.2)
+  2 #TOT-CMB3-ADCR                      (P5.2)
+  2 #TOT-CMB4-PREM                      (P5.2)
+  2 #TOT-CMB4-DUES                      (P5.2)
+  2 #TOT-CMB3-PRN-CAP                   (P5.2)
+  2 #TOT-CMB3-INT-CAP                   (P5.2)
+  2 #HOLD-CUR-ACCT-UPDT                 (N8)
+  2 #ACTIVITY-TYPE                      (A3)
+  2 #STATUS-TYPE                        (A2)
+*  2 #pol-nbr                            (a16)                   /* vt3   /* vt5
+  2 #lx-passed                          (i2)                     /* vt5
+*
+1 #PEACHTREE-VARIABLES
+  2 #PEACH-CASH-TEXT                    (A)     DYNAMIC
+  2 #PEACH-CNT                          (P5)
+  2 #TOTAL-PEACHTREE-AMOUNT             (P7.2)
+  2 #PEACH-CNT-X                        (A5)
+  2 #PEACHTREE                          (A200)
+  2 #TODAY-PEACH                        (A8)
+  2 #PEACHTREE-AMOUNT                   (A12)
+  2 #POL-NUM                            (A16)
+  2 #LAST                               (A25)
+  2 REDEFINE #LAST
+    3 #LAST-DISP                         (A15)
+    3 #LAST-REST                         (A10)
+  2 #MI                                 (A1)
+  2 #FIRST-20                           (A20)
+  2 #EXTRA1                             (A25)
+  2 #EXTRA2                             (A25)
+  2 #EXTRA3                             (A25)
+  2 #ERR-MSG                            (A60)
+*
+1 #NX-WORK-FIELDS
+  2 #NOTE-TEXT                          (A60/10)
+  2 #TO-INIT                            (A3/10)
+  2 #NX-IND                             (I4)
+*
+1 #FTP-FIELDS
+  2 #DATN                              (N8)
+  2 REDEFINE #DATN
+    3 #DATN-A                            (A8)
+  2 #TIMN                               (N7)
+  2 REDEFINE #TIMN
+    3 #TIMN-A                            (A6)
+    3 #TIMN-REST                         (A1)
+  2 #SHCMD                              (A250)
+  2 #FTP-SCRIPT-NAME                    (A)   DYNAMIC INIT <'/usr/SAG/cronus/.scripts/ftpAafmaaLocal'>
+  2 #UNIX-FILE-NAME                     (A)   DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ACHPROCESSED/ACH_RET_PEACHTREE.TXT'>
+  2 #WINDOWS-FILE-PREFIX                (A)   DYNAMIC INIT <'/ftp/finmgmt/ACH_RET_PEACHTREE'>
+  2 #UNIX-DESTINATION                   (A)   DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ACHPROCESSED/ACH_RET_PEACHTREE'>
+1 #OLD-ALP-DATE                        (N8)  /* vt1
+1 DATE-OF-BIRTH                        (N8.0)     /* TT1
+1 #NAME-D                              (A) DYNAMIC    /* YK2
+1 #SERVICES-ACCOUNT-NUMBER (A4) CONST <'4118'>        /* YK2
+*
+END-DEFINE
+************************************************************************
+*
+#CGA-CLERK         := FUNCTION-CLERK(<*USER>)
+#DATN              := *DATN
+*
+#BEGIN-DATE        := #DATE-OF-UPDATE
+#REQUEST           := 'C'
+PERFORM CALL-GDATESXX
+#DATN-MMDDYYYY     := #NEW-DATE-A
+#CURR-VAR-INT-RATE := FUNCTION-INT-RATE(<'RATE5AB'>)
+*
+DEFINE WORK FILE 1 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+COMPRESS #TODAY-MM #TODAY-DD #TODAY-YY INTO #TODAY-PEACH WITH '/'
+*
+MOVE '1,2,3,4,5,6' TO #PEACHTREE
+WRITE WORK 1 #PEACHTREE
+RESET #PEACHTREE
+*
+FOR #I1 1 TO #DT-IND
+  FIND (1) ST-V WITH MEMBER-KEY = #DT-MEMBER-ID (#I1)
+    IF NO RECORDS FOUND
+      FIND (1) ST-V WITH WIDOW-KEY = #DT-MEMBER-ID (#I1)
+        IF NO RECORDS FOUND
+          COMPRESS 'Member' #DT-MEMBER-ID (#I1) 'Not found - Contact'
+            'Technical Support' INTO #TEXT
+          REINPUT #TEXT
+        END-NOREC
+        #ISN := *ISN
+      END-FIND
+    END-NOREC
+*
+    #ISN     := *ISN
+  END-FIND
+*
+  G01. GET ST-V #ISN
+* YK2 >
+  IF #DT-ACCOUNT-NUMBER(#I1) <> #SERVICES-ACCOUNT-NUMBER
+    #SEGMENT := F_POLICY_SEGMENT (<#DT-POLICY-NUMBER (#I1),#DT-MEMBER-ID (#I1)>)
+  END-IF
+* < YK2
+  PERFORM LOAD-AM-SCREEN
+  PERFORM CALL-ACCOUNTING-PROCESSOR
+  PERFORM CREATE-PEACHTREE-FILE
+  PERFORM STORE-ACCT-REG-V
+*
+  UPDATE (G01.)
+END-FOR
+*
+PERFORM CREATE-PEACHTREE-CASH-ENTRY
+*
+END TRANSACTION
+*
+CLOSE WORK 1
+PERFORM FTP-FILE
+*
+ON ERROR
+  IF *ERROR-NR = 3145
+    BACKOUT TRANSACTION
+    REINPUT 'A record is currently in use. Please try again later'
+    ESCAPE ROUTINE
+  END-IF
+END-ERROR
+*
+************************************************************************
+DEFINE SUBROUTINE CALL-GDATESXX
+************************************************************************
+*
+CALLNAT 'GDATESXX'
+  #BEGIN-DATE
+  #UNUSED-DATE
+  #NEW-DATE
+  #REQUEST
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-AM-SCREEN
+************************************************************************
+*
+#ILN1                         := 1
+#SCR-CASH-CODE       (#ILN1)  := 'N'
+#MEMBER-CN-A                  := #DT-MEMBER-ID (#I1)
+#SCR-ID-SSN          (#ILN1)  := #MEMBER-CN
+#SCR-EFF-DT          (#ILN1)  := #DATN-MMDDYYYY
+* YK2 >
+IF #DT-ACCOUNT-NUMBER(#I1) <> #SERVICES-ACCOUNT-NUMBER
+  #BEGIN-DATE                 := ST-V.ISSUE-DATE (#SEGMENT)
+  PERFORM CALL-GDATESXX
+  #SCR-ISS-DT          (#ILN1)  := #NEW-DATE-A
+END-IF
+* < YK2
+*
+#SCR-TRAN-CODE       (#ILN1)  := #DT-TRAN-CODE (#I1)
+*
+IF #DT-CREDIT-AMOUNT (#I1) NE 0
+  #SCR-TRAN-AMT      (#ILN1)  := #DT-CREDIT-AMOUNT (#I1)
+  #SCR-ADJ           (#ILN1)  := '-'
+ELSE
+  #SCR-TRAN-AMT      (#ILN1)  := #DT-DEBIT-AMOUNT (#I1)
+  #SCR-ADJ           (#ILN1)  := '+'
+END-IF
+*
+#SCR-NAME            (#ILN1)  := ST-V.NAME
+*
+#TT-TRAN-APPLIED     (#ILN1)  := TRUE
+#TT-ID-NO            (#ILN1)  := #MEMBER-CN
+#TT-EFF-DT           (#ILN1)  := *DATN
+#TT-TRAN-CODE        (#ILN1)  := #SCR-TRAN-CODE (#ILN1)
+#TT-TRAN-AMT         (#ILN1)  := #SCR-TRAN-AMT  (#ILN1)
+#TT-NAME             (#ILN1)  := #SCR-NAME      (#ILN1)
+#TT-ADJ              (#ILN1)  := #SCR-ADJ       (#ILN1)
+#TT-ALP-CODE         (#ILN1)  := #SCR-ALP-CODE  (#ILN1)
+#TT-AMT-FLAG         (#ILN1)  := #SCR-AMT-FLAG  (#ILN1)
+#TT-CASH-CODE        (#ILN1)  := #SCR-CASH-CODE (#ILN1)
+*
+#ACTIVITY-TYPE                := #DT-REJECTION-CODE (#I1)
+#STATUS-TYPE                  := 'RA'
+*
+ADD 1 TO #ILN2
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALL-ACCOUNTING-PROCESSOR
+************************************************************************
+*
+IF #DT-ACCOUNT-NUMBER(#I1) <> #SERVICES-ACCOUNT-NUMBER             /* YK2
+  RESET #SG-TBL (*)
+  #LX := #SEGMENT
+*
+  DECIDE FOR FIRST CONDITION                                       /* PM3
+    WHEN #DT-ACCOUNT-NUMBER (#I1) = '4012' or = '4021'             /* PM3     VT2
+        or = '4023' or = '4024' or = '4022' or = '4026' or = '4025' or = '4028'            /* vt4
+      #SG-CAT1 (1)              := '1Y'                            /* PM3
+    WHEN #DT-ACCOUNT-NUMBER (#I1) = '4014' or = '4031'             /* PM3     vt2
+        or = '4033' or = '4034' or = '4032' or = '4036' or = '4035' or = '4112'            /* vt4
+      #SG-CAT1 (1)              := 'RN'                            /* PM3
+    WHEN NONE                                                      /* PM3
+      IGNORE                                                       /* PM3
+  END-DECIDE                                                       /* PM3
+*
+  DECIDE FOR FIRST CONDITION                                       /* PM1
+    WHEN  FUNCTION-DECEASED (<#DT-MEMBER-ID (#I1),#SEGMENT>) = 'P' /* PM1
+        AND #SCR-TRAN-CODE (#ILN1) = 'RDCR'                           /* PM1
+      PERFORM UPDATE-TERMINATED-DBCR                               /* PM1
+      ESCAPE ROUTINE                                               /* PM1
+    WHEN FUNCTION-LAPSED (<#DT-MEMBER-ID (#I1),#SEGMENT,#WORK-DATE,#DATN>) = TRUE /* PM1
+        AND #SCR-TRAN-CODE (#ILN1) = 'PADF' OR = 'PADV' OR = 'AIAF' OR = 'AIAV'      /* PM1
+      IF #SCR-TRAN-CODE (#ILN1) = 'PADF' OR = 'PADV'               /* PM1
+        ADD #SCR-TRAN-AMT (#ILN1) TO ST-V.TERM-LOAN-PRIN           /* PM1
+      ELSE                                                         /* PM1
+        ADD #SCR-TRAN-AMT (#ILN1) TO ST-V.TERM-ACC-INT             /* PM1
+      END-IF                                                       /* PM1
+      ESCAPE ROUTINE                                               /* PM1
+    WHEN NONE                                                      /* PM1
+      IGNORE                                                       /* PM1
+  END-DECIDE                                                       /* PM1
+*
+  #HOLD-MODE             := ST-V.MODE (#SEGMENT)
+  #HOLD-STATUS           := ST-V.STATUS (#SEGMENT)                 /* PM1
+  #HOLD-ANN-PREM         := ST-V.ANNUAL-PREM(#SEGMENT)             /* YK1
+*
+  ST-V.MODE (#SEGMENT)   := 'E'
+  ST-V.STATUS (#SEGMENT) := 'D'                                    /* PM1
+* When EZ-Pay is used for EZ Term - $1 discount applied          /* YK1
+* Include $1 discount in calculation of reverse premium amount   /* YK1
+  IF ST-V.PLAN(#SEGMENT) = 'EZ'                                    /* YK1
+    ST-V.ANNUAL-PREM(#SEGMENT) := ST-V.ANNUAL-PREM(#SEGMENT) - 12  /* YK1
+  END-IF                                                           /* YK1
+ELSE                                                             /* YK2
+  #LX := 1                                                       /* YK2
+  ST-V.MODE(#LX) := 'E'                                          /* YK2
+END-IF                                                           /* YK2
+*
+RESET DATE-OF-BIRTH                                              /* TT1
+DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<ST-V.MEMBER-CONTACT-ID>)     /* TT1
+*
+CALLNAT 'C2505SAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE (1:9)
+  ST-V.INTRO-FLAG
+  ST-V.MEMBERSHIP-DRIVE
+  DATE-OF-BIRTH                                                  /* TT1
+  ST-V.X-LOAN-DATE (1:9)
+  ST-V.X-LOAN-AMOUNT (1:9)
+  ST-V.DUES-ALL-PAID-IND
+  ST-V.DUES-BALANCE
+  ST-V.DUES-FPF
+  ST-V.DUES-TOT-PAID
+  ST-V.X-FIRST-PLACE-FEE (1:9)
+  ST-V.PAD-CODE
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.AUX-DEBIT-CREDIT-AMT
+  ST-V.X-ACCUM-INTEREST (1:9)
+  ST-V.X-NXT-YR-ACCUM-INT (1:9)
+  ST-V.X-OLD-LOAN-AMT (1:9)
+  ST-V.X-CAP-AMT (1:9)
+  ST-V.X-BILL-SW (1:9)
+  ST-V.X-BILL-SW-2 (1:9)
+  ST-V.X-BILL-ADJUST (1:9)
+  ST-V.X-BILL-DOLLAR (1:9)
+  ST-V.X-BILL-INTEREST-AMT (1:9)
+  ST-V.X-INTEREST-RECEIVED (1:9)
+  ST-V.X-PRINCIPAL-CHG-CODE (1:9)
+  ST-V.APL-CNT
+  ST-V.X-LOAN-DATE-2 (1:9)
+  ST-V.X-LOAN-AMOUNT-2 (1:9)
+  ST-V.X-ACCUM-INTEREST-2 (1:9)
+  ST-V.X-NXT-YR-ACCUM-INT-2 (1:9)
+  ST-V.X-OLD-LOAN-AMT-2 (1:9)
+  ST-V.X-CAP-AMT-2 (1:9)
+  ST-V.X-BILL-INTEREST-AMT-2 (1:9)
+  ST-V.X-INTEREST-RECEIVED-2 (1:9)
+  ST-V.X-LPO-PMT-RCVD        (1:9)
+  ST-V.X-LPO-PMT-RCVD-2      (1:9)
+  ST-V.X-LPO-PRIOR-LOAN-BAL  (1:9)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2(1:9)
+  ST-V.X-LPO-PRIOR-ACC-INT   (1:9)
+  ST-V.X-LPO-PRIOR-ACC-INT-2 (1:9)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  ST-V.ALOT-SW
+  ST-V.ALOT-AMT
+  ST-V.STOP-DATE
+  ST-V.X-ALT-LP-IND (1:9)
+  ST-V.X-ALT-LP-AMT (1:9)
+  ST-V.X-ALT-LP-DATE (1:9)                      /* vt1
+  ST-V.X-ALT-LP-IND-2 (1:9)
+  ST-V.X-ALT-LP-AMT-2 (1:9)
+  ST-V.NUMBER-MEMBERSHIPS
+  ST-V.STATUS              (1:9)
+  st-v.policy-id           (1:9)                 /* vt6 10/17/2017
+  ST-V.PAY-STATUS          (1:9)
+  ST-V.MODE                (1:9)
+  ST-V.PLAN                (1:9)
+  ST-V.ISSUE-DATE          (1:9)
+  ST-V.PAID-TO-DATE        (1:9)
+  ST-V.PAID-UP-DATE        (1:9)
+  ST-V.ANNUAL-PREM         (1:9)
+  ST-V.MTD-ACV-PREM-ADJ    (1:9)
+  ST-V.CONV-DURATION       (1:9)
+  ST-V.MONTH-ALLOC-AMT     (1:9)
+  ST-V.OWNERSHIP-FLAG      (1:9)
+  ST-V.RID-PLAN            (1:9)
+  ST-V.RID-EFF-DT          (1:9)
+  ST-V.RID-PD-TO           (1:9)
+  ST-V.X-RID-FPF           (1:9)
+  ST-V.X-RID-BALANCE       (1:9)
+  ST-V.RID-TOT-PAID
+  ST-V.LAST-DB-CR-CHECK
+  ST-V.PAY-NOW-SWITCH
+  ST-V.MEMBER-CONTACT-ID   /* NG99
+*  ST-V.ADDRESS-1
+*  ST-V.ADDRESS-CHG-CODE
+  ST-V.EZPAY-CAP-LOAN-AMOUNT
+*
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #2ND-TIM-EDIT
+  #DISP-MSG
+  #OLD-ALP-FLG
+  #OLD-ALP-AMT
+  #OLD-ALP-DATE                          /* vt1
+  #CMB2-LOAN-AMT
+*
+  #TRANS-TABLE  (1:300)
+  #SG-TBL       (1:15)
+  #LX
+*
+  ST-V.ID-NUMBER
+  ST-V.PROCESS-IND
+  ST-V.NAME
+  #CGA-CLERK
+  #EXTRA-STOP
+  #TOT-CMB3-PRN
+  #TOT-CMB3-INT
+  #TOT-CMB3-ADCR
+  #TOT-CMB4-PREM
+  #TOT-CMB4-DUES
+  #CMBX
+  #TOT-CMB3-PRN-CAP
+  #TOT-CMB3-INT-CAP
+  ST-V.CAP-BILL-DATE
+  #APPROVED (*)
+*
+IF #DT-ACCOUNT-NUMBER(#I1) <> #SERVICES-ACCOUNT-NUMBER             /* YK2
+  ST-V.MODE (#SEGMENT)   := #HOLD-MODE
+  ST-V.STATUS (#SEGMENT) := #HOLD-STATUS                           /* PM1
+  ST-V.ANNUAL-PREM(#SEGMENT) := #HOLD-ANN-PREM                     /* YK1
+END-IF                                                             /* YK2
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE STORE-ACCT-REG-V
+************************************************************************
+*
+* IF NOT #DT-ACCOUNT-NUMBER (#I1) = '4118'        /* PM3
+IF #DT-ACCOUNT-NUMBER(#I1) <> #SERVICES-ACCOUNT-NUMBER       /* YK2
+  #HOLD-CUR-ACCT-UPDT := ST-V.DATE-ACCT-UPDATE
+*
+* callnat 'GPLNMSXX'  #pol-nbr st-v.id-number #segment        /* vt3 vt5
+* reset #lx-passed                    /* vt5   YK2
+  MOVE #SEGMENT TO #LX-PASSED         /* vt5   YK2
+*
+  CALLNAT 'C2520SAM' #SCR-LINES
+    ST-V.ID-NUMBER
+    ST-V.PROCESS-IND
+    ST-V.INTRO-FLAG
+    ST-V.NAME
+    ST-V.PLAN   (1:9)
+    ST-V.DEBIT-CREDIT-AMT
+    ST-V.DATE-ACCT-UPDATE
+    #DATE-OF-UPDATE
+    #TIME-OF-UPDATE
+    #ILN1
+    #HOLD-CUR-ACCT-UPDT
+    #CGA-CLERK
+    #EXTRA-STOP
+    #SG-TBL (1:15)
+    #CMBX
+    #ACTIVITY-TYPE
+    #STATUS-TYPE
+*   #pol-nbr                                /* vt3 /* vt5
+    #LX-PASSED                               /* vt5
+*
+  RESET #EXTRA-STOP
+*
+END-IF                                        /* PM3
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-PEACHTREE-FILE
+************************************************************************
+* YK2 >
+* CALLNAT 'GPLNMSXX'
+*   #POL-NUM
+*   ST-V.ID-NUMBER
+*   #SEGMENT
+*
+* RESET #LAST #MI #FIRST-20
+* CALLNAT 'GFMLNSXX'
+*   ST-V.NAME
+*   #FIRST-20
+*   #MI
+*   #LAST
+*   #ERR-MSG
+*
+#POL-NUM := #DT-POLICY-NUMBER(#I1)
+#NAME-D := ST-V.NAME
+#LAST   := FUNCTION-FORM-NAME(<#NAME-D,'U'>)
+* < YK2
+COMPUTE #PEACH-CNT = #DT-IND + 1
+MOVE EDITED #PEACH-CNT (EM=ZZZZ9) TO #PEACH-CNT-X
+MOVE LEFT #PEACH-CNT-X TO #PEACH-CNT-X
+*
+* SEPARATE #LAST INTO #LAST #EXTRA1 #EXTRA2 #EXTRA3 WITH DELIMITER ','   /* YK2
+MOVE EDITED #SCR-TRAN-AMT (#ILN1) (EM=ZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+IF #SCR-ADJ (#ILN1) = '-'
+  COMPRESS '-' #PEACHTREE-AMOUNT INTO #PEACHTREE-AMOUNT LEAVING NO
+  SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #TOTAL-PEACHTREE-AMOUNT
+ELSE
+  ADD #SCR-TRAN-AMT (#ILN1) TO #TOTAL-PEACHTREE-AMOUNT
+END-IF
+*
+COMPRESS #TODAY-PEACH ','
+  #SCR-TRAN-CODE (#ILN1)
+  #TODAY-MM #TODAY-DD
+  'CN' #SCR-ID-SSN (#ILN1) ','
+  #PEACH-CNT-X ',' INTO #PEACHTREE LEAVING NO
+*
+COMPRESS #PEACHTREE #DT-ACCOUNT-NUMBER (#I1) INTO #PEACHTREE LEAVING NO
+*
+DECIDE FOR FIRST CONDITION                                  /* PM1
+  WHEN #DT-ACCOUNT-NUMBER (#I1) = '5477'                    /* PM1 PM2
+    COMPRESS #PEACHTREE '- 03' INTO #PEACHTREE LEAVING NO   /* PM1
+  WHEN #DT-ACCOUNT-NUMBER (#I1) = '5497' OR = '5499'        /* PM1
+    COMPRESS #PEACHTREE '- 07' INTO #PEACHTREE LEAVING NO   /* PM1
+  WHEN NONE                                                 /* PM1
+    COMPRESS #PEACHTREE '- 00' INTO #PEACHTREE
+END-DECIDE                                                  /* PM1
+*
+COMPRESS  #PEACHTREE ',' #LAST INTO #PEACHTREE LEAVING NO
+*
+COMPRESS #PEACHTREE #POL-NUM INTO #PEACHTREE
+*
+COMPRESS #PEACHTREE ',' #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+*
+WRITE WORK FILE 1 #PEACHTREE
+RESET #PEACHTREE
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-PEACHTREE-CASH-ENTRY
+************************************************************************
+*
+COMPRESS 'NSF' 'EZPay' *DATN #SELECT-FILE-NAME-ONLY INTO #PEACH-CASH-TEXT
+COMPUTE #PEACH-CNT := #DT-IND + 1
+MOVE EDITED #PEACH-CNT (EM=ZZZZ9) TO #PEACH-CNT-X
+MOVE LEFT #PEACH-CNT-X TO #PEACH-CNT-X
+*
+MOVE EDITED #TOTAL-PEACHTREE-AMOUNT (EM=ZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+COMPRESS '-' #PEACHTREE-AMOUNT INTO #PEACHTREE-AMOUNT LEAVING NO
+*
+COMPRESS #TODAY-PEACH ','
+  #PEACH-CASH-TEXT ','
+  #PEACH-CNT-X ','
+  '1010 - 00' ','
+  #PEACH-CASH-TEXT ','
+  #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+*
+WRITE WORK FILE 1 #PEACHTREE
+RESET #PEACHTREE
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE FTP-FILE
+************************************************************************
+*
+#TIMN := *TIMN
+*
+COMPRESS #WINDOWS-FILE-PREFIX '_' #DATN '_' #TIMN '.TXT' INTO #WINDOWS-FILE-NAME LEAVING NO
+*
+CALL 'SHCMD' #SHCMD
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WINDOWS-FILE-NAME
+*
+COMPRESS #UNIX-DESTINATION ':' #DATN-A ':' #TIMN-A INTO #UNIX-DESTINATION LEAVING NO
+COMPRESS 'mv' #UNIX-FILE-NAME #UNIX-DESTINATION INTO #SHCMD
+*
+CALL 'SHCMD' #SHCMD
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE UPDATE-TERMINATED-DBCR                         /* PM1
+************************************************************************
+*
+FR01.
+FIND (1) FR-V WITH MEMBER-KEY = #DT-MEMBER-ID (#I1)
+  FOR #I2 1 TO 45
+    IF FR-V.POL-DATE (#I2) = ST-V.ISSUE-DATE (#SEGMENT)
+        AND FR-V.POL-TYPE (#I2) = ST-V.PLAN (#SEGMENT)
+*
+      DECIDE FOR FIRST CONDITION
+        WHEN #DT-ORIG-TRAN-CODE (#I1) = 'PRER' OR = 'DUER' OR = 'RIDR'
+          SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM FR-V.DEAD-PREM-ADJ (#I2)
+          ADD #SCR-TRAN-AMT (#ILN1) TO ST-V.TERM-PREM-REF-DUE
+        WHEN #DT-ORIG-TRAN-CODE (#I1) = 'PADF' OR = 'PADV'
+          SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM FR-V.DEAD-LOAN-PRIN (#I2)
+          ADD #SCR-TRAN-AMT (#ILN1) TO ST-V.TERM-LOAN-PRIN
+        WHEN #DT-ORIG-TRAN-CODE (#I1) = 'AIAF' OR = 'AIAV'
+          SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM FR-V.DEAD-LOAN-INT (#I2)
+          ADD #SCR-TRAN-AMT (#ILN1) TO ST-V.TERM-ACC-INT
+        WHEN NONE
+          SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM FR-V.DEAD-DB-CR (#I2)
+          ADD #SCR-TRAN-AMT (#ILN1) TO ST-V.TERM-DEBIT-CREDIT
+      END-DECIDE
+*
+      UPDATE (FR01.)
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FIND
+*
+END-SUBROUTINE
+*
+END

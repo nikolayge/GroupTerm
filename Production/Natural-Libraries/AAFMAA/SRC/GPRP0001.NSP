@@ -1,0 +1,272 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPRP0001                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Policy Package Printing                               *
+*              : Requests file maintenance                             *
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* YAK    07252008  None    Program Written                             *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRL0001      /* General Processes Property
+LOCAL USING PMDA0002
+LOCAL
+1 #I                    (I2)
+1 #I1                   (I2)
+1 #TEXT                 (A78)
+1 #SCREEN-NUMBER        (N2)
+1 #SCREEN-COUNT         (N5)
+1 #SIZE-ARRAY           (N5)
+1 #LINE-COUNT           (N5)
+1 #MAX-ENTRY            (N2)    INIT <14>
+1 #ADMIN-ACCESS         (L)
+1 #FULL-ACCESS          (L)
+1 #USER-ACCESS          (L)
+1 #CV-SEL               (C/14)
+1 #TAB                  (A1) INIT <H'09'>
+1 #FUNCTION-ATTRIBUTES  (A70)
+1 REDEFINE #FUNCTION-ATTRIBUTES
+  2 #PROGRAM            (A8)
+  2 #SEPARATOR          (A1)
+  2 #FUNCTION-PARM      (A7)
+  2 #HEADER-1           (A50)
+  2 #SECURITY-CODE      (N2)
+*
+1 #REQUEST-ARRAY   (*)
+  2 #ARRAY-SEL     (A1)
+  2 #REQUEST-LINE  (A80)
+1 #REQUEST-RECORD  (A80)
+1 #SCR-ARRAY       (14)
+  2 #SEL           (A1)
+  2 #POLICY-NUMBER (A16)
+  2 #REQUEST-DATE  (A8)
+  2 #REQUEST-TYPE  (A10)
+  2 #OPTION-1      (A1)
+  2 #OPTION-2      (A1)
+  2 #COMMENTS      (A20)
+1 #FILE-EMPTY      (L)
+1 #FILE-NAME       (A) DYNAMIC
+*
+END-DEFINE
+*
+DEFINE WINDOW CONFIRMATION-BOX
+  SIZE 12*60
+  BASE 5/7
+*
+SET KEY PF2  NAMED 'Save'
+SET KEY PF3  NAMED 'Retrn'
+SET KEY PF7  NAMED 'Up'
+SET KEY PF8  NAMED 'Down'
+SET KEY PF12 NAMED 'Quit'
+*
+IF *DATA NE 0
+  INPUT #FUNCTION-ATTRIBUTES
+END-IF
+*
+RESET #ADMIN-ACCESS #FULL-ACCESS
+IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A'
+  #ADMIN-ACCESS := #FULL-ACCESS := TRUE
+ELSE
+  IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'U'
+    #FULL-ACCESS := TRUE
+  END-IF
+END-IF
+*
+IF NOT #FULL-ACCESS
+  #TEXT := 'User not authorized to perform this function. Browse access only'
+  #CV-SEL(*) := (AD=P)
+  SET KEY PF2 = OFF
+END-IF
+*
+FORMAT LS = 100
+DECIDE ON FIRST VALUE #FUNCTION-PARM
+  VALUE 'PPRR'
+    #FILE-NAME := #PRINT-REQUEST-FILE
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+COMPRESS #UNIX-DIR #FILE-NAME INTO #FILE-NAME leaving no
+DEFINE WORK FILE 1 #FILE-NAME
+*
+PERFORM READ-FILE
+PERFORM POPULATE-SCREEN
+REPEAT
+  INPUT TEXT #TEXT MARK *#SEL(1) USING MAP 'GPRM0001'
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF2'
+      PERFORM SAVE-SCREEN
+      PERFORM WRITE-FILE
+      PERFORM RETURN-TO-MENU
+    VALUE 'PF3'
+      PERFORM RETURN-TO-MENU
+    VALUE 'PF8', 'PF7'
+      PERFORM SAVE-SCREEN
+      PERFORM NEXT-SCREEN
+    VALUE 'ENTR'
+      PERFORM SAVE-SCREEN
+      PERFORM POPULATE-SCREEN
+    VALUE 'PF12'
+      SET KEY OFF
+      FETCH 'G1000PXX'
+    NONE
+      IGNORE
+  END-DECIDE
+END-REPEAT
+*
+***********************************************************************
+DEFINE SUBROUTINE READ-FILE
+***********************************************************************
+*
+ON ERROR
+  IF *ERROR-NR = 1599
+    #TEXT := 'Print Request file is empty...'
+    PERFORM RETURN-TO-MENU
+  END-IF
+END-ERROR
+RESET #LINE-COUNT #SCREEN-COUNT #I #SEL(*)
+#SIZE-ARRAY := #MAX-ENTRY
+EXPAND ARRAY #REQUEST-ARRAY TO (1:#SIZE-ARRAY)
+READ WORK FILE 1 #REQUEST-RECORD
+  IF #REQUEST-RECORD = ' '
+    ESCAPE TOP
+  END-IF
+  #LINE-COUNT := #LINE-COUNT + 1
+  #I := #I + 1
+  #REQUEST-LINE(#I) := #REQUEST-RECORD
+  IF #LINE-COUNT = #MAX-ENTRY
+    #SIZE-ARRAY := #SIZE-ARRAY + #MAX-ENTRY
+    #SCREEN-COUNT := #SCREEN-COUNT + 1
+    RESET #LINE-COUNT
+    RESIZE ARRAY #REQUEST-ARRAY TO (1:#SIZE-ARRAY)
+  END-IF
+END-WORK
+IF #LINE-COUNT = 0
+  #SIZE-ARRAY := #SIZE-ARRAY - #MAX-ENTRY
+  IF #SIZE-ARRAY = 0
+    #TEXT := 'Print Request file is empty...'
+    PERFORM RETURN-TO-MENU
+  END-IF
+ELSE
+  #SIZE-ARRAY := #LINE-COUNT + #MAX-ENTRY * #SCREEN-COUNT
+  #SCREEN-COUNT := #SCREEN-COUNT + 1
+END-IF
+RESIZE ARRAY #REQUEST-ARRAY TO (1:#SIZE-ARRAY)
+#SCREEN-NUMBER := 1
+CLOSE WORK FILE 1
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE WRITE-FILE
+***********************************************************************
+*
+#FILE-EMPTY := TRUE
+FOR #I = 1 TO #SIZE-ARRAY
+  IF #ARRAY-SEL(#I) = ' '
+    WRITE WORK FILE 1 #REQUEST-LINE(#I)
+    #FILE-EMPTY := FALSE
+  END-IF
+END-FOR
+IF #FILE-EMPTY
+  RESET #REQUEST-RECORD
+  WRITE WORK FILE 1 #REQUEST-RECORD
+END-IF
+CLOSE WORK FILE 1
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE NEXT-SCREEN
+***********************************************************************
+*
+IF *PF-KEY = 'PF8'
+  IF #SCREEN-NUMBER = #SCREEN-COUNT
+    #TEXT   := 'Last Screen'
+  ELSE
+    #SCREEN-NUMBER := #SCREEN-NUMBER + 1
+  END-IF
+ELSE
+  IF #SCREEN-NUMBER = 1
+    #TEXT   := 'First Screen'
+  ELSE
+    #SCREEN-NUMBER := #SCREEN-NUMBER - 1
+  END-IF
+END-IF
+PERFORM POPULATE-SCREEN
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SAVE-SCREEN
+***********************************************************************
+*
+#I1 := ((#SCREEN-NUMBER - 1) * #MAX-ENTRY)
+#LINE-COUNT := #SIZE-ARRAY - #I1
+IF #LINE-COUNT > #MAX-ENTRY
+  #LINE-COUNT := #MAX-ENTRY
+END-IF
+FOR #I = 1 TO #LINE-COUNT
+  IF #OPTION-1(#I) <> ' ' AND NOT (#OPTION-1(#I) = 'Y' OR #OPTION-1(#I) = 'N')
+    #TEXT := 'Please, respond "Y" or "N"'
+    REINPUT WITH #TEXT MARK *#OPTION-1(#I)
+  END-IF
+  IF #OPTION-2(#I) <> ' ' AND NOT (#OPTION-2(#I) = 'Y' OR #OPTION-2(#I) = 'N')
+    #TEXT := 'Please, respond "Y" or "N"'
+    REINPUT WITH #TEXT MARK *#OPTION-2(#I)
+  END-IF
+  IF #SEL (#I) <> ' '
+    IF #SEL (#I) <> 'D'
+      #TEXT := 'Please, use "D" to mark the record'
+      REINPUT WITH #TEXT MARK *#SEL(#I)
+    ELSE
+      #ARRAY-SEL(#I1 + #I) := #SEL (#I)
+    END-IF
+  END-IF
+  COMPRESS  #POLICY-NUMBER(#I) #TAB #REQUEST-DATE(#I) #TAB #REQUEST-TYPE(#I) #TAB #OPTION-1(#I) #TAB #OPTION-2(#I) #TAB #COMMENTS(#I)
+    INTO #REQUEST-LINE(#I1 + #I) LEAVING NO
+END-FOR
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE POPULATE-SCREEN
+***********************************************************************
+*
+RESET #SCR-ARRAY(*)
+#CV-SEL(*) := (AD=I)
+#I1 := ((#SCREEN-NUMBER - 1) * #MAX-ENTRY)
+#LINE-COUNT := #SIZE-ARRAY - #I1
+IF #LINE-COUNT > #MAX-ENTRY
+  #LINE-COUNT := #MAX-ENTRY
+END-IF
+FOR #I = 1 TO #LINE-COUNT
+  SEPARATE #REQUEST-LINE(#I1 + #I) INTO
+    #POLICY-NUMBER(#I) #REQUEST-DATE(#I) #REQUEST-TYPE(#I) #OPTION-1(#I) #OPTION-2(#I) #COMMENTS(#I)
+  IGNORE WITH DELIMITER #TAB
+  IF #ARRAY-SEL(#I1 + #I) <> ' '
+    #CV-SEL(#I) := (AD=P)
+    #COMMENTS(#I) := 'Marked for deletion'
+  END-IF
+END-FOR
+#LINE-COUNT := #LINE-COUNT + 1
+FOR #I = #LINE-COUNT TO #MAX-ENTRY
+  #CV-SEL(#I) := (AD=P)
+END-FOR
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE RETURN-TO-MENU
+********************************
+*
+RESET #TEXT
+#FUNCTION-PARM := 'PROC   '
+#PROGRAM       := 'G1000PUI'
+STACK TOP DATA #FUNCTION-ATTRIBUTES #TEXT
+FETCH #PROGRAM
+END-SUBROUTINE
+*
+END

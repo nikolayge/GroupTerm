@@ -1,0 +1,620 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPMEST - CREATE MONTH-END STATISTICS
+*     - find loan interest with loans paid-off - Lyne Babin
+*     - find debit/credit and bill adjustment totals - Elizabeth McGrail
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    01032005  PM1     Adjust process so inactive accounts are     *
+*                          included in debit/credit totals.            *
+* PAM    03072005  PM2     Adjust process to read all accounts,        *
+*                          including dead members                      *
+* PAM    03292005  PM3     Allow pending customers through the db/cr   *
+*                          processing.                                 *
+* PAM    04212005  PM4     Added Lapse Overloan Report for Elizabeth.  *
+*                          processing.                                 *
+* PAM    09272005  PM5     Added Resgn/Addl Ins reports for Lisa.      *
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII                     *
+* YAK    07262007  YK1     Added two 'Total counter' lines             *
+*                          Added Date/Time to the header               *
+* RSE    09292009  RE1     Change PROCESS-IND/600K logic for Unification    
+************************************************************************
+*
+DEFINE DATA
+ LOCAL  USING GONERLXX
+ LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 NAME
+ 2 SSN
+ 2 PROCESS-IND
+ 2 INTRO-FLAG
+ 2 WIDOW-FLAG
+ 2 NUMBER-MEMBERSHIPS
+ 2 DEBIT-CREDIT-AMT
+ 2 ISSUE-DATE                          (9)
+ 2 X-BILL-ADJUST                       (9)
+ 2 X-LOAN-DATE                         (N8.0/9)
+ 2 X-LOAN-DATE-2                       (N8.0/9)
+ 2 X-LOAN-AMOUNT                       (P5.2/9)
+ 2 X-LOAN-AMOUNT-2                     (P7.2/9)
+ 2 X-ACCUM-INTEREST                    (P5.2/9)
+ 2 X-ACCUM-INTEREST-2                  (P5.2/9)
+ 2 PAY-STATUS                          (9)
+ 2 PLAN                                (9)
+ 2 STATUS                              (9)
+ 2 FACE-AMOUNT                         (9)                        /* PM5
+*
+1 NN-V VIEW OF A-NOTES
+ 2 ID-NUMBER                           (N6)
+ 2 REDEFINE ID-NUMBER
+  3 ID-NUMBER-A                        (A6)
+ 2 NOTE-TABLE                          (60)
+  3 NOTE-DATE                          (N8)
+  3 REDEFINE NOTE-DATE
+   4 NT-DATE-YYYY                      (N4)
+   4 NT-DATE-MM                        (N2)
+   4 NT-DATE-DD                        (N2)
+  3 NOTE-CLERK-ID                      (A3)
+  3 NOTE-TEXT                          (A60)
+  3 REDEFINE NOTE-TEXT
+   4 NOTE-TEXT-1-9                     (A9)
+   4 NOTE-TEXT-SPACE-1                 (A1)
+   4 NOTE-TEXT-ISS-DT                  (A10)
+   4 NOTE-TEXT-SPACE-2                 (A1)
+   4 NOTE-TEXT-OTHER                   (A39)
+   4 REDEFINE NOTE-TEXT-OTHER
+    5 NOTE-TEXT-LAPC                   (A4)
+    5 NOTE-TEXT-REST                   (A35)
+   4 REDEFINE NOTE-TEXT-OTHER
+    5 NOTE-TEXT-LAPO                   (A10)
+    5 NOTE-TEXT-REST-A                 (A29)
+  3 REDEFINE NOTE-TEXT
+   4 NOTE-TEXT-VIEW                    (A35)
+   4 NOTE-TEXT-REST-O                  (A25)
+*
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL                               /* PM5
+ 2 ID-NUMBER                           (N6)                       /* PM5
+ 2 REDEFINE ID-NUMBER                                             /* PM5
+ 3 ID-NUMBER-A                         (A6)                       /* PM5
+ 2 ENTRY-DATE                          (N8)                       /* PM5
+ 2 CODE                                (A1)                       /* PM5
+ 2 ISSUE-DATE                          (N8)                       /* PM5
+ 2 REDEFINE ISSUE-DATE                                            /* PM5
+  3 ISSUE-DATE-YYYY                    (A4)                       /* PM5
+  3 ISSUE-DATE-MM                      (A2)                       /* PM5
+  3 ISSUE-DATE-DD                      (A2)                       /* PM5
+ 2 NUM-MBRSHIPS                        (N3)                       /* PM5
+*
+1 #I1                                  (I2)
+1 #I2                                  (I2)
+1 #I3                                  (I2)
+1 #I4                                  (I2)
+1 #I5                                  (I2)
+1 #CNT-1                               (P5)
+1 #CNT-2                               (P5)
+1 #CNT-3                               (P5)
+1 #CNT-4                               (P5)
+*
+1 #JCL-PARM                            (A32)
+1 REDEFINE #JCL-PARM
+ 2 #JCL-MM                             (N2)   /* DATE PARM MM/DD/YYYY
+ 2 #JCL-X1                             (A1)
+ 2 #JCL-DD                             (N2)
+ 2 #JCL-X2                             (A1)
+ 2 #JCL-YYYY                           (N4)
+*
+1 #START-DATE                          (N8)
+1 REDEFINE #START-DATE
+ 2 #START-DATE-YYYY                    (N4)
+ 2 #START-DATE-MM                      (N2)
+ 2 #START-DATE-DD                      (N2)
+1 #END-DATE                            (N8)
+1 #YYYYMMDD                            (N8)
+1 #ACTION-FLAG                         (A1) INIT <'B'>
+*
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+1 #EXTRACT-RECORD                      (A125)
+*
+*** Used for oustanding loan interest report ***************************
+1 #OUTSTANDING-INT                     (L)
+1 #WORK-LOAN-DATE                      (N8)
+1 REDEFINE #WORK-LOAN-DATE
+ 2 #LOAN-DATE-YYYY                     (N4)
+ 2 #LOAN-DATE-MM                       (N2)
+ 2 #LOAN-DATE-DD                       (N2)
+1 #WORK-ISSUE-DATE                     (N8)
+1 REDEFINE #WORK-ISSUE-DATE
+ 2 #ISSUE-DATE-YYYY                    (N4)
+ 2 #ISSUE-DATE-MM                      (N2)
+ 2 #ISSUE-DATE-DD                      (N2)
+1 #DISPLAY-FIXED-LOAN-DATE             (A10)
+1 #DISPLAY-FIXED-ACCUM-INTEREST        (A10)
+1 #DISPLAY-VARIABLE-LOAN-DATE          (A10)
+1 #DISPLAY-VARIABLE-ACCUM-INTEREST     (A10)
+1 #DISPLAY-ISSUE-DATE                  (A10)
+*
+*** end of outstanding loan interest ***********************************
+*
+*** used for total debit/credit and bill adjustment report *************
+*
+1 #BADJ-NEG-CNT                        (P5)
+1 #BADJ-POS-CNT                        (P5)
+1 #BADJ-NEG                            (P11.2)
+1 #BADJ-POS                            (P11.2)
+1 #DB-CR-NEG-CNT                       (P5)
+1 #DB-CR-POS-CNT                       (P5)
+1 #DB-CR-NEG                           (P11.2)
+1 #DB-CR-POS                           (P11.2)
+1 #NET-AMT                             (P11.2)
+1 #TOTAL-COUNT                         (P6)
+*
+*** end of total debit/credit and bill adjustment report ***************
+*
+*** used for lapse overloan / reinstatement report *********************
+*
+1 #DISPLAY-NOTE                        (A60)
+1 #HOLD-ID-NUMBER                      (N6)
+1 #SSN                                 (N9)
+1 REDEFINE #SSN
+ 2 #SSN-A                              (A9)
+*
+*** end of lapse overloan / reinstatement report ***********************
+*
+*** used for resignation / additional insurance reports ****************
+*
+1 #NOT-FND                             (L)                        /* PM5
+1 #INVERSE-START-DATE                  (N8)                       /* PM5
+1 #INVERSE-END-DATE                    (N8)                       /* PM5
+1 #ACTUAL-ENTRY-DATE                   (N8)                       /* PM5
+1 REDEFINE #ACTUAL-ENTRY-DATE                                     /* PM5
+ 2 #ENTRY-DATE-YYYY                    (A4)                       /* PM5
+ 2 #ENTRY-DATE-MM                      (A2)                       /* PM5
+ 2 #ENTRY-DATE-DD                      (A2)                       /* PM5
+1 #FACE-AMOUNT                         (N7)                       /* PM5   /* vt was n6
+1 #HOLD-FACE-AMOUNT                    (N7)                       /* PM5   /* vt was n6
+1 #LAST-ISS-DT                         (N8)                       /* PM5
+1 #LAST-CN                             (N6)                       /* PM5
+1 #LAST-CODE                           (A1)                       /* PM5
+1 #DIS-NAME                            (A25)                      /* PM5
+1 #DIS-ENTRY-DATE                      (A10)                      /* PM5
+1 #DIS-FACE-AMOUNT                     (A12)                      /* PM5  /* vt was a10
+1 #DIS-ISSUE-DATE                      (A10)                      /* PM5
+1 #DIS-ID-NUMBER                       (A6)                       /* PM5
+1 #DIS-PLAN                            (A3)                       /* PM5
+1 #DIS-INTRO-FLAG                      (A1)                       /* PM5
+*
+*** end of resignation / additional insurance reports ******************
+*
+END-DEFINE
+*
+************************************************************************
+*
+FORMAT  (2) LS=133 PS=76
+WRITE   (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+              'Outstanding Interest with paid-off loans'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT  (3) LS=133 PS=76
+WRITE   (3) 'Total  _DBCR-BADJ_mmddyyyy'
+WRITE   (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+              'Total outstanding debits/credits and bill adjustments'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT  (4) LS=133 PS=76
+WRITE   (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+              'Members that Lapsed Overloaned this month'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT  (5) LS=133 PS=76
+WRITE   (5) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+              'RSGN/ADDL INS during this month'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+READ WORK 1 ONCE RECORD #JCL-PARM
+PERFORM FORMAT-DATES
+*
+COMPRESS 'Mem_Id_Num' #TAB
+         'Issue_Date' #TAB
+         'Fixed_Loan_Date' #TAB
+         'Fixed_Loan_Interest' #TAB
+         'Variable_Loan_Date' #TAB
+         'Variable_Loan_Interest'
+    INTO #EXTRACT-RECORD LEAVING NO
+WRITE WORK 2 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+COMPRESS 'PROGRAM: ' *PROGRAM ' DATE: ' *DATN '  TIME: ' *TIMX INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD                                     /* YK1
+MOVE 'Total outstanding debits/credits and bill adjustments'     /* YK1
+    TO #EXTRACT-RECORD                                           /* YK1
+WRITE WORK 3 #EXTRACT-RECORD                                     /* YK1
+RESET #EXTRACT-RECORD                                            /* YK1
+*
+COMPRESS 'ID' #TAB                                                /* PM4
+         'SSN' #TAB
+         'Note'  INTO #EXTRACT-RECORD LEAVING NO
+WRITE WORK 4 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+* READ ST-V BY MEMBER-KEY FROM '001900'                           /* PM2
+READ ST-V LOGICAL WITH NAME-KEY FROM 'A'                          /* PM2
+*  IF PROCESS-IND = 'S'   /* OR = 'C'                              /* PM3  RE1
+*   OR ST-V.ID-NUMBER GE 600000                                            RE1
+  IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                                 /* RE1  
+   OR ST-V.ID-NUMBER LT 1900                                      /* PM2
+    ESCAPE TOP
+  END-IF
+*
+  IF DEBIT-CREDIT-AMT NE 0
+    IF DEBIT-CREDIT-AMT LT 0
+      ADD 1 TO #DB-CR-NEG-CNT
+      ADD DEBIT-CREDIT-AMT TO #DB-CR-NEG
+    ELSE
+      ADD 1 TO #DB-CR-POS-CNT
+      ADD DEBIT-CREDIT-AMT TO #DB-CR-POS
+    END-IF
+  END-IF
+*
+*
+  FIND NN-V WITH NN-V.ID-NUMBER = ST-V.ID-NUMBER                  /* PM4
+    IF NO RECORDS FOUND
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    FOR #I1 1 TO 60
+      IF NN-V.NOTE-TEXT (#I1) = ' '
+        ESCAPE BOTTOM
+      END-IF
+*
+      IF NN-V.NOTE-TEXT (#I1) = MASK ('* POL ISS')
+       AND NN-V.NOTE-TEXT-LAPO (#I1) = 'LAPS OVRLN'
+        FOR #I2 1 TO 60
+          IF NN-V.NOTE-TEXT (#I2) = ' '
+            ESCAPE BOTTOM
+          END-IF
+*
+          IF NN-V.NOTE-TEXT (#I2) = MASK ('* POL ISS')
+           AND NN-V.NOTE-TEXT-ISS-DT (#I1) = NN-V.NOTE-TEXT-ISS-DT (#I2)
+           AND NN-V.NOTE-TEXT-LAPO (#I2) = 'REINSTATED'
+           AND NN-V.NOTE-DATE (#I2) GE #START-DATE
+           AND NN-V.NOTE-DATE (#I2) LE #END-DATE
+            IF NN-V.ID-NUMBER NE #HOLD-ID-NUMBER
+              ADD +1 TO #CNT-4
+              MOVE NN-V.ID-NUMBER TO #HOLD-ID-NUMBER
+              RESET #SSN
+              MOVE ST-V.SSN TO #SSN
+            END-IF
+            RESET #DISPLAY-NOTE
+            COMPRESS NN-V.NOTE-TEXT-ISS-DT (#I1)
+                     NN-V.NOTE-TEXT-OTHER (#I1)
+                     NN-V.NOTE-TEXT-OTHER (#I2) INTO #DISPLAY-NOTE
+*
+            COMPRESS NN-V.ID-NUMBER #TAB
+                     #SSN-A #TAB
+                     #DISPLAY-NOTE INTO #EXTRACT-RECORD LEAVING NO
+            WRITE WORK 4 #EXTRACT-RECORD
+            RESET #EXTRACT-RECORD
+*
+            DISPLAY (4) 'Cnt' #CNT-4
+                        'ID' ID-NUMBER
+                        'Note' #DISPLAY-NOTE
+          END-IF
+        END-FOR
+      END-IF
+    END-FOR
+  END-FIND
+*
+*
+  IF NUMBER-MEMBERSHIPS = 0                                       /* PM1
+   OR WIDOW-FLAG = 'Y'
+   OR PROCESS-IND = 'C'                                           /* PM2
+    ESCAPE TOP
+  END-IF
+*
+  FOR #I1 1 TO 9
+    RESET #DISPLAY-ISSUE-DATE
+          #DISPLAY-FIXED-LOAN-DATE
+          #DISPLAY-FIXED-ACCUM-INTEREST
+          #DISPLAY-VARIABLE-LOAN-DATE
+          #DISPLAY-VARIABLE-ACCUM-INTEREST
+          #DISPLAY-ISSUE-DATE
+          #OUTSTANDING-INT
+*
+    IF ISSUE-DATE (#I1) EQ 0
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF STATUS (#I1) NE 'D'
+      ESCAPE TOP
+    END-IF
+*
+    IF X-BILL-ADJUST (#I1) NE 0
+      IF X-BILL-ADJUST (#I1) LT 0
+        ADD 1 TO #BADJ-NEG-CNT
+        ADD X-BILL-ADJUST (#I1) TO #BADJ-NEG
+      ELSE
+        ADD 1 TO #BADJ-POS-CNT
+        ADD X-BILL-ADJUST (#I1) TO #BADJ-POS
+      END-IF
+    END-IF
+*
+    IF X-LOAN-AMOUNT (#I1) EQ 0
+     AND X-ACCUM-INTEREST (#I1) NE 0
+       MOVE EDITED X-ACCUM-INTEREST (#I1) (EM=ZZZ,ZZ9.99)
+            TO #DISPLAY-FIXED-ACCUM-INTEREST
+       MOVE TRUE TO #OUTSTANDING-INT
+       MOVE X-LOAN-DATE (#I1) TO #WORK-LOAN-DATE
+       COMPRESS #LOAN-DATE-MM '/' #LOAN-DATE-DD '/'
+         #LOAN-DATE-YYYY INTO #DISPLAY-FIXED-LOAN-DATE LEAVING NO
+    END-IF
+*
+    IF X-LOAN-AMOUNT-2 (#I1) EQ 0
+     AND X-ACCUM-INTEREST-2 (#I1) NE 0
+       MOVE EDITED X-ACCUM-INTEREST-2 (#I1) (EM=ZZZ,ZZ9.99)
+            TO #DISPLAY-VARIABLE-ACCUM-INTEREST
+       MOVE TRUE TO #OUTSTANDING-INT
+       MOVE X-LOAN-DATE-2 (#I1) TO #WORK-LOAN-DATE
+       COMPRESS #LOAN-DATE-MM '/' #LOAN-DATE-DD '/'
+         #LOAN-DATE-YYYY INTO #DISPLAY-VARIABLE-LOAN-DATE LEAVING NO
+    END-IF
+*
+    IF #OUTSTANDING-INT
+      MOVE ISSUE-DATE (#I1) TO #WORK-ISSUE-DATE
+      COMPRESS #ISSUE-DATE-MM '/' #ISSUE-DATE-DD '/'
+        #ISSUE-DATE-YYYY INTO #DISPLAY-ISSUE-DATE LEAVING NO
+      DISPLAY (2) 'ID Number'           ST-V.ID-NUMBER
+                  'Issue Date'          #DISPLAY-ISSUE-DATE
+                  'Fixed Loan Date'     #DISPLAY-FIXED-LOAN-DATE
+                  'Fixed Loan Interest' #DISPLAY-FIXED-ACCUM-INTEREST
+                  'Variable Loan Date'  #DISPLAY-VARIABLE-LOAN-DATE
+                  'Variable Loan Interest'
+                                        #DISPLAY-VARIABLE-ACCUM-INTEREST
+*
+      COMPRESS ST-V.ID-NUMBER #TAB
+               #DISPLAY-ISSUE-DATE #TAB
+               #DISPLAY-FIXED-LOAN-DATE #TAB
+               #DISPLAY-FIXED-ACCUM-INTEREST #TAB
+               #DISPLAY-VARIABLE-LOAN-DATE #TAB
+               #DISPLAY-VARIABLE-ACCUM-INTEREST
+        INTO #EXTRACT-RECORD LEAVING NO
+      WRITE WORK 2 #EXTRACT-RECORD
+      RESET #EXTRACT-RECORD
+    END-IF
+  END-FOR
+END-READ
+*
+MOVE EDITED #DB-CR-NEG-CNT (EM=ZZZ,ZZ9) TO #EXTRACT-RECORD
+COMPRESS 'Number Negative DB-CR =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+MOVE EDITED #DB-CR-NEG (EM=Z,ZZZ,ZZ9.99) TO #EXTRACT-RECORD
+COMPRESS '-' #EXTRACT-RECORD INTO #EXTRACT-RECORD LEAVING NO
+COMPRESS 'Amount Negative DB-CR =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+MOVE EDITED #DB-CR-POS-CNT (EM=ZZZ,ZZ9) TO #EXTRACT-RECORD
+COMPRESS 'Number Positive DB-CR =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+#TOTAL-COUNT := #DB-CR-POS-CNT + #DB-CR-NEG-CNT                   /* YK1
+MOVE EDITED #TOTAL-COUNT (EM=ZZZ,ZZ9) TO #EXTRACT-RECORD
+COMPRESS 'Total DB-CR records   =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+MOVE EDITED #DB-CR-POS (EM=Z,ZZZ,ZZ9.99) TO #EXTRACT-RECORD
+COMPRESS 'Amount Positive DB-CR =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+COMPUTE #NET-AMT= #DB-CR-POS + #DB-CR-NEG
+MOVE EDITED #NET-AMT (EM=Z,ZZZ,ZZ9.99) TO #EXTRACT-RECORD
+IF #NET-AMT LT 0
+  COMPRESS '-' #EXTRACT-RECORD INTO #EXTRACT-RECORD LEAVING NO
+END-IF
+COMPRESS 'Net             DB-CR =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+MOVE EDITED #BADJ-NEG-CNT (EM=ZZZ,ZZ9) TO #EXTRACT-RECORD
+COMPRESS 'Number Negative BADJ =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+MOVE EDITED #BADJ-NEG (EM=Z,ZZZ,ZZ9.99) TO #EXTRACT-RECORD
+COMPRESS '-' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+COMPRESS 'Amount Negative BADJ =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+MOVE EDITED #BADJ-POS-CNT (EM=ZZZ,ZZ9) TO #EXTRACT-RECORD
+COMPRESS 'Number Positive BADJ =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+MOVE EDITED #BADJ-POS (EM=Z,ZZZ,ZZ9.99) TO #EXTRACT-RECORD
+COMPRESS 'Amount positive BADJ =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+#TOTAL-COUNT := #BADJ-POS-CNT + #BADJ-NEG-CNT                    /* YK1
+MOVE EDITED #TOTAL-COUNT (EM=ZZZ,ZZ9) TO #EXTRACT-RECORD
+COMPRESS 'Total BADJ records   =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+COMPUTE #NET-AMT= #BADJ-POS + #BADJ-NEG
+MOVE EDITED #NET-AMT (EM=Z,ZZZ,ZZ9.99) TO #EXTRACT-RECORD
+IF #NET-AMT LT 0
+  COMPRESS '-' #EXTRACT-RECORD INTO #EXTRACT-RECORD LEAVING NO
+END-IF
+COMPRESS 'Net             BADJ =' #EXTRACT-RECORD INTO #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD
+WRITE (3) #EXTRACT-RECORD
+*
+PERFORM CREATE-RSGN-ADDLINS-REPORTS                               /* PM5
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-RSGN-ADDLINS-REPORTS                     /* PM5
+************************************************************************
+*
+COMPRESS 'ID Number'     #TAB
+         'Name'          #TAB
+         'Plan'          #TAB
+         'Insured'       #TAB
+         'Face $'        #TAB
+         'Entry Date'    #TAB
+         'Date of Issue' INTO #EXTRACT-RECORD LEAVING NO
+WRITE WORK 5 #EXTRACT-RECORD
+WRITE WORK 6 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+READ MD-V BY ENTRY-DATE FROM #INVERSE-START-DATE
+                        THRU #INVERSE-END-DATE
+*
+  IF NOT MD-V.CODE = 'S' OR = 'A'
+    ESCAPE TOP
+  END-IF
+*
+  RESET #NOT-FND
+  FIND ST-V WITH MEMBER-KEY = MD-V.ID-NUMBER-A
+    IF NO RECORDS FOUND
+      FIND ST-V WITH WIDOW-KEY = MD-V.ID-NUMBER-A
+        IF NO RECORDS FOUND
+          MOVE TRUE TO #NOT-FND
+        END-NOREC
+      END-FIND
+    END-NOREC
+  END-FIND
+*
+  IF #NOT-FND
+    ESCAPE TOP
+  END-IF
+*
+*  IF ST-V.PROCESS-IND = 'S'                 RE1
+  IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)   /* RE1     
+    ESCAPE TOP
+  END-IF
+*
+  COMPUTE #ACTUAL-ENTRY-DATE = 99999999 - MD-V.ENTRY-DATE
+  COMPUTE #FACE-AMOUNT  = MD-V.NUM-MBRSHIPS * 5000
+  MOVE #FACE-AMOUNT TO #HOLD-FACE-AMOUNT
+  FOR #I1 1 TO 9                        /* in case units changed by corr
+    IF ST-V.ISSUE-DATE (#I1) = ISSUE-DATE
+      IF   (ST-V.ID-NUMBER        = #LAST-CN)       /*IN CASES OF 2 POLS
+       AND (ST-V.ISSUE-DATE (#I1) = #LAST-ISS-DT)   /* w same iss-dts
+       AND (MD-V.CODE             = #LAST-CODE)
+        RESET #LAST-CN
+        RESET #LAST-ISS-DT
+        RESET #LAST-CODE
+        ESCAPE TOP
+      END-IF
+*
+      MOVE ST-V.FACE-AMOUNT (#I1) TO #FACE-AMOUNT
+      MOVE ST-V.ID-NUMBER         TO #LAST-CN
+      MOVE ST-V.ISSUE-DATE (#I1)  TO #LAST-ISS-DT
+      MOVE CODE                   TO #LAST-CODE
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF #I1 GT 9
+    MOVE 1 TO #I1
+  END-IF
+*
+  IF #I1 LT 9
+    COMPUTE #I2 = #I1 + 1
+  END-IF
+*
+  FOR #I2 #I2 TO 9
+    IF ST-V.ISSUE-DATE (#I2)     = ISSUE-DATE
+     AND ST-V.FACE-AMOUNT (#I2)  = #HOLD-FACE-AMOUNT
+     AND ST-V.FACE-AMOUNT (#I1) NE #HOLD-FACE-AMOUNT
+*
+      MOVE ST-V.FACE-AMOUNT (#I2) TO #FACE-AMOUNT
+      RESET #LAST-CN #LAST-ISS-DT #LAST-CODE
+      MOVE #I2 TO #I1
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  RESET #DIS-NAME #DIS-ENTRY-DATE #DIS-FACE-AMOUNT #DIS-ISSUE-DATE
+        #DIS-ID-NUMBER #DIS-PLAN #DIS-INTRO-FLAG
+*
+  MOVE MD-V.ID-NUMBER TO #DIS-ID-NUMBER
+  MOVE ST-V.NAME TO #DIS-NAME
+  MOVE ST-V.INTRO-FLAG TO #DIS-INTRO-FLAG
+  MOVE ST-V.PLAN (#I1) TO #DIS-PLAN
+  MOVE EDITED #FACE-AMOUNT (EM=Z,ZZZ,ZZ9) TO #DIS-FACE-AMOUNT
+  COMPRESS #ENTRY-DATE-MM #ENTRY-DATE-DD #ENTRY-DATE-YYYY
+           INTO #DIS-ENTRY-DATE WITH '/'
+  COMPRESS MD-V.ISSUE-DATE-MM MD-V.ISSUE-DATE-DD MD-V.ISSUE-DATE-YYYY
+           INTO #DIS-ISSUE-DATE WITH '/'
+*
+  DISPLAY (5) 'ID Number'     #DIS-ID-NUMBER
+              'Name'          #DIS-NAME
+              'Plan'          #DIS-PLAN
+              'Insured'       #DIS-INTRO-FLAG
+              'Face $'        #DIS-FACE-AMOUNT
+              'Entry Date'    #DIS-ENTRY-DATE
+              'Date of Issue' #DIS-ISSUE-DATE
+              'Code'          MD-V.CODE
+*
+  COMPRESS #DIS-ID-NUMBER    #TAB
+           #DIS-NAME         #TAB
+           #DIS-PLAN         #TAB
+           #DIS-INTRO-FLAG   #TAB
+           #DIS-FACE-AMOUNT  #TAB
+           #DIS-ENTRY-DATE   #TAB
+           #DIS-ISSUE-DATE INTO #EXTRACT-RECORD LEAVING NO
+*
+  IF MD-V.CODE = 'S'
+    WRITE WORK 5 #EXTRACT-RECORD
+  ELSE
+    WRITE WORK 6 #EXTRACT-RECORD
+  END-IF
+*
+  RESET #EXTRACT-RECORD
+END-READ
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE FORMAT-DATES
+************************************************************************
+*
+MOVE #JCL-YYYY TO #START-DATE-YYYY
+MOVE #JCL-MM   TO #START-DATE-MM
+MOVE #JCL-DD   TO #START-DATE-DD
+*
+SUBTRACT 1 FROM #START-DATE-MM
+IF #START-DATE-MM = 0
+  MOVE 12 TO #START-DATE-MM
+  SUBTRACT 1 FROM #START-DATE-YYYY
+END-IF
+*
+CALLNAT 'GDATESXX'
+  #END-DATE
+  #START-DATE
+  #YYYYMMDD
+  #ACTION-FLAG
+*
+COMPUTE #INVERSE-START-DATE = 99999999 - #END-DATE                /* PM5
+COMPUTE #INVERSE-END-DATE   = 99999999 - #START-DATE              /* PM5
+*
+END-SUBROUTINE
+*
+END

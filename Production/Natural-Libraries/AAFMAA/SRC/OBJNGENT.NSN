@@ -1,0 +1,289 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* A-GEN-TABLE - Object Module
+* OBJNGENT - Subprogram to perform GEN-TABLE
+* access functions.
+* * * * * * * * * * * * * * * * * * * * * * * *
+***********************************************
+* MODIFICATION LOG
+***********************************************
+* USER   DATE      TAG  REASON
+* YAK    04142008  YAK  Initial Creation
+* * * * * * * * * * * * * * * * * * * * * * * *
+*
+DEFINE DATA
+PARAMETER USING OBJAGENT
+PARAMETER 1 #SEQ-NBR  (N3) OPTIONAL
+*
+LOCAL USING OBJLGENT
+LOCAL
+1 GT-HIST-SEC-KEY VIEW OF A-GEN-TABLE
+  2 SEC-KEY
+1 #I              (N5)
+1 #FOUND          (L)
+1 #PROGRAM        (A8)
+1 #SEV-LEVEL      (A1)
+1 #GEN-END-KEY            (A7) INIT <'ZZZZZZZ'>
+1 REDEFINE #GEN-END-KEY
+  2 #END-KEY           (A4)
+  2 #END-SUB-KEY       (A3)
+1 #CLERK-ID (A3)
+END-DEFINE
+*
+IF #SEQ-NBR SPECIFIED
+  #I := #SEQ-NBR
+ELSE
+  #I := 1
+END-IF
+*
+* Main processing
+*
+ON ERROR
+  IF *ERROR-NR = 3113
+    #RETURN-MESSAGE := 'Record already deleted'
+    ESCAPE ROUTINE
+  END-IF
+END-ERROR
+*
+IF #NUMBER-OF-RECORDS NE 0
+  RESIZE ARRAY PARM-ARRAY TO (*:#NUMBER-OF-RECORDS)
+ELSE
+  EXPAND ARRAY PARM-ARRAY TO (*:1)
+END-IF
+DECIDE ON FIRST VALUE #ACTION
+  VALUE 'ADD', 'ADD-HIST'
+    PERFORM ADD-RECORD
+  VALUE 'UPDATE'
+    PERFORM UPDATE-RECORD
+  VALUE 'DELETE'
+    PERFORM DELETE-RECORD
+  VALUE 'GET'                             /* by Primary key
+    PERFORM GET-RECORD
+  VALUE 'HIST-KEY'                        /* Histogram - check existence
+    PERFORM HIST-KEY                      /* get *number
+  VALUE 'HIST-SEC'
+    PERFORM HIST-SEC-KEY
+  VALUE 'READ-KEY'
+    PERFORM READ-BY-KEY
+  VALUE 'READ-SEC'
+    PERFORM READ-BY-SEC-KEY
+  VALUE 'READ'
+    PERFORM READ-TABLE
+  VALUE 'R-ALPHA'
+    PERFORM READ-SEC-KEY-SORT-ALPHA
+  VALUE 'R-ALPSEL'
+    PERFORM READ-SEC-KEY-ALPHA-SEL
+  NONE
+    IGNORE
+END-DECIDE
+*
+****************************
+DEFINE SUBROUTINE ADD-RECORD
+****************************
+*
+MOVE BY NAME PARM-ARRAY(1) TO GEN-TABLE-V
+STORE GEN-TABLE-V
+IF #ACTION = 'ADD-HIST'
+  UPD. GET GEN-TABLE-V ISN(2)
+  MOVE BY NAME PARM-ARRAY(2) TO GEN-TABLE-V
+  UPDATE (UPD.)
+END-IF
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE UPDATE-RECORD
+*******************************
+*
+GT-U. GET GEN-TABLE-V ISN(#I)
+MOVE BY NAME PARM-ARRAY(#I) TO GEN-TABLE-V
+UPDATE (GT-U.)
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE DELETE-RECORD
+*******************************
+*
+GT-D. GET GEN-TABLE-V ISN(#I)
+DELETE (GT-D.)
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+**************************
+DEFINE SUBROUTINE HIST-KEY
+**************************
+*
+FIND NUMBER GEN-TABLE-V WITH GEN-KEY = #KEY
+#NUMBER-OF-RECORDS := *NUMBER
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE HIST-SEC-KEY
+******************************
+*
+FIND NUMBER GEN-TABLE-V WITH SEC-KEY = #SEC-KEY
+#NUMBER-OF-RECORDS := *NUMBER
+*
+END-SUBROUTINE
+****************************
+DEFINE SUBROUTINE GET-RECORD      /* by PRIMARY key
+****************************
+*
+READ GEN-TABLE-V BY PRIMARY-KEY GE #PRIMARY-KEY
+  IF GEN-TABLE-V.GEN-KEY NE #KEY OR
+      GEN-TABLE-V.GEN-SUB-KEY NE #SUB-KEY OR
+      GEN-TABLE-V.EFFECTIVE-DATE > #DATE
+    ESCAPE BOTTOM
+  END-IF
+  #FOUND := TRUE
+  ISN(1) := *ISN
+  MOVE BY NAME GEN-TABLE-V TO PARM-ARRAY(1)
+  ESCAPE ROUTINE
+END-READ
+IF NOT #FOUND
+  COMPRESS 'There is NO active records with the requested key'
+    #SEC-KEY INTO #RETURN-MESSAGE
+  PERFORM PROCESS-ERROR
+END-IF
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE READ-BY-KEY
+*****************************
+*
+FIND GEN-TABLE-V WITH GEN-KEY = #KEY
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  #FOUND := TRUE
+  #I := *COUNTER
+  PARM-GEN-TABLE.ISN(#I) := *ISN
+  MOVE BY NAME GEN-TABLE-V TO PARM-ARRAY(#I)
+END-FIND
+IF NOT #FOUND
+  COMPRESS 'Requested record with key' #KEY ' does not exist on Gen-Table'
+    INTO #RETURN-MESSAGE
+END-IF
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE READ-BY-SEC-KEY
+*********************************
+*
+FIND GEN-TABLE-V WITH SEC-KEY = #SEC-KEY SORTED BY PRIMARY-KEY DESCENDING
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  #FOUND := TRUE
+  #I := *COUNTER
+  PARM-GEN-TABLE.ISN(#I) := *ISN
+  MOVE BY NAME GEN-TABLE-V TO PARM-ARRAY(#I)
+END-FIND
+IF NOT #FOUND
+  COMPRESS 'Requested record with key' #SUB-KEY ' does not exist on Gen-Table'
+    INTO #RETURN-MESSAGE
+END-IF
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE READ-SEC-KEY-SORT-ALPHA
+*****************************************
+*
+RESET #I
+FIND GEN-TABLE-V WITH SEC-KEY = #SEC-KEY
+END-ALL
+  AND SORT BY GEN-TABLE-V.GEN-ALPHA-VALUE USING GEN-TABLE-V.ADDL-INFO
+  #FOUND := TRUE
+  #I := #I + 1
+  PARM-GEN-TABLE.ISN(#I) := *ISN
+  MOVE BY NAME GEN-TABLE-V TO PARM-ARRAY(#I)
+END-SORT
+IF NOT #FOUND
+  COMPRESS 'Requested record with key' #SUB-KEY ' does not exist on Gen-Table'
+    INTO #RETURN-MESSAGE
+END-IF
+END-SUBROUTINE
+*
+*********************************************
+DEFINE SUBROUTINE READ-SEC-KEY-ALPHA-SEL
+*********************************************
+*
+RESET #I
+FIND GEN-TABLE-V WITH SEC-KEY = #SEC-KEY
+  ACCEPT IF GEN-TABLE-V.GEN-NUMBER-VALUE = 1
+  #FOUND := TRUE
+  #I := #I + 1
+  PARM-GEN-TABLE.ISN(#I) := *ISN
+  MOVE BY NAME GEN-TABLE-V TO PARM-ARRAY(#I)
+END-FIND
+#NUMBER-OF-RECORDS := #I
+IF NOT #FOUND
+  COMPRESS 'Requested selection with key' #SUB-KEY ' does not exist on Gen-Table'
+    INTO #RETURN-MESSAGE
+END-IF
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE READ-TABLE      /* by PRIMARY key
+****************************
+*
+IF #SUB-KEY NE ' '
+  #END-KEY := #KEY
+  #END-SUB-KEY := #SUB-KEY
+  EXAMINE FULL #END-SUB-KEY ' ' REPLACE with 'Z'
+ELSE
+  IF #KEY NE ' '
+    COMPRESS #KEY 'ZZZ' INTO #GEN-END-KEY LEAVING NO
+  END-IF
+END-IF
+*
+RESET #NUMBER-OF-RECORDS
+HISTOGRAM GT-HIST-SEC-KEY FOR SEC-KEY FROM #SEC-KEY THRU #GEN-END-KEY
+  #NUMBER-OF-RECORDS := *COUNTER
+END-HISTOGRAM
+IF #NUMBER-OF-RECORDS = 0
+  COMPRESS 'There is NO current records with the requested key'
+    #SEC-KEY INTO #RETURN-MESSAGE
+  #RETURN-CODE := 9999
+  ESCAPE ROUTINE
+END-IF
+*
+RESIZE ARRAY PARM-ARRAY TO (*:#NUMBER-OF-RECORDS)
+*
+#I := 1
+READ GEN-TABLE-V BY PRIMARY-KEY GE #PRIMARY-KEY
+  IF GEN-TABLE-V.GEN-KEY GT #END-KEY
+      OR GEN-TABLE-V.GEN-SUB-KEY GT #END-SUB-KEY
+    ESCAPE BOTTOM IMMEDIATE
+  END-IF
+  PARM-GEN-TABLE.ISN(#I) := *ISN
+  MOVE BY NAME GEN-TABLE-V TO PARM-ARRAY(#I)
+  AT BREAK OF GEN-TABLE-V.GEN-SUB-KEY
+    IF GEN-TABLE-V.GEN-SUB-KEY GT #END-SUB-KEY OR
+        GEN-TABLE-V.GEN-KEY GT #END-KEY
+      ESCAPE ROUTINE
+    END-IF
+    #I := #I + 1
+  END-BREAK
+END-READ
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE PROCESS-ERROR
+*******************************
+*
+#PROGRAM := *PROGRAM
+#SEV-LEVEL := 'S'
+CALLNAT 'OBJNBERR' #PROGRAM #RETURN-MESSAGE #SEV-LEVEL
+*
+END-SUBROUTINE
+*
+END

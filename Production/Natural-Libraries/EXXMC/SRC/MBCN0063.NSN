@@ -1,0 +1,136 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+****************************************************************
+* SUBPROGRAM-ID: MBCN0062 - Search contact within the family
+* Match First/Last Name/Date of Birth and/or SSN
+* Return Contact ID if match is found
+* Return error if match found with the same relationship code
+****************************************************************
+*        MODIFICATION LOG
+****************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11242010       Initial Creation (for Member Center)
+* YAK    05032011       Add logic to search for existing contact
+*                       by CONTACT-2-ID as well as CONTACT-1-ID
+****************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0006
+PARAMETER
+1 #ERROR-CODE (A3)
+LOCAL USING OBJLCONT
+LOCAL USING OBJLCTRL
+LOCAL
+1 #LastName  (A) DYNAMIC
+1 #FirstName (A) DYNAMIC
+1 #ContactID (N8)
+1 #Linked-member (L)
+1 #CALL-MESSAGE (A3) CONST <'999'>
+END-DEFINE
+*
+#LastName  := FamilyInformation.LastName
+#FirstName := FamilyInformation.FirstName
+EXAMINE #LastName TRANSLATE INTO UPPER CASE
+EXAMINE #FirstName TRANSLATE INTO UPPER CASE
+*
+IF FamilyInformation.SSN <> 0
+  PERFORM SEARCH-BY-SSN
+END-IF
+*
+#ContactID := F-GET-CONTACT-ID(<FamilyInformation.MemberCN>)
+PERFORM SEARCH-BY-MEMBER
+PERFORM SEARCH-BY-LINKED-MEMBER
+* If adding a child - check both parents
+IF (FamilyInformation.NewRelationshipCode = 'K' OR = 'D' OR = 'G') and #Linked-member
+  FIND CR-V WITH CONTACT-2-ID = #ContactID
+    ACCEPT IF ROLE-2-CD = 'S'
+    #ContactID := CR-V.CONTACT-1-ID
+    ESCAPE BOTTOM
+  END-FIND
+  PERFORM SEARCH-BY-MEMBER
+END-IF
+*
+**=============================
+DEFINE SUBROUTINE SEARCH-BY-SSN
+**=============================
+*
+FIND CT-V WITH SSN = FamilyInformation.SSN
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  ACCEPT IF CONTACT-TYPE = 'I'
+  EXAMINE CT-V.LAST-NAME TRANSLATE INTO UPPER CASE
+  EXAMINE CT-V.FIRST-NAME TRANSLATE INTO UPPER CASE
+  IF #LastName = CT-V.LAST-NAME AND #FirstName = CT-V.FIRST-NAME
+      AND CT-V.DATE-OF-BIRTH = FamilyInformation.DateOfBirth
+    FamilyInformation.ContactID := CT-V.CONTACT-ID
+  ELSE
+    #ERROR-CODE := #CALL-MESSAGE
+  END-IF
+  ESCAPE MODULE
+END-FIND
+END-SUBROUTINE
+*
+**================================
+DEFINE SUBROUTINE SEARCH-BY-MEMBER
+**================================
+*
+FIND CR-V WITH CONTACT-1-ID = #ContactID
+  FIND(1) CT-V WITH CONTACT-ID = CR-V.CONTACT-2-ID
+    EXAMINE CT-V.LAST-NAME TRANSLATE INTO UPPER CASE
+    EXAMINE CT-V.FIRST-NAME TRANSLATE INTO UPPER CASE
+    IF #LastName = CT-V.LAST-NAME AND #FirstName = CT-V.FIRST-NAME
+        AND CT-V.DATE-OF-BIRTH = FamilyInformation.DateOfBirth
+      DECIDE FOR FIRST CONDITION
+        WHEN CT-V.SSN = 0 AND FamilyInformation.SSN <> 0
+          #ERROR-CODE := #CALL-MESSAGE
+        WHEN CT-V.SSN <> 0 AND FamilyInformation.SSN <> 0
+           AND FamilyInformation.SSN <> CT-V.SSN
+          #ERROR-CODE := #CALL-MESSAGE
+        WHEN CT-V.SSN = 0 AND FamilyInformation.SSN = 0
+          FamilyInformation.ContactID := CT-V.CONTACT-ID
+        WHEN CT-V.SSN <> 0 AND FamilyInformation.SSN = 0
+          FamilyInformation.ContactID := CT-V.CONTACT-ID
+        WHEN NONE
+          WRITE WORK FILE 1 VARIABLE 'UNEXPECTED CONDITION'
+      END-DECIDE
+      ESCAPE MODULE
+    END-IF
+  END-FIND
+END-FIND
+END-SUBROUTINE
+*
+**=======================================
+DEFINE SUBROUTINE SEARCH-BY-LINKED-MEMBER
+**=======================================
+*
+FIND CR-V WITH CONTACT-2-ID = #ContactID
+  #Linked-member := TRUE
+  FIND(1) CT-V WITH CONTACT-ID = CR-V.CONTACT-1-ID
+    EXAMINE CT-V.LAST-NAME TRANSLATE INTO UPPER CASE
+    EXAMINE CT-V.FIRST-NAME TRANSLATE INTO UPPER CASE
+    IF CT-V.LAST-NAME = #LastName AND CT-V.FIRST-NAME = SCAN(#FirstName)
+        AND CT-V.DATE-OF-BIRTH = FamilyInformation.DateOfBirth
+      DECIDE FOR FIRST CONDITION
+        WHEN CT-V.SSN = 0 AND FamilyInformation.SSN <> 0
+          #ERROR-CODE := #CALL-MESSAGE
+        WHEN CT-V.SSN <> 0 AND FamilyInformation.SSN <> 0
+          AND FamilyInformation.SSN <> CT-V.SSN
+          #ERROR-CODE := #CALL-MESSAGE
+        WHEN CT-V.SSN = 0 AND FamilyInformation.SSN = 0
+          FamilyInformation.ContactID := CT-V.CONTACT-ID
+        WHEN CT-V.SSN <> 0 AND FamilyInformation.SSN = 0
+          FamilyInformation.ContactID := CT-V.CONTACT-ID
+        WHEN NONE
+          WRITE WORK FILE 1 VARIABLE 'UNEXPECTED CONDITION SEARCHING BY LINKED MEMBER'
+      END-DECIDE
+      ESCAPE MODULE
+    END-IF
+  END-FIND
+END-FIND
+END-SUBROUTINE
+*
+END

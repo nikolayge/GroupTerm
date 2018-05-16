@@ -1,0 +1,153 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online - MC II
+* Get Member Indentification Information
+* XML Request Parser/Serializer
+********************************************************************
+*        MODIFICATION LOG
+********************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11152010       Initial Creation
+* YAK    01262016  YK1  MC-II FIR - Add fields
+* YAK    01262016  YK2  DV Upload - add logic for the call from AUC
+* YAK    12132016  YK3  Add [CDATA] to XML for names
+*********************************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING MBCA0010
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #I                (I2)
+1 #value            (A) DYNAMIC
+1 #AUC              (A) DYNAMIC CONST <'AUC'>           /* YK2
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic for Get
+CALLNAT 'MBCNN013' MemberInfo #ErrorCode
+* YK2 >
+IF MemberInfo.SystemSource = #AUC
+  PERFORM COMPOSE-AUC-XML
+ELSE
+  PERFORM COMPOSE-XML
+END-IF
+* < YK2
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberIdentification/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      MemberInfo.CN := VAL(#value)
+    END-IF
+* YK2 >
+  VALUE 'MemberIdentification/SystemSource/$'
+    MemberInfo.SystemSource := *TRIM(XML_PARSER_CONTENT)
+* < YK2
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-AUC-XML  /* YK2
+*********************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS
+  '<MemberIdentification>'
+  '<CN>' MemberInfo.CN '</CN>'
+  '<MemberName>' MemberInfo.MemberName '</MemberName>'
+  '<MemberFormattedName>' MemberInfo.MemberFormattedName '</MemberFormattedName>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</MemberIdentification>' INTO XML LEAVING NO
+RESPONSE-DATA := XML
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS
+  '<MemberIdentification>'
+  '<CN>' MemberInfo.CN '</CN>'
+  '<MemberName>' MemberInfo.MemberName '</MemberName>'
+* YK1 >
+  '<MemberFormattedName><![CDATA[' MemberInfo.MemberFormattedName ']]></MemberFormattedName>'    /* YK3
+  '<WidowFormattedName><![CDATA[' MemberInfo.WidowFormattedName ']]></WidowFormattedName>'       /* YK3
+  '<MemberFirstName><![CDATA[' MemberInfo.MemberFirstName ']]></MemberFirstName>'                /* YK3  
+  '<MemberSSN>' MemberInfo.MemberSSN '</MemberSSN>'
+  '<MemberBirthCertInd>' MemberInfo.MemberBirthCertInd '</MemberBirthCertInd>'
+  '<MemberBirthCertCodeDescription>' MemberInfo.MemberBirthCertCodeDescription '</MemberBirthCertCodeDescription>'
+  '<MemberMarrCertInd>' MemberInfo.MemberMarrCertInd '</MemberMarrCertInd>'
+  '<MemberMarrCertCodeDescription>' MemberInfo.MemberMarrCertCodeDescription '</MemberMarrCertCodeDescription>'
+* < YK1
+  '<DateOfBirth>' MemberInfo.DateOfBirth '</DateOfBirth>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</MemberIdentification>' INTO XML LEAVING NO
+RESPONSE-DATA := XML
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE COMPOSE-ERROR-XML
+***********************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+COMPRESS '<MemberIdentification>' '<CN>' MemberInfo.CN '</CN>' -
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '</MemberIdentification>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

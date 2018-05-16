@@ -1,0 +1,155 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2006SNM   EDIT or PROCESS new NM for AT's linked to AT's
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06042004    PM1   REMOVED END TRANSACTION FROM SPOUSE/GEN     *
+*                          TO CREATE CN WHEN APP BECOMES PENDING.      *
+* PAM    07072004    PM2   When updating linkages from a spouse/gen    *
+*                          application, only update linked numbers.    *
+*                          Member-CN is handled in following section.  *
+*                          Do not update linkages on original MBR app. *
+* PAM    08032004    PM3   Added processing for linked-cn to update    *
+*                          linkage for spouse/gen applications linked  *
+*                          to new members.                             *
+* PAM    08272004    PM4   Changed check for existing linked-cn's to   *
+*                          reveiw all possible entries instead of      *
+*                          moving on first emtpy slot.                 *
+* PAM    09132004    PM5   Only reset spouse/gen information on call   *
+*                          to load spouse/gen info.                    *
+* PAM    04/21/2010  PM6   Revised - only update linkage - everything  *
+*                          else to contact file                        *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #PROCESS-SW   (A1)   /* E=EDIT S=get sps/gen info P=process all info
+1 #CGA-SCR-SUFFIX (A3)
+1 #AT-NUM       (N6)   /* AT # to make new mwmber
+1 #INTRO-FLAG   (A1)   /* int-flag on above AT#
+1 #REFERING-ID-NUMBER (N6/9)  /* linked #'s of above at#
+1 #MEMBER-CN          (A6)    /* linked st #'s of above at#
+1 #CN-NUM       (N6)          /* new CN of new member
+1 #SSN          (N9)          /* SSN of new member
+*
+1 #ERR-MSG      (A60)
+*
+1 #LINKED-CN    (N6/30)                                           /* PM3
+*
+LOCAL
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER
+ 2 SSN
+ 2 INTRO-FLAG
+ 2 REFERING-ID-NUMBER  (N6/2)
+ 2 MEMBER-CN           (A6)
+ 2 NAME
+ 2 DATE-OF-BIRTH
+*
+1 #I1    (I2)
+1 #I2    (I2)
+1 #I3    (I2)                                                     /* PM3
+1 #LINKED-CN-FOUND (L)                                            /* PM4
+*
+END-DEFINE
+*
+RESET #ERR-MSG                                                    /* PM5
+*
+IF #PROCESS-SW = 'S'   /* get sps/gen info
+  RESET #I2                                                       /* PM5
+  FOR #I1 1 TO 9
+    IF   (#REFERING-ID-NUMBER (#I1) GT 500000)
+     AND (NOT #INTRO-FLAG = 'S' OR =  'K' OR = 'G')
+      FIND AT-V WITH ID-NUMBER = #REFERING-ID-NUMBER (#I1)
+        IF AT-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+*
+          RESET #LINKED-CN-FOUND                                  /* PM4
+          FOR #I3 1 TO 30                                         /* PM3
+            IF #LINKED-CN (#I3) = AT-V.ID-NUMBER  /* already linked  PM3
+              MOVE TRUE TO #LINKED-CN-FOUND                       /* PM4
+              ESCAPE BOTTOM                                       /* PM3
+            END-IF                                                /* PM3
+          END-FOR                                                 /* PM3
+*
+          IF NOT #LINKED-CN-FOUND                                 /* PM4
+            FOR #I3 1 TO 30                                       /* PM4
+              IF #LINKED-CN (#I3) = 0                             /* PM3
+                MOVE AT-V.ID-NUMBER TO #LINKED-CN (#I3)           /* PM3
+                ESCAPE BOTTOM                                     /* PM3
+              END-IF                                              /* PM3
+            END-FOR                                               /* PM4
+          END-IF                                                  /* PM4
+*                                                                 /* PM3
+        END-IF
+      END-FIND
+    END-IF
+  END-FOR
+*
+  ESCAPE ROUTINE
+END-IF
+*
+IF #PROCESS-SW = 'E'   /* edit AT record
+  IF  #INTRO-FLAG = 'S' OR = 'K' OR = 'G'   /* at is sps/gen rec
+    IF #REFERING-ID-NUMBER (1) GE 500000 /* still linked to another AT
+      MOVE 'AT is still linked to another "AT"' TO #ERR-MSG
+      ESCAPE ROUTINE
+    END-IF
+  ELSE   /* must be a member AT
+    FOR #I1 1 TO 9
+      IF #REFERING-ID-NUMBER (#I1) GE 500000
+        FIND AT-V WITH ID-NUMBER = #REFERING-ID-NUMBER (#I1)
+          IF NO RECORDS FOUND
+            COMPRESS 'Linked AT number' #REFERING-ID-NUMBER (#I1)
+                      'not found' TO #ERR-MSG
+            ESCAPE ROUTINE
+          END-NOREC
+        END-FIND
+      END-IF
+    END-FOR
+  END-IF
+*
+  ESCAPE ROUTINE
+END-IF
+*
+* PROCESS LINKAGE UPDATES
+  FOR #I1 1 TO 9
+    IF   (#REFERING-ID-NUMBER (#I1) GT 500000)
+      FIND AT-V WITH ID-NUMBER = #REFERING-ID-NUMBER (#I1)
+        IF AT-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+          MOVE #CN-NUM TO AT-V.REFERING-ID-NUMBER (1)
+        ELSE
+          IF NOT #INTRO-FLAG = 'S' OR =  'K' OR = 'G'             /* PM2
+            MOVE #CN-NUM TO AT-V.MEMBER-CN
+          END-IF                                                  /* PM2
+        END-IF
+*
+        IF #CGA-SCR-SUFFIX NE 'OVR' /* will nevr b UPD but just in cas
+          UPDATE (0124)
+        END-IF
+      END-FIND
+    END-IF
+  END-FOR
+* END-IF
+*                                          /* Update CN for all AT's
+  IF #INTRO-FLAG = 'S' OR =  'K' OR = 'G'  /* with S,K,G member numbers
+    FIND AT-V WITH SSN = #SSN
+      IF AT-V.INTRO-FLAG = 'V'  /* AFSC app
+        ESCAPE TOP
+      END-IF
+*
+      MOVE #CN-NUM TO AT-V.MEMBER-CN
+*
+      IF #CGA-SCR-SUFFIX NE 'OVR' /* will nevr b UPD but just in cas
+        UPDATE (0142)
+      END-IF
+    END-FIND
+  END-IF
+*
+END

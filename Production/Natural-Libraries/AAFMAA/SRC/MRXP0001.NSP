@@ -1,0 +1,1529 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+/** New Program MRXP0001.
+/**
+/** :author nguentchev
+/* This Program is an incredibly convoluted way of pulling convoluted data
+/* to load in a not so convoluted format...
+* vxt 01/14/2015 vt1 Add the new rates /Ticket 1691 - new rates for 2015/
+* vxt 12/23/2016 vt2 New rates for 2017
+* vxt 12/28/2017 vt3 /Ticket 6975/ New rates for 2018
+**********************************************************************
+*
+DEFINE DATA
+LOCAL
+1 MRX-V VIEW OF A-MATRIX-DATA
+  2 MonthKey      (N6.0)
+  2 MATRIXID      (A64)
+  2 COLUMNNAME    (A64)
+  2 ROWNAME       (A64)
+  2 PRODUCTSCOUNT (N9.0)
+  2 LIVESCOUNT    (N9.0)
+  2 DEATHBENEFITS (N11.2)
+  2 GROUPNAME     (A25)
+  2 ROWORDER      (N2)
+  2 COLUMNORDER   (N2)
+*
+1 SVC VIEW OF A-SVC-MEMBER
+  2 SVC-STATUS (A1)
+  2 SVC-MODE (A1)
+  2 SVC-ID-NUMBER (N6)
+  2 SVC-PLAN (A3)
+*
+1 PREVIOUS-MONTH (N6)
+1 REDEFINE PREVIOUS-MONTH
+  2 PREVIOUS-YYYY (N4)
+  2 PREVIOUS-MM   (N2)
+1 NetMembershipGains     (N9/1:4)
+1 NetMembershipLosses    (N9/1:4)
+1 NetMembershipGainsLives(N9/1:4)
+1 NetMembershipLossesLives(N9/1:4)
+1 TOTAL-SAS-PLANS  (I4)
+1 TOTAL-PSM-PLANS  (I4)
+1 HOLD-LIVES-COUNT (N9)
+1 HOLD-DEATH-BENEFIT   (N11.2)
+1 HOLD-PRODUCT-COUNT   (N9)
+1 PROJECTED-INVOICE-TOTAL   (N9)
+*
+1 MemberCat         (A30/4) CONST < 'Members','Spouses','Children','Grandchildren' >
+1 FaceSlices        (A20/8) CONST < '<10000','=10000','<50000','=50000','<100000','=100000','<250000','>=250000' >
+1 ProductCodes     (A3/14) CONST  <'OL','30P','20P','7P','FLX','NSP','RT','LT','FSO','LT2','AL','GP','EZ','LT+'>
+1 ProductCodesForDB (A3/14) CONST <'OL','30P','20P','7P','FLX','RT','LT','NSP','LT2','AL','FSO','GP','EZ','LT+'>
+* 1 AgeRanges   (A10/10) CONST<'0 - 17','18 - 29','30 - 39','40 - 49','50 - 59',
+*   '60 - 69','70 - 79','80 - 89','90 - 99','100+'>
+1 MilitaryStatuses(A12/1:7)
+  CONSTANT
+  <'Active','Retired','Veteran','Cadet','Reserve','Guard','Non Military'>
+1 MilitaryStatusesOrder(N2/1:7)
+  CONSTANT
+  <1,5,6,4,2,3,7>
+* 1 ProductCodesNames (A5/14) CONST
+*   <'OL',
+*   '30P',
+*   '20P',
+*   '7P',
+*   'RT',
+*   'LT',
+*   'AL',
+*   'FLX',
+*   'GP',
+*   'LT2',
+*   'EZ',
+*   'LT+'
+*   >
+1 ProductGL  (A30/16)  CONST <
+  'Ordinary Life',
+  'Level Term',
+  '5 Year Renewable Term',
+  'ANNUITYLife',
+  'Service Only',  /* had NU previously.  Not sure what it means.
+  'Level Term II',
+  'Generation Plus',
+  'EZ Term',
+  'Level Term II+',
+  '30 Pay',
+  '20 Pay',
+  '7 Pay',
+  'Flexible Pay',
+  'Net Single Premium',
+  'Premier Services',
+  'SAS Only'
+  >
+1 ProductOrdering2 (N2/1:16)
+  CONSTANT
+  <1,9,12,7,16,11,8,13,11,2,3,4,5,6,14,15>
+1 ProductGrouping2 (A25/1:16)
+  CONSTANT
+  <'Value Added Whole Life','Other Insurance','Other Insurance','Other Insurance','Services','Other Insurance','Other Insurance','Other Insurance','Other Insurance','Value Added Whole Life',
+  'Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Services','Services'>
+
+1 Translate1 (I2/12) CONST <1,2,3,4,5,6,7,8,20,22,24,26>
+1 Translate2 (I2/12) CONST <11,12,13,14,15,16,17,18,20,23,25,27>
+*
+1 Translate3 (I4/12) CONST <1,2,3,4,5,6,7,8,22,24,26,20>
+1 Translate4 (I4/12) CONST <1,2,3,4,5,6,18,14,16,22,24,20>
+*
+1 Translate5 (I4/11) CONST <11,12,13,14,15,16,17,18,23,25,27>
+1 Translate6 (I4/11) CONST <7,8,9,10,11,12,30,15,17,23,25>
+*
+1 NEW-PRODUCT-SUMS (I4/1:12)
+1 NEW-PRODUCT-SUMS-S (I4/1:12)
+1 ADD-PRODUCT-SUMS (I4/1:11)
+1 ADD-PRODUCT-SUMS-S (I4/1:11)
+
+1 PREVIOUS-MONTH-KEY (N6)
+1 REDEFINE PREVIOUS-MONTH-KEY
+  2 PREVIOUS-KEY-YYYY   (N4)
+  2 PREVIOUS-KEY-MM     (N2)
+*
+* 1 TranslatePlans(A3/12)  CONSTANT <'OL','30P','20P','7P','RT','LT','AL','FLX','LT2','EZ','LT+','GP'>
+1 TranslatePlans(A25/14)
+  CONSTANT <'Ordinary Life','30 Pay','20 Pay','7 Pay','5 Year Renewable Term','Level Term','ANNUITYLife',
+  'Flexible Pay','Level Term II','EZ Term','Level Term II+','Generation Plus','Net Single Premium',
+  'Service Only'>
+1 ProductOrdering3(N2/1:14)
+  CONSTANT
+  <1,2,3,4,12,9,7,5,10,13,11,8,6,16>
+1 ProductGrouping3(A25/1:14)
+  CONSTANT
+  <'Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Other Insurance','Other Insurance','Other Insurance',
+  'Value Added Whole Life','Other Insurance','Other Insurance','Other Insurance','Other Insurance','Value Added Whole Life','Services'>
+
+1 GainCodes  (A20/3) CONST <'NewPolicies','Reinstatements','Conversions'>
+1 LossCodes (A20/1:9) CONST <
+  'Deaths',
+  'CashSurrender',
+  'Lapse',
+  'Expiration',
+  'Resignation',
+  'Lapse',
+  'OverLoan',
+  'Conversion',
+  'Resignation'
+  >
+
+*
+1 ProductNames     (A30/1:16)
+  CONSTANT
+  <'Ordinary Life','30 Pay','20 Pay','7 Pay','Flexible Pay','Net Single Premium',
+  '5 Year Renewable Term','Level Term','Service Only','Level Term II',
+  'ANNUITYLife','Generation Plus','EZ Term','Level Term II+', 'Premier Services'
+  ,'SAS Only'>
+*
+1 ProductOrdering(N2/1:16)
+  CONSTANT
+  <1,2,3,4,5,6,12,9,16,10,7,8,13,11,14,15>
+1 ProductGrouping(A25/1:16)
+  CONSTANT
+  <'Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Value Added Whole Life','Other Insurance','Other Insurance','Services',
+  'Other Insurance','Other Insurance','Other Insurance','Other Insurance','Other Insurance','Services','Services'>
+* 1 MilitaryStatus   (A10/3) CONST <'Active','Retired','Veteran'>
+*
+1 MilitaryBranches(A30/1:8)
+  CONSTANT
+  <'Army','Air Force','Navy','Marine Corps','Coast Guard',
+  'Public Health Service/Other','AAFMAA Employee','Civilian'>
+1 MilitaryBranchOrdering (N2/1:8)
+  CONSTANT
+  <2,1,5,4,3,6,8,7>
+*
+1 GainTypes         (A25/1:5)
+  CONSTANT
+  <'New Policies','Additional Policies','Reinstatements','Conversions','1035 Internal Exchange'>
+1 GainTypeOrders (N2/1:5)
+  CONSTANT
+  <1,2,3,5,4>
+*
+1 INVOICE-COLUMN-NAMES (A10/3) CONSTANT <'Count','Factor','Billing'>
+*
+1 MilitaryPayGrades(A20/1:26)
+  CONSTANT
+  <'E1','E2','E3','E4','E5','E6','E7','E8','E9','Enlisted Special','W1','W2','W3','W4',
+  'W5','O1','O2','O3','O4','O5','O6','O7','O8','O9','O10','Commissioned Special'>
+*
+1 INVOICE-ROW-NAMES    (A50/1:10)CONSTANT <
+  'Grandfathered Members',
+  'G/F Widow files served - 1st year widows',
+  'I/P Widow files served - 1st year widows',
+  'G/F Deaths entered MONTH w/ Widow created',
+  'Other Deaths Entered MONTH',
+  'Deceased Widow > 90 Rebate = 100% *',
+  'Deceased widow < 90 Rebate =  50% *',
+  'Pipeline Members',
+  'Premier Services',
+  'Total'
+  >
+*
+1 TotalBillingColumns (I4)  CONSTANT <3>
+1 BillingColumns   (A7/1:TotalBillingColumns)
+  CONSTANT
+  <'Count','Factor','Billing'>
+*
+1 TotalInvoiceTotals   (I4)      CONSTANT <12>
+1 InvoiceRowNames      (A50/1:TotalInvoiceTotals)CONSTANT
+  <
+  'Grandfathered Members',
+  'G/F Widow files served - 1st year widows',
+  'I/P Widow files served - 1st year widows',
+  'G/F Deaths entered MONTH w/ Widow created',
+  'Other Deaths Entered MONTH',
+  'Deceased Widow > 90 Rebate = 100% *',
+  'Deceased widow < 90 Rebate =  50% *',
+  'Pipeline Members',
+  'Premier Services',
+  'Survivor Assistance Memembers'>
+*
+1 TotalInsuredType (I4) CONSTANT <4>
+1 InsuredType      (A13/1:TotalInsuredType)
+  CONSTANT
+  <'Members','Spouses','Children','Grandchildren'>
+*
+1 TotalGainTypes    (I4) CONSTANT <5>
+*
+1 LossTypeTotal   (I4)    CONSTANT <10>
+1 LossesTypes(A25/1:LossTypeTotal)
+  CONSTANT
+  <'Deaths','Cash Surrender','Lapse','Expiration','Over-Loan','Resignation',
+  'Conversion','External 1035 Exchange','1035 Internal Exchange','Annuitization'>
+1 LossTypesOrder (N2/1:LossTypeTotal)
+  CONSTANT
+  <1,2,4,10,5,6,9,7,8,3>
+*
+1 TotalDBRanges (I4)       CONSTANT <6>
+1 DBRanges(A10/1:TotalDBRanges)
+  CONSTANT
+  <'Under 50K','50K-100K','100K-250K','250K-400K','400K-750K','Over 750k'>
+*
+1 TotalAgeGroups(I4)        CONSTANT <10>
+1 AgeGroups   (A8/1:TotalAgeGroups)
+  CONSTANT
+  <'Under 18','18 - 29','30 - 39','40 - 49','50 - 59','60 - 69','70 - 79','80 - 89','90 - 99','100+'>
+1 GAINS-LOSSES-GROUP
+  2 #GAINS-BY-PLAN    (N9.0)
+  2 #LOSSES-BY-PLAN   (N9.0)
+  2 #GAINS-BY-DB      (N11.2)
+  2 #LOSSES-BY-DB     (N11.2)
+  2 #GAINS-BY-LIVES   (N9.0)
+  2 #LOSSES-BY-LIVES  (N9.0)
+*
+1 PREVIOUS-MSL-V VIEW OF A-MBRSHIP-STATS
+  2 MONTH-KEY
+  2 ME-AFSC-AAFM-TOTS      (5)
+  2 me-psm-plans
+  2 me-psm-amount
+
+1 MSL-V VIEW OF A-MBRSHIP-STATS
+  2 MONTH-KEY              (N6)
+  2 M-E-INS-BY-FACE        (8,4)   /* FAC-X,INS-X
+  2 M-E-PLANS-BY-FACE      (8,4)   /* FAC-X,INS-X
+  2 M-E-INS-BY-FACE-CAPS   (8)     /* FAC-X
+  2 M-E-PLANS-BY-FACE-CAPS (8)     /* FAC-X
+  2 M-E-PLANS-BY-TYPE      (14,4)  /* TYP-X,INS-X
+  2 M-E-DB-BY-TYPE         (14,4)  /* TYP-X,INS-X
+  2 M-E-PLANS-BY-TYPE-CAPS (14)    /* TYP-X
+  2 M-E-PU-PLANS-BY-TYPE   (9,4)   /* TP2-X,INX-X
+  2 M-E-PP-PLANS-BY-MODE   (3,4)   /* MOD-X,INS-X
+  2 M-E-INS-BY-AGE         (10,4)  /* AGE-X,INS-X
+  2 M-E-FSO-BY-STAT        (3)
+  2 M-E-FSO-BY-RANK        (3)
+  2 M-E-FSO-BY-SEX         (2)
+  2 M-E-FSO-BY-AGE         (8)
+  2 M-E-FSO-BY-SERV        (9)
+  2 LOSS-MBRS              (4)
+  2 LOSS-PLANS             (4)
+  2 SPS-GEN-LOSS-MBRS      (4)
+  2 SPS-GEN-LOSS-PLANS     (4)
+  2 ARMY-MBRS              (P7.0/1:3)  /* MST-X
+  2 AIRF-MBRS              (P7.0/1:3)  /* MST-X
+  2 NV-CG-MBRS             (P5.0/1:3)  /* MST-X
+  2 MAR-MBRS               (P5.0/1:3)  /* MST-X
+  2 SPS-GEN-GAIN-PLANS     (P5.0/1:25)
+  2 SPS-GEN-GAIN-FAC-AMT   (P9.2/1:25)
+  2 GAIN-MBRS              (P5.0/1:27)
+  2 GAIN-FAC-AMT           (P9.2/1:27)
+  2 GAINS-BY-PLAN-DB       (9)
+  2 GAINS-BY-PLAN          (9)
+  2 LOSSES-BY-PLAN-DB      (9)
+  2 LOSSES-BY-PLAN         (9)
+  2 LOSSES-LIVES-BY-CAT    (4)
+  2 GAINS-LIVES-BY-CAT     (4)
+  2 ME-AFSC-AAFM-TOTS      (5)    /* FOR BILLING PROJECTIONS
+  2 ME-AFSC-AAFM-WIDS-SERVED-GF   /* FOR BILLING PROJECTIONS
+  2 ME-AFSC-AAFM-DOD-CURR-YR-GF   /* FOR BILLING PROJECTIONS
+  2 ME-AFSC-AAFM-WIDS-SERVED-IO   /* FOR BILLING PROJECTIONS
+  2 ME-AFSC-AAFM-DOD-CURR-YR-IO   /* FOR BILLING PROJECTIONS
+  2 ME-AFSC-AAFM-DEATHS (6)                /* FOR BILLING PROJECTIONS
+  2 ME-AFSC-WID-DETHS-MONS-OVR90-GF        /* FOR BILLING PROJECTIONS
+  2 ME-AFSC-WID-DETHS-MONS-UND90-GF   /* FOR BILLING PROJECTIONS
+  2 me-psm-plans
+  2 me-psm-amount
+* Index Variables
+1 I      (I4)
+1 J      (I4)
+1 K      (I4)
+1 L      (I4)
+*
+1 #AFSC-LAST-MON-WIDS-SERVED-GF(P7) /* FOR BILLING INVOICES
+1 #AFSC-LAST-MON-WIDS-SERVED-IO(P7)
+*
+* Below is a set of all the rates for AFSC billing...
+1 #GF-MON-RATE     (N1.2) INIT <2.55> /* these 1st 6 rates will be
+1 #PL-MON-RATE     (N1.2) INIT <2.00> /* overridden based on curr date
+1 #GF-WID-MON-RATE (N1.2) INIT <1.14>
+1 #IO-WID-MON-RATE (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE   (N3.2) INIT <642.00>  /* death with widow
+1 #GN-DEATH-RATE   (N3.2) INIT <255.30>  /* death w/o widow
+* below went into effect 7/1/2000
+1 #GF-MON-RATE-00     (N1.2) INIT <2.55>
+1 #PL-MON-RATE-00     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-00 (N1.2) INIT <1.14>
+1 #IO-WID-MON-RATE-00 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-00   (N3.2) INIT <642.00>  /* death with widow
+1 #GN-DEATH-RATE-00   (N3.2) INIT <255.30>  /* death w/o widow
+* below went into effect 7/1/2001
+1 #GF-MON-RATE-01     (N1.2) INIT <2.64>
+1 #PL-MON-RATE-01     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-01 (N1.2) INIT <1.18>
+1 #IO-WID-MON-RATE-01 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-01   (N3.2) INIT <664.47>  /* death with widow
+1 #GN-DEATH-RATE-01   (N3.2) INIT <264.24>  /* death w/o widow
+* below went into effect 7/1/2002
+1 #GF-MON-RATE-02     (N1.2) INIT <2.71>
+1 #GF-MON-RATE-02-B   (N1.2) INIT <2.70> /*WENT INTO EFFECT 10/2002
+1 #PL-MON-RATE-02     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-02 (N1.2) INIT <1.21>
+1 #IO-WID-MON-RATE-02 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-02   (N3.2) INIT <681.75>  /* death with wido
+1 #GN-DEATH-RATE-02   (N3.2) INIT <271.11>  /* death w/o widow
+* below went into effect 7/1/2003
+1 #GF-MON-RATE-03     (N1.2) INIT <2.74>
+1 #PL-MON-RATE-03     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-03 (N1.2) INIT <1.23>
+1 #IO-WID-MON-RATE-03 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-03   (N3.2) INIT <691.29>  /* death with wido
+1 #GN-DEATH-RATE-03   (N3.2) INIT <274.91>  /* death w/o widow
+* below went into effect 7/1/2004 - entered 2/26/2004
+1 #GF-MON-RATE-04     (N1.2) INIT <2.80>
+1 #PL-MON-RATE-04     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-04 (N1.2) INIT <1.26>
+1 #IO-WID-MON-RATE-04 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-04   (N3.2) INIT <705.81>  /* death with wido
+1 #GN-DEATH-RATE-04   (N3.2) INIT <280.68>  /* death w/o widow
+* below went into effect 7/1/2005 - entered 6/13/2005
+1 #GF-MON-RATE-05     (N1.2) INIT <2.88>
+1 #PL-MON-RATE-05     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-05 (N1.2) INIT <1.29>
+1 #IO-WID-MON-RATE-05 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-05   (N3.2) INIT <724.87>  /* death with wido
+1 #GN-DEATH-RATE-05   (N3.2) INIT <288.26>  /* death w/o widow
+* below went into effect 7/1/2006 - entered 3/03/2006
+1 #GF-MON-RATE-06     (N1.2) INIT <3.00>
+1 #PL-MON-RATE-06     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-06 (N1.2) INIT <1.34>
+1 #IO-WID-MON-RATE-06 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-06   (N3.2) INIT <754.59>  /* death with wido
+1 #GN-DEATH-RATE-06   (N3.2) INIT <300.08>  /* death w/o widow
+* below went into effect 7/1/2007 - entered 11/25/2006
+1 #GF-MON-RATE-07     (N1.2) INIT <3.10>
+1 #PL-MON-RATE-07     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-07 (N1.2) INIT <1.38>
+1 #IO-WID-MON-RATE-07 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-07   (N3.2) INIT <779.49>  /* death with wido
+1 #GN-DEATH-RATE-07   (N3.2) INIT <309.98>  /* death w/o widow
+* below went into effect 7/1/2008 - entered 11/26/2007
+1 #GF-MON-RATE-08     (N1.2) INIT <3.17>
+1 #PL-MON-RATE-08     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-08 (N1.2) INIT <1.41>
+1 #IO-WID-MON-RATE-08 (N1.2) INIT <0.10>
+1 #GW-DEATH-RATE-08   (N3.2) INIT <797.42>  /* death with wido
+1 #GN-DEATH-RATE-08   (N3.2) INIT <317.11>  /* death w/o widow
+*
+* BELOW WENT INTO EFFECT 7/1/2009 - ENTERED 03/27/2009
+1 #GF-MON-RATE-09     (N1.2) INIT <3.35>
+1 #PL-MON-RATE-09     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-09 (N1.2) INIT <1.49>
+1 #IO-WID-MON-RATE-09 (N1.2) INIT <0.11>
+1 #GW-DEATH-RATE-09   (N3.2) INIT <843.67>  /* DEATH WITH WIDO
+1 #GN-DEATH-RATE-09   (N3.2) INIT <335.50>  /* DEATH W/O WIDOW
+*
+* BELOW WENT INTO EFFECT 1/1/2012 - ENTERED 01/30/2012
+1 #GF-MON-RATE-10     (N1.2) INIT <3.47>
+1 #PL-MON-RATE-10     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-10 (N1.2) INIT <1.54>
+1 #IO-WID-MON-RATE-10 (N1.2) INIT <0.11>
+1 #GW-DEATH-RATE-10   (N3.2) INIT <874.04>  /* DEATH WITH WIDO
+1 #GN-DEATH-RATE-10   (N3.2) INIT <347.58>  /* DEATH W/O WIDOW
+*
+* BELOW WENT INTO EFFECT 1/1/2013 - ENTERED 01/30/2013
+1 #GF-MON-RATE-11     (N1.2) INIT <3.53>
+1 #PL-MON-RATE-11    (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-11 (N1.2) INIT <1.57>
+1 #IO-WID-MON-RATE-11 (N1.2) INIT <0.11>
+1 #GW-DEATH-RATE-11   (N3.2) INIT <888.90>  /* DEATH WITH WIDO
+1 #GN-DEATH-RATE-11  (N3.2) INIT <353.49>  /* DEATH W/O WIDOW
+*
+*  BELOW WENT INTO EFFECT 1/1/2014 - ENTERED 01/30/2014
+1 #GF-MON-RATE-12     (N1.2) INIT <3.58>
+1 #PL-MON-RATE-12    (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-12 (N1.2) INIT <1.59>
+1 #IO-WID-MON-RATE-12 (N1.2) INIT <0.12>
+1 #GW-DEATH-RATE-12   (N3.2) INIT <902.23>  /* DEATH WITH WIDO
+1 #GN-DEATH-RATE-12  (N3.2) INIT <358.79>  /* DEATH W/O WIDOW
+*
+*  BELOW WENT INTO EFFECT 1/1/2014 - ENTERED 01/14/2015                         /* vt1 \/
+1 #GF-MON-RATE-13     (N1.2) INIT <3.64>
+1 #PL-MON-RATE-13    (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-13 (N1.2) INIT <1.61>
+1 #IO-WID-MON-RATE-13 (N1.2) INIT <0.12>
+1 #GW-DEATH-RATE-13   (N3.2) INIT <917.57>  /* DEATH WITH WIDO
+1 #GN-DEATH-RATE-13  (N3.2) INIT <364.89>  /* DEATH W/O WIDOW                   /* vt1 /\
+*
+**  BELOW WENT INTO EFFECT 1/1/2017 - ENTERED 01/01/2017                         /* vt2 \/
+1 #GF-MON-RATE-14     (N1.2) INIT <3.66>
+1 #PL-MON-RATE-14    (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-14 (N1.2) INIT <1.63>
+1 #IO-WID-MON-RATE-14 (N1.2) INIT <0.14>
+1 #GW-DEATH-RATE-14   (N3.2) INIT <920.32>  /* DEATH WITH WIDO
+1 #GN-DEATH-RATE-14  (N3.2) INIT <366.00>  /* DEATH W/O WIDOW                   /* vt2 /\
+*
+*  BELOW WENT INTO EFFECT 1/1/2018 - ENTERED 01/01/2018                         /* vt3 \/
+1 #GF-MON-RATE-15     (N1.2) INIT <3.74>
+1 #PL-MON-RATE-15     (N1.2) INIT <2.00>
+1 #GF-WID-MON-RATE-15 (N1.2) INIT <1.67>
+1 #IO-WID-MON-RATE-15 (N1.2) INIT <0.15>
+1 #GW-DEATH-RATE-15   (N3.2) INIT <940.00>  /* DEATH WITH WIDO
+1 #GN-DEATH-RATE-15   (N3.2) INIT <374.00>  /* DEATH W/O WIDOW                   /* vt3 /\
+*
+1 CURRENT-DATE (N8) INIT <*DATN>
+1 REDEFINE CURRENT-DATE
+  2 YYYYMM (N6)
+  2 DD     (N2)
+1 #i       (I4)
+1 #J       (I4)
+1 LOG-OUTPUT (A100)
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/tmp/MSS_LOAD_LOG_MAN_RUN.txt'
+*
+COMPRESS *PROGRAM *DAT4U  *TIME 'Start' into LOG-OUTPUT
+WRITE WORK FILE 1 LOG-OUTPUT
+RESET LOG-OUTPUT
+
+SSS. SETTIME
+READ MRX-V
+  DELETE
+  ADD 1 TO #J /* FOR LOG
+  ADD 1 TO J
+  IF J > 256
+    RESET J
+    END TRANSACTION
+  END-IF
+END-READ
+END TRANSACTION
+*
+COMPRESS *PROGRAM *DAT4U  *TIMD(SSS.) #J 'Records deleted' INTO LOG-OUTPUT
+WRITE WORK 1 LOG-OUTPUT
+
+RESET TOTAL-SAS-PLANS TOTAL-PSM-PLANS LOG-OUTPUT
+*
+RESET #J
+READ MRX-V
+  #J := #J + 1
+END-READ
+
+COMPRESS #J 'Records Currently in Matrix Data after deletion' INTO LOG-OUTPUT
+WRITE WORK 1 LOG-OUTPUT
+
+RESET LOG-OUTPUT
+
+
+READ SVC
+  IF SVC-PLAN = 'SAS' AND (SVC-STATUS = 'A' OR SVC-STATUS = 'F')
+    ADD 1 TO TOTAL-SAS-PLANS
+  END-IF
+  IF SVC-PLAN = 'PSM' AND SVC-STATUS = 'A'
+    ADD 1 TO TOTAL-PSM-PLANS
+  END-IF
+END-READ
+
+
+XXX. SET TIME
+READ MSL-V BY MONTH-KEY STARTING FROM 199705
+* M-E-PLANS-BY-TYPE      (14,4)  /* TYP-X,INS-X
+* M-E-DB-BY-TYPE         (14,4)  /* TYP-X,INS-X
+*   RESET MRX-V
+*   MRX-V.MonthKey   := MSL-V.MONTH-KEY
+*   MRX-V.MATRIXID   := 'PlansByType'
+*   FOR J=1 TO 14
+*     MRX-V.ROWNAME := ProductCodes (J)
+*     FOR K=1 TO 4
+*       MRX-V.COLUMNNAME    := MemberCat (K)
+*       MRX-V.PRODUCTSCOUNT := M-E-PLANS-BY-TYPE (J,K)
+*       MRX-V.LIVESCOUNT    := 0
+*       MRX-V.DEATHBENEFITS := M-E-DB-BY-TYPE (J,K)
+*       STORE MRX-V
+*     END-FOR
+*   END-FOR
+
+  RESET PREVIOUS-MONTH-KEY
+  PREVIOUS-MONTH-KEY := MONTH-KEY
+  SUBTRACT 1 FROM PREVIOUS-MONTH-KEY
+  IF PREVIOUS-KEY-MM = 0
+    PREVIOUS-KEY-MM := 12
+    SUBTRACT 1 FROM PREVIOUS-KEY-YYYY
+  END-IF
+
+  RESET MRX-V
+  MRX-V.MonthKey   := PREVIOUS-MONTH-KEY
+  MRX-V.MATRIXID   := 'MilitaryStatusByBranch'
+  MRX-V.ROWNAME    := MilitaryBranches (1)
+  ROWORDER         := MilitaryBranchOrdering(1)
+  FOR J 1 TO 7 /* MIL STATUS Army
+    MRX-V.COLUMNNAME    := MilitaryStatuses (J)
+    COLUMNORDER         := MilitaryStatusesOrder(j)
+    IF j <= 3
+      MRX-V.LIVESCOUNT    := ARMY-MBRS (J)
+    END-IF
+    STORE MRX-V
+    RESET LIVESCOUNT
+  END-FOR
+  MRX-V.ROWNAME := MilitaryBranches (2)
+  ROWORDER         := MilitaryBranchOrdering(2)
+  FOR J 1 TO 7 /* MIL STATUS Airforce
+    MRX-V.COLUMNNAME    := MilitaryStatuses (J)
+    COLUMNORDER         := MilitaryStatusesOrder(J)
+    IF j <= 3
+      MRX-V.LIVESCOUNT    := AIRF-MBRS (J)
+    END-IF
+    STORE MRX-V
+    RESET LIVESCOUNT
+  END-FOR
+  MRX-V.ROWNAME         := MilitaryBranches (3)
+  ROWORDER              := MilitaryBranchOrdering(3)
+  FOR J 1 TO 7 /* MIL STATUS Navy/Coast guard - They are combined in legacy code
+    MRX-V.COLUMNNAME    := MilitaryStatuses (J)
+    COLUMNORDER         := MilitaryStatusesOrder(J)
+    IF j <= 3
+      MRX-V.LIVESCOUNT    := NV-CG-MBRS (J)
+    END-IF
+    STORE MRX-V
+    RESET LIVESCOUNT
+  END-FOR
+  MRX-V.ROWNAME := MilitaryBranches (4)
+  ROWORDER         := MilitaryBranchOrdering(4)
+  FOR J 1 TO 7 /* MIL STATUS Marines
+    MRX-V.COLUMNNAME    := MilitaryStatuses (J)
+    COLUMNORDER         := MilitaryStatusesOrder(J)
+    IF j <= 3
+      MRX-V.LIVESCOUNT    := MAR-MBRS (J)
+    END-IF
+    STORE MRX-V
+    RESET LIVESCOUNT
+  END-FOR
+  FOR i 5 TO 8
+    MRX-V.ROWNAME := MilitaryBranches(i)
+    ROWORDER              := MilitaryBranchOrdering(i)
+    FOR J 1 TO 7
+      MRX-V.COLUMNNAME    := MilitaryStatuses (J)
+      COLUMNORDER         := MilitaryStatusesOrder(J)
+      STORE MRX-V
+      RESET COLUMNNAME
+    END-FOR
+    RESET ROWNAME
+  END-FOR
+  RESET MRX-V
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID   := 'LossesByTypeAndTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR J 1 TO 10 /* loss type
+    MRX-V.ROWNAME    := LossesTypes (J)
+    ROWORDER         := LossTypesOrder(j)
+    IF  J <= 4
+      IF j = 4
+        MRX-V.PRODUCTSCOUNT := LOSS-PLANS(J)
+        MRX-V.LIVESCOUNT    := LOSS-MBRS(J)
+      ELSE
+        COMPUTE MRX-V.PRODUCTSCOUNT = LOSS-PLANS(J) + SPS-GEN-LOSS-PLANS(J)
+        COMPUTE MRX-V.LIVESCOUNT    = LOSS-MBRS(J)  + SPS-GEN-LOSS-MBRS(J)
+      END-IF
+    END-IF
+    STORE MRX-V
+    RESET ROWNAME LIVESCOUNT PRODUCTSCOUNT
+  END-FOR
+
+  RESET MRX-V
+  MRX-V.MonthKey   := PREVIOUS-MONTH-KEY
+  MRX-V.MATRIXID   := 'TotalProductByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+
+  FOR J 1 TO 16
+    MRX-V.ROWNAME := ProductNames (J)
+    GROUPNAME      := ProductGrouping(j)
+    ROWORDER       := ProductOrdering(j)
+    IF j <= 14
+      ADD M-E-PLANS-BY-TYPE (J,*) TO MRX-V.PRODUCTSCOUNT       /* (14,4)
+      /* product codes indexes are different order for Death Benefit for some odd reason
+      DECIDE ON FIRST VALUE OF J
+        VALUE 6
+*           ADD M-E-DB-BY-TYPE    (8,*)  TO MRX-V.DEATHBENEFITS
+          MRX-V.DEATHBENEFITS := 0
+        VALUE 7
+          ADD M-E-DB-BY-TYPE    (6,*)  TO MRX-V.DEATHBENEFITS
+        VALUE 8
+          ADD M-E-DB-BY-TYPE    (7,*)  TO MRX-V.DEATHBENEFITS
+        VALUE 9
+*           ADD M-E-DB-BY-TYPE    (11,*) TO MRX-V.DEATHBENEFITS
+          ADD M-E-DB-BY-TYPE    (8,*) TO MRX-V.DEATHBENEFITS
+        VALUE 10
+          ADD M-E-DB-BY-TYPE    (9,*)  TO MRX-V.DEATHBENEFITS
+        VALUE 11
+          ADD M-E-DB-BY-TYPE    (10,*) TO MRX-V.DEATHBENEFITS
+        NONE
+          ADD M-E-DB-BY-TYPE    (J,*)  TO MRX-V.DEATHBENEFITS
+      END-DECIDE
+    END-IF
+
+    IF j = 15 /* PSM
+      FIND(1) PREVIOUS-MSL-V WITH PREVIOUS-MSL-V.MONTH-KEY = PREVIOUS-MONTH-KEY
+        PRODUCTSCOUNT := me-psm-plans
+      END-FIND
+
+    END-IF
+    IF MSL-V.MONTH-KEY = 201408 or = 201409
+      IF j = 16 /* SAS   /* ONLY GOING TO KEEP TRACK OF CURRENT DATA.
+        PRODUCTSCOUNT := TOTAL-SAS-PLANS
+      END-IF
+    END-IF
+
+
+    STORE MRX-V
+    RESET MRX-V.PRODUCTSCOUNT MRX-V.DEATHBENEFITS
+  END-FOR
+
+
+  RESET MRX-V
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID   := 'ProductGainsByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR J 1 TO 14
+    ROWORDER       := ProductOrdering2(j)
+*     IF j = 9
+*       ESCAPE TOP
+*     END-IF
+*     IF J <> 5
+    MRX-V.ROWNAME := ProductGL (J)
+    GROUPNAME     := ProductGrouping2(j)
+    IF J <= 9
+      MRX-V.DEATHBENEFITS := GAINS-BY-PLAN-DB (J)
+      MRX-V.PRODUCTSCOUNT := GAINS-BY-PLAN (J)
+    END-IF
+    STORE MRX-V
+    RESET MRX-V.PRODUCTSCOUNT MRX-V.DEATHBENEFITS
+*     END-IF
+  END-FOR
+
+  END TRANSACTION
+
+  RESET MRX-V
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID   := 'ProductLossesByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR J 1 TO 14
+*     IF j = 9
+*       ESCAPE TOP
+*     END-IF
+*     IF J <> 5
+    MRX-V.ROWNAME := ProductGL (J)
+    ROWORDER       := ProductOrdering2(j)
+    GROUPNAME     := ProductGrouping2(j)
+    IF J <= 9
+      MRX-V.DEATHBENEFITS := LOSSES-BY-PLAN-DB (J)
+      MRX-V.PRODUCTSCOUNT := LOSSES-BY-PLAN (J)
+    END-IF
+    STORE MRX-V
+    RESET MRX-V.PRODUCTSCOUNT MRX-V.DEATHBENEFITS
+*     END-IF
+  END-FOR
+  RESET MRX-V NetMembershipGains(*) NetMembershipLosses(*)
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID   := 'MembershipLossesByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR J 1 TO 4
+    MRX-V.ROWNAME := MemberCat (J)
+    ROWORDER      := j
+    MRX-V.LIVESCOUNT := LOSSES-LIVES-BY-CAT(J)
+    IF J = 1 THEN
+      ADD MSL-V.LOSS-MBRS (1:4) TO MRX-V.PRODUCTSCOUNT
+    ELSE IF J = 2 THEN
+        RESET MRX-V.PRODUCTSCOUNT
+        ADD MSL-V.SPS-GEN-LOSS-MBRS(*) TO MRX-V.PRODUCTSCOUNT
+      ELSE
+        MRX-V.PRODUCTSCOUNT := 0
+      END-IF
+    END-IF
+    NetMembershipLosses     (j) := MRX-V.PRODUCTSCOUNT
+    NetMembershipLossesLives(j) := MRX-V.LIVESCOUNT
+    STORE MRX-V
+    RESET MRX-V.PRODUCTSCOUNT MRX-V.DEATHBENEFITS MRX-V.LIVESCOUNT ROWNAME
+  END-FOR
+
+  RESET MRX-V
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID   := 'MembershipGainsByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR J 1 TO 4
+    MRX-V.ROWNAME := MemberCat (J)       /* 999
+    ROWORDER      := j
+    MRX-V.LIVESCOUNT := GAINS-LIVES-BY-CAT (J)
+    IF J = 1
+      ADD MSL-V.GAIN-MBRS (1:10)  TO MRX-V.PRODUCTSCOUNT
+      ADD MSL-V.GAIN-MBRS (20)    TO MRX-V.PRODUCTSCOUNT
+      ADD MSL-V.GAIN-MBRS (22)    TO MRX-V.PRODUCTSCOUNT
+      ADD MSL-V.GAIN-MBRS (24)    TO MRX-V.PRODUCTSCOUNT
+      ADD MSL-V.GAIN-MBRS (26)    TO MRX-V.PRODUCTSCOUNT
+    ELSE IF J = 2
+        ADD SPS-GEN-GAIN-PLANS (1:6)    TO MRX-V.PRODUCTSCOUNT
+        ADD SPS-GEN-GAIN-PLANS (13:14)  TO MRX-V.PRODUCTSCOUNT
+        ADD SPS-GEN-GAIN-PLANS (16)     TO MRX-V.PRODUCTSCOUNT
+        ADD SPS-GEN-GAIN-PLANS (18)     TO MRX-V.PRODUCTSCOUNT
+        ADD SPS-GEN-GAIN-PLANS (20)     TO MRX-V.PRODUCTSCOUNT
+        ADD SPS-GEN-GAIN-PLANS (22)     TO MRX-V.PRODUCTSCOUNT
+        ADD SPS-GEN-GAIN-PLANS (24)     TO MRX-V.PRODUCTSCOUNT
+      ELSE
+        MRX-V.PRODUCTSCOUNT := 0
+      END-IF
+    END-IF
+    NetMembershipGains(j) := MRX-V.PRODUCTSCOUNT
+    NetMembershipGainsLives(j) := MRX-V.LIVESCOUNT
+    STORE MRX-V
+    RESET MRX-V.PRODUCTSCOUNT MRX-V.DEATHBENEFITS MRX-V.LIVESCOUNT
+  END-FOR
+* Loads Membership type by age
+  RESET MRX-V
+  MRX-V.MonthKey   := PREVIOUS-MONTH-KEY
+  MRX-V.MATRIXID   := 'MembershipByAge'
+  FOR I 1 TO 10
+    MRX-V.COLUMNNAME := AgeGroups(i)
+    COLUMNORDER      := i
+    FOR J 1 TO 4
+      MRX-V.ROWNAME    := MemberCat(j)
+      ROWORDER         := j
+      MRX-V.LIVESCOUNT := M-E-INS-BY-AGE(i,j)
+      STORE MRX-V
+      RESET MRX-V.ROWNAME MRX-V.LIVESCOUNT
+    END-FOR
+  END-FOR
+
+  END TRANSACTION
+
+
+* Loads Membership type by time
+  RESET MRX-V
+  MRX-V.MonthKey   := PREVIOUS-MONTH-KEY
+  MRX-V.MATRIXID   := 'TotalMembershipByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR J 1 TO 4
+    MRX-V.ROWNAME    := MemberCat(j)
+    ROWORDER         := j
+    ADD M-E-INS-BY-AGE    (*,j)  TO MRX-V.LIVESCOUNT
+    ADD M-E-DB-BY-TYPE    (*,j)  TO MRX-V.DEATHBENEFITS
+    ADD M-E-PLANS-BY-TYPE (*,j) TO  MRX-V.PRODUCTSCOUNT
+    STORE MRX-V
+    RESET MRX-V.ROWNAME MRX-V.LIVESCOUNT MRX-V.DEATHBENEFITS MRX-V.PRODUCTSCOUNT
+  END-FOR
+* Loads Grand totals by Time
+  RESET MRX-V
+  MRX-V.MonthKey   := PREVIOUS-MONTH-KEY
+  MRX-V.MATRIXID   := 'TotalInsuranceByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  MRX-V.ROWNAME    := 'GrandTotals'
+  ADD M-E-INS-BY-AGE    (*,*)  TO MRX-V.LIVESCOUNT
+  ADD M-E-DB-BY-TYPE    (*,*)  TO MRX-V.DEATHBENEFITS
+  ADD M-E-PLANS-BY-TYPE (*,*)  TO MRX-V.PRODUCTSCOUNT
+  STORE MRX-V
+  RESET MRX-V.ROWNAME MRX-V.LIVESCOUNT MRX-V.DEATHBENEFITS MRX-V.PRODUCTSCOUNT
+* Military Status by Time
+  MRX-V.MonthKey   := PREVIOUS-MONTH-KEY
+  MRX-V.MATRIXID   := 'TotalMilitaryStatusByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR i 1 TO 7 /* MIL STATUS
+    MRX-V.ROWNAME := MilitaryStatuses (i)
+    ROWORDER      := MilitaryStatusesOrder (i)
+    IF i <= 3
+      COMPUTE MRX-V.LIVESCOUNT = ARMY-MBRS(i) + AIRF-MBRS(i) + NV-CG-MBRS(i) + MAR-MBRS(i)
+    END-IF
+    STORE MRX-V
+    RESET MRX-V.ROWNAME MRX-V.LIVESCOUNT
+  END-FOR
+
+  END TRANSACTION
+
+* Net insurance changes by time
+  RESET MRX-V
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID   := 'NetInsuranceByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  MRX-V.ROWNAME    := 'GrandTotals'
+  ADD  GAINS-BY-PLAN-DB(*)     TO  #GAINS-BY-DB
+  ADD  LOSSES-BY-PLAN-DB(*)    TO  #LOSSES-BY-DB
+  ADD  GAINS-BY-PLAN(*)        TO  #GAINS-BY-PLAN
+  ADD  LOSSES-BY-PLAN(*)       TO  #LOSSES-BY-PLAN
+  ADD  GAINS-LIVES-BY-CAT(*)   TO  #GAINS-BY-LIVES
+  ADD  LOSSES-LIVES-BY-CAT(*)  TO  #LOSSES-BY-LIVES
+  COMPUTE MRX-V.DEATHBENEFITS = #GAINS-BY-DB - #LOSSES-BY-DB
+  COMPUTE MRX-V.PRODUCTSCOUNT = #GAINS-BY-PLAN - #LOSSES-BY-PLAN
+  COMPUTE MRX-V.LIVESCOUNT    = #GAINS-BY-LIVES - #LOSSES-BY-LIVES
+  STORE MRX-V
+  RESET MRX-V GAINS-LOSSES-GROUP
+
+* Loads Net insurance changes for plan types
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID   := 'NetProductsByTime'
+  MRX-V.COLUMNNAME := 'TimePeriod'
+  FOR J 1 TO 14
+*     IF J <> 5
+    MRX-V.ROWNAME := ProductGL (J)
+    ROWORDER      := ProductOrdering2(j)
+    GROUPNAME     := ProductGrouping2(j)
+    IF J <= 9
+      COMPUTE MRX-V.DEATHBENEFITS = GAINS-BY-PLAN-DB(J) - LOSSES-BY-PLAN-DB(J)
+      COMPUTE MRX-V.PRODUCTSCOUNT = GAINS-BY-PLAN(J)    - LOSSES-BY-PLAN(J)
+    END-IF
+    STORE MRX-V
+    RESET MRX-V.PRODUCTSCOUNT MRX-V.DEATHBENEFITS
+*     END-IF
+  END-FOR
+*
+* Loads sales by Member Type
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'NewProductsByMembership'
+  FOR i 1 TO 13
+    RESET K L
+    ROWNAME  := TranslatePlans(i)
+    ROWORDER := ProductOrdering3(i)
+    GROUPNAME := ProductGrouping3(i)
+    IF i <= 12
+      k       := Translate3(i)
+      l       := Translate4(i)
+    END-IF
+    FOR j 1 TO 4
+      COLUMNNAME  := MemberCat(j)
+      COLUMNORDER := j
+      IF i <= 12
+        IF j = 1
+          IF i = 12 /* TO AVOID GPL FOR MEMBERS
+            IGNORE
+          ELSE
+            MRX-V.PRODUCTSCOUNT := MSL-V.GAIN-MBRS(k)
+            NEW-PRODUCT-SUMS(i) := PRODUCTSCOUNT
+          END-IF
+        END-IF
+        IF j = 2
+          MRX-V.PRODUCTSCOUNT := SPS-GEN-GAIN-PLANS (l)
+          NEW-PRODUCT-SUMS-S(i) := PRODUCTSCOUNT
+        END-IF
+      END-IF
+      STORE MRX-V
+      RESET MRX-V.PRODUCTSCOUNT
+    END-FOR
+  END-FOR
+*
+  END TRANSACTION
+
+* Loads Additional Sales By MemberType
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'AdditionalProductsByMembership'
+  FOR i 1 TO 13
+    RESET K L
+    ROWNAME  := TranslatePlans(i)
+    ROWORDER := ProductOrdering3(i)
+    GROUPNAME := ProductGrouping3(i)
+    IF i <= 11
+      k       := Translate5(i)
+      l       := Translate6(i)
+    END-IF
+    FOR j 1 TO 4
+      COLUMNNAME  := MemberCat(j)
+      COLUMNORDER := j
+      IF i <= 11
+        IF j = 1
+          MRX-V.PRODUCTSCOUNT := MSL-V.GAIN-MBRS(k)
+          ADD-PRODUCT-SUMS(i) := MRX-V.PRODUCTSCOUNT
+        END-IF
+        IF j = 2
+          IF l = 30   /* USING 30 AS A PLACEHOLDER FOR GPL/AL
+            COMPUTE MRX-V.PRODUCTSCOUNT = SPS-GEN-GAIN-PLANS (19) +
+              SPS-GEN-GAIN-PLANS (21) /* AL + GPL
+            ADD-PRODUCT-SUMS-S(i) := MRX-V.PRODUCTSCOUNT
+          ELSE
+            MRX-V.PRODUCTSCOUNT := SPS-GEN-GAIN-PLANS (l)
+            ADD-PRODUCT-SUMS-S(i) := MRX-V.PRODUCTSCOUNT
+          END-IF
+        END-IF
+      END-IF
+      STORE MRX-V
+      RESET MRX-V.PRODUCTSCOUNT
+    END-FOR
+  END-FOR
+
+* Loads Sum of Sales By MemberType
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'TotalProductsByMembership'
+  FOR i 1 TO 13
+    RESET K L
+    ROWNAME  := TranslatePlans(i)
+    ROWORDER := ProductOrdering3(i)
+    GROUPNAME := ProductGrouping3(i)
+    FOR j 1 TO 4
+      COLUMNNAME  := MemberCat(j)
+      COLUMNORDER := j
+      IF i <= 11
+        IF J = 1
+*           IF i = 7
+*             COMPUTE MRX-V.PRODUCTSCOUNT  = NEW-PRODUCT-SUMS(i) + ADD-PRODUCT-SUMS(i)
+*             ADD NEW-PRODUCT-SUMS-S(12) TO MRX-V.PRODUCTSCOUNT  /* GPL POLICIES COMBINED SOMETIMES
+*           ELSE
+          COMPUTE MRX-V.PRODUCTSCOUNT  = NEW-PRODUCT-SUMS(i) + ADD-PRODUCT-SUMS(i)
+        END-IF
+*         END-IF
+        IF J = 2
+          IF i = 7
+            COMPUTE MRX-V.PRODUCTSCOUNT  = NEW-PRODUCT-SUMS-S(i) + ADD-PRODUCT-SUMS-S(i)
+            ADD NEW-PRODUCT-SUMS-S(12) TO MRX-V.PRODUCTSCOUNT   /* GPL POLICIES COMBINED SOMETIMES
+          ELSE
+            COMPUTE MRX-V.PRODUCTSCOUNT  = NEW-PRODUCT-SUMS-S(i) + ADD-PRODUCT-SUMS-S(i)
+          END-IF
+        END-IF
+      END-IF
+      STORE MRX-V
+      RESET MRX-V.PRODUCTSCOUNT COLUMNNAME
+    END-FOR
+    RESET ROWNAME
+  END-FOR
+*
+* Loads projected billing invoice
+  RESET MRX-V PROJECTED-INVOICE-TOTAL PREVIOUS-MONTH
+  MRX-V.MonthKey   := MSL-V.MONTH-KEY
+
+  PERFORM DETERMINE-AFSC-BILLING-RATES
+
+  MRX-V.MATRIXID   := 'ProjectedBillingInvoices'
+  FOR i 1 TO 10
+    MRX-V.ROWNAME    := INVOICE-ROW-NAMES(i)
+    IF i = 1
+      COMPUTE PREVIOUS-MONTH = MRX-V.MonthKey - 1
+
+      IF PREVIOUS-MM = 0
+        ADD 12 TO PREVIOUS-MM
+        SUBTRACT 1 FROM PREVIOUS-YYYY
+      END-IF
+
+      FIND(1) PREVIOUS-MSL-V WITH PREVIOUS-MSL-V.MONTH-KEY = PREVIOUS-MONTH
+        MRX-V.LIVESCOUNT := PREVIOUS-MSL-V.ME-AFSC-AAFM-TOTS(1)
+        HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+
+      END-FIND
+
+      MRX-V.DEATHBENEFITS := #GF-MON-RATE
+      HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+    END-IF
+
+    IF i = 2
+      MOVE ME-AFSC-AAFM-WIDS-SERVED-GF TO #AFSC-LAST-MON-WIDS-SERVED-GF
+      IF ME-AFSC-AAFM-DOD-CURR-YR-GF GT #AFSC-LAST-MON-WIDS-SERVED-GF
+        MOVE #AFSC-LAST-MON-WIDS-SERVED-GF TO ME-AFSC-AAFM-DOD-CURR-YR-GF
+      END-IF
+      COMPUTE MRX-V.LIVESCOUNT = #AFSC-LAST-MON-WIDS-SERVED-GF
+        - ME-AFSC-AAFM-DOD-CURR-YR-GF
+      HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+      MRX-V.DEATHBENEFITS := #GF-WID-MON-RATE
+      HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+    END-IF
+
+    IF i = 3
+      MOVE ME-AFSC-AAFM-WIDS-SERVED-IO TO #AFSC-LAST-MON-WIDS-SERVED-IO
+      IF ME-AFSC-AAFM-DOD-CURR-YR-IO GT #AFSC-LAST-MON-WIDS-SERVED-IO
+        MOVE #AFSC-LAST-MON-WIDS-SERVED-IO TO ME-AFSC-AAFM-DOD-CURR-YR-IO
+      END-IF
+      COMPUTE MRX-V.LIVESCOUNT = #AFSC-LAST-MON-WIDS-SERVED-IO
+        - ME-AFSC-AAFM-DOD-CURR-YR-IO
+      HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+      MRX-V.DEATHBENEFITS := #IO-WID-MON-RATE
+      HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+    END-IF
+
+    IF i = 4
+      MRX-V.LIVESCOUNT  := MSL-V.ME-AFSC-AAFM-DEATHS(1)
+      HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+      MRX-V.DEATHBENEFITS := #GW-DEATH-RATE
+      HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+    END-IF
+
+    IF i = 5
+      ADD ME-AFSC-AAFM-DEATHS (2:5) TO MRX-V.LIVESCOUNT
+      HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+      MRX-V.DEATHBENEFITS := #GN-DEATH-RATE
+      HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+    END-IF
+
+    IF i = 6
+      MRX-V.LIVESCOUNT    := MSL-V.ME-AFSC-WID-DETHS-MONS-OVR90-GF
+      HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+      MRX-V.DEATHBENEFITS := #GF-WID-MON-RATE
+      HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+    END-IF
+
+    IF i = 7
+      MRX-V.LIVESCOUNT    := ME-AFSC-WID-DETHS-MONS-UND90-GF
+      HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+      MRX-V.DEATHBENEFITS := #GF-WID-MON-RATE
+      HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+    END-IF
+
+    IF i = 8
+*             PREVIOUS-MONTH := PREVIOUS-MONTH - 1
+
+*       IF PREVIOUS-MM = 0
+*         ADD 12 TO PREVIOUS-MM
+*         SUBTRACT 1 FROM PREVIOUS-YYYY
+*       END-IF
+
+      FIND(1) PREVIOUS-MSL-V WITH PREVIOUS-MSL-V.MONTH-KEY = PREVIOUS-MONTH
+
+        MRX-V.LIVESCOUNT    := PREVIOUS-MSL-V.ME-AFSC-AAFM-TOTS(4)
+        HOLD-LIVES-COUNT := MRX-V.LIVESCOUNT
+        MRX-V.DEATHBENEFITS := 2.00
+        HOLD-DEATH-BENEFIT := MRX-V.DEATHBENEFITS
+      END-FIND
+
+    END-IF
+
+    IF i = 9
+      MRX-V.LIVESCOUNT    := me-psm-plans
+      HOLD-DEATH-BENEFIT    := me-psm-amount
+      HOLD-LIVES-COUNT := 1
+    END-IF
+
+    COMPUTE MRX-V.PRODUCTSCOUNT = (HOLD-DEATH-BENEFIT * 100) * HOLD-LIVES-COUNT
+    IF i = 7
+      MRX-V.PRODUCTSCOUNT := MRX-V.PRODUCTSCOUNT * .5
+    END-IF
+
+    IF i = 10
+      MRX-V.PRODUCTSCOUNT := PROJECTED-INVOICE-TOTAL
+    END-IF
+
+    IF i = 6 OR i = 7
+      SUBTRACT MRX-V.PRODUCTSCOUNT FROM PROJECTED-INVOICE-TOTAL
+    ELSE
+      ADD MRX-V.PRODUCTSCOUNT TO PROJECTED-INVOICE-TOTAL
+    END-IF
+
+    RESET HOLD-LIVES-COUNT HOLD-DEATH-BENEFIT
+    STORE MRX-V
+    RESET MRX-V.LIVESCOUNT MRX-V.DEATHBENEFITS MRX-V.PRODUCTSCOUNT
+    RESET MRX-V.ROWNAME
+  END-FOR
+*
+  RESET MRX-V
+  MONTHKEY := MSL-V.MONTH-KEY
+  MATRIXID := 'NetMembershipByTime'
+  COLUMNNAME := 'TimePeriod'
+  FOR i 1 TO 4
+    ROWNAME := MemberCat(i)
+    ROWORDER := i
+    COMPUTE MRX-V.LIVESCOUNT      = NetMembershipGainsLives(i) - NetMembershipLossesLives(i)
+    COMPUTE MRX-V.PRODUCTSCOUNT   = NetMembershipGains(i) - NetMembershipLosses(i)
+    STORE MRX-V
+    RESET ROWNAME LIVESCOUNT PRODUCTSCOUNT
+  END-FOR
+*
+  END TRANSACTION
+
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'NetMilitaryStatusByTime'
+  COLUMNNAME := 'TimePeriod'
+  FOR i 1 TO 7
+    ROWNAME := MilitaryStatuses(i)
+    ROWORDER := MilitaryStatusesOrder(i)
+    STORE MRX-V
+    RESET ROWNAME
+  END-FOR
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY  := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'GainsByTypeAndTime'
+  COLUMNNAME      := 'TimePeriod'
+  FOR i 1 TO 5
+    ROWNAME  := GainTypes(i)
+    ROWORDER := GainTypeOrders(i)
+    IF i = 1
+      ADD GAIN-MBRS (1:10)  TO PRODUCTSCOUNT
+*       ADD GAIN-MBRS (20)    TO PRODUCTSCOUNT
+      ADD GAIN-MBRS (22)    TO PRODUCTSCOUNT
+      ADD GAIN-MBRS (24)    TO PRODUCTSCOUNT
+      ADD GAIN-MBRS (26)    TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (1:6)    TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (13:14)  TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (16)     TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (18)     TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (20)     TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (22)     TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (24)     TO PRODUCTSCOUNT
+*       SUBTRACT GAIN-MBRS(20) FROM PRODUCTSCOUNT /* FOR REMOVING REINSTATEMENTS FROM NEW PRODUCT GAINS
+    END-IF
+*
+    IF i = 2
+      ADD GAIN-MBRS (11:19) TO PRODUCTSCOUNT
+      ADD GAIN-MBRS (21)    TO PRODUCTSCOUNT
+      ADD GAIN-MBRS (23)    TO PRODUCTSCOUNT
+      ADD GAIN-MBRS (25)    TO PRODUCTSCOUNT
+      ADD GAIN-MBRS (27)    TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (7:12) TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (15) TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (17) TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (19) TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (21) TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (23) TO PRODUCTSCOUNT
+      ADD SPS-GEN-GAIN-PLANS (25) TO PRODUCTSCOUNT
+    END-IF
+*
+    IF i = 3
+      PRODUCTSCOUNT := GAIN-MBRS (20)
+    END-IF
+    STORE MRX-V
+    RESET ROWNAME PRODUCTSCOUNT
+  END-FOR
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'NewProductsByRank'
+  FOR i 1 TO 26
+    COLUMNNAME  := MilitaryPayGrades(i)
+    COLUMNORDER := i
+    FOR j 1 TO 14
+      IF j = 9
+        ESCAPE TOP
+      END-IF
+      ROWNAME := ProductNames(j)
+      GROUPNAME      := ProductGrouping(j)
+      ROWORDER := ProductOrdering(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+*
+  END TRANSACTION
+
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'NewProductsByBranch'
+  FOR i 1 TO 8
+    COLUMNNAME := MilitaryBranches(i)
+    COLUMNORDER := MilitaryBranchOrdering(I)
+    FOR j 1 TO 14
+      IF j = 9
+        ESCAPE TOP
+      END-IF
+      ROWNAME := ProductNames(j)
+      GROUPNAME      := ProductGrouping(j)
+      ROWORDER := ProductOrdering(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'MembershipByDeathBenefit'
+  FOR i 1 TO 6
+    COLUMNNAME := DBRanges(i)
+    COLUMNORDER := i
+    FOR j 1 TO 4
+      ROWNAME := MemberCAT(j)
+      ROWORDER := j
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+*
+  END TRANSACTION
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'BranchByAge'
+  FOR i 1 TO TotalAgeGroups
+    COLUMNNAME := AgeGroups(i)
+    COLUMNORDER := i
+    FOR j 1 TO 8
+      ROWNAME := MilitaryBranches(j)
+      ROWORDER := MilitaryBranchOrdering(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'ProductsByAge'
+  FOR i 1 TO TotalAgeGroups
+    COLUMNNAME := AgeGroups(i)
+    COLUMNORDER := i
+    FOR j 1 TO 14
+      IF j = 9
+        ESCAPE TOP
+      END-IF
+      ROWNAME  := ProductNames(j)
+      GROUPNAME      := ProductGrouping(j)
+      ROWORDER := PRODUCTORDERING(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'PayGradeByBranch'
+  FOR i 1 TO 8
+    COLUMNNAME := MilitaryBranches(i)
+    COLUMNORDER := MilitaryBranchOrdering(i)
+    FOR j 1 TO 26
+      ROWNAME := MilitaryPayGrades(j)
+      ROWORDER := J
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+
+  END TRANSACTION
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'AdditionalProductsByRank'
+  FOR i 1 TO 26
+    COLUMNNAME := MilitaryPayGrades(i)
+    COLUMNORDER := i
+    FOR j 1 TO 14
+      IF j = 9
+        ESCAPE TOP
+      END-IF
+      ROWNAME := ProductNames(j)
+      GROUPNAME      := ProductGrouping(j)
+      ROWORDER := ProductOrdering(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'TotalProductsByRank'
+  FOR i 1 TO 26
+    COLUMNNAME := MilitaryPayGrades(i)
+    COLUMNORDER := i
+    FOR j 1 TO 14
+      IF j = 9
+        ESCAPE TOP
+      END-IF
+      ROWNAME := ProductNames(j)
+      GROUPNAME      := ProductGrouping(j)
+      ROWORDER := ProductOrdering(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+
+  END TRANSACTION
+
+*
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'AdditionalProductsByBranch'
+  FOR i 1 TO 8
+    COLUMNNAME := MilitaryBranches(i)
+    COLUMNORDER := MilitaryBranchOrdering(i)
+    FOR j 1 TO 14
+      IF j = 9
+        ESCAPE TOP
+      END-IF
+      ROWNAME := ProductNames(j)
+      ROWORDER := ProductOrdering(j)
+      GROUPNAME      := ProductGrouping(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+
+  RESET MRX-V
+  MRX-V.MONTHKEY := MSL-V.MONTH-KEY
+  MRX-V.MATRIXID  := 'TotalProductsByBranch'
+  FOR i 1 TO 8
+    COLUMNNAME := MilitaryBranches(i)
+    COLUMNORDER := MilitaryBranchOrdering(I)
+    FOR j 1 TO 14
+      IF j = 9
+        ESCAPE TOP
+      END-IF
+      ROWNAME := ProductNames(j)
+      GROUPNAME      := ProductGrouping(j)
+      ROWORDER := ProductOrdering(j)
+      STORE MRX-V
+      RESET ROWNAME
+    END-FOR
+    RESET COLUMNNAME
+  END-FOR
+
+  END TRANSACTION
+
+
+END-READ
+
+READ MRX-V
+  #I := #I + 1
+END-READ
+
+
+RESET LOG-OUTPUT
+COMPRESS *PROGRAM *DAT4U *TIMD(XXX.) #i 'New Records Stored' INTO LOG-OUTPUT
+WRITE WORK FILE 1 LOG-OUTPUT
+
+RESET LOG-OUTPUT
+ON ERROR
+  COMPRESS  *PROGRAM *ERROR-NR *ERROR-LINE INTO LOG-OUTPUT
+  WRITE WORK FILE 1 LOG-OUTPUT
+  STOP
+END-ERROR
+
+COMPRESS 'Completed Succesfully at'  *DAT4U *TIME  INTO LOG-OUTPUT
+WRITE WORK FILE 1 LOG-OUTPUT
+
+CLOSE WORK FILE 1
+
+**============================================
+DEFINE SUBROUTINE DETERMINE-AFSC-BILLING-RATES
+**===========================================
+* Ridicuous Legacy Rate Logic
+IF MONTHKEY LT 200107
+  MOVE #GF-MON-RATE-00     TO #GF-MON-RATE
+  MOVE #PL-MON-RATE-00     TO #PL-MON-RATE
+  MOVE #GF-WID-MON-RATE-00 TO #GF-WID-MON-RATE
+  MOVE #IO-WID-MON-RATE-00 TO #IO-WID-MON-RATE
+  MOVE #GW-DEATH-RATE-00   TO #GW-DEATH-RATE
+  MOVE #GN-DEATH-RATE-00   TO #GN-DEATH-RATE
+ELSE
+  IF MONTHKEY LT 200207
+    MOVE #GF-MON-RATE-01     TO #GF-MON-RATE
+    MOVE #PL-MON-RATE-01     TO #PL-MON-RATE
+    MOVE #GF-WID-MON-RATE-01 TO #GF-WID-MON-RATE
+    MOVE #IO-WID-MON-RATE-01 TO #IO-WID-MON-RATE
+    MOVE #GW-DEATH-RATE-01   TO #GW-DEATH-RATE
+    MOVE #GN-DEATH-RATE-01   TO #GN-DEATH-RATE
+  ELSE
+    IF MONTHKEY LT 200307
+      IF MONTHKEY LT 200210
+        MOVE #GF-MON-RATE-02     TO #GF-MON-RATE
+      ELSE
+        MOVE #GF-MON-RATE-02-B   TO #GF-MON-RATE
+      END-IF
+*
+      MOVE #PL-MON-RATE-02     TO #PL-MON-RATE
+      MOVE #GF-WID-MON-RATE-02 TO #GF-WID-MON-RATE
+      MOVE #IO-WID-MON-RATE-02 TO #IO-WID-MON-RATE
+      MOVE #GW-DEATH-RATE-02   TO #GW-DEATH-RATE
+      MOVE #GN-DEATH-RATE-02   TO #GN-DEATH-RATE
+    ELSE
+      IF MONTHKEY LT 200407
+        MOVE #GF-MON-RATE-03     TO #GF-MON-RATE
+        MOVE #PL-MON-RATE-03     TO #PL-MON-RATE
+        MOVE #GF-WID-MON-RATE-03 TO #GF-WID-MON-RATE
+        MOVE #IO-WID-MON-RATE-03 TO #IO-WID-MON-RATE
+        MOVE #GW-DEATH-RATE-03   TO #GW-DEATH-RATE
+        MOVE #GN-DEATH-RATE-03   TO #GN-DEATH-RATE
+      ELSE
+        IF MONTHKEY LT 200507
+          MOVE #GF-MON-RATE-04     TO #GF-MON-RATE
+          MOVE #PL-MON-RATE-04     TO #PL-MON-RATE
+          MOVE #GF-WID-MON-RATE-04 TO #GF-WID-MON-RATE
+          MOVE #IO-WID-MON-RATE-04 TO #IO-WID-MON-RATE
+          MOVE #GW-DEATH-RATE-04   TO #GW-DEATH-RATE
+          MOVE #GN-DEATH-RATE-04   TO #GN-DEATH-RATE
+        ELSE
+          IF MONTHKEY LT 200607
+            MOVE #GF-MON-RATE-05     TO #GF-MON-RATE
+            MOVE #PL-MON-RATE-05     TO #PL-MON-RATE
+            MOVE #GF-WID-MON-RATE-05 TO #GF-WID-MON-RATE
+            MOVE #IO-WID-MON-RATE-05 TO #IO-WID-MON-RATE
+            MOVE #GW-DEATH-RATE-05   TO #GW-DEATH-RATE
+            MOVE #GN-DEATH-RATE-05   TO #GN-DEATH-RATE
+          ELSE
+            IF MONTHKEY LT 200707
+              MOVE #GF-MON-RATE-06     TO #GF-MON-RATE
+              MOVE #PL-MON-RATE-06     TO #PL-MON-RATE
+              MOVE #GF-WID-MON-RATE-06 TO #GF-WID-MON-RATE
+              MOVE #IO-WID-MON-RATE-06 TO #IO-WID-MON-RATE
+              MOVE #GW-DEATH-RATE-06   TO #GW-DEATH-RATE
+              MOVE #GN-DEATH-RATE-06   TO #GN-DEATH-RATE
+            ELSE
+              IF MONTHKEY LT 200807
+                MOVE #GF-MON-RATE-07     TO #GF-MON-RATE
+                MOVE #PL-MON-RATE-07     TO #PL-MON-RATE
+                MOVE #GF-WID-MON-RATE-07 TO #GF-WID-MON-RATE
+                MOVE #IO-WID-MON-RATE-07 TO #IO-WID-MON-RATE
+                MOVE #GW-DEATH-RATE-07   TO #GW-DEATH-RATE
+                MOVE #GN-DEATH-RATE-07   TO #GN-DEATH-RATE
+              ELSE
+                IF MONTHKEY LT 200907
+                  MOVE #GF-MON-RATE-08     TO #GF-MON-RATE
+                  MOVE #PL-MON-RATE-08     TO #PL-MON-RATE
+                  MOVE #GF-WID-MON-RATE-08 TO #GF-WID-MON-RATE
+                  MOVE #IO-WID-MON-RATE-08 TO #IO-WID-MON-RATE
+                  MOVE #GW-DEATH-RATE-08   TO #GW-DEATH-RATE
+                  MOVE #GN-DEATH-RATE-08   TO #GN-DEATH-RATE
+                ELSE
+                  IF MONTHKEY LT 201007
+                      OR (MONTHKEY GE 201007 /* ONLY ON LAST ONE
+                      and MONTHKEY lt 201201)
+                    MOVE #GF-MON-RATE-09     TO #GF-MON-RATE
+                    MOVE #PL-MON-RATE-09     TO #PL-MON-RATE
+                    MOVE #GF-WID-MON-RATE-09 TO #GF-WID-MON-RATE
+                    MOVE #IO-WID-MON-RATE-09 TO #IO-WID-MON-RATE
+                    MOVE #GW-DEATH-RATE-09   TO #GW-DEATH-RATE
+                    MOVE #GN-DEATH-RATE-09   TO #GN-DEATH-RATE
+                  else
+                    if MONTHKEY ge 201201
+                        and MONTHKEY lt 201301
+                      MOVE #GF-MON-RATE-10     TO #GF-MON-RATE
+                      MOVE #PL-MON-RATE-10     TO #PL-MON-RATE
+                      MOVE #GF-WID-MON-RATE-10 TO #GF-WID-MON-RATE
+                      MOVE #IO-WID-MON-RATE-10 TO #IO-WID-MON-RATE
+                      MOVE #GW-DEATH-RATE-10   TO #GW-DEATH-RATE
+                      MOVE #GN-DEATH-RATE-10   TO #GN-DEATH-RATE
+                    else
+                      if MONTHKEY ge 201301
+                          and MONTHKEY lt 201401
+                        MOVE #GF-MON-RATE-11     TO #GF-MON-RATE
+                        MOVE #PL-MON-RATE-11    TO #PL-MON-RATE
+                        MOVE #GF-WID-MON-RATE-11 TO #GF-WID-MON-RATE
+                        MOVE #IO-WID-MON-RATE-11 TO #IO-WID-MON-RATE
+                        MOVE #GW-DEATH-RATE-11   TO #GW-DEATH-RATE
+                        MOVE #GN-DEATH-RATE-11   TO #GN-DEATH-RATE
+                      else
+                        if MONTHKEY ge 201401
+                            and monthkey lt 201501                                          /* vt1
+                          MOVE #GF-MON-RATE-12    TO #GF-MON-RATE
+                          MOVE #PL-MON-RATE-12    TO #PL-MON-RATE
+                          MOVE #GF-WID-MON-RATE-12 TO #GF-WID-MON-RATE
+                          MOVE #IO-WID-MON-RATE-12 TO #IO-WID-MON-RATE
+                          MOVE #GW-DEATH-RATE-12   TO #GW-DEATH-RATE
+                          MOVE #GN-DEATH-RATE-12   TO #GN-DEATH-RATE
+                        else                                                               /* vt2 \/
+                          if MONTHKEY ge 201501
+                              and monthkey lt 201601
+                            MOVE #GF-MON-RATE-13    TO #GF-MON-RATE
+                            MOVE #PL-MON-RATE-13    TO #PL-MON-RATE
+                            MOVE #GF-WID-MON-RATE-13 TO #GF-WID-MON-RATE
+                            MOVE #IO-WID-MON-RATE-13 TO #IO-WID-MON-RATE
+                            MOVE #GW-DEATH-RATE-13   TO #GW-DEATH-RATE
+                            MOVE #GN-DEATH-RATE-13   TO #GN-DEATH-RATE
+                          else
+                            if MONTHKEY ge 201601
+                                and monthkey lt 201701
+                              MOVE #GF-MON-RATE-13    TO #GF-MON-RATE
+                              MOVE #PL-MON-RATE-13    TO #PL-MON-RATE
+                              MOVE #GF-WID-MON-RATE-13 TO #GF-WID-MON-RATE
+                              MOVE #IO-WID-MON-RATE-13 TO #IO-WID-MON-RATE
+                              MOVE #GW-DEATH-RATE-13   TO #GW-DEATH-RATE
+                              MOVE #GN-DEATH-RATE-13   TO #GN-DEATH-RATE
+                            else
+                              if monthkey Ge 201701
+                                  and monthkey lt 201801                                     /* vt3
+                                MOVE #GF-MON-RATE-14    TO #GF-MON-RATE
+                                MOVE #PL-MON-RATE-14    TO #PL-MON-RATE
+                                MOVE #GF-WID-MON-RATE-14 TO #GF-WID-MON-RATE
+                                MOVE #IO-WID-MON-RATE-14 TO #IO-WID-MON-RATE
+                                MOVE #GW-DEATH-RATE-14   TO #GW-DEATH-RATE
+                                MOVE #GN-DEATH-RATE-14   TO #GN-DEATH-RATE
+                              else                                                     /* vt3 \/
+                                if monthkey Ge 201801
+                                  MOVE #GF-MON-RATE-15    TO #GF-MON-RATE
+                                  MOVE #PL-MON-RATE-15    TO #PL-MON-RATE
+                                  MOVE #GF-WID-MON-RATE-15 TO #GF-WID-MON-RATE
+                                  MOVE #IO-WID-MON-RATE-15 TO #IO-WID-MON-RATE
+                                  MOVE #GW-DEATH-RATE-15   TO #GW-DEATH-RATE
+                                  MOVE #GN-DEATH-RATE-15   TO #GN-DEATH-RATE
+                                end-if                                                  /* vt3 /\
+                              end-if
+                            end-if                                                         /* vt2 /\
+                          end-if                                                             /* vt1 /\
+                        end-if
+                      end-if
+                    end-if
+                  END-IF
+                END-IF
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+**============
+END-SUBROUTINE
+**============
+END

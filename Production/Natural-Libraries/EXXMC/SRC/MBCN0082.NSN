@@ -1,0 +1,634 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Benefits/External Life Insurance Information
+* Add/Delete/Update Logic
+* MBCN0082
+**********************************************************************
+*        MODIFICATION LOG
+**********************************************************************
+* USER   DATE      TAG  REASON
+* YAK    10202011       Initial Creation
+* YAK    11142011  YK1  Do not allow to delete external policies
+*                       that are in vault from Member Center ( OI 644)
+* YAK    08012014  YK2  Contact Normalization
+**********************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0008
+PARAMETER 1 #ErrorCode (A3)
+1 #VALIDATION-RESULT (A) DYNAMIC
+*
+LOCAL USING OBJLEXTP
+LOCAL USING OBJLMINF
+LOCAL USING GPRAMINF
+LOCAL USING GPRAEXTP
+LOCAL USING GPRATR01
+LOCAL USING ERROR_L
+LOCAL
+*
+1 #MEMBER                 (A) DYNAMIC INIT <'MEMBER'>
+1 #MEMBER-CENTER-CLERK    (A) DYNAMIC INIT <'MBR'>
+1 #UPDATE                 (A) DYNAMIC CONST <'UPDATE'>
+1 #ADD                    (A) DYNAMIC CONST <'ADD'>
+1 #DELETE                 (A) DYNAMIC CONST <'DELETE'>
+1 #GET                    (A) DYNAMIC CONST <'GET'>
+1 #EXT-LIFE-POLICIES      (A) DYNAMIC CONST<'ExternalLifeInsurance'>
+1 #BENEFITS-SS            (A) DYNAMIC CONST<'BenefitsSS'>
+1 #BENEFITS-VA            (A) DYNAMIC CONST<'BenefitsVA'>
+1 #BENEFITS-MILITARY      (A) DYNAMIC CONST<'BenefitsMilitary'>
+1 #BENEFITS-OTHER         (A) DYNAMIC CONST<'BenefitsOther'>
+1 #TRUE                   (A) DYNAMIC CONST<'true'>
+1 #FALSE                  (A) DYNAMIC CONST<'false'>
+1 #DEL                    (A) DYNAMIC CONST <';'>
+1 FUNCTION_CODE           (A) DYNAMIC
+1 #ContactId              (N8)
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #I                (I2)
+1 #II               (I2)
+1 #I1               (I2)
+1 #SS-DATE          (N8)
+1 REDEFINE #SS-DATE
+  2 #SS-DATE-YYYYMM (N6)
+  2 #SS-DATE-DD     (N2)
+1 #POL-ID           (N2)
+1 #NEW-FIRS         (L)
+1 #VALUE            (N3)
+1 #ErrorDescription (A) DYNAMIC                                 /* YK1
+1 #ERROR-CODE-DEL   (A3) CONST <'414'>                          /* YK1
+1 #NON-DELETE-POL-CODES (A1/6) CONST <'3','4','*','5','&','7'>  /* YK1
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+FUNCTION_CODE := MemberBenefits.BenefitType
+*
+IF MemberBenefits.UserID <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<MemberBenefits.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<Memberbenefits.UserID>)(2)
+END-IF
+*
+DECIDE ON FIRST VALUE MemberBenefits.ActionType
+  VALUE '0'
+    ESCAPE ROUTINE
+  VALUE '1'
+    MemberBenefits.ActionType := #ADD
+  VALUE '2'
+    MemberBenefits.ActionType := #UPDATE
+  VALUE '3'
+    MemberBenefits.ActionType := #DELETE
+  NONE VALUE
+    #ErrorCode  := #ACTION-INVALID
+    ESCAPE ROUTINE
+END-DECIDE
+*
+DECIDE FOR FIRST CONDITION
+  WHEN MemberBenefits.ActionType = #UPDATE AND MemberBenefits.BenefitType <> #EXT-LIFE-POLICIES
+    PERFORM UPDATE-BENEFIT
+  WHEN MemberBenefits.BenefitType = #EXT-LIFE-POLICIES
+    PERFORM UPDATE-POLICY-TABLE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+PERFORM WRITE-TRANSACTION-LOG
+*
+*************************************
+DEFINE SUBROUTINE UPDATE-POLICY-TABLE
+*************************************
+* Get additional data for validation
+IF MemberBenefits.ActionType <> #DELETE
+  FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+    #EXT-POLICY-INFO.DATE-OF-BIRTH         := GET-DATE-OF-BIRTH(<MIL-INFO-V.MEMBER-CONTACT-ID>)   /* YK2
+    #EXT-POLICY-INFO.DATE-RETIRED          := MIL-INFO-V.DATE-RETIRED
+    #EXT-POLICY-INFO.CHIEF-OF-STAFF-IND    := MIL-INFO-V.CHIEF-OF-STAFF-IND
+    #EXT-POLICY-INFO.MILITARY-SERVICE      := MIL-INFO-V.MILITARY-SERVICE
+    #EXT-POLICY-INFO.MILITARY-STATUS       := MIL-INFO-V.MILITARY-STATUS
+    #EXT-POLICY-INFO.ACTIVE-DUTY-BASE-DATE := MIL-INFO-V.ACTIVE-DUTY-BASE-DATE
+    #EXT-POLICY-INFO.BASE-PAY-EF-DATE      := MIL-INFO-V.BASE-PAY-EF-DATE
+    #EXT-POLICY-INFO.RANK                  := MIL-INFO-V.RANK
+    #EXT-POLICY-INFO.DISABILITY-PCT        := MIL-INFO-V.DISABILITY-PCT
+  END-FIND
+*
+  #EXT-POLICY-INFO.POL-NAME       := MemberBenefits.Company(1)
+  #EXT-POLICY-INFO.POL-TYPE       := MemberBenefits.Type(1)
+  #EXT-POLICY-INFO.POL-AMOUNT     := MemberBenefits.DeathBenefits(1)
+  #EXT-POLICY-INFO.POL-DATE       := MemberBenefits.IssueDate(1)
+*
+  EXPAND ARRAY #ERROR-CODE TO (*:1)
+  PERFORM CALL-VALIDATION-EXT-POLICY
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN MemberBenefits.ActionType = #ADD
+    PERFORM ADD-POLICY
+  WHEN MemberBenefits.ActionType = #UPDATE
+    PERFORM UPDATE-POLICY
+  WHEN MemberBenefits.ActionType = #DELETE
+    PERFORM DELETE-POLICY
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE UPDATE-BENEFIT
+********************************
+*
+EXPAND ARRAY #ERROR-CODE TO (*:10)
+EXPAND ARRAY #VALIDATE-FLAG TO (*:50)
+*
+DECIDE ON FIRST VALUE MemberBenefits.BenefitType
+  VALUE #BENEFITS-SS
+    PERFORM UPDATE-SS-BENEFITS
+  VALUE #BENEFITS-VA
+    PERFORM UPDATE-VA-BENEFITS
+  VALUE #BENEFITS-MILITARY
+    PERFORM UPDATE-MILITARY-BENEFITS
+  VALUE #BENEFITS-OTHER
+    PERFORM UPDATE-OTHER-BENEFITS
+  NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE ADD-POLICY
+****************************
+*
+FIND(1) FIR-V WITH ID-NUMBER = MemberBenefits.CN
+  IF NO RECORDS FOUND
+    #NEW-FIRS := TRUE
+  END-NOREC
+END-FIND
+IF #NEW-FIRS
+* Create new FIR record
+  FIR-V.ID-NUMBER         := MemberBenefits.CN
+  FIR-V.CONTACT-ID-NUMBER := F-GET-CONTACT-ID(<MemberBenefits.CN>)
+  FIR-V.MEMBER-FLAG       := 'Y'
+  STORE FIR-V
+END-IF
+*
+FD1.
+FIND(1) FIR-V WITH ID-NUMBER = MemberBenefits.CN
+  #I := C*POLICY-TABLE
+  IF #I <> 0
+    #POL-ID := POL-ID(#I) + 1
+  ELSE
+    #POL-ID := 1
+  END-IF
+  #I := #I + 1
+  FIR-V.POL-ID(#I)               := #POL-ID
+  IF MemberBenefits.PolicyCode(1) = #FALSE
+    POL-CODE(#I) := 'X'
+  END-IF
+* FIR-V.POL-INS-CONTACT-ID-N(#I) := MemberBenefits.InsuredContactID(1)
+  FIR-V.POL-REMARKS(#I)          := MemberBenefits.Remarks(1)
+  FIR-V.POL-NAME(#I)             := MemberBenefits.Company(1)
+  FIR-V.POL-NUMBER(#I)           := MemberBenefits.PolicyNumber(1)
+  FIR-V.POL-TYPE(#I)             := MemberBenefits.Type(1)
+  FIR-V.POL-DATE(#I)             := MemberBenefits.IssueDate(1)
+  FIR-V.POL-AMOUNT(#I)           := MemberBenefits.DeathBenefits(1)
+  FIR-V.INS-LAST-FM-DATE         := #DATN
+  FIR-V.DTS-DATN                 := #DATN
+  FIR-V.DTS-TIMN                 := #TIMN
+  UPDATE (FD1.)
+END-FIND
+RESET BEFORE_IMAGE
+PERFORM GET-AFTER-IMAGE
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE DELETE-POLICY
+*******************************
+*
+RESET AFTER_IMAGE
+FD2.
+FIND(1) FIR-V WITH ID-NUMBER = MemberBenefits.CN
+  FOR #I = 1 TO FIR-V.C*POLICY-TABLE
+    IF FIR-V.POL-ID(#I) = MemberBenefits.PolicyID(1)
+      IF FIR-V.POL-CODE(#I) <> ' '                     /* YK1 start
+        RESET #II
+        EXAMINE #NON-DELETE-POL-CODES(*) FOR FIR-V.POL-CODE(#I) INDEX #II
+        IF #II <> 0
+          #ErrorCode := '1'
+          #ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE-DEL>)
+          #VALIDATION-RESULT := #ErrorDescription
+          ESCAPE MODULE
+        END-IF                                         /* YK1 end
+      END-IF
+      PERFORM GET-BEFORE-IMAGE
+      RESET FIR-V.POLICY-TABLE(#I)
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+* if this update is done by batch error-processing (for records being on hold at the time of request)
+* there is a chance that policy with requested POL-ID has been already deleted from DP screen
+  IF #I > FIR-V.C*POLICY-TABLE
+    ESCAPE MODULE
+  END-IF
+*
+  FOR #II = #I  TO FIR-V.C*POLICY-TABLE
+    MOVE BY NAME FIR-V.POLICY-TABLE(#II + 1) TO FIR-V.POLICY-TABLE(#II)
+  END-FOR
+  #I := FIR-V.C*POLICY-TABLE
+  RESET POLICY-TABLE(#I)
+  FIR-V.INS-LAST-FM-DATE       := #DATN
+  FIR-V.DTS-DATN               := #DATN
+  FIR-V.DTS-TIMN               := #TIMN
+  UPDATE (FD2.)
+END-FIND
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE UPDATE-POLICY
+*******************************
+*
+FD3.
+FIND(1) FIR-V WITH ID-NUMBER = MemberBenefits.CN
+  FOR #I = 1 TO C*POLICY-TABLE
+    IF FIR-V.POL-ID(#I) = MemberBenefits.PolicyID(1)
+      PERFORM GET-BEFORE-IMAGE
+      IF MemberBenefits.PolicyCode(1) = #FALSE
+        FIR-V.POL-CODE(#I) := 'X'
+      END-IF
+*     FIR-V.POL-INS-CONTACT-ID-N(#I) := MemberBenefits.InsuredContactID(1)
+      FIR-V.POL-REMARKS(#I)          := MemberBenefits.Remarks(1)
+      FIR-V.POL-NAME(#I)             := MemberBenefits.Company(1)
+      FIR-V.POL-NUMBER(#I)           := MemberBenefits.PolicyNumber(1)
+      FIR-V.POL-TYPE(#I)             := MemberBenefits.Type(1)
+      FIR-V.POL-DATE(#I)             := MemberBenefits.IssueDate(1)
+      FIR-V.POL-AMOUNT(#I)           := MemberBenefits.DeathBenefits(1)
+      FIR-V.INS-LAST-FM-DATE         := #DATN
+      FIR-V.DTS-DATN                 := #DATN
+      FIR-V.DTS-TIMN                 := #TIMN
+      PERFORM GET-AFTER-IMAGE
+    END-IF
+  END-FOR
+  UPDATE (FD3.)
+END-FIND
+*
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-BEFORE-IMAGE
+**********************************
+*
+* BEFORE_IMAGE.POL-INS-CONTACT-ID := FIR-V.POL-INS-CONTACT-ID(#I)
+* BEFORE_IMAGE.POL-INS-CONTACT-ID := *TRIM(BEFORE_IMAGE.POL-INS-CONTACT-ID)
+BEFORE_IMAGE.POL-NAME           := FIR-V.POL-NAME(#I)
+BEFORE_IMAGE.POL-NAME := *TRIM(BEFORE_IMAGE.POL-NAME)
+BEFORE_IMAGE.POL-NUMBER         := FIR-V.POL-NUMBER(#I)
+BEFORE_IMAGE.POL-NUMBER := *TRIM(BEFORE_IMAGE.POL-NUMBER)
+BEFORE_IMAGE.POL-TYPE           := FIR-V.POL-TYPE(#I)
+BEFORE_IMAGE.POL-TYPE := *TRIM(BEFORE_IMAGE.POL-TYPE)
+IF FIR-V.POL-DATE(#I) <> 0
+  BEFORE_IMAGE.POL-DATE := FIR-V.POL-DATE(#I)
+END-IF
+IF FIR-V.POL-AMOUNT(#I) <> 0
+  MOVE EDITED FIR-V.POL-AMOUNT(#I) (EM=ZZZZZZ9) TO BEFORE_IMAGE.POL-AMOUNT
+END-IF
+BEFORE_IMAGE.POL-REMARKS := FIR-V.POL-REMARKS(#I)
+BEFORE_IMAGE.POL-REMARKS := *TRIM(BEFORE_IMAGE.POL-REMARKS)
+BEFORE_IMAGE.DATE-LAST-UPDATE       := FIR-V.INS-LAST-FM-DATE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-AFTER-IMAGE
+*********************************
+*
+* AFTER_IMAGE.POL-INS-CONTACT-ID := MemberBenefits.InsuredContactID(1)
+* AFTER_IMAGE.POL-INS-CONTACT-ID := *TRIM(AFTER_IMAGE.POL-INS-CONTACT-ID)
+AFTER_IMAGE.POL-NAME           := FIR-V.POL-NAME(#I)
+AFTER_IMAGE.POL-NAME := *TRIM(AFTER_IMAGE.POL-NAME)
+AFTER_IMAGE.POL-NUMBER         := FIR-V.POL-NUMBER(#I)
+AFTER_IMAGE.POL-NUMBER := *TRIM(AFTER_IMAGE.POL-NUMBER)
+AFTER_IMAGE.POL-TYPE           := FIR-V.POL-TYPE(#I)
+AFTER_IMAGE.POL-TYPE := *TRIM(AFTER_IMAGE.POL-TYPE)
+IF MemberBenefits.IssueDate(1) <> 0
+  AFTER_IMAGE.POL-DATE := FIR-V.POL-DATE(#I)
+END-IF
+IF MemberBenefits.DeathBenefits(1) <> 0
+  MOVE EDITED MemberBenefits.DeathBenefits(1) (EM=ZZZZZZ9) TO AFTER_IMAGE.POL-AMOUNT
+  AFTER_IMAGE.POL-AMOUNT := *TRIM(AFTER_IMAGE.POL-AMOUNT)
+END-IF
+AFTER_IMAGE.POL-REMARKS := FIR-V.POL-REMARKS(#I)
+AFTER_IMAGE.POL-REMARKS := *TRIM(AFTER_IMAGE.POL-REMARKS)
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE UPDATE-SS-BENEFITS
+************************************
+*
+#SS-DATE := MemberBenefits.MemberReceivingSSDate
+#MILITARY-INFO.SOC-SEC-ST-DATE := #SS-DATE-YYYYMM
+#SS-DATE := MemberBenefits.SpouseReceivingSSDate
+#MILITARY-INFO.SPS-SS-ST-DATE  := #SS-DATE-YYYYMM
+#MILITARY-INFO.MBR-SS          := MemberBenefits.MemberGrossSSBenefit
+#MILITARY-INFO.SS-BENEFIT-AMT  := MemberBenefits.SpouseGrossSSBenefit
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  #MILITARY-INFO.STATUS-CODE   := MIL-INFO-V.STATUS-CODE
+  #MILITARY-INFO.DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<MIL-INFO-V.MEMBER-CONTACT-ID>)   /* YK2
+END-FIND
+*
+FOR #I = 27 TO 30
+  #VALIDATE-FLAG (27) := 'Y'
+END-FOR
+*
+PERFORM CALL-VALIDATION-MILITARY
+IF #MILITARY-INFO.MBR-SS = 0 AND #MILITARY-INFO.SOC-SEC-ST-DATE <> 0
+    AND MIL-INFO-V.SOC-SEC-PIA <> 0 AND #MILITARY-INFO.DATE-OF-BIRTH >= 19180101
+  CALLNAT 'MBCN0083' MemberBenefits.BenefitType
+    MemberBenefits.CN
+    #MILITARY-INFO.MBR-SS
+    #MILITARY-INFO.DATE-OF-BIRTH
+    #MILITARY-INFO.SOC-SEC-ST-DATE
+END-IF
+*
+FD4.
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  IF MIL-INFO-V.SOC-SEC-ST-DATE <> 0
+    BEFORE_IMAGE.SOC-SEC-ST-DATE := MIL-INFO-V.SOC-SEC-ST-DATE
+  END-IF
+  IF MIL-INFO-V.SPS-SS-ST-DATE <> 0
+    BEFORE_IMAGE.SPS-SS-ST-DATE  := MIL-INFO-V.SPS-SS-ST-DATE
+  END-IF
+  IF MIL-INFO-V.MBR-SS <> 0
+    MOVE EDITED MIL-INFO-V.MBR-SS (EM=ZZ,ZZZ) TO BEFORE_IMAGE.MBR-SS
+  END-IF
+  IF MIL-INFO-V.SS-BENEFIT-AMT <> 0
+    MOVE EDITED MIL-INFO-V.SS-BENEFIT-AMT (EM=ZZ,ZZZ) TO BEFORE_IMAGE.SS-BENEFIT-AMT
+  END-IF
+*
+  MIL-INFO-V.SOC-SEC-ST-DATE   := #MILITARY-INFO.SOC-SEC-ST-DATE
+  MIL-INFO-V.SPS-SS-ST-DATE    := #MILITARY-INFO.SPS-SS-ST-DATE
+  MIL-INFO-V.MBR-SS            := MemberBenefits.MemberGrossSSBenefit
+  MIL-INFO-V.SS-BENEFIT-AMT    := MemberBenefits.SpouseGrossSSBenefit
+*
+  IF #MILITARY-INFO.SOC-SEC-ST-DATE <> 0
+    AFTER_IMAGE.SOC-SEC-ST-DATE  := #MILITARY-INFO.SOC-SEC-ST-DATE
+  END-IF
+  IF #MILITARY-INFO.SPS-SS-ST-DATE NE 0
+    AFTER_IMAGE.SPS-SS-ST-DATE   := #MILITARY-INFO.SPS-SS-ST-DATE
+  END-IF
+  IF MemberBenefits.MemberGrossSSBenefit <> 0
+    MOVE EDITED MemberBenefits.MemberGrossSSBenefit (EM=ZZ,ZZZ) TO AFTER_IMAGE.MBR-SS
+  END-IF
+  IF MemberBenefits.SpouseGrossSSBenefit <> 0
+    MOVE EDITED MemberBenefits.SpouseGrossSSBenefit (EM=ZZ,ZZZ) TO AFTER_IMAGE.SS-BENEFIT-AMT
+  END-IF
+  #ContactID := MIL-INFO-V.MEMBER-CONTACT-ID
+  UPDATE (FD4.)
+END-FIND
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE UPDATE-VA-BENEFITS
+************************************
+*
+#VALIDATE-FLAG (10) := 'Y'
+#VALIDATE-FLAG (11) := 'Y'
+#VALIDATE-FLAG (12) := 'Y'
+#VALIDATE-FLAG (31) := 'Y'
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  #MILITARY-INFO.MILITARY-STATUS   := MIL-INFO-V.MILITARY-STATUS
+  #MILITARY-INFO.MILITARY-SERVICE  := MIL-INFO-V.MILITARY-SERVICE
+END-FIND
+*
+#MILITARY-INFO.ID-NUMBER         := MemberBenefits.CN
+#MILITARY-INFO.VA-CLAIM-NUMBER   := VAClaimNumber
+#MILITARY-INFO.VA-DISABILITY-PCT := VADisabilityPercent / 100
+#MILITARY-INFO.VA-DISABLE-DATE   := VADisabilityDate
+#MILITARY-INFO.SMC-CODE          := VASpecialMonthlyCompensation
+*
+IF   (#MILITARY-INFO.SMC-CODE NE ' ')
+    AND (NOT #MILITARY-INFO.SMC-CODE = 'K' OR #MILITARY-INFO.SMC-CODE = 'KK'
+    OR #MILITARY-INFO.SMC-CODE = 'KKK')
+    AND (#MILITARY-INFO.VA-DISABILITY-PCT NE 1.0)
+  MOVE 1.0 TO #MILITARY-INFO.VA-DISABILITY-PCT
+*  'VA-Disability % must be 100% with non K SMC'
+END-IF
+*
+PERFORM CALL-VALIDATION-MILITARY
+*
+FD5.
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+*
+  IF MIL-INFO-V.VA-DISABILITY-PCT <> 0
+    #VALUE := MIL-INFO-V.VA-DISABILITY-PCT * 100
+    COMPRESS #VALUE '%' INTO BEFORE_IMAGE.VA-DISABILITY-PCT LEAVING NO
+  END-IF
+  IF MIL-INFO-V.VA-DISABLE-DATE <> 0
+    BEFORE_IMAGE.VA-DISABLE-DATE     := MIL-INFO-V.VA-DISABLE-DATE
+  END-IF
+  BEFORE_IMAGE.VA-CLAIM-NUMBER     := MIL-INFO-V.VA-CLAIM-NUMBER
+  BEFORE_IMAGE.SMC-CODE            := MIL-INFO-V.SMC-CODE
+*
+  MIL-INFO-V.VA-CLAIM-NUMBER   := VAClaimNumber
+  MIL-INFO-V.VA-DISABLE-DATE   := VADisabilityDate
+  IF (MIL-INFO-V.VA-DISABILITY-PCT = 9.99 OR MIL-INFO-V.VA-DISABILITY-PCT = 0.01) AND VADisabilityPercent = 0
+    IGNORE
+  ELSE  
+    MIL-INFO-V.VA-DISABILITY-PCT := VADisabilityPercent / 100
+  END-IF
+  MIL-INFO-V.SMC-CODE          := VASpecialMonthlyCompensation
+*
+  AFTER_IMAGE.VA-CLAIM-NUMBER  := VAClaimNumber
+  AFTER_IMAGE.SMC-CODE         := VASpecialMonthlyCompensation
+  IF VADisabilityDate <> 0
+    AFTER_IMAGE.VA-DISABLE-DATE := VADisabilityDate
+  END-IF
+  IF VADisabilityPercent <> 0
+    COMPRESS VADisabilityPercent '%' INTO AFTER_IMAGE.VA-DISABILITY-PCT LEAVING NO
+  END-IF
+*
+  #ContactID                   := MIL-INFO-V.MEMBER-CONTACT-ID
+  UPDATE (FD5.)
+END-FIND
+*
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE UPDATE-MILITARY-BENEFITS
+******************************************
+*
+FOR #I = 15 TO 17
+  #VALIDATE-FLAG (#I) := 'Y'
+END-FOR
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  #MILITARY-INFO.DATE-OF-BIRTH     := GET-DATE-OF-BIRTH(<MIL-INFO-V.MEMBER-CONTACT-ID>)
+  #MILITARY-INFO.RSV-NG-RETIRE-PTS := MIL-INFO-V.RSV-NG-RETIRE-PTS
+  #MILITARY-INFO.MILITARY-STATUS   := MIL-INFO-V.MILITARY-STATUS
+  #MILITARY-INFO.MILITARY-SERVICE  := MIL-INFO-V.MILITARY-SERVICE
+END-FIND
+*
+#MILITARY-INFO.RETIRED-PAY-AMT := GrossMilitaryRetirementPay
+IF GuardOrReserve = #TRUE
+  #MILITARY-INFO.RSV-NG-TYPE-ANNUITY := GuardReserveSBPAnnuity
+  #MILITARY-INFO.MIL-SBP-AMT := GuardReserveSBPBaseAmount
+  RESET #VALIDATE-FLAG (16)
+ELSE
+  #MILITARY-INFO.MIL-SBP-OPT := SBPOption
+  #MILITARY-INFO.MIL-SBP-AMT := SBPAnnuityAmount
+END-IF
+*
+PERFORM CALL-VALIDATION-MILITARY
+FD6.
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+*
+  IF MIL-INFO-V.RETIRED-PAY-AMT <> 0
+    BEFORE_IMAGE.RETIRED-PAY-AMT := MIL-INFO-V.RETIRED-PAY-AMT
+  END-IF
+  IF GuardOrReserve = #TRUE
+    BEFORE_IMAGE.RSV-NG-TYPE-ANNUITY := MIL-INFO-V.RSV-NG-TYPE-ANNUITY
+  ELSE
+    BEFORE_IMAGE.MIL-SBP-OPT := MIL-INFO-V.MIL-SBP-OPT
+  END-IF
+  IF MIL-INFO-V.MIL-SBP-AMT <> 0
+    BEFORE_IMAGE.MIL-SBP-AMT := MIL-INFO-V.MIL-SBP-AMT
+  END-IF
+*
+  MIL-INFO-V.RETIRED-PAY-AMT := GrossMilitaryRetirementPay
+  IF MIL-INFO-V.RETIRED-PAY-AMT <> 0
+    AFTER_IMAGE.RETIRED-PAY-AMT := MIL-INFO-V.RETIRED-PAY-AMT
+  END-IF
+  IF GuardOrReserve = #TRUE
+    MIL-INFO-V.RSV-NG-TYPE-ANNUITY := GuardReserveSBPAnnuity
+    MIL-INFO-V.MIL-SBP-AMT := GuardReserveSBPBaseAmount
+    AFTER_IMAGE.RSV-NG-TYPE-ANNUITY := GuardReserveSBPAnnuity
+    IF GuardReserveSBPBaseAmount <> 0
+      AFTER_IMAGE.MIL-SBP-AMT := GuardReserveSBPBaseAmount
+    END-IF
+  ELSE
+    MIL-INFO-V.MIL-SBP-OPT := SBPOption
+    MIL-INFO-V.MIL-SBP-AMT := SBPAnnuityAmount
+    AFTER_IMAGE.MIL-SBP-OPT := SBPOption
+    IF SBPAnnuityAmount <> 0
+      AFTER_IMAGE.MIL-SBP-AMT := SBPAnnuityAmount
+    END-IF
+  END-IF
+  #ContactID               := MIL-INFO-V.MEMBER-CONTACT-ID
+  UPDATE (FD6.)
+END-FIND
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE UPDATE-OTHER-BENEFITS
+***************************************
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  #MILITARY-INFO.SPS-CSRS-IND    := MIL-INFO-V.SPS-CSRS-IND
+END-FIND
+#MILITARY-INFO.SPS-GOVT-ANNUITY  := SpousePensionAmount
+#MILITARY-INFO.SPS-CSRS-IND      := SpousePensionType
+*
+#VALIDATE-FLAG (36) := 'Y'
+PERFORM CALL-VALIDATION-MILITARY
+FD7.
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  IF MIL-INFO-V.CIVIL-SVC-PENSION <> 0
+    MOVE EDITED MIL-INFO-V.CIVIL-SVC-PENSION (EM=ZZ,ZZZ) TO BEFORE_IMAGE.CIVIL-SVC-PENSION
+  END-IF
+  IF MIL-INFO-V.CIV-SV-SBP-AMT <> 0
+    MOVE EDITED MIL-INFO-V.CIV-SV-SBP-AMT (EM=ZZ,ZZZ) TO BEFORE_IMAGE.CIV-SV-SBP-AMT
+  END-IF
+  IF MIL-INFO-V.CIVIL-PENSION <> 0
+    MOVE EDITED MIL-INFO-V.CIVIL-PENSION (EM=ZZ,ZZZ) TO BEFORE_IMAGE.CIVIL-PENSION
+  END-IF
+  IF MIL-INFO-V.CIVIL-ANNUITY <> 0
+    MOVE EDITED MIL-INFO-V.CIVIL-ANNUITY (EM=ZZ,ZZZ) TO BEFORE_IMAGE.CIVIL-ANNUITY
+  END-IF
+  IF MIL-INFO-V.SPS-GOVT-ANNUITY <> 0
+    MOVE EDITED MIL-INFO-V.SPS-GOVT-ANNUITY (EM=ZZ,ZZZ) TO BEFORE_IMAGE.SPS-GOVT-ANNUITY
+  END-IF
+  BEFORE_IMAGE.SPS-CSRS-IND      := MIL-INFO-V.SPS-CSRS-IND
+*
+  MIL-INFO-V.CIVIL-SVC-PENSION   := GovPensionAmount
+  MIL-INFO-V.CIV-SV-SBP-AMT      := GovPensionSurvivorAnnuityAmount
+  MIL-INFO-V.CIVIL-PENSION       := PrivatePensionAmount
+  MIL-INFO-V.CIVIL-ANNUITY       := PrivatePensionSuvivorAnnuityAmount
+  MIL-INFO-V.SPS-GOVT-ANNUITY    := SpousePensionAmount
+  MIL-INFO-V.SPS-CSRS-IND        := SpousePensionType
+*
+  IF GovPensionAmount <> 0
+    MOVE EDITED GovPensionAmount (EM=ZZ,ZZZ) TO AFTER_IMAGE.CIVIL-SVC-PENSION
+  END-IF
+  IF GovPensionSurvivorAnnuityAmount <> 0
+    MOVE EDITED GovPensionSurvivorAnnuityAmount (EM=ZZ,ZZZ) TO AFTER_IMAGE.CIV-SV-SBP-AMT
+  END-IF
+  IF PrivatePensionAmount <> 0
+    MOVE EDITED PrivatePensionAmount (EM=ZZ,ZZZ) TO AFTER_IMAGE.CIVIL-PENSION
+  END-IF
+  IF PrivatePensionSuvivorAnnuityAmount <> 0
+    MOVE EDITED PrivatePensionSuvivorAnnuityAmount (EM=ZZ,ZZZ) TO AFTER_IMAGE.CIVIL-ANNUITY
+  END-IF
+  IF SpousePensionAmount <> 0
+    MOVE EDITED SpousePensionAmount (EM=ZZ,ZZZ) TO AFTER_IMAGE.SPS-GOVT-ANNUITY
+  END-IF
+  AFTER_IMAGE.SPS-CSRS-IND       := SpousePensionType
+  #ContactID                     := MIL-INFO-V.MEMBER-CONTACT-ID
+  UPDATE (FD7.)
+END-FIND
+*
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE CALL-VALIDATION-MILITARY
+******************************************
+* Call Business logic program for validation
+*
+#SYSTEM := 'MemberCenter'
+CALLNAT 'GPRNMINF' #MILITARY-INFO #OTHERS
+IF #ERROR-CODE(1) <> ' '
+  PERFORM COMPOSE-VALIDATION-ERROR-XML
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+********************************************
+DEFINE SUBROUTINE CALL-VALIDATION-EXT-POLICY
+********************************************
+* Call Business logic program for validation
+EXPAND ARRAY #ERROR-CODE TO (*:20)
+CALLNAT 'GPRNEXTP' #EXT-POLICY-INFO #ERROR-CODE(*)
+IF #ERROR-CODE(1) <> ' '
+  PERFORM COMPOSE-VALIDATION-ERROR-XML
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+**********************************************
+DEFINE SUBROUTINE COMPOSE-VALIDATION-ERROR-XML
+**********************************************
+#ErrorCode := '1'
+FOR #I = 1 TO *OCCURRENCE(#ERROR-CODE)
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE(#I)>)
+  COMPRESS #VALIDATION-RESULT #ErrorDescription #DEL
+    INTO #VALIDATION-RESULT LEAVING NO
+END-FOR
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+* Transaction Log for Rank/MilStatus/MilService
+TR_ID_NUMBER  := MemberBenefits.CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<#ContactID>)
+TR_CLERK      := #MEMBER-CENTER-CLERK
+CALLNAT 'GPRNTR01' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+END-SUBROUTINE
+END

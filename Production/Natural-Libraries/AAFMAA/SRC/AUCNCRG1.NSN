@@ -1,0 +1,140 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram AUCNCRG1.
+/**
+/** :author nguentchev
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON                                         *
+/** NGG 07/18/2012 NG1 Pass share user request
+DEFINE DATA
+PARAMETER
+1 #CONTACT-ID          (N8)
+1 #XML_OUTPUT          (A) DYNAMIC
+LOCAL USING AUCACR01
+LOCAL
+1 #XML-TEMP           (A) DYNAMIC
+1 CONTACT-REL-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID (N8)
+  2 ROLE-1-CD    (A1)
+  2 CONTACT-2-ID (N8)
+  2 ROLE-2-CD    (A1)
+1 #GET         (I4) CONST <0>
+1 MC-V VIEW OF A-CONTACTS
+  2 ID-NUMBER
+  2 CONTACT-ID
+*
+1 LINKED-CN-V VIEW OF A-STATUS
+  2 INTRO-FLAG
+  2 MEMBER-CONTACT-ID
+1 MEMBER VIEW OF A-STATUS
+  2 INTRO-FLAG
+  2 LINKED-CN      (N6/30)
+1 #J           (I4)
+1 #PAGE-CN     (I4)
+END-DEFINE
+*
+#XML_OUTPUT := ' '
+COMPRESS FULL #XML_OUTPUT  '<ContactRelations'
+  '>' INTO #XML_OUTPUT LEAVING NO
+*
+FIND CONTACT-REL-V WITH CONTACT-1-ID = #CONTACT-ID
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  RESET ContactRelation
+  IF ROLE-1-CD = 'S' OR= 'X'
+    ContactRelation.RelationType  := 'M'  /* Dependents = Right Contact ID
+  ELSE
+    ContactRelation.RelationType  := 'D'  /* Dependents = Right Contact ID
+  END-IF
+  ContactRelation.RelationID    := *ISN
+  ContactRelation.ActionType    := #GET
+  CALLNAT 'AUCNCRM1' ContactRelation
+  PERFORM GEN-XML-HEADER
+  CALLNAT 'AUCNCRS1' #XML-TEMP ContactRelation
+  COMPRESS #XML_OUTPUT #XML-TEMP INTO #XML_OUTPUT
+END-FIND
+FIND CONTACT-REL-V WITH CONTACT-2-ID = #CONTACT-ID
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  RESET ContactRelation
+  ContactRelation.RelationType  := 'R'  /* Reverse = Left Contact ID
+  ContactRelation.RelationID    := *ISN
+  ContactRelation.ActionType    := #GET
+  CALLNAT 'AUCNCRM1' ContactRelation
+  PERFORM GEN-XML-HEADER                /* NG1
+  CALLNAT 'AUCNCRS1' #XML-TEMP ContactRelation
+  COMPRESS #XML_OUTPUT #XML-TEMP INTO #XML_OUTPUT
+END-FIND
+FIND MC-V WITH CONTACT-ID = #CONTACT-ID
+  IF MC-V.ID-NUMBER > 0
+    IF ContactRelation.CN2 = 0          /* NG1
+      ContactRelation.CN2 := MC-V.ID-NUMBER
+      PERFORM GEN-XML-HEADER
+    END-IF
+    FIND MEMBER WITH ID-NUMBER = MC-V.ID-NUMBER
+      IF NO RECORDS FOUND
+        ContactRelation.ErrorCode := 9
+        ContactRelation.ErrorDescription := 'No member record found'
+        ESCAPE BOTTOM
+      END-NOREC
+      FOR #J 1 TO 30
+        IF MEMBER.LINKED-CN ( #J ) > 0
+          FIND LINKED-CN-V WITH ID-NUMBER = MEMBER.LINKED-CN ( #J )
+            RESET ContactRelation
+            ContactRelation.ContactID     := LINKED-CN-V.MEMBER-CONTACT-ID
+            ContactRelation.RelationType  := 'L'  /* Linked CN
+            CurrentRelationshipCode := LINKED-CN-V.INTRO-FLAG
+            ContactRelation.ActionType    := #GET
+            ContactRelation.CN    := MEMBER.LINKED-CN ( #J )
+*           CALLNAT 'AUCNCRM1' Relation  Not presented as relation in CONTACT-REL-V
+            CALLNAT 'AUCNCRS1' #XML-TEMP ContactRelation
+            COMPRESS #XML_OUTPUT #XML-TEMP INTO #XML_OUTPUT
+          END-FIND
+        END-IF
+      END-FOR
+    END-FIND
+  END-IF
+END-FIND
+COMPRESS FULL #XML_OUTPUT  '</ContactRelations'
+  '>' INTO #XML_OUTPUT LEAVING NO
+*
+DEFINE GEN-XML-HEADER
+/*     ==============
+ADD 1 TO #PAGE-CN
+IF #PAGE-CN > 1
+  ESCAPE ROUTINE
+END-IF
+COMPRESS FULL #XML_OUTPUT
+  '<ErrorCode'
+  '>' INTO #XML_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_OUTPUT
+  ContactRelation.ErrorCode
+  '</ErrorCode>' INTO #XML_OUTPUT LEAVING NO
+COMPRESS FULL #XML_OUTPUT
+  '<ErrorDescription'
+  '>' INTO #XML_OUTPUT LEAVING NO
+COMPRESS FULL #XML_OUTPUT
+  ContactRelation.ErrorDescription
+  '</ErrorDescription>' INTO #XML_OUTPUT LEAVING NO
+COMPRESS FULL #XML_OUTPUT
+  '<ContactID'
+  '>' INTO #XML_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_OUTPUT
+  ContactRelation.Contact2ID
+  '</ContactID>' INTO #XML_OUTPUT LEAVING NO
+COMPRESS FULL #XML_OUTPUT
+  '<CN'
+  '>' INTO #XML_OUTPUT LEAVING NO
+COMPRESS NUMERIC #XML_OUTPUT
+  ContactRelation.CN2
+  '</CN>' INTO #XML_OUTPUT LEAVING NO
+END-SUBROUTINE
+*
+END

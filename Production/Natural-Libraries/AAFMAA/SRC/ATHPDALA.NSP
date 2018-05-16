@@ -1,0 +1,173 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPDALA - Update Alotment Authorization flag in IAS with backfeed from DAL
+* To be run daily as part of daily process (DSDCTH10)
+* Input - file from DAL
+* Output - Update status report
+* Database update - YES
+************************************************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* YAK  03082007      Initial creation
+* DRW  04122007  DW1 Do Not update if already an 'S'
+* DRW 06/06/2008 DW2 Add ALOT-CHG-AUTH "A" checking
+************************************************************************
+DEFINE DATA
+LOCAL
+*
+1 #INPUT      (A50)
+*
+1 ST-V VIEW OF A-STATUS
+  2 MEMBER-KEY
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 ACCESS-AUTH-CODE
+  2 ALOT-CHG-AUTH
+  2 ALOT-CHG-AUTH-DATE
+  2 NAME
+1 ST-V-UPD VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 ACCESS-AUTH-CODE
+  2 ALOT-CHG-AUTH
+  2 ALOT-CHG-AUTH-DATE
+  2 NAME
+  2 DATE-OTHER-UPDATE
+*
+1 #TAB       (A1) INIT <H'09'>
+1 #I         (N5)
+1 #MEMBER-KEY             (A7)
+1 REDEFINE #MEMBER-KEY
+  2 #ID-NUMBER            (N6)
+  2 #MEMBER-FLAG          (A1)
+1 #STRING                 (A6)
+1 #CN-IN                  (A) DYNAMIC
+1 #HEADER-LINE            (A78)
+1 #REPORT-LINE            (A78)
+1 #MESSAGE                (A30)
+1 #NOT-FOUND-MESSAGE      (A30) INIT <'MEMBER ID NOT FOUND'>
+1 #ALREADY-YES-MESSAGE    (A30) INIT <'FLAG IS ALREADY SET TO "Y"'>
+1 #ALREADY-stop-MESSAGE   (A30) INIT <'FLAG IS ALREADY SET TO "S"'>   /* DW1
+1 #RECORD-UPDATED-MESSAGE (A30) INIT <'RECORD UPDATED SUCCESSFULLY'>
+*
+1 #COUNTERS
+  2 #REC-READ        (P7)
+  2 #REC-UPDATED     (P7)
+  2 #REC-NOT-FOUND   (P7)
+  2 #REC-NOT-UPDATED (P7)
+*
+1 TR-LOG VIEW OF A-TRANSACTION-REGISTER
+ 2 ID-NUMBER        (N6)
+ 2 PROCESS-IND      (A1)
+ 2 NAME             (A25)
+ 2 DATE-LAST-UPDATE (N8)
+ 2 TERMINAL-ID      (A8)
+ 2 CLERK-ID         (A3)
+ 2 TRANSACTION-DATN (P9)
+ 2 TRANSACTION-TIMN (P7)
+ 2 OLD-DATA         (A125/32)
+ 2 NEW-DATA         (A125/32)
+ 2 REDEFINE NEW-DATA
+  3 NEW-DATA-OCC     (32)
+   4 NEW-DATA-CA      (A3)
+   4 NEW-DATA-REST    (A22)
+*
+1 #W-OLD-NEW-DATA  (A125)
+1 REDEFINE #W-OLD-NEW-DATA
+ 2 #W-DESCRIPTION   (A10)
+ 2 #W-DATA          (A115)
+1 #HOLD-ALOT-CHG-AUTH   (A1)
+1 #DATN              (N8)
+*
+END-DEFINE
+*
+* * * * * * * REPORT HEADER * * * * * *
+FORMAT (1)  LS=133 PS=76
+WRITE (1) NOTITLE 'PROGRAM ' *PROGRAM 5X
+'DAL Alotment Change Authorization Status updates'
+  5X 'DATE: '*DAT4U 5X 'TIME: ' *TIMX
+*
+* Report fields
+COMPRESS  'CN' #TAB 'Update Message'
+  INTO #HEADER-LINE LEAVING NO
+WRITE (1) #HEADER-LINE
+#DATN := *DATN
+*
+READ WORK FILE 1 ONCE RECORD #INPUT
+READ WORK FILE 1 RECORD #INPUT
+RESET #CN-IN #MESSAGE #MEMBER-KEY
+SEPARATE #INPUT INTO #CN-IN IGNORE WITH DELIMITER ','
+#CN-IN := *TRIM(#CN-IN)
+IF #CN-IN IS (N6)
+  #ID-NUMBER := VAL(#CN-IN)
+ELSE
+  WRITE 'CN Number is invalid '
+  ESCAPE TOP
+END-IF  
+  #REC-READ := #REC-READ + 1
+  READ(1) ST-V WITH MEMBER-KEY = #MEMBER-KEY
+    IF ID-NUMBER NE #ID-NUMBER
+      #MESSAGE := #NOT-FOUND-MESSAGE
+      #REC-NOT-FOUND := #REC-NOT-FOUND + 1
+      ESCAPE BOTTOM
+    END-IF
+    IF ALOT-CHG-AUTH = 'Y' or = 'A'                  /* DW2
+      #MESSAGE := #ALREADY-YES-MESSAGE
+      #REC-NOT-UPDATED := #REC-NOT-UPDATED + 1
+    ELSE
+      IF ALOT-CHG-AUTH = 'S'                            /* DW1
+        #MESSAGE := #ALREADY-STOP-MESSAGE
+        #REC-NOT-UPDATED := #REC-NOT-UPDATED + 1
+      ELSE
+        GET ST-V-UPD *ISN
+        #HOLD-ALOT-CHG-AUTH := ST-V-UPD.ALOT-CHG-AUTH
+        ST-V-UPD.ALOT-CHG-AUTH := 'Y'  /* Lyne says keep it 'Y'    /* DW2
+        ST-V-UPD.ALOT-CHG-AUTH-DATE := #DATN
+        UPDATE (0125)
+        PERFORM LOG-TRANSACTION
+        END TRANSACTION
+        #MESSAGE := #RECORD-UPDATED-MESSAGE
+        #REC-UPDATED := #REC-UPDATED + 1
+      end-if
+    END-IF
+  END-READ
+  IF #MESSAGE = ' '
+      #MESSAGE := #NOT-FOUND-MESSAGE
+      #REC-NOT-FOUND := #REC-NOT-FOUND + 1
+   END-IF
+  COMPRESS #ID-NUMBER #TAB #MESSAGE INTO #REPORT-LINE LEAVING NO
+  WRITE (1) NOTITLE #REPORT-LINE
+*
+END-WORK
+*
+DEFINE SUBROUTINE LOG-TRANSACTION
+*
+RESET TR-LOG
+  MOVE ST-V-UPD.ID-NUMBER TO TR-LOG.ID-NUMBER
+  MOVE ST-V-UPD.PROCESS-IND TO TR-LOG.PROCESS-IND
+  MOVE ST-V-UPD.NAME TO TR-LOG.NAME
+  MOVE ST-V-UPD.DATE-OTHER-UPDATE TO TR-LOG.DATE-LAST-UPDATE
+  MOVE 'EDS' TO TR-LOG.CLERK-ID
+  MOVE *INIT-ID TO TR-LOG.TERMINAL-ID
+  MOVE *DATN TO TR-LOG.TRANSACTION-DATN
+  MOVE *TIMN TO TR-LOG.TRANSACTION-TIMN
+  MOVE 'AL-AUTH'     TO #W-DESCRIPTION
+  MOVE #HOLD-ALOT-CHG-AUTH TO #W-DATA
+  MOVE #W-OLD-NEW-DATA     TO TR-LOG.OLD-DATA (1)
+  MOVE ST-V-UPD.ALOT-CHG-AUTH       TO #W-DATA
+  MOVE #W-OLD-NEW-DATA     TO TR-LOG.NEW-DATA (1)
+  MOVE 'CA-' TO NEW-DATA-CA (1)
+  STORE TR-LOG
+*
+END-SUBROUTINE
+*
+NEWPAGE (1)
+WRITE(1) 'Total records read        =' #REC-READ
+WRITE(1) 'Total records updated     =' #REC-UPDATED
+WRITE(1) 'Total records not updated =' #REC-NOT-UPDATED
+WRITE(1) 'Total records not found   =' #REC-NOT-FOUND
+*
+END

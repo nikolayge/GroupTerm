@@ -1,0 +1,124 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+***************************************************************
+* SUBPROGRAM-ID: GPRN006A - Find all the policies this Customer
+* (CN) owns or owned - authorized to update, view etc.
+* Clone of GPRN0006 to include terminated policies for Payment History
+***************************************************************
+* Temporary until ownership project implemented 
+***************************************************************
+*        MODIFICATION LOG
+***************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11082010       Initial Creation (for Member Center)
+* YAK    05062015  YK1  Include Terminated policies (MC-II)
+***************************************************************
+*
+DEFINE DATA
+PARAMETER USING GPRA0006
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 INTRO-FLAG
+  2 C*LINKED-CN
+  2 LINKED-CN (40)
+  2 NUM-MBRSHIPS (9)
+  2 STATUS (9)
+*
+1 #LINKED-CN     (N6/40)
+1 #MULTIPLE-OWNER            (L)
+1 #NON-INS-OWNER             (L)
+1 #OWNER-OCC-9   (1:9)
+  2 #OWNER-FLAG               (A1)
+  2 #OWNER-CN                 (N6/10)
+  2 #OWNER-CN-BY-POL          (N6)
+  2 #OWNER-CN-SEG             (I2/9)
+  2 #ISS-DATE                 (N8/9)
+  2 #ISS-DATE-DISP            (A10/9)
+  2 #BENE-TYPE                (A1/2)
+  2 #BENE-TEXT                (A60/10)
+1 I  (I2)
+1 II (I2)
+1 J  (I2)
+1 K  (I2)
+1 C@LINKED-CN (I2)
+1 #ACTIVE     (A1) INIT <'D'>
+END-DEFINE
+*
+FIND(1) ST-V WITH ID-NUMBER = PARM-CN
+  IF ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    PARM-MEMBER-CN := LINKED-CN(1)
+  ELSE
+    PARM-MEMBER-CN := PARM-CN
+  END-IF
+END-FIND
+*
+CALLNAT 'GOWNRSXX' PARM-MEMBER-CN
+  #NON-INS-OWNER
+  #MULTIPLE-OWNER
+  #OWNER-OCC-9 (1:9)
+
+FOR I = 1 TO 9
+  IF #OWNER-CN(I,1) = 0
+    ESCAPE BOTTOM
+  END-IF
+  FOR II = 1 to 10
+    IF #OWNER-CN(I,II) = 0
+      ESCAPE BOTTOM
+    END-IF
+    IF #OWNER-CN(I,II) = PARM-CN
+*     IF F-POLICY-STATUS(<PARM-MEMBER-CN,I>) = #ACTIVE      /* YK1
+        J := J + 1
+        RESIZE ARRAY PARM-POLICIES TO (*:J)
+        PARM-POLICIES.ID-NUMBER(J)    := PARM-MEMBER-CN
+        PARM-POLICIES.POLICY-INDEX(J) := I
+*     END-IF                                                /* YK1 
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FOR
+*
+FIND ST-V WITH ID-NUMBER = PARM-MEMBER-CN
+  #LINKED-CN(*) := LINKED-CN(*)
+  C@LINKED-CN   := C*LINKED-CN
+END-FIND
+*
+FOR K = 1 TO C*LINKED-CN
+  RESET #NON-INS-OWNER #MULTIPLE-OWNER #OWNER-OCC-9 (*)
+  CALLNAT 'GOWNRSXX'  #LINKED-CN(K)
+    #NON-INS-OWNER
+    #MULTIPLE-OWNER
+    #OWNER-OCC-9 (1:9)
+*
+  FOR I = 1 TO 9
+    IF #OWNER-CN(I,1) = 0
+      ESCAPE BOTTOM
+    END-IF
+    FOR II = 1 to 10
+      IF #OWNER-CN(I,II) = 0
+        ESCAPE BOTTOM
+      END-IF
+      IF #OWNER-CN(I,II) = PARM-CN
+        IF F-POLICY-STATUS(<#LINKED-CN(K),I>) = #ACTIVE
+          J := J + 1
+          RESIZE ARRAY PARM-POLICIES TO (*:J)
+          PARM-POLICIES.ID-NUMBER(J)    := #LINKED-CN(K)
+          PARM-POLICIES.POLICY-INDEX(J) := I
+        END-IF
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FOR
+END-FOR
+* Populate Policy Numbers
+  FOR I = 1 TO *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+    CALLNAT 'GPLNMSXX' PARM-POLICIES.POLICY-NUMBER(I)
+                       PARM-POLICIES.ID-NUMBER(I)
+                       PARM-POLICIES.POLICY-INDEX(I)
+  END-FOR
+*
+END

@@ -1,0 +1,624 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* --------------------------------------------------------------
+* PROGRAM-ID: C2950PRC
+*  THIS PROGRAM PERFORMS THE ACCOUNTING RECONCILIATION
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06072004  PM1     MOVE ALB/KHB TO OTHER GROUPING.  ADDED CDM  *
+*                          CEJ, LCB to list per Kathie Ballard.        *
+*                          REMOVED SLL FROM LIST.                      *
+* PAM    06172004  PM2     Changed third clerk to handle 7 (millions)  *
+*                          significant digits. Adjusted totals to      *
+*                          display 7 significant digits. Person that   *
+*                          handles loans must be the third clerk.      *
+* PAM    06292004  PM3     Changed CDM to CDA - got married.           *
+* PAM    09162004  PM4     Added FPFC to transaction list.             *
+* PAM    09222004  PM5     Remvd FPFC transaction - don't need it      *
+* PAM    11162004  PM6     Added APFP and APFR to transaction list.    *
+* PAM    01302006  PM7     Removed CDA/LCB and added KHB/IM for        *
+*                          financial department.                       *
+* SAG-AB 20060510  RH1     Changed to PS=23 to avoid page overflow     *
+* DRW    05172006  DW8     Changed IM  to KA                           *
+* DRW    09122006  DW9     Changed KA  to RDR                          *
+* DRW    03272007  DW10    Changed KHB/CEJ to BHL/AJT                  *
+* PAM    12182007  PM11    Added monthly processing                    *
+* PAM    02142008  PM12    Expanded batch record size                  *
+* PAM    02202008  PM13    Do not include CASH transactions. Change    *
+*                          default for OTHER transactions              *
+* DRW  01/30/2008  DW11    Add DUEA Tran Code (Dues Adjustment)        *
+* DRW  04/08/2008  DW12    Add New TRAN CODES                          *
+* DRW  04/09/2008  DW13    CHG WOFF to LWOF and SUSR to SUSP           *
+* DRW  04/17/2008  DW14    Bypass LWOF TR Records                      *
+* PAM  07/20/2009  PM15    Fixed error in date calc                    *
+* PAM  01/16/2010  PM16    Changed BHL/AJT to MXC/TMP                  *
+* YAK  11/04/2011  YK1     Move to run after midnight (OI 502)         *
+************************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX
+LOCAL
+*
+1 #CLERK (A24) INIT <'SKS-MXC-ELB-RDR-TMP-OTH-'> /* OVERLAID PM3 PM7 DW8 PM16
+1 REDEFINE #CLERK                                /* IF AFSC   DW9 DW10
+ 2 #CLERK-OCC    (6)
+  3 #CLERK-NAME (A3)
+  3 #CLERK-FILL (A1)
+*
+1 #BATCH-CLERK-TABLE (50)                                         /* PM11
+ 2 #BATCH-CLERK      (A3)                                         /* PM11
+ 2 #BATCH-CLERK-TTL  (P11.2)                                      /* PM11
+ 2 #TRAN-OCC         (70)                                         /* PM11 DW11
+  3 #BATCH-CLERK-AMT (P11.2)                                      /* PM11
+1 #B-I1              (I2)                                         /* PM11
+1 #B-I2              (I2)                                         /* PM11
+1 #BATCH-TRAN-TOTAL  (P11.2/71)   /* WAS 59                       /* PM11 DW11
+*
+1 #SCN-TRAN-PICK     (A1/70)                                      /* PM6  DW11
+1 REDEFINE #SCN-TRAN-PICK
+ 2 #SCN-TRAN-PICK-2  (A1/70)                                      /* PM6  DW11
+1 REDEFINE #SCN-TRAN-PICK
+ 2 #SCN-TRAN-PICK-3  (A1/70)                                      /* PM6  DW11
+1 REDEFINE #SCN-TRAN-PICK
+ 2 #SCN-TRAN-PICK-4  (A1/70)                                      /* PM6  DW11
+*
+1 #TRAN-TABLE                           /* OVERLAID IF AFSC
+ 2 #TT-1   (A6) INIT <'NEWL D'>
+ 2 #TT-2   (A6) INIT <'ADDL B'>
+*
+ 2 #TT-3   (A6) INIT <'PREP C'>
+ 2 #TT-4   (A6) INIT <'PRER D'>
+ 2 #TT-5   (A6) INIT <'FPFP C'>
+ 2 #TT-6   (A6) INIT <'FPFR-B'>
+ 2 #TT-7   (A6) INIT <'FPFR+B'>
+*
+ 2 #TT-8   (A6) INIT <'DUEP C'>
+ 2 #TT-9   (A6) INIT <'DUER-B'>
+ 2 #TT-10  (A6) INIT <'DUER+B'>
+ 2 #TT-11  (A6) INIT <'DUEA-B'>    /* DW11
+ 2 #TT-12  (A6) INIT <'DUEA+B'>    /* DW11
+*
+ 2 #TT-13  (A6) INIT <'FPDP C'>
+ 2 #TT-14  (A6) INIT <'FPDR-B'>
+ 2 #TT-15  (A6) INIT <'FPDR+B'>
+*
+ 2 #TT-16  (A6) INIT <'RIDP C'>
+ 2 #TT-17  (A6) INIT <'RIDR-B'>
+ 2 #TT-18  (A6) INIT <'RIDR+B'>
+ 2 #TT-19  (A6) INIT <'FPRP C'>
+ 2 #TT-20  (A6) INIT <'FPRR-B'>
+ 2 #TT-21  (A6) INIT <'FPRR+B'>
+*
+ 2 #TT-22  (A6) INIT <'PRNF C'>
+ 2 #TT-23  (A6) INIT <'PRNV C'>
+ 2 #TT-24  (A6) INIT <'FLNF C'>
+ 2 #TT-25  (A6) INIT <'FLNV C'>
+ 2 #TT-26  (A6) INIT <'BADJ-B'>
+ 2 #TT-27  (A6) INIT <'BADJ+B'>
+ 2 #TT-28  (A6) INIT <'SALF C'>
+ 2 #TT-29  (A6) INIT <'SALV C'>
+ 2 #TT-30  (A6) INIT <'STOP D'>
+ 2 #TT-31  (A6) INIT <'STRT C'>
+ 2 #TT-32  (A6) INIT <'RDCR D'>
+ 2 #TT-33  (A6) INIT <'ADCR C'>
+ 2 #TT-34  (A6) INIT <'INTF C'>
+ 2 #TT-35  (A6) INIT <'INTV C'>
+ 2 #TT-36  (A6) INIT <'INPF C'>
+ 2 #TT-37  (A6) INIT <'INPV C'>
+ 2 #TT-38  (A6) INIT <'IADF-B'>
+ 2 #TT-39  (A6) INIT <'IADF+B'>
+ 2 #TT-40  (A6) INIT <'IADV-B'>
+ 2 #TT-41  (A6) INIT <'IADV+B'>
+ 2 #TT-42  (A6) INIT <'AIAV-B'>
+ 2 #TT-43  (A6) INIT <'AIAV+B'>
+ 2 #TT-44  (A6) INIT <'AIAF-B'>
+ 2 #TT-45  (A6) INIT <'AIAF+B'>
+ 2 #TT-46  (A6) INIT <'CAPF C'>
+ 2 #TT-47  (A6) INIT <'CAPV C'>
+ 2 #TT-48  (A6) INIT <'PADF-B'>
+ 2 #TT-49  (A6) INIT <'PADF+B'>
+ 2 #TT-50  (A6) INIT <'PADV-B'>
+ 2 #TT-51  (A6) INIT <'PADV+B'>
+ 2 #TT-52  (A6) INIT <'CADF-B'>
+ 2 #TT-53  (A6) INIT <'CADF+B'>
+ 2 #TT-54  (A6) INIT <'CADV-B'>
+ 2 #TT-55  (A6) INIT <'CADV+B'>
+ 2 #TT-56  (A6) INIT <'APFP C'>                                   /* PM6
+ 2 #TT-57  (A6) INIT <'APFR D'>                                   /* PM6
+* 2 #tt-58  (a6) INIT <'LWOF D'>  /* Loan Writeoff     /* DW12/DW13/DW14
+ 2 #TT-58  (A6) INIT <'SUSP-B'>  /* SUSPENCE Credit   /* DW12
+ 2 #TT-59  (A6) INIT <'SUSP+B'>  /* SUSPENCE Debit    /* DW12
+ 2 #TT-60  (A6) INIT <'CVAL D'>  /* Cash Value Adjust /* DW12/DW13
+ 2 #TT-61  (A6) INIT <'APPD C'>  /* Addl Prems Paid   /* DW12/DW13
+ 2 #TT-62  (A6) INIT <'OTHR-B'>                                   /* PM5
+ 2 #TT-63  (A6) INIT <'OTHR+B'>
+ 2 #TT-64  (A6) INIT <'      '>
+ 2 #TT-65  (A6) INIT <'      '>
+ 2 #TT-66  (A6) INIT <'      '>
+ 2 #TT-67  (A6) INIT <'      '>
+ 2 #TT-68  (A6) INIT <'      '>
+ 2 #TT-69  (A6) INIT <'      '>
+ 2 #TT-70  (A6) INIT <'      '>
+1 REDEFINE #TRAN-TABLE
+* If another Tran is added Check the Forced index entry of 58 in DO-ACCUMULATION
+ 2 #TRAN-OCC    (70)   /* Same as below    /* Was 58                 /* PM6 DW11
+  3 #SCR-TRAN     (A4)
+  3 REDEFINE #SCR-TRAN
+   4 #SCR-TRAN-2  (A4)  /* DW11
+  3 REDEFINE #SCR-TRAN
+   4 #SCR-TRAN-3  (A4)  /* DW11
+  3 REDEFINE #SCR-TRAN
+   4 #SCR-TRAN-4  (A4)  /* DW11
+*
+  3 #SCR-MIN-PLUS (A1)
+  3 #SCR-D-C      (A1)
+*
+1 #NUM-ENTRIES     (N3) INIT <70>  /* Same as above                 /* DW11
+1 #ACC-ACCUM
+ 2 #ACCUM-TRAN-TYPE     (70)                                      /* PM6 DW11
+  3 #ACCUM-CLERK-AMT   (P7.2/6)
+  3 REDEFINE #ACCUM-CLERK-AMT
+   4 #ACCUM-CLERK-AMT-2 (P7.2/6)                    /* DW11
+1 #S-CLERK-TOTAL       (P7.2/7)
+1 REDEFINE #S-CLERK-TOTAL
+ 2 #S-CLERK-TOTAL-2    (P7.2/7)                     /* DW11
+1 REDEFINE #S-CLERK-TOTAL
+ 2 #S-CLERK-TOTAL-3    (P7.2/7)                     /* DW11
+*
+1 #S-TYPE-TOTAL        (P7.2/71)   /* Was 59                     /* PM6  DW11
+*
+1 #ACCUM-CLERK-AMT-SPECIAL (P7.2/70)                              /* PM6  DW11
+1 #S-CLERK-TOTAL-SPECIAL (P7.2)                                   /* PM2
+*
+1 TR-V VIEW OF A-ACCOUNTING-REGISTER
+ 2 ID-NUMBER
+ 2 TRANSACTION-DATN       (P9)
+ 2 TRANSACTION-TIMN       (P7)
+ 2 TXN-CODE               (A4)
+ 2 SEQUENCE-NUM           (N1)
+ 2 DEBIT-AMOUNT           (P7.2)
+ 2 CREDIT-AMOUNT          (P7.2)
+ 2 CLERK-ID               (A3)
+ 2 TERMINAL-ID            (A8)
+ 2 PROCESS-IND            (A1)
+ 2 MONTH-END              (A1)                                    /* PM11
+*
+1 #TRAN-40 (A4)
+1 #CI      (I2)
+1 #TI      (I2)
+1 #TI2     (I2)
+*
+1 #START-DATE  (N8)
+1 REDEFINE #START-DATE
+ 2 #START-DATE-A  (A8)
+ 2 REDEFINE #START-DATE-A
+  3 #ST-MM     (A2)
+  3 #ST-DD     (A2)
+  3 #ST-YYYY   (A4)
+*
+1 #END-DATE    (N8)
+1 REDEFINE #END-DATE
+ 2 #END-DATE-A  (A8)
+ 2 REDEFINE #END-DATE-A
+  3 #EN-MM     (A2)
+  3 #EN-DD     (A2)
+  3 #EN-YYYY   (A4)
+*
+1 #W-DATE           (P9)
+1 #E-DATE           (P9)
+1 #W-DATE-FORMAT     (N8)
+1 REDEFINE #W-DATE-FORMAT
+ 2 #W-DATE-FORMAT-A   (A8)
+*
+1 #SCR-DATE            (A10)
+1 #INPUT-DATE-N        (N8)
+1 REDEFINE #INPUT-DATE-N
+ 2 #INPUT-DATE          (A8)
+1 REDEFINE #INPUT-DATE-N
+ 2 #ID-MM           (A2)
+ 2 #ID-DD           (A2)
+ 2 #ID-YYYY         (A4)
+*
+1 #INPUT-TYPE   (A1) INIT <'D'>
+1 #SUMM-DET     (A1) INIT <'T'>
+*
+1 #HOLD-DATE           (N8)
+1 REDEFINE #HOLD-DATE
+ 2 #HD-YYYY           (A4)
+ 2 #HD-MM             (A2)
+ 2 #HD-DD             (A2)
+*
+1 #GDATESXX-FIELDS                                                /* PM11
+ 2 #DATN                     (N8)
+ 2 #FROM-DATE                (N8)     INIT <00000001>
+ 2 #TR-DATE                  (N8)
+ 2 #REQUEST-TYPE             (A1)     INIT <'E'>
+*
+1 #EXTRACT-RECORD            (A1000)                             /* PM11 PM12
+1 #TAB                       (A1)     INIT <H'09'>               /* PM11
+1 #DISPLAY-AMOUNT            (A18)                               /* PM11
+*
+END-DEFINE
+******************************************************************************
+* 
+INCLUDE GONERCXX
+*
+FORMAT PS=23                 /* SAG-AB 20060510
+*
+PERFORM FORMAT-DATES                                              /* PM11
+RESET #CGA-SCR-ID
+RESET #CGA-SCR-SUFFIX
+MOVE '*' TO #CGA-SCR-COMMAND
+*
+IF *DEVICE = 'BATCH'                                              /* PM11
+  PERFORM DO-ACCTG-DAILY                                          /* PM11
+  PERFORM CREATE-REPORT                                           /* PM11
+  ESCAPE ROUTINE                                                  /* PM11
+END-IF                                                            /* PM11
+*
+REPEAT
+*
+INPUT 'Please enter (D)aily recon or (T)ransaction recon - '
+  #INPUT-TYPE (AD=IM)
+*
+IF #INPUT-TYPE = 'D' OR = 'T'
+  IGNORE
+ELSE
+   REINPUT 'Invalid type - must be D or T'
+END-IF
+*
+IF #INPUT-TYPE = 'D'
+  INPUT 'Please enter recon date - ' #INPUT-DATE (AD=IM)
+  IF #INPUT-DATE NE MASK(MMDDYY)
+    REINPUT 'Date must be format MMDDYY'
+    MARK *#INPUT-DATE
+  END-IF
+*
+  COMPRESS #ID-MM '/' #ID-DD '/' #ID-YYYY INTO #SCR-DATE LEAVING NO
+  COMPRESS #ID-YYYY #ID-MM #ID-DD
+                INTO #W-DATE-FORMAT-A LEAVING NO SPACE
+  MOVE #W-DATE-FORMAT TO #W-DATE
+ELSE
+  INPUT 'Please enter (T)otals only or (D)etail listing - '
+    #SUMM-DET (AD=IM)
+*
+  IF #SUMM-DET = 'T' OR = 'D'
+    IGNORE
+  ELSE
+    REINPUT 'Invalid type - must be T or D'
+  END-IF
+*
+* MOVE #ACC-TXN-TYPE (40) TO #TRAN-40
+  INPUT MARK *#START-DATE USING MAP 'C2952MRC'
+  IF #CGA-SCR-COMMAND = '*'
+    IGNORE
+  ELSE
+    FETCH 'G1000PXX'
+  END-IF
+*
+  IF #START-DATE-A NE MASK(MMDDYYYY)
+   REINPUT 'START DATE must be format MMDDYYYY'
+   MARK *#START-DATE
+  END-IF
+*
+  IF #END-DATE-A NE MASK(MMDDYYYY)
+    REINPUT WITH 'END DATE must be format MMDDYYYY'
+    MARK *#END-DATE
+  END-IF
+*
+  COMPRESS #ST-MM '/' #ST-DD '/' #ST-YYYY INTO #SCR-DATE LEAVING NO
+  COMPRESS #ST-YYYY #ST-MM #ST-DD
+                INTO #W-DATE-FORMAT-A LEAVING NO SPACE
+  MOVE #W-DATE-FORMAT TO #W-DATE
+  COMPRESS #EN-YYYY #EN-MM #EN-DD
+                INTO #W-DATE-FORMAT-A LEAVING NO SPACE
+  MOVE #W-DATE-FORMAT TO #E-DATE
+END-IF
+*
+RESET #ACC-ACCUM
+RESET #S-CLERK-TOTAL (*)
+RESET #S-TYPE-TOTAL  (*)
+RESET #ACCUM-CLERK-AMT-SPECIAL (*) #S-CLERK-TOTAL-SPECIAL         /* PM2
+*
+IF #INPUT-TYPE = 'T'
+  PERFORM DO-ACCTG-TRAN
+ELSE
+  PERFORM DO-ACCTG-DAILY
+END-IF
+*
+PERFORM DISPLAY-SCREEN
+IF #CGA-SCR-COMMAND = '*'
+  IGNORE
+ELSE
+  FETCH 'G1000PXX'
+END-IF
+*
+END-REPEAT
+*
+******************************************************************************
+DEFINE SUBROUTINE DO-ACCTG-DAILY
+******************************************************************************
+*
+READ TR-V LOGICAL WITH TRANSACTION-DATN = #W-DATE
+  IF  TRANSACTION-DATN NE #W-DATE
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'LWOF'         /* Bypass LWOF     /* DW14
+    ESCAPE TOP
+  END-IF
+*
+  IF (TR-V.MONTH-END = 'Y'                                       /* PM11
+   AND *DEVICE NE 'BATCH')                                       /* PM11
+    OR TR-V.TXN-CODE = 'CASH'                                    /* PM13
+    ESCAPE TOP
+  END-IF
+*
+  PERFORM DO-ACCUMULATION
+END-READ
+*
+END-SUBROUTINE
+*
+******************************************************************************
+DEFINE SUBROUTINE DO-ACCUMULATION
+******************************************************************************
+*
+FOR #CI 1 TO 5
+  IF #CLERK-NAME(#CI) = TR-V.CLERK-ID
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+PERFORM FIND-BATCH-CLERK                                          /* PM11
+*
+FOR #TI 1 TO #NUM-ENTRIES                                         /* PM6  DW11
+  IF #SCR-TRAN (#TI) = TR-V.TXN-CODE
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF #TI GT #NUM-ENTRIES                                        /* PM6  DW11
+  COMPUTE #TI = #NUM-ENTRIES - 2                              /* PM6  DW11 PM13
+  MOVE 62 TO #TI   /* the 1st Other Index /* <<<<<<<<<<<<<<   /* DW11/DW12/DW14
+END-IF                                                        /* PM4
+*
+COMPUTE #TI2 = #TI + 1
+IF #SCR-D-C (#TI) = 'C'
+  ADD TR-V.CREDIT-AMOUNT TO #ACCUM-CLERK-AMT(#TI,#CI)
+  ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)              /* PM11
+  ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI)          /* PM11
+ELSE
+ IF #SCR-D-C (#TI) = 'D'
+    ADD TR-V.DEBIT-AMOUNT TO #ACCUM-CLERK-AMT(#TI,#CI)
+    ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)             /* PM11
+    ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI)         /* PM11
+ ELSE
+   IF #SCR-TRAN ( #TI) = 'ADDL'
+     IF TR-V.SEQUENCE-NUM = 1
+         SUBTRACT TR-V.CREDIT-AMOUNT FROM
+                                   #ACCUM-CLERK-AMT(#TI,#CI)
+         SUBTRACT TR-V.CREDIT-AMOUNT FROM
+                                   #BATCH-CLERK-TTL (#B-I1)       /* PM11
+         SUBTRACT TR-V.CREDIT-AMOUNT FROM
+                                   #BATCH-CLERK-AMT (#B-I1,#TI)   /* PM11
+     ELSE
+       IF TR-V.SEQUENCE-NUM = 3
+          ADD TR-V.DEBIT-AMOUNT TO #ACCUM-CLERK-AMT(#TI,#CI)
+          ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)       /* PM11
+          ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI)   /* PM11
+       END-IF
+     END-IF
+   ELSE
+     ADD TR-V.CREDIT-AMOUNT TO #ACCUM-CLERK-AMT (#TI,#CI)
+     ADD TR-V.DEBIT-AMOUNT  TO #ACCUM-CLERK-AMT (#TI2, #CI)
+     ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)           /* PM11
+     ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI)       /* PM11
+     ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)            /* PM11
+     ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI2)       /* PM11
+   END-IF
+ END-IF
+END-IF
+*
+IF #SUMM-DET ='D'
+  WRITE TR-V.ID-NUMBER TR-V.TXN-CODE TR-V.CLERK-ID
+   TR-V.DEBIT-AMOUNT TR-V.CREDIT-AMOUNT TR-V.TRANSACTION-DATN
+END-IF
+*
+END-SUBROUTINE
+*
+******************************************************************************
+DEFINE SUBROUTINE DO-ACCTG-TRAN
+******************************************************************************
+*
+READ TR-V LOGICAL WITH TRANSACTION-DATN FROM #W-DATE
+  IF TRANSACTION-DATN GT #E-DATE
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'LWOF'         /* Bypass LWOF     /* DW14
+    ESCAPE TOP
+  END-IF
+*
+  IF (TR-V.MONTH-END = 'Y'                                        /* PM11
+   AND *DEVICE NE 'BATCH')                                        /* PM11
+    OR TR-V.TXN-CODE = 'CASH'                                     /* PM13
+    ESCAPE TOP
+  END-IF
+*
+  FOR #TI 1 TO #NUM-ENTRIES                                 /* PM6 DW11
+    IF TXN-CODE = #SCR-TRAN (#TI)
+      IF #SCN-TRAN-PICK (#TI) = 'X'
+        PERFORM DO-ACCUMULATION
+        ESCAPE BOTTOM
+      END-IF
+    END-IF
+  END-FOR
+END-READ
+*
+END-SUBROUTINE
+*
+******************************************************************************
+DEFINE SUBROUTINE DISPLAY-SCREEN
+******************************************************************************
+*
+FOR #TI 1 TO #NUM-ENTRIES                                      /* PM6 DW11
+  FOR #CI 1 TO 6
+    ADD #ACCUM-CLERK-AMT(#TI,#CI) TO #S-TYPE-TOTAL  (#TI)
+    ADD #ACCUM-CLERK-AMT(#TI,#CI) TO #S-CLERK-TOTAL (#CI)
+    ADD #ACCUM-CLERK-AMT(#TI,#CI) TO #S-CLERK-TOTAL (7)
+*
+    IF #CI = 3                                                    /* PM1
+      ADD #ACCUM-CLERK-AMT (#TI,#CI) TO #ACCUM-CLERK-AMT-SPECIAL (#TI)
+      ADD #ACCUM-CLERK-AMT (#TI,#CI) TO #S-CLERK-TOTAL-SPECIAL
+    END-IF                                                        /* PM1
+  END-FOR
+END-FOR
+*
+INPUT USING MAP 'C2950MRC'
+IF #CGA-SCR-COMMAND = '*'
+  IGNORE
+ELSE
+  FETCH 'G1000PXX'
+END-IF
+*
+INPUT USING MAP 'C2951MRC'
+IF #CGA-SCR-COMMAND = '*'
+  IGNORE
+ELSE
+  FETCH 'G1000PXX'
+END-IF
+*
+INPUT USING MAP 'C2953MRC'
+*
+IF #CGA-SCR-COMMAND = '*'
+  IGNORE
+ELSE
+  FETCH 'G1000PXX'
+END-IF
+*
+INPUT USING MAP 'C2954MRC'       /* DW12
+*
+END-SUBROUTINE
+*
+******************************************************************************
+DEFINE SUBROUTINE FORMAT-DATES
+******************************************************************************
+*
+IF *DEVICE = 'BATCH'
+  INPUT #DATN
+  IF #DATN = 0
+    MOVE *DATN TO #DATN
+*
+    IF *TIMN LT 1200000
+      CALLNAT 'GDATESXX'
+        #DATN
+        #FROM-DATE
+        #TR-DATE
+        #REQUEST-TYPE
+*
+      #DATN   := #TR-DATE                                              /* PM15
+    END-IF
+  END-IF
+*
+  #W-DATE     := #DATN
+ELSE
+  MOVE *DATN TO #HOLD-DATE
+  COMPRESS #HD-MM #HD-DD #HD-YYYY INTO #INPUT-DATE LEAVING NO SPACE
+  ASSIGN #START-DATE-A = #INPUT-DATE
+  ASSIGN #END-DATE-A = #INPUT-DATE
+END-IF
+*
+END-SUBROUTINE
+*
+******************************************************************************
+DEFINE SUBROUTINE FIND-BATCH-CLERK                                     /* PM11
+******************************************************************************
+*
+FOR #B-I1 1 TO 50
+  IF #BATCH-CLERK (#B-I1) = TR-V.CLERK-ID
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #BATCH-CLERK (#B-I1) = ' '
+    #BATCH-CLERK (#B-I1) := TR-V.CLERK-ID
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+******************************************************************************
+DEFINE SUBROUTINE CREATE-REPORT                                        /* PM11
+******************************************************************************
+*
+COMPRESS 'TRANSACTION' #TAB '+/-' INTO #EXTRACT-RECORD LEAVING NO
+*
+FOR #B-I1 1 TO 50
+  IF #BATCH-CLERK (#B-I1) = ' '
+    COMPRESS #EXTRACT-RECORD #TAB
+             'TOTAL' INTO #EXTRACT-RECORD LEAVING NO
+    WRITE WORK 1 #EXTRACT-RECORD
+    RESET #EXTRACT-RECORD
+    ESCAPE BOTTOM
+  END-IF
+*
+  COMPRESS #EXTRACT-RECORD #TAB
+           #BATCH-CLERK (#B-I1) INTO #EXTRACT-RECORD LEAVING NO
+END-FOR
+*
+FOR #B-I2 1 TO #NUM-ENTRIES                               /* DW11
+  IF #SCR-TRAN (#B-I2) = ' '             /* DW11
+    ESCAPE TOP
+  END-IF
+*
+  COMPRESS #SCR-TRAN (#B-I2) #TAB
+           #SCR-MIN-PLUS (#B-I2) INTO #EXTRACT-RECORD LEAVING NO
+*
+  FOR #B-I1 1 TO 50
+    IF #BATCH-CLERK (#B-I1) = ' '
+      ADD #BATCH-TRAN-TOTAL (#B-I2) TO #BATCH-TRAN-TOTAL (71)   /* Was 59   DW11
+      MOVE EDITED #BATCH-TRAN-TOTAL (#B-I2) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99)
+        TO #DISPLAY-AMOUNT
+      COMPRESS #EXTRACT-RECORD #TAB
+               #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+      WRITE WORK 1 #EXTRACT-RECORD
+      RESET #EXTRACT-RECORD
+      ESCAPE BOTTOM
+    END-IF
+*
+    MOVE EDITED #BATCH-CLERK-AMT (#B-I1,#B-I2) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99)
+      TO #DISPLAY-AMOUNT
+    ADD #BATCH-CLERK-AMT (#B-I1, #B-I2) TO #BATCH-TRAN-TOTAL (#B-I2)
+*
+    COMPRESS #EXTRACT-RECORD #TAB
+             #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+  END-FOR
+END-FOR
+*
+#EXTRACT-RECORD := #TAB
+FOR #B-I1 1 TO 50
+  IF #BATCH-CLERK (#B-I1) = ' '
+    MOVE EDITED #BATCH-TRAN-TOTAL (71) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99) /* Was 59   DW11
+        TO #DISPLAY-AMOUNT
+    COMPRESS #EXTRACT-RECORD #TAB
+             #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+    WRITE WORK 1 #EXTRACT-RECORD
+    RESET #EXTRACT-RECORD
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE EDITED #BATCH-CLERK-TTL (#B-I1) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99)
+        TO #DISPLAY-AMOUNT
+
+  COMPRESS #EXTRACT-RECORD #TAB
+           #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+END-FOR
+*
+END-SUBROUTINE
+*
+END

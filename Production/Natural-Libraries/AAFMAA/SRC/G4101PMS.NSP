@@ -1,0 +1,280 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: G4101PMS
+*
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  02232005 DW1  Add AL (Annuity Life) PROCESSING
+* DRW 08/21/2008 DW2 Gen Plus Processing
+* RSE 11/13/2012 RE1 Screen modifications for LT II Annual Renewable Requirements
+*                    Added new plans (LT II AR & No Medical Term (NMT))
+*******************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING G4100LMS
+LOCAL USING GONERLXX        /* WORK FIELDS FOR 'GONERCXX'
+LOCAL
+1 #ytd-sps-gen-orig-gains-al-gpl    (p7)     /* DW2
+1 #ytd-sps-gen-addl-gains-al-gpl    (p7)
+*
+1 #SO-AL-LBL   (A7) INIT <'SO'>
+1 #DATN-DISP   (A11)
+1 #LAST-Y-E-TOT-UNITS  (P7)
+1 #YTD-ORIG-GAINS      (P7/10)
+1 #YTD-ADDL-GAINS      (P7/11)   /* RE1 formerly 9
+1 #YTD-SPS-GEN-ORIG-GAINS      (P7/7)
+1 #YTD-SPS-GEN-ADDL-GAINS      (P7/7)
+1 #YTD-REINSTATES      (P7)
+1 #YTD-TOT-GAINS       (P7)
+1 #SUB1-TOT-UNITS      (P7)
+1 #YTD-LOSSES          (P7/4)
+1 #YTD-LOSSES-SG       (P7/3)
+1 #YTD-TOT-LOSSES      (P7)
+1 #SUB2-TOT-UNITS      (P7)
+1 #CURR-TOT-UNITS      (P7)
+1 #CURR-MBRS-BY-UNITS  (P7/5)     /* RE1 formerly 10
+1 #CURR-MBRS-BY-UNITS-2(P7/5)     /* RE1 new field
+1 #CURR-TOT-MBRS-BY-UNITS  (P7)
+1 #CURR-LINES-BY-PLAN  (P7/8)     /* RE1 formerly 7
+*
+1 #TEXT               (A60)
+1 #I1                 (I2)
+1 #HOLD-MM            (N2)
+1 #LAST-YYYY          (N4)
+1 #FROM-DATE          (A16)
+1 #TO-DATE            (A8)
+1 REDEFINE #TO-DATE
+ 2 #TO-DATE-MM        (N2)
+ 2 #TO-DATE-SL-1      (A1)
+ 2 #TO-DATE-DD        (N2)
+ 2 #TO-DATE-SL-2      (A1)
+ 2 #TO-DATE-YY        (N2)
+*
+1 #TO-DATE-MON-DISP   (A3)
+*
+1 #DATN-YYYYMMDD      (N8)
+1 REDEFINE #DATN-YYYYMMDD
+ 2 #DATN-YYYYMM       (N6)
+ 2 #DATN-DD           (N2)
+*
+1 #WORK-YYYYMM        (N6)
+1 REDEFINE #WORK-YYYYMM
+ 2 #WORK-YYYY         (N4)
+ 2 #WORK-MM           (N2)
+*
+1 #YYYYMMDD           (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM            (N6)
+ 2 REDEFINE #YYYYMM
+  3 #YYYY             (N4)
+  3 #MM               (N2)
+ 2 #DD                (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A    (A4)
+ 2 #MM-A      (A2)
+ 2 #DD-A      (A2)
+*
+1 #MONTH-G (A48)
+             INIT <'JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC '>
+1 REDEFINE #MONTH-G
+ 2 #MONTH-OCC     (12)
+  3 #MONTH        (A3)
+  3 #FILL         (A1)
+1 #MONTHS (A36) INIT <'JanFebMarAprMayJunJulAugSepOctNovDec'>
+1 REDEFINE #MONTHS
+ 2 #MON (A3/12)
+*
+END-DEFINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+INCLUDE GONERCXX            /* NATURAL ERROR ROUTINE
+*
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #DD-A #MON (#MM) #YYYY-A INTO #DATN-DISP
+MOVE *DATN TO #DATN-YYYYMMDD
+*
+INPUT #YYYYMM
+*
+MOVE 'MS' TO #CGA-SCR-COMMAND
+*
+IF #YYYY GE 2005         /* DW1
+  MOVE 'AL/GPL' TO #SO-AL-LBL                /* DW2
+END-IF
+*
+MOVE #YYYYMM TO #WORK-YYYYMM
+COMPUTE #LAST-YYYY = #WORK-YYYY - 1
+COMPRESS '31 DECEMBER' #LAST-YYYY INTO #FROM-DATE
+*
+IF #WORK-YYYYMM GE #DATN-YYYYMM
+  MOVE #DATN-YYYYMM TO #WORK-YYYYMM
+  SUBTRACT 1 FROM #WORK-MM
+*
+  IF #WORK-MM LT 1
+    MOVE 12 TO #WORK-MM
+    SUBTRACT 1 FROM #WORK-YYYY
+  END-IF
+END-IF
+*
+COMPRESS #MONTH (#WORK-MM) #WORK-YYYY INTO #TO-DATE
+*
+MOVE #WORK-MM TO #HOLD-MM
+FOR #WORK-MM 1 TO #HOLD-MM
+  FIND (1) MBRSHIP-STATS-V WITH MONTH-KEY = #WORK-YYYYMM
+    IF #WORK-MM = 1     /* USE JANUARY FOR LAST Y-E AMTS
+      IF #WORK-YYYY = 1997
+        MOVE 81626 TO #LAST-Y-E-TOT-UNITS
+      ELSE
+        IF #WORK-YYYY GT 1997
+          ADD ME-SHIPS-BY-UNITS (*)   TO #LAST-Y-E-TOT-UNITS
+        ELSE
+          ADD ME-SHIPS-BY-UNITS (*)   TO #LAST-Y-E-TOT-UNITS
+          ADD ME-PAID-UP-UNITS        TO #LAST-Y-E-TOT-UNITS
+          ADD ME-ETI-UNITS            TO #LAST-Y-E-TOT-UNITS
+        END-IF
+      END-IF
+    END-IF
+*
+    IF #WORK-YYYY GE 1997
+*      ADD GAIN-MBRS (1:4) TO #YTD-ORIG-GAINS (1:4)          /* RE1 START
+*      ADD GAIN-MBRS (8)   TO #YTD-ORIG-GAINS (5)
+*      ADD GAIN-MBRS (22)  TO #YTD-ORIG-GAINS (7)   /* LTII
+*      ADD GAIN-MBRS (5:7) TO #YTD-ORIG-GAINS (6:8)
+      ADD GAIN-MBRS (1:4) TO #YTD-ORIG-GAINS (1)   
+      ADD GAIN-MBRS (8)   TO #YTD-ORIG-GAINS (2)
+      ADD GAIN-MBRS (5)  TO #YTD-ORIG-GAINS (3)   /* LTII
+      ADD GAIN-MBRS (24) TO #YTD-ORIG-GAINS (4)
+      ADD GAIN-MBRS (6) TO #YTD-ORIG-GAINS (5)
+      ADD GAIN-MBRS (22) TO #YTD-ORIG-GAINS (5)
+      ADD GAIN-MBRS (26) TO #YTD-ORIG-GAINS (5)
+      ADD GAIN-MBRS (7) TO #YTD-ORIG-GAINS (6)              /* RE1 END
+      ADD GAIN-MBRS (1:8) TO #YTD-TOT-GAINS
+      ADD GAIN-MBRS (22)  TO #YTD-TOT-GAINS   /* LTII
+      ADD GAIN-MBRS (24)  TO #YTD-TOT-GAINS   /* NMT                              /* RE1 START
+      ADD GAIN-MBRS (26)  TO #YTD-TOT-GAINS   /* LTII AR     
+*
+*      ADD SPS-GEN-GAIN-PLANS (1:4) TO #YTD-SPS-GEN-ORIG-GAINS (1:4)
+*      ADD SPS-GEN-GAIN-PLANS (14) TO #YTD-SPS-GEN-ORIG-GAINS (5)
+*      ADD SPS-GEN-GAIN-PLANS (5:6) TO #YTD-SPS-GEN-ORIG-GAINS (6:7)
+*      ADD SPS-GEN-GAIN-PLANS (16)  TO #YTD-SPS-GEN-ORIG-GAINS (7) /* lt2
+      ADD SPS-GEN-GAIN-PLANS (1:4) TO #YTD-SPS-GEN-ORIG-GAINS (1)
+      ADD SPS-GEN-GAIN-PLANS (14) TO #YTD-SPS-GEN-ORIG-GAINS (2)
+      ADD SPS-GEN-GAIN-PLANS (5) TO #YTD-SPS-GEN-ORIG-GAINS (3)
+      ADD SPS-GEN-GAIN-PLANS (22) TO #YTD-SPS-GEN-ORIG-GAINS (4)
+      ADD SPS-GEN-GAIN-PLANS (6) TO #YTD-SPS-GEN-ORIG-GAINS (5)
+      ADD SPS-GEN-GAIN-PLANS (16) TO #YTD-SPS-GEN-ORIG-GAINS (5)
+      ADD SPS-GEN-GAIN-PLANS (24) TO #YTD-SPS-GEN-ORIG-GAINS (5)                  /* RE1 END
+      add sps-gen-gain-plans (18)  to #ytd-sps-gen-orig-gains-al-gpl     /* DW2
+      add sps-gen-gain-plans (20)  to #ytd-sps-gen-orig-gains-al-gpl     /* DW2
+*
+      ADD SPS-GEN-GAIN-PLANS (1:6) TO #YTD-TOT-GAINS
+      ADD SPS-GEN-GAIN-PLANS (14)  TO #YTD-TOT-GAINS
+      ADD SPS-GEN-GAIN-PLANS (16)  TO #YTD-TOT-GAINS   /* LTII
+      add sps-gen-gain-plans (18)  to #ytd-tot-gains   /* DW2
+      add sps-gen-gain-plans (20)  to #ytd-tot-gains   /* DW2
+*
+*      ADD GAIN-MBRS (11:14) TO #YTD-ADDL-GAINS (1:4)            /* RE1 START
+*      ADD GAIN-MBRS (18)    TO #YTD-ADDL-GAINS (5)
+*      ADD GAIN-MBRS (15:17) TO #YTD-ADDL-GAINS (6:8)
+*      ADD GAIN-MBRS (23)    TO #YTD-ADDL-GAINS (7)   /* LTII
+      ADD GAIN-MBRS (11:14) TO #YTD-ADDL-GAINS (1)
+      ADD GAIN-MBRS (18)    TO #YTD-ADDL-GAINS (2)
+      ADD GAIN-MBRS (15)    TO #YTD-ADDL-GAINS (3)
+      ADD GAIN-MBRS (25)    TO #YTD-ADDL-GAINS (4)
+      ADD GAIN-MBRS (16)    TO #YTD-ADDL-GAINS (5)   /* LTII
+      ADD GAIN-MBRS (23)    TO #YTD-ADDL-GAINS (5)   /* LTII
+      ADD GAIN-MBRS (27)    TO #YTD-ADDL-GAINS (5)
+      ADD GAIN-MBRS (17)    TO #YTD-ADDL-GAINS (6)              /* RE1 END
+      
+      ADD GAIN-MBRS (11:18) TO #YTD-TOT-GAINS
+      ADD GAIN-MBRS (23)    TO #YTD-TOT-GAINS   /* LTII
+      ADD GAIN-MBRS (25)    TO #YTD-TOT-GAINS   /* RE1 NMT          
+      ADD GAIN-MBRS (27)    TO #YTD-TOT-GAINS   /* RE1 LTII AR
+      ADD GAIN-MBRS (19:20) TO #YTD-REINSTATES
+      ADD SPS-GEN-GAIN-PLANS (13) TO #YTD-REINSTATES
+*
+*      ADD SPS-GEN-GAIN-PLANS (7:10)  TO #YTD-SPS-GEN-ADDL-GAINS (1:4)           /* RE1 START
+*      ADD SPS-GEN-GAIN-PLANS (15)    TO #YTD-SPS-GEN-ADDL-GAINS (5)
+*      ADD SPS-GEN-GAIN-PLANS (11:12) TO #YTD-SPS-GEN-ADDL-GAINS (6:7)
+*      ADD SPS-GEN-GAIN-PLANS (17)    TO #YTD-SPS-GEN-ADDL-GAINS (7) /* lt2
+      ADD SPS-GEN-GAIN-PLANS (7:10)  TO #YTD-SPS-GEN-ADDL-GAINS (1)
+      ADD SPS-GEN-GAIN-PLANS (15)    TO #YTD-SPS-GEN-ADDL-GAINS (2)
+      ADD SPS-GEN-GAIN-PLANS (11) TO #YTD-SPS-GEN-ADDL-GAINS (3)
+      ADD SPS-GEN-GAIN-PLANS (23) TO #YTD-SPS-GEN-ADDL-GAINS (4)
+      ADD SPS-GEN-GAIN-PLANS (12) TO #YTD-SPS-GEN-ADDL-GAINS (5)
+      ADD SPS-GEN-GAIN-PLANS (17) TO #YTD-SPS-GEN-ADDL-GAINS (5)
+      ADD SPS-GEN-GAIN-PLANS (25)    TO #YTD-SPS-GEN-ADDL-GAINS (5) /* lt2       /* RE1 END
+      add sps-gen-gain-plans (19)    to #ytd-sps-gen-addl-gains-al-gpl  /* DW2
+      add sps-gen-gain-plans (21)    to #ytd-sps-gen-addl-gains-al-gpl  /* DW2
+*
+      
+      ADD SPS-GEN-GAIN-PLANS (7:12)  TO #YTD-TOT-GAINS
+      ADD SPS-GEN-GAIN-PLANS (15)    TO #YTD-TOT-GAINS
+      ADD SPS-GEN-GAIN-PLANS (17)    TO #YTD-TOT-GAINS  /* LTII
+      add sps-gen-gain-plans (19)    to #ytd-tot-gains    /* DW2
+      add sps-gen-gain-plans (21)    to #ytd-tot-gains    /* DW2
+    ELSE
+      FOR #I1 1 TO 10
+        ADD GAIN-SHIPS (#I1) TO #YTD-ORIG-GAINS (#I1)
+        ADD GAIN-SHIPS (#I1) TO #YTD-TOT-GAINS
+      END-FOR
+*
+      ADD GAIN-SHIPS(11:19) TO #YTD-ADDL-GAINS (1:9)
+      ADD GAIN-SHIPS(11:19) TO #YTD-TOT-GAINS
+      ADD GAIN-SHIPS(20)    TO #YTD-REINSTATES
+    END-IF
+*
+    COMPUTE #SUB1-TOT-UNITS = #LAST-Y-E-TOT-UNITS + #YTD-TOT-GAINS
+                                                  + #YTD-REINSTATES
+*
+    FOR #I1 1 TO 4
+      ADD LOSS-PLANS (#I1) TO #YTD-LOSSES (#I1)
+      ADD LOSS-PLANS (#I1) TO #YTD-TOT-LOSSES
+    END-FOR
+*
+    FOR #I1 1 TO 3
+      ADD SPS-GEN-LOSS-PLANS (#I1) TO #YTD-LOSSES-SG (#I1)
+      ADD SPS-GEN-LOSS-PLANS (#I1) TO #YTD-TOT-LOSSES
+    END-FOR
+*
+    COMPUTE #SUB2-TOT-UNITS = #SUB1-TOT-UNITS - #YTD-TOT-LOSSES
+  END-FIND
+END-FOR
+*
+IF #WORK-YYYYMM GE #DATN-YYYYMM
+  MOVE #DATN-YYYYMM TO #WORK-YYYYMM
+ELSE
+  MOVE #YYYYMM TO #WORK-YYYYMM
+  ADD 1 TO #WORK-MM
+*
+  IF #WORK-MM GT 12
+    MOVE 1 TO #WORK-MM
+    ADD 1 TO #WORK-YYYY
+  END-IF
+END-IF
+*
+FIND (1) MBRSHIP-STATS-V WITH MONTH-KEY = #WORK-YYYYMM
+*  ADD ME-MBR-BY-UNITS  (*) TO #CURR-MBRS-BY-UNITS (*)            /* RE1 
+  ADD ME-MBR-BY-UNITS  (1:5) TO #CURR-MBRS-BY-UNITS (1:5)         /* RE1
+  ADD ME-MBR-BY-UNITS  (6:10) TO #CURR-MBRS-BY-UNITS-2 (1:5)      /* RE1
+  ADD ME-MBR-BY-UNITS  (*) TO #CURR-TOT-MBRS-BY-UNITS
+*  ADD ME-LINES-BY-PLAN (*) TO #CURR-LINES-BY-PLAN (*)      /* RE1 START
+  ADD ME-LINES-BY-PLAN (1:4) TO #CURR-LINES-BY-PLAN (1:4)
+  ADD ME-LINES-BY-PLAN (5) TO #CURR-LINES-BY-PLAN (5)
+  ADD ME-LINES-BY-PLAN (8) TO #CURR-LINES-BY-PLAN (6)
+  ADD ME-LINES-BY-PLAN (6) TO #CURR-LINES-BY-PLAN (7)
+  ADD ME-LINES-BY-PLAN (9) TO #CURR-LINES-BY-PLAN (7)
+  ADD ME-LINES-BY-PLAN (7) TO #CURR-LINES-BY-PLAN (8)       /* RE1 END
+END-FIND
+*
+IF #YYYYMM GE 199701
+  INPUT TEXT #TEXT USING MAP 'G4120MMS'  /* plans
+ELSE
+  INPUT TEXT #TEXT USING MAP 'G4121MMS' /* units
+END-IF
+*
+FETCH 'G1000PXX'
+END

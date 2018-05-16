@@ -1,0 +1,724 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPBPTMCV - Level Term II / Annual Renewable Auto Conversion
+*************************************************************************
+* Created for Annual Renewable Project
+* Modelled after LT to RT conversion
+******************************************************************
+* MODIFICATION LOG
+******************************************************************
+* YAK  10172012        Initial Creation (Annual Renewable Project)
+* YAK  01022013   YK1  Add renewal for EZ Term
+* vxt  12312013   vt1  Fix the error 0936 in Production
+* YAK  02182014   YK2  Change logic to determine Rider on the account
+* TMT  04122014   TT1  Contact Normalization - Gender and DOB
+* YAK  01132017   YK3  Remove unused logic for letters
+*                      Change policy ownership to the new structure
+*                      Correct logic for transactions
+* vxt  06/14/2017 vt2  /HD-8138, HD-4276/ Fix issue with EZ term ez-pay renewals
+********************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLSTAT
+LOCAL USING GPRATR02
+LOCAL USING CONTPDA1         /* TT1
+LOCAL USING OBJLLETT          /* YK3
+LOCAL
+
+* Assigned/calculated at the beginning of the process
+1 #DATN           (N8)
+1 #TIMN           (N7)
+1 #PARM           (A10)                                   /* PARMRUND.TXT - MM/DD/YYYY
+1 #PARM-DATE      (N8)
+1 REDEFINE #PARM-DATE
+  2 #PARM-YYYYMM  (N6)
+1 REDEFINE #PARM-DATE
+  2 #PARM-YYYY    (N4)
+  2 #PARM-MM      (N2)
+  2 #PARM-DD      (N2)
+*
+1 CONSTANTS
+  2 #DIRECT-BILL-MODE     (A1/8) CONST <'A','S','Q','M'>
+  2 #CREDIT-CARD-MODE     (A1/8) CONST <'0','1','2','4'>
+  2 #NO-RESPONSE          (A1)   CONST <' '>
+  2 #RESPONSE-NO          (A1)   CONST <'N'>
+  2 #PREMIUM-PAY-STATUS   (A2)   CONST <'22'>
+  2 #GWAT-PAY-STATUS      (A2)   CONST <'21'>
+  2 #AR                   (A1)   CONST <'T'>
+  2 #LTII                 (A1/3) CONST <'S','R','Q'>
+  2 #ALLOTMENT            (A1)   CONST <'G'>
+  2 #EAZY-PAY             (A1)   CONST <'E'>
+  2 #CLERK-ID             (A3)   CONST <'EDS'>
+  2 #SCR-COMMAND          (A2)   CONST <'*'>
+  2 #SCR-SUFFIX           (A3)   CONST <' '>
+  2 #EZ-TERM              (A3)   CONST <'EZ'>
+  2 #LTII-TYPE            (A2)   CONST <'SA'>                       /* Annual Renewable Term Type - used to get a new rate
+  2 #NURSING-HOME         (A2)   CONST <'73'>                       /* Nursing Home pay status (NH) - premium waiver
+  2 #AR-CONVERSION        (A)    DYNAMIC CONST <'ARConversion'>     /* Function name for Transaction register generic module
+  2 #EZ-RENEWAL           (A)    DYNAMIC CONST <'EZRenewal'>        /* Function name for Transaction register generic module
+  2 #LET-LTII-PLUS-REN  (A20)    CONST <'LTII_PLUS_LET_REN'>        /* YK3
+  2 #LET-LTII-PLUS-EXP  (A20)    CONST <'LTII_PLUS_LET_EXP'>        /* YK3
+
+* Work variables
+1 #COUNTERS
+  2 #REC-CNT           (N7)
+  2 #I                 (I2)
+
+1 #ISN                 (P9)
+1 #ID-NUMBER           (N6)
+1 #INT                 (I2)
+1 FUNCTION_CODE        (A) DYNAMIC
+1 #DATE-F              (A20)
+1 #DATE-W              (N8)
+1 REDEFINE #DATE-W
+  2 #DATE-A             (A8)
+1 REDEFINE #DATE-W
+  2 #YYYY-A            (A4)
+  2 #MM-A              (A2)
+  2 #DD-A              (A2)
+1 REDEFINE #DATE-W
+  2 #YYYY              (N4)
+  2 #MM                (N2)
+  2 #DD                (N2)
+
+1 #PAID-TO-DATE        (N8.0)
+1 REDEFINE #PAID-TO-DATE
+  2 #PAID-TO-DATE-YYYYMM (N6.0)
+1 REDEFINE #PAID-TO-DATE
+  2 #PAID-TO-DATE-YYYY  (N4.0)
+  2 #PAID-TO-DATE-MM    (N2.0)
+  2 #PAID-TO-DATE-DD    (N2.0)
+
+1 #DYNAMIC-VARIABLES
+  2 #DUES                 (N3.2)
+  2 #ISSUE-DATE           (N8)
+  2 #NOTE-TEXT            (A60/10)
+  2 #PLAN                 (A3)
+  2 #NEW-PLAN             (A3)
+  2 #RENEWABLE-PLAN       (A3)
+  2 REDEFINE #RENEWABLE-PLAN
+    3 #PLAN-RATE-CLASS    (A1)
+    3 #PLAN-TERM          (N2)
+  2 #UPDATE               (L)  INIT <FALSE>
+  2 #TERM-DATE            (N8)
+  2 #CONFIRMED            (L)
+*   2 #DECLINED             (L)
+  2 #RENEW-FLAG           (A1)
+  2 #FROM-ISSUE-DATE      (A10)
+  2 #NEW-ISSUE-DATE       (N8)
+  2 #NEW-ISSUE-AGE        (N2)
+  2 #NEW-ANN-PREM         (N7.2)               /* vt1 was n6.2
+  2 #OUTPUT-PREM-DIFF     (N6.2)
+  2 #NEW-PREM             (N7.2)               /* vt1 was n6.2
+  2 #OLD-PREM             (N6.2)
+  2 #NUM-MONTHS           (N2)
+  2 #FACE-AMT             (N7.2)
+  2 #ERR-MSG              (A) DYNAMIC
+  2 #OLD-MONTHLY-PREM     (A10)
+  2 #MONTHLY-PREM         (A10)
+  2 #POLICY-NUMBER        (A) DYNAMIC
+  2 #TEMPLATE-NAME        (A) DYNAMIC
+
+* C2522SAM Communication area
+1 #C2522SAM
+  2 #SCR-ID          (N9)
+  2 #SOURCE-PROG      (A8)
+  2 #EFF-DT           (N8)
+  2 #TR-CD            (A4)
+  2 #ADJ-AMT          (N5.2)
+  2 #OLD-FPF          (N7.2)
+  2 #NEW-FPF          (N7.2)
+  2 #LAST-DATE-UPDATE (N8)
+  2 #NEW-DATE-UPDATE  (N8)
+  2 #SCR-TRAN-CODE    (A4)
+  2 #CMBX             (A4)
+* GRIDCSXX Communication area
+1 #GRIDCSXX
+  2 #AT-RID-ATTACH-FAC-AMT  (N6.2)
+  2 #AT-RID-ATTACH-PLAN     (A3)
+  2 #AT-RID-PLAN            (A2/5)
+  2 #AT-RID-ATTACH-ISS-DT   (N8/5)
+  2 #AT-TOT-FBR-PREM        (N3.2)
+  2 #EX-FBR-PREM-BY-LINE    (N3.2/9)
+  2 #EX-SPS-DB-BY-LINE      (N6/9)
+  2 #EX-DEP-DB-BY-LINE      (N6/9)
+  2 #EX-EACH-DEP-DB-BY-LINE (N6/9)
+  2 #NUM-ELIG-CHILDREN      (N2)
+  2 #NUM-ELIG-CHILDREN-UNDER-6-MON  (N2)
+  2 #TOT-CHILD-DB           (N6)
+  2 #RID-TEXT               (A78)
+  2 #RID-PREM               (N3.2)
+
+1 DATE-OF-BIRTH (N8.0)                            /* TT1
+1 REDEFINE DATE-OF-BIRTH                          /* TT1
+  2 DOB-YYYY (N4)                                 /* TT1
+  2 DOB-MM (N2)                                   /* TT1
+  2 DOB-DD (N2.0)                                 /* TT1
+
+* Variables to calculate rate increase age/date for EZ Term
+1 #EZ-INCREASE-DATE   (N8)
+1 REDEFINE #EZ-INCREASE-DATE
+  2 #EZ-INCREASE-DATE-YYYYMM (N6)
+  2 REDEFINE #EZ-INCREASE-DATE-YYYYMM
+    3 #EZ-INCREASE-DATE-YYYY (N4)
+    3 #EZ-INCREASE-DATE-MM   (N2)
+1 #WORK-FIELD         (N2)
+1 #DIFF               (N2)
+1 #BILL-ADJUST        (N5.2)
+1 #DEBIT-CREDIT       (N5.2)
+*
+1 #paid-old-amt       (n7.2)                   /* vt2  \/
+1 #paid-new-amt       (n7.2)
+
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 id-number         (n6)
+  2 name              (a25)
+  2 transaction-datn  (p9)
+  2 transaction-timn  (p7)
+  2 cash-code         (a1)
+  2 clerk-id          (a3)
+  2 terminal-id       (a8)
+  2 PROCESS-IND       (A1)
+  2 POLICY-NUMBER     (A16)
+  2 AALP-FLAG         (A1)
+  2 TXN-CODE          (A4)
+  2 TXN-ACCT-NUMBER   (N3)
+  2 MESSAGE-CODE      (A1)
+  2 credit-amount     (p7.2)
+  2 acct-date         (n8)
+  2 debit-amount      (p7.2)
+  2 description       (a20)
+  2 sg-category-1     (a2/15)
+  2 sg-category-2     (a2/15)
+  2 SG-AMOUNT         (N6.2/2)
+1 #1-YR-ago-a               (a8)
+1 redefine #1-YR-ago-a
+  2 #1-YR-AGO               (N8)
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY     (N4)
+  2 #MM       (N2)
+  2 #DD1       (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYmm     (N6)
+  2 #ddd       (N2)                           /* vt2 /\
+*
+*
+END-DEFINE
+*
+ON ERROR
+  write 'CN = ' #id-number 'Term-date = ' #term-date 'Today = ' #datn
+END-ERROR
+*
+#TIMN := *TIMN
+#DATN := *DATN
+*
+* Read Parm date
+DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/ATHLB/PARMRUND.TXT'
+READ WORK FILE 1 ONCE #PARM
+*
+EXAMINE #PARM FOR '/' DELETE
+#PARM-DATE := VAL(#PARM)
+#PARM-DATE := FUNCTION-DATE(<#PARM-DATE>)
+*
+IF #TIMN LT 1200000
+* IF AFTER MIDNIGHT SUBTRACT TAKE YESTERDAY DATE
+  #DATE-F := FUNCTION-CALENDAR(<#DATN,'H'>)
+  #DATN := VAL(#DATE-F)
+  #TIMN := 2315000
+END-IF
+*
+R_ST.
+READ ST-V BY MEMBER-KEY FROM '001900'
+*
+  #ID-NUMBER := ST-V.ID-NUMBER
+  #ISN := *ISN
+
+  RESET PDA-CONTACT                                     /* TT1
+  P-CONTACT-ID := ST-V.MEMBER-CONTACT-ID                /* TT1
+  CALLNAT 'CONTS001' PDA-CONTACT                        /* TT1
+  DATE-OF-BIRTH := P-DATE-OF-BIRTH                      /* TT1
+
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+*
+    RESET #DYNAMIC-VARIABLES
+    RESET #GRIDCSXX #C2522SAM
+    RESET #UPDATE
+*
+    IF  (ST-V.ONLINE-ACTION-GN = '2')      /* NEW MEMBER
+        OR (ST-V.ONLINE-ACTION (#I) = '1')   /* NEW POLICY
+      ESCAPE TOP
+    END-IF
+*
+    MOVE ST-V.PLAN(#I) TO #PLAN
+    IF #PLAN = #EZ-TERM
+      PERFORM CALCULATE-NEXT-INCREASE-DATE
+    END-IF
+    DECIDE FOR FIRST CONDITION
+* Level Term II / Annual Renewable Term due to expire this month - extend
+      WHEN F-LT2PLUS-TRUE(<#PLAN>) AND (STATUS (#I) = 'D')
+          AND ST-V.PAID-UP-DATE-YYYYMM (#I) = #PARM-YYYYMM
+          AND ST-V.RENEW-FLAG(#I) <> #RESPONSE-NO
+        #CONFIRMED := TRUE
+        #UPDATE := TRUE
+        #POLICY-NUMBER := ST-V.POLICY-ID(#I)          /* YK3
+        #TEMPLATE-NAME := #LET-LTII-PLUS-REN          /* YK3
+        PERFORM CONVERT-POLICY
+        PERFORM SEND-LETTER                           /* YK3
+* Level Term II / Annual Renewable Term due to expire this month - expire
+* YK3 >
+      WHEN F-LT2PLUS-TRUE(<#PLAN>) AND (STATUS (#I) = 'D')
+          AND ST-V.PAID-UP-DATE-YYYYMM (#I) = #PARM-YYYYMM
+          AND ST-V.RENEW-FLAG(#I) = #RESPONSE-NO
+        #UPDATE := TRUE
+        #POLICY-NUMBER := ST-V.POLICY-ID(#I)
+        #TEMPLATE-NAME := #LET-LTII-PLUS-EXP
+        PERFORM SEND-LETTER
+* < YK3
+**============================================  EZ Term processing
+* EZ term policy is eligible for premium waiver
+      WHEN #PLAN=#EZ-TERM AND (STATUS (#I) = 'D')
+          AND ST-V.PAY-STATUS(#I) = #NURSING-HOME                  /* Nursing Home benefit
+        CALLNAT 'GPRNNH01' ST-V.ID-NUMBER #PARM-DATE #ERR-MSG
+        IF #ERR-MSG = 'UPDATED'
+          #UPDATE := TRUE
+        END-IF
+* EZ term is due to increase rate (member is entering the next age band this month)
+      WHEN #PLAN = #EZ-TERM AND STATUS (#I) = 'D' AND ST-V.RENEW-FLAG(#I) <> #RESPONSE-NO
+          AND #EZ-INCREASE-DATE-YYYYMM = #PARM-YYYYMM
+        PERFORM CONVERT-POLICY
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-FOR
+* If plan was converted - commit changes
+  IF #UPDATE OR #REC-CNT = 500
+    END TRANSACTION
+    RESET #REC-CNT
+  END-IF
+*
+ END-READ
+*
+END TRANSACTION
+*
+********************************
+DEFINE SUBROUTINE CONVERT-POLICY
+********************************
+*
+PERFORM POPULATE-NEW-INFO
+PERFORM CALC-PREM-DIFF
+PERFORM POPULATE-BEFORE-AFTER-IMAGE
+PERFORM UPDATE-ST-RECORD
+PERFORM WRITE-CONVERSION-NOTE
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE POPULATE-NEW-INFO
+***********************************
+*
+* Create new plan
+#RENEWABLE-PLAN := #PLAN
+DECIDE FOR FIRST CONDITION
+  WHEN #PLAN-RATE-CLASS = #AR                /* Annual renewable after initial term
+    #PLAN-TERM := #PLAN-TERM + 1
+  WHEN #RENEWABLE-PLAN = #EZ-TERM            /* EZ Term
+    IGNORE
+  WHEN NONE                                  /* All other LTII+ plans at the end of initial term
+    #PLAN-RATE-CLASS := #AR
+    #PLAN-TERM       := 1
+END-DECIDE
+#NEW-PLAN       := #RENEWABLE-PLAN
+#NEW-ISSUE-DATE := ST-V.ISSUE-DATE(#I)       /* Does not change for EZ Term
+IF F-LT2-TRUE(<#PLAN>)
+* Create #FROM-ISSUE-DATE in format MM/DD/YYYY
+  #FROM-ISSUE-DATE := FUNCTION-CALENDAR(<ST-V.ISSUE-DATE(#I),'D'>)
+* Create #NEW-ISSUE-DATE in the format of YYYYMMDD
+  #DATE-W            := ST-V.PAID-UP-DATE(#I)    /* OR ISSUE-DATE + PLAN-TERM
+  #DD                := ST-V.ISSUE-DATE-DD(#I)
+  #NEW-ISSUE-DATE    := #DATE-W
+* Calculate new issue age
+  #DATE-W := ST-V.PAID-UP-DATE(#I) - DATE-OF-BIRTH             /* TT1
+  #NEW-ISSUE-AGE := VAL(#YYYY-A)
+END-IF
+*
+#ID-NUMBER := ST-V.ID-NUMBER
+* New policy can be only for the same amount
+#FACE-AMT  := ST-V.FACE-AMOUNT(#I)
+#OLD-PREM  := ST-V.ANNUAL-PREM(#I) / 12
+MOVE EDITED #OLD-PREM (EM=ZZZZZZ.99) TO #OLD-MONTHLY-PREM
+#OLD-MONTHLY-PREM := *TRIM(#OLD-MONTHLY-PREM)
+PERFORM CALC-NEW-PREM
+MOVE EDITED #NEW-PREM (EM=ZZZZZZ.99) TO #MONTHLY-PREM
+#MONTHLY-PREM := *TRIM(#MONTHLY-PREM)
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE CALC-NEW-PREM
+*******************************
+*
+* Get new rate for Annual renewable/EZ Term - Returns monthly premium #NEW-PREM
+DECIDE FOR FIRST CONDITION
+  WHEN #NEW-PLAN = #EZ-TERM
+* EZ Term New Annual Premium
+    CALLNAT 'GPRNNMT1' #NEW-ISSUE-AGE P-GENDER #FACE-AMT #NEW-ANN-PREM                /* TT1
+    #NEW-PREM := #NEW-ANN-PREM / 12
+  WHEN F-LT2PLUS-TRUE(<#PLAN>)
+* Annual Renewable
+    #NEW-PREM := F-LTII-RENEW-RATES (< #NEW-ISSUE-AGE >)
+    COMPUTE #NEW-PREM = #NEW-PREM * (#FACE-AMT / 10000)
+    #NEW-ANN-PREM := #NEW-PREM * 12                        /* New Annual LTII+ Premium
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CALC-PREM-DIFF
+********************************
+*
+reset #paid-old-amt #paid-new-amt  #bill-adjust                        /* vt2
+#OLD-PREM     := ST-V.ANNUAL-PREM(#I) / 12                      /* Old Premium
+#PAID-TO-DATE := ST-V.PAID-TO-DATE(#I)
+*
+IF ST-V.MODE(#I) = #ALLOTMENT
+* Fot allotment new date is assinged
+  #PAID-TO-DATE    := #PARM-DATE
+  #PAID-TO-DATE-DD := 15
+END-IF
+* work date - today
+#DATE-W := #DATN     /* #YYYY #MM #DD
+* Adjust payments with the new rate
+DECIDE FOR FIRST CONDITION
+* When paid ahead (beyond the date of rate increase for EZ Term)
+  WHEN #PAID-TO-DATE-YYYYMM > #PARM-YYYYMM     /* OR (#PAID-TO-DATE-YYYY = #YYYY AND #PAID-TO-DATE-MM > #MM)
+    #NUM-MONTHS := (#PAID-TO-DATE-YYYY - #PARM-YYYY)*12 + (#PAID-TO-DATE-MM - #PARM-MM)
+    #OUTPUT-PREM-DIFF := (#NEW-PREM - #OLD-PREM) * #NUM-MONTHS
+    #paid-old-amt := #num-months * #old-prem                                 /* vt2
+    #paid-new-amt := #num-months * #new-prem                                 /* vt2
+* When behind in payments
+  WHEN #PAID-TO-DATE-YYYYMM < #PARM-YYYYMM
+    #NUM-MONTHS := (#PARM-YYYY - #PAID-TO-DATE-YYYY)*12 + (#PARM-MM - #PAID-TO-DATE-MM)
+*     #OUTPUT-PREM-DIFF := #OLD-PREM * #NUM-MONTHS                           /* vt2 \/
+*     #PAID-TO-DATE-MM := #PAID-TO-DATE-MM + #NUM-MONTHS
+*     IF #PAID-TO-DATE-MM > 12
+*       #PAID-TO-DATE-MM := #PAID-TO-DATE-MM - 12
+*       #PAID-TO-DATE-YYYY := #PAID-TO-DATE-YYYY + 1
+    if #num-months = 1 and st-v.mode(#i) = 'E'                              /* vt2 07/11/2017 \/
+      reset #output-prem-diff #adj-amt
+    else                                                                    /* vt2 07/11/2017 /\
+      #output-prem-diff := (#old-prem - #new-prem ) * #num-months
+      #tr-cd := 'PWOF'
+      #adj-amt := #output-prem-diff
+      perform store-acct-reg
+    end-if                                                                  /* vt2 07/11/2017
+  when #paid-to-date-yyyymm = #parm-yyyymm
+    #num-months := 1
+    #OUTPUT-PREM-DIFF := (#NEW-PREM - #OLD-PREM) * #NUM-MONTHS
+    #paid-old-amt := #num-months * #old-prem
+    #paid-new-amt := #num-months * #new-prem                                 /* vt2 /\
+** END-IF                                                                    /* vt2
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+* Calculate and Apply Prem paid difference to the policy Billing Adjustment bucket
+* #OUTPUT-PREM-DIFF - Amount calculated based on paid-to-date
+DECIDE FOR FIRST CONDITION
+  WHEN (ST-V.MODE(#I) = #DIRECT-BILL-MODE(*) OR ST-V.MODE(#I) = #CREDIT-CARD-MODE(*)or st-v.mode(#i) = #eazy-pay) AND #OUTPUT-PREM-DIFF <> 0     /* vt2
+    if #output-prem-diff ne 0                                                /* vt2 07/11/2017
+      #BILL-ADJUST := #OUTPUT-PREM-DIFF
+      #TR-CD   := 'BADJ'
+      #ADJ-AMT := #OUTPUT-PREM-DIFF
+      perform STORE-ACCT-REG
+    end-if                                                                   /* vt2 07/11/2017
+    if #paid-old-amt ne 0                                                    /* vt2  \/
+      #tr-cd   := 'PRER'
+      #adj-amt := #paid-old-amt
+      perform STORE-ACCT-REG
+    end-if
+    if #paid-new-amt ne 0
+      #tr-cd   := 'PREP'
+      #adj-amt := #paid-new-amt
+      perform STORE-ACCT-REG
+    end-if                                                                   /* vt2  /\
+*   WHEN ST-V.MODE(#I) = #EAZY-PAY AND #OUTPUT-PREM-DIFF <> 0                /* vt2 \/
+*     #DEBIT-CREDIT := #OUTPUT-PREM-DIFF
+*     IF #OUTPUT-PREM-DIFF GT 0
+*       MOVE 'RDCR' TO #TR-CD
+*     ELSE
+*       MOVE 'ADCR' TO #TR-CD
+*     END-IF
+*     #ADJ-AMT := #OUTPUT-PREM-DIFF                                         /* vt2 /\
+  WHEN ST-V.MODE(#I) = 'G'
+* Get Dues if applicable
+    CALLNAT 'GDUESSXX' ST-V.ID-NUMBER #I #DUES
+* Get Family Rider premium if applicable
+*   IF (X-RID-FPF (#I) NE 0) OR (X-RID-BALANCE (#I) NE 0)  /* YK2
+    IF  RID-PLAN(#I) <> ' '                                /* YK2
+      CALLNAT 'GRIDCSXX'
+        #ID-NUMBER
+        #AT-RID-ATTACH-FAC-AMT
+        #AT-RID-ATTACH-PLAN
+        #AT-RID-PLAN            (1:5)
+        #AT-RID-ATTACH-ISS-DT   (1:5)
+        #AT-TOT-FBR-PREM
+        #EX-FBR-PREM-BY-LINE    (1:9)
+        #EX-SPS-DB-BY-LINE      (1:9)
+        #EX-DEP-DB-BY-LINE      (1:9)
+        #EX-EACH-DEP-DB-BY-LINE (1:9)
+        #NUM-ELIG-CHILDREN
+        #NUM-ELIG-CHILDREN-UNDER-6-MON
+        #TOT-CHILD-DB
+        #RID-TEXT
+      MOVE #EX-FBR-PREM-BY-LINE(#I) TO #RID-PREM
+    END-IF
+* Calculate adjustment as
+* Should always be a full Months premium
+    COMPUTE #ADJ-AMT = ((#NEW-ANN-PREM / 12) + #DUES + #RID-PREM)* #NUM-MONTHS
+*
+    IF #ADJ-AMT NE 0
+      #OLD-FPF := ST-V.X-FIRST-PLACE-FEE(#I)
+      #ADJ-AMT := ST-V.X-FIRST-PLACE-FEE(#I) + #ADJ-AMT
+      #NEW-FPF := #ADJ-AMT
+      RESET #ADJ-AMT
+      MOVE 'FPFC' TO #TR-CD
+    END-IF
+  WHEN ANY
+****************************    IF #ADJ-AMT <> 0 OR #NEW-FPF <> 0                   /* vt2
+   if #new-fpf ne 0                                                            /* vt2
+      PERFORM CALL-C2522SAM
+    END-IF
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*********************************************
+DEFINE SUBROUTINE POPULATE-BEFORE-AFTER-IMAGE
+*********************************************
+* Before Image
+BEFORE_IMAGE.DATE-LAST-UPDATE := ST-V.DATE-ACCT-UPDATE
+BEFORE_IMAGE.ISSUE-DATE := ST-V.ISSUE-DATE (#I)
+BEFORE_IMAGE.PLAN       := #PLAN
+BEFORE_IMAGE.MODE       := ST-V.MODE (#I)
+MOVE EDITED ST-V.FACE-AMOUNT(#I) (EM=ZZZZZZ.99) TO BEFORE_IMAGE.FACE-AMT
+MOVE EDITED #OLD-PREM (EM=ZZZZZ.99) TO BEFORE_IMAGE.MONTHLY-PREM
+* After Image
+AFTER_IMAGE.ISSUE-DATE := #NEW-ISSUE-DATE
+AFTER_IMAGE.PLAN       := #NEW-PLAN
+AFTER_IMAGE.MODE       := ST-V.MODE(#I)
+MOVE EDITED ST-V.FACE-AMOUNT(#I) (EM=ZZZZZZ.99) TO AFTER_IMAGE.FACE-AMT
+MOVE EDITED #NEW-PREM (EM=ZZZZZ.99)  TO AFTER_IMAGE.MONTHLY-PREM
+*
+IF #PLAN-RATE-CLASS = #AR
+  FUNCTION_CODE := #AR-CONVERSION
+ELSE
+  FUNCTION_CODE := #EZ-RENEWAL
+END-IF
+*
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE UPDATE-ST-RECORD
+**********************************
+*
+GT_ST.
+GET ST-V #ISN
+IF F-LT2PLUS-TRUE(<#PLAN>)
+  RESET ST-V.TOT-PREMIUMS-PAID (#I)
+  ST-V.PRIOR-STATUS(#I)    := ST-V.PAY-STATUS(#I)       /* Prior Pay Status
+  IF ST-V.MODE(#I) = #ALLOTMENT
+    ST-V.PAY-STATUS(#I)    := #GWAT-PAY-STATUS          /* 21
+  ELSE
+    ST-V.PAY-STATUS(#I)    := #PREMIUM-PAY-STATUS       /* 22
+  END-IF
+*
+  ST-V.SPLIT-IND(#I)       := 7                         /* 7 used for Term Plans
+  ST-V.PAID-UP-DATE(#I)    := #NEW-ISSUE-DATE + 10000   /* 1 Year Term
+  ST-V.DATE-ENTERED(#I)    := ST-V.ISSUE-DATE(#I) := #NEW-ISSUE-DATE
+  ST-V.ISSUE-AGE(#I)       := #NEW-ISSUE-AGE
+  ST-V.PLAN(#I)            := #NEW-PLAN
+  ST-V.ONLINE-ACTION(#I)   := 'P'
+  IF ST-V.ONLINE-ACTION-GN = '1' OR = '2' OR = '3'     /* Already Flagged
+    IGNORE
+  ELSE
+    ST-V.ONLINE-ACTION-GN := '4'                       /* Indicates Action this month
+  END-IF
+  IF #NEW-PLAN = 'T01' AND (ST-V.MODE(#I) = #CREDIT-CARD-MODE(*) OR ST-V.MODE(#I) = #EAZY-PAY)
+    ST-V.MODE(#I) := AFTER_IMAGE.MODE := 'Q'
+  END-IF
+END-IF
+*
+ST-V.X-BILL-ADJUST(#I) := ST-V.X-BILL-ADJUST(#I) + #BILL-ADJUST
+ST-V.DEBIT-CREDIT-AMT  := ST-V.DEBIT-CREDIT-AMT + #DEBIT-CREDIT
+*
+ST-V.ANNUAL-PREM(#I)   := #NEW-ANN-PREM
+ST-V.PAID-TO-DATE(#I)  := #PAID-TO-DATE
+ST-V.DATE-ACCT-UPDATE  := #DATN
+*
+UPDATE (GT_ST.)
+* Write transactions
+TR_ID_NUMBER  := #ID-NUMBER
+TR_NAME       := FUNCTION-CONTACT-NAME(<ST-V.MEMBER-CONTACT-ID>)
+TR_CLERK      := #CLERK-ID
+* Write to Transaction Register file
+CALLNAT 'GPRNTR02' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-CONVERSION-NOTE
+***************************************
+*
+#INT := 1
+DECIDE FOR FIRST CONDITION
+  WHEN F-LT2-TRUE(<#PLAN>)
+    COMPRESS '* Policy issued' #FROM-ISSUE-DATE INTO #NOTE-TEXT(#INT)
+    COMPRESS #NOTE-TEXT (#INT) 'Converted' #PLAN 'to' #NEW-PLAN
+      INTO #NOTE-TEXT (#INT)
+  WHEN #PLAN = #EZ-TERM
+    COMPRESS '* EZ Term Monthly Premium increase from' #OLD-MONTHLY-PREM 'to' #MONTHLY-PREM
+      INTO #NOTE-TEXT (#INT)
+  WHEN NONE
+    IGNORE
+END-DECIDE
+CALLNAT 'E4205SDM' #ID-NUMBER #INT #CLERK-ID #NOTE-TEXT (*)
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE CALL-C2522SAM
+*******************************
+*
+* RESET #C2522SAM
+#LAST-DATE-UPDATE := ST-V.DATE-ACCT-UPDATE
+#NEW-DATE-UPDATE  := #EFF-DT := #DATN
+*
+#SOURCE-PROG      := *PROGRAM
+#ISSUE-DATE       := ST-V.ISSUE-DATE(#I)
+#CMBX             := 'TMCV'
+RESET #SCR-TRAN-CODE
+*
+CALLNAT 'C2522SAM'
+  #SCR-COMMAND
+  #SCR-ID
+  #SCR-SUFFIX
+  #CLERK-ID
+  #ID-NUMBER
+  #SOURCE-PROG
+  #EFF-DT
+  #TR-CD
+  #ADJ-AMT
+  #OLD-FPF
+  #NEW-FPF
+  #LAST-DATE-UPDATE
+  #NEW-DATE-UPDATE
+  #ISSUE-DATE
+  #SCR-TRAN-CODE
+  #CMBX
+  #TIMN
+*
+END-SUBROUTINE
+*
+**********************************************
+DEFINE SUBROUTINE CALCULATE-NEXT-INCREASE-DATE
+**********************************************
+*
+#WORK-FIELD := #PARM-YYYY - DOB-YYYY                 /* TT1
+IF #PARM-MM < DOB-MM                                 /* TT1
+  #WORK-FIELD := #WORK-FIELD - 1
+END-IF
+DIVIDE 5 INTO #WORK-FIELD REMAINDER #DIFF
+IF #DIFF = 0
+  #NEW-ISSUE-AGE := #WORK-FIELD * 5
+ELSE
+  #NEW-ISSUE-AGE := (#WORK-FIELD + 1) * 5
+END-IF
+#EZ-INCREASE-DATE := DATE-OF-BIRTH + #NEW-ISSUE-AGE * 10000   /* TT1
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE SEND-LETTER  /* YK3
+*****************************
+*
+F1.
+FIND LT-V WITH POLICY-NUMBER = ST-V.POLICY-ID(#I)
+  ACCEPT IF TEMPLATE-NAME = #TEMPLATE-NAME AND IS-SENT = 'N'
+  RESET IS-SENT
+  UPDATE (F1.)
+END-FIND
+*
+END-SUBROUTINE
+*****************
+define subroutine STORE-ACCT-REG                              /* vt2 \/
+*****************
+*
+
+RESET AR-V
+ar-v.id-number               := ST-V.id-number
+ar-v.transaction-datn        := #datn
+ar-v.transaction-timn        := #timn
+ar-v.acct-date               := #datn
+ar-v.cash-code               := 'A'
+ar-v.name                    := ST-V.name
+ar-v.clerk-id                := 'EDS'
+ar-v.terminal-id             := *init-id
+AR-V.TXN-CODE                := #tr-cd
+AR-V.PROCESS-IND             := ST-V.PROCESS-IND
+AR-V.POLICY-NUMBER           := ST-V.policy-id (#i)
+AR-V.SG-AMOUNT           (1) := #adj-amt
+if #tr-cd = 'PREP'
+  ar-v.credit-amount           := #adj-amt
+else
+  if #tr-cd = 'PWOF'
+    ar-v.debit-amount  := #adj-amt * -1
+    AR-V.SG-AMOUNT (1) := #adj-amt * -1
+  else
+    ar-v.debit-amount            := #adj-amt
+  end-if
+end-if
+*
+if #plan = 'OL' OR= '20P' OR= '30P' OR= '7P' OR= 'SO' OR= 'SPF' OR= 'FSO'
+    OR= 'LT' OR= 'RT' OR = 'GPL' OR = 'EZ' or = 'GP2' or = 'AL' or = 'AL2'
+  move #plan to ar-v.sg-category-2(1)
+else
+  if f-lt2-true(<#plan>)
+    move 'VT' to ar-v.sg-category-2(1)
+  else
+    if (#plan = mask (NN'F'))
+        or (#plan = mask (N'PF'))
+        or (#plan = 'SPF')
+      move 'FL' TO ar-v.sg-category-2(1)
+    else
+      move 'FX' to ar-v.sg-category-2(1)
+    end-if
+  end-if
+end-if
+*
+AR-V.DESCRIPTION             := 'TERM CONV'
+*
+if #tr-cd = 'PREP' or = 'PRER'
+  IF #ISSUE-DATE GT #1-YR-AGO
+    MOVE '1Y' TO AR-V.SG-CATEGORY-1 (1)
+  ELSE
+    MOVE 'RN' TO AR-V.SG-CATEGORY-1 (1)
+  END-IF
+END-IF
+*
+if #plan = 'SO'
+  move #plan to ar-v.sg-category-1(1)
+end-if
+*
+STORE AR-V
+end transaction
+escape routine
+*
+end-subroutine                                              /* vt2 /\
+*
+END

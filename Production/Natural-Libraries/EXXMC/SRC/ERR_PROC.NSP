@@ -1,0 +1,258 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Process Errors Logged to the Error_LOG file
+* Read active errors and send a request
+* Update error status/remove error from the file
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    12072010       Initial Creation
+* YAK    01/04/2015     Add functions for MC II
+*                       Remove 'Get' functions
+********************************************************
+*
+DEFINE DATA
+*
+LOCAL USING PARSER-X
+LOCAL USING OBJLERRQ
+LOCAL USING GPRA0003
+LOCAL USING P_PARMS
+LOCAL USING GPRL0EML
+LOCAL
+1 LOG-MESSAGE       (A10000)
+1 LOG_ACTION        (A) DYNAMIC
+1 #FAILED-ON-HOLD   (A) DYNAMIC CONST <'F'>
+1 #ErrorTag         (A) Dynamic
+1 #ErrorTagClose    (A) Dynamic
+1 #PROCESS-NAME     (A) DYNAMIC
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+1 #SUCCESS-XML      (A) DYNAMIC CONST <'<ErrorCode>0</ErrorCode>'>
+1 #ERROR-DESCRIPTION(A) DYNAMIC CONST <'<ErrorDescription>'>
+1 RETURN-MESSAGE    (A78)
+1 #ACTIVE           (A) DYNAMIC CONST <'A'>
+1 #PROCESSED        (A) DYNAMIC CONST <'P'>
+1 #RUNNING          (A) DYNAMIC CONST <'R'>
+1 #ISN              (P9)
+1 #I                (I2)
+*
+1 #ErrorCode        (A3)
+1 #MethodId         (N2)
+*
+1 ERROR-QUEUE-UPD VIEW OF A-ERROR-QUEUE
+  2 MEMBER-CN
+  2 ERROR-STATUS
+*
+END-DEFINE
+*
+DEFINE WORK FILE 1 "/usr/SAG/tmp/error_process.log" TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 2 "/usr/SAG/MC/FIR_REQUEST.TXT" TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 3 "/usr/SAG/MC/FIR_REPORT.TXT" TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 4 "/usr/SAG/MC/FAS_REPORT.TXT" TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+*
+ON ERROR
+  BACKOUT TRANSACTION
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  ERROR-PROGRAM := *PROGRAM
+  ERROR-OBJECT  := P_ERROR_PROGRAM
+  ERROR-LINE    := P_ERROR_LINE
+  ERROR-NUMBER  := P_ERROR_NUM
+  IF ERROR-NUMBER = '3098' AND PROCESS-NAME = 'RegisterMember'
+    #ErrorTag := 'MCMemberInfo'
+    CALLNAT 'MBCN0005' REQUEST-DATA RESPONSE-DATA
+    PERFORM UPDATE-ERROR-RECORD
+  END-IF
+  RESET LOG-MESSAGE
+  COMPRESS ERROR-NUMBER ERROR-LINE ERROR-PROGRAM ERROR-OBJECT *DATN *TIME INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+  CLOSE WORK FILE 1
+  ERROR-MESSAGE := 'Error occured while processing your request'
+  COMPRESS '<' #ErrorTag '>'
+    '<ErrorCode>' ERROR-NUMBER '</ErrorCode>' -
+    '<ErrorDescription>' ERROR-MESSAGE '</ErrorDescription>' -
+    '</' #ErrorTag '>'
+    INTO RESPONSE-DATA LEAVING NO
+  P_TO     := 'ykegeles@aafmaa.com'
+* P_CC     :=  'bzaslavskiy@aafmaa.com,vtokmakova@aafmaa.com'
+  P_SUBJ   := '"Error Process Run Error"'
+  P_MSG(1) := 'Error running ERR_PROC program'
+  P_MSG(2) := LOG-MESSAGE
+  CALLNAT 'GPRS0EML' p_EMAIL
+  COMPRESS *DAT4I *TIMX PROCESS-NAME RESPONSE-DATA INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE  
+* ESCAPE ROUTINE
+END-ERROR
+*
+READ ERROR-QUEUE-V BY MEMBER-ERROR-STATUS
+  ACCEPT IF ERROR-QUEUE-V.ERROR-STATUS = #ACTIVE OR = #RUNNING
+* AND ERROR-QUEUE-V.MEMBER-CN =
+  #ISN := *ISN
+  #PROCESS-NAME := ERROR-QUEUE-V.PROCESS-NAME
+  FOR #I = 1 TO C*REQUEST-LINE
+    COMPRESS REQUEST-DATA REQUEST-LINE(#I) INTO REQUEST-DATA LEAVING NO
+  END-FOR
+  RESET RESPONSE-DATA
+  COMPRESS *DATN *TIMN PROCESS-NAME REQUEST-DATA INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+  GT2.
+  GET ERROR-QUEUE-UPD #ISN
+  ERROR-QUEUE-UPD.ERROR-STATUS := #RUNNING
+  UPDATE (GT2.)
+  END TRANSACTION
+  DECIDE ON FIRST VALUE PROCESS-NAME
+    VALUE 'UpdatePassword', 'UpdateUserName', 'UpdateDALAccessDate', 'UpdateSecurityQuestions'
+      #ErrorTag := 'MemberLogin'
+      CALLNAT 'MBCNN011' #PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    VALUE 'UpdatePaperlessOptions'
+      #ErrorTag := 'MemberLogin'
+      CALLNAT 'MBCNN014' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageMilitaryInfo'
+      #ErrorTag := 'MilitaryInformation'
+      CALLNAT 'MBCN0020' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageAddresses'
+      #ErrorTag := 'MemberAddresses'
+      CALLNAT 'MBCN0030' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageAddressTypes'
+      #ErrorTag := 'MemberAddresses'
+      CALLNAT 'MBCNN030' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManagePhones'
+      #ErrorTag := 'MemberPhones'
+      CALLNAT 'MBCNN040' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageEmails'
+      #ErrorTag := 'MemberEmails'
+      CALLNAT 'MBCNN050' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageFamilyInfo'
+      #ErrorTag := 'FamilyInformation'
+      CALLNAT 'MBCN0060' REQUEST-DATA RESPONSE-DATA
+* Manage Benefits
+    VALUE 'GetExternalLifeInsurance', 'UpdateExternalLifeInsurance'
+      #ErrorTag := 'ExternalLifeInsurances'
+      CALLNAT 'MBCN0080' #PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    VALUE 'GetBenefitsSS', 'UpdateBenefitsSS'
+      #ErrorTag := 'BenefitsSS'
+      CALLNAT 'MBCN0080' #PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    VALUE 'GetBenefitsVA', 'UpdateBenefitsVA'
+      #ErrorTag := 'BenefitsVA'
+      CALLNAT 'MBCN0080' #PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    VALUE 'GetBenefitsMilitary', 'UpdateBenefitsMilitary'
+      #ErrorTag := 'BenefitsMilitary'
+      CALLNAT 'MBCN0080' #PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    VALUE 'GetBenefitsOther', 'UpdateBenefitsOther'
+      #ErrorTag := 'BenefitsOther'
+      CALLNAT 'MBCN0080' #PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    VALUE 'FinancialProfile'
+      #ErrorTag := 'FinancialProfile'
+      CALLNAT 'MBCN0090' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageMemberDocuments'
+      #ErrorTag := 'MemberDocuments'
+      CALLNAT 'MBCN0100' REQUEST-DATA RESPONSE-DATA
+* YK5 >
+    VALUE 'ManageDVUpload'
+      #ErrorTag := 'DigitalVaultUpload'
+      CALLNAT 'MBCN0100' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageInsuranceCompanies'
+      #ErrorTag := 'InsuranceCompany'
+      CALLNAT 'MBCN0101' REQUEST-DATA RESPONSE-DATA
+* < YK5
+* Payment Center
+    VALUE 'ApplyPayments'
+      #ErrorTag := 'Members'
+      CALLNAT 'MBCNEP20' REQUEST-DATA RESPONSE-DATA #PROCESS-NAME
+    VALUE 'ManagePaymentSettings'
+      #ErrorTag := 'PaymentSettings'
+      CALLNAT 'MBCNEP30' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageCreditCards'
+      #ErrorTag := 'Members'
+      CALLNAT 'MBCNCC40' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ManageBankAccounts'
+      #ErrorTag := 'Members'
+      CALLNAT 'MBCNEC50' REQUEST-DATA RESPONSE-DATA
+    VALUE 'SchedulePayment'
+      #ErrorTag := 'Members'
+      CALLNAT 'MBCNPR10' REQUEST-DATA RESPONSE-DATA
+* Old Member Center functions - used for AUC
+    VALUE 'UpdateContactInfo'
+      EXAMINE REQUEST-DATA FOR 'ContactInformation' REPLACE 'MilitaryInfo'  /* bz
+      #ErrorTag := 'ContactInformation'
+      CALLNAT 'MBCN0020' REQUEST-DATA RESPONSE-DATA
+      EXAMINE RESPONSE-DATA FOR 'MilitaryInfo' REPLACE 'ContactInformation'  /* bz
+    VALUE 'UpdatePhone'
+      #ErrorTag := 'MemberPhones'
+      CALLNAT 'MBCN0040' REQUEST-DATA RESPONSE-DATA
+    VALUE 'UpdateEmail'
+      #ErrorTag := 'MemberEmails'
+      CALLNAT 'MBCN0050' REQUEST-DATA RESPONSE-DATA
+* Called from Online Application
+    VALUE 'UpdateAddress'
+      #ErrorTag := 'AddressInfo'
+      CALLNAT 'MOAN0030' REQUEST-DATA RESPONSE-DATA
+    VALUE 'ServicePayment'
+      #ErrorTag := 'ServicePayment'
+      CALLNAT 'WEBN0004' REQUEST-DATA RESPONSE-DATA
+    VALUE 'CreditCardInfo'
+      #ErrorTag := 'CreditCardInfo'
+      CALLNAT 'MOANCC40' REQUEST-DATA RESPONSE-DATA
+* External payer
+    VALUE 'ApplyExtPayerPayment'
+      #ErrorTag := 'ExternalPayer'
+      CALLNAT 'MBCNCC2A' REQUEST-DATA RESPONSE-DATA
+* Mobile Payments
+    VALUE 'ApplyMobilePayments'                          /* YK1
+      #ErrorTag := 'Members'
+      CALLNAT 'MBCNCC20' REQUEST-DATA RESPONSE-DATA #PROCESS-NAME   /* YK3
+    VALUE 'UpdateAnnRptFlag'
+      #ErrorTag := 'MCMemberInfo'
+      CALLNAT 'WEBN0003' REQUEST-DATA RESPONSE-DATA
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+  PERFORM UPDATE-ERROR-RECORD
+*
+END-READ
+FETCH 'CHECK_EM'
+*
+**************************
+DEFINE UPDATE-ERROR-RECORD
+**************************
+COMPRESS LOG-MESSAGE RESPONSE-DATA INTO LOG-MESSAGE
+WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+CLOSE WORK FILE 1
+EXAMINE RESPONSE-DATA FOR #SUCCESS-XML POSITION #I
+IF #I NE 0
+  GT.
+  GET ERROR-QUEUE-V #ISN
+  ERROR-QUEUE-V.ERROR-STATUS := #PROCESSED
+  UPDATE (GT.)
+  END TRANSACTION
+ELSE
+  EXAMINE RESPONSE-DATA FOR #ERROR-DESCRIPTION POSITION #I
+  LOG-MESSAGE := SUBSTRING(RESPONSE-DATA,#I)
+  P_TO     := 'ykegeles@aafmaa.com'
+  P_SUBJ   := '"ERR-PROC Error"'
+  P_MSG(1) := 'Error response running ERR-PROC - Production'
+  P_MSG(2) := LOG-MESSAGE
+  CALLNAT 'GPRS0EML' p_EMAIL
+  GT1.
+  GET ERROR-QUEUE-V #ISN
+  IF ERROR-QUEUE-V.ERROR-STATUS = #RUNNING
+    ERROR-QUEUE-V.ERROR-STATUS := #ACTIVE
+    UPDATE (GT1.)
+    END TRANSACTION
+  END-IF
+END-IF
+*
+REPEAT
+  RETURN-MESSAGE := RESPONSE-DATA
+  WRITE RETURN-MESSAGE
+  IF *LENGTH(RESPONSE-DATA) > 78
+    RESPONSE-DATA := SUBSTR(RESPONSE-DATA,79)
+  ELSE
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+END-SUBROUTINE
+END

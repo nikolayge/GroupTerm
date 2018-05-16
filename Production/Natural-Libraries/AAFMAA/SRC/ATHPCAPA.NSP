@@ -1,0 +1,803 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+****************************************************************************
+* NAME         : ATHPCAPA                                                  *
+*                                                                          *
+* FUNCTION  : Send e-mails when CAP policy or CAP loan only were issued    *
+*                                                                          *
+* vxt 05022011  Initial creation                                           *
+* vxt 07132011  VT1 Add logic to calculation of Total due - if it is a     *
+*                   loan only and premium is paid by allotment then        *
+*                   combine premium and loan amounts due.                  *
+* vxt 08/25/2011 vt2 Calculate the total amount-due for allotment payments.*
+* vxt 08/29/2011 vt3 Change the logic for total amount calculation         *
+* vxt 10/14/2011 vt4 fix the problem with total amount calculation when    *
+*                    there are the policy which are inactive.Add daily     *
+*                    report for the e-mails sent out.                      *
+* vxt 03/05/2012 vt5 Add logic to calculate total allotment amount due.
+* vxt 05/30/2012 vt5 Add premier services to the total due amount          *
+* vxt 12/10/2012 vt6 Fix the issue with next-month calculation /ticket 1589/
+* vxt 03/18/2013 vt7 FIx the linked amounts per CN / Ticket 1879/          *
+* vxt 12/12/2013 vt8 ticket 2445
+* TMT 06/10/2014 TT1 Contact Normalization - Gender and Date-of-Birth      *
+* vxt 11/30/2015 vt9 CAP 2 loans fixes /Ticket 4055/
+* vxt 01/28/2016 vt10 CAP 2 e-mail fix /Ticket 4172 /                      *
+* vxt 03/22/2016 vt11 add new format of next-month field                   *
+* vxt 06/13/2016 vt12 /Ticket 4551 -Add fields to the report  /            *
+* bz  06/22/2016 bz-OI-4298 file definition is moving to ESP with new name *
+* bz-Name 07/07/2017     Fine Names
+****************************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GPRL0001       /* Property file
+LOCAL USING GPRA0005       /* E-mail Information
+LOCAL USING ADDA0001       /* PDA for the Address
+local USING WCCA0011                                           /* vt2
+LOCAL USING SVCA0003                                           /* vt5
+*
+LOCAL
+1 #MSG   (A) DYNAMIC                                           /* vt5
+1 status view of a-status
+  2 id-number
+*  2 ssn
+  2 cap-entry-date
+  2 rank
+  2 military-service
+  2 member-contact-id
+  2 name
+  2 x-alt-lp-date  (9)
+  2 x-alt-lp-ind   (9)
+  2 x-alt-lp-amt   (9)
+  2 plan           (9)
+  2 face-amount    (9)
+  2 annual-prem    (9)
+  2 mode           (9)                   /* vt1
+  2 pad-code                             /* vt2
+  2 ownership-flag (9)                   /* vt2
+  2 issue-date     (9)                   /* vt4
+  2 status         (9)                             /* vt10
+1 AT view of A-appl-tracking
+*  2 ssn
+  2 id-number
+  2 face-amt-units
+  2 cap-loan-amt
+  2 cap-term
+  2 cap-ind
+  2 smoker-flag
+  2 date-of-birth
+  2 rating-code
+  2 sex
+  2 plan
+  2 intro-flag
+1 stat view of a-status
+  2 id-number
+  2 mode   (9)
+  2 x-alt-lp-amt(9)
+  2 x-alt-lp-ind(9)
+  2 pad-code
+  2 ownership-flag (9)
+*
+1 LK-V VIEW OF A-STATUS                                           /* vt5 \/
+  2 ID-NUMBER      (N6)
+  2 INTRO-FLAG
+  2 WIDOW-FLAG
+*  2 DATE-OF-BIRTH        /* TT1
+  2 ALOT-AMT
+*
+1 notes VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 NOTE-TEXT    (60)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC  (60)
+      4 NOTE-TEXT-60           (A60)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-FILL1        (A14)
+        5 NOTE-TEXT-ALOT-PAYS-CN (A6)
+        5 NOTE-TEXT-FILL2        (A40)
+1 #linked-cn-tot-amt              (n5.2)                     /* vt5 /\
+*
+1 #curr-date-d                      (d)
+1 #curr-date                        (N8)
+1 REDEFINE #curr-date
+  2 #curr-date-YYYY                 (N4)
+  2 redefine #curr-date-yyyy
+    3 #curr-date-cent               (n2)
+    3 #curr-date-year               (n2)
+  2 #curr-date-MM                   (n2)
+  2 #curr-date-DD                   (n2)
+1 #curr-date-a                     (a8)    /* for test vt2
+*
+1 #work-date                        (N8)
+1 REDEFINE #work-date
+  2 #work-date-YYYY                 (N4)
+  2 redefine #work-date-yyyy
+    3 #work-date-cent               (n2)
+    3 #work-date-year               (n2)
+  2 #work-date-MM                   (n2)
+  2 #work-date-DD                   (n2)
+*
+1 #next-month-d                     (d)
+1 #next-month-a                     (a8)
+1 redefine #next-month-a
+  2 #next-month-a-mm                  (n2)
+  2 #next-month-a-dd                  (n2)
+  2 #next-month-a-yyyy                (n4)
+1 #next-2-month-d                   (d)
+1 #next-2-month-a                   (a8)
+1 redefine #next-2-month-a
+  2 #next-2-month-mm                (n2)
+  2 #next-2-month-dd                (n2)
+  2 #next-2-month-yyyy              (n4)
+1 #month-text                       (a9)
+1 #next-date                        (a3)
+1 #next-month                       (a18)
+1 #next-month-no-day                (a15)                /* vt11
+1 #work-month                       (a10)                /* vt11
+1 #next-2-month                     (a14)                      /* vt1 was 13
+1 #work-mm                          (n2)
+1 #date-of-birth                    (a8)
+1 #date-of-birth-d                  (d)
+*
+1 #cap-date                         (n8)
+1 redefine #cap-date
+  2 #cap-date-century               (n2)
+  2 #cap-date-6                     (n6)
+1  redefine #cap-date                                                      /* vt6
+  2 #cap-date-a                     (a8)                                   /* vt6
+*
+1 #target-date                      (n8)
+1 redefine #target-date
+  2 #target-date-yyyy               (n4)
+  2 #target-date-mm                 (n2)
+  2 #target-date-dd                 (n2)
+*
+1 #cap-pmt-type                     (a1)
+1 #pol-num                          (a16)
+1 #owner-name                       (A)  DYNAMIC
+1 #I                                (I2)
+1 #pol-seg                          (i2)
+1 #policy-segment                   (a1)
+1 #owner-email                      (a60)
+*
+1 #loan-amt                         (n5.2)
+1 #loan-amt-in                      (n5.2)                /* vt3
+1 #mon-prem                         (n5.2)
+1 #tot-amt                          (n5.2)
+* 1 #tot-amt                          (a8)
+1 #tot-amt-due                      (n5.2)                /* vt2
+1 #face-amt                         (n7.2)
+1 #smoker-flag                      (a1)
+1 #scr-suffix                       (a3)
+1 #scr-command                      (a2)
+1 #scr-id                           (n9)
+1 #iss-age                          (n2)
+1 #aprem                            (n6.2)
+1 #YYYYMMDD                         (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY                           (N4)
+  2 REDEFINE #YYYY
+    3 #CENT                         (N2)
+    3 #YY                           (N2)
+  2 #MM                             (N2)
+  2 #DD                             (N2)
+*
+1 ERROR-MESSAGE    (A100)                                      /* vt2 \/
+1 #j               (i2)
+1 #K               (i2)
+1 #tot-due         (n5.2/9)
+1 #tot-due-lk      (n5.2/9)                                  /* vt5
+1 #tot-amt-due-all (n5.2/9)
+1 #tot-amt-due-all-a (a9/9)
+1 #tot-due-a       (a9/9)
+1 #pad-code        (a1)
+1 #ownership-flag  (a1)                                        /* vt2 /\
+*
+1 #pol-num1           (a16)                                     /* vt3 \/
+1 #total-allot-amt    (n5.2)
+1 #total-ezpay-amt    (n5.2)
+1 #total-allot-amt-a  (a8)
+1 #total-ezpay-amt-a  (a8)
+1 #type-loan-pmt      (a1)
+1 #policy-nbr         (a16/9)
+1 #tot-due-allot      (n5.2/9)
+1 #tot-due-ezpay      (n5.2/9)
+1 #m                  (i2)
+1 #l                  (i2)                                     /* vt3 /\
+1 #mlk                (i2)                            /* vt5
+1 #jlk                (i2)                            /* vt5
+*
+1 #text            (a50/9)
+1 #CONTACT-ID                       (n8)
+1 #cn                               (a6)
+1 #SALUTATION-WITH-NAME             (A) DYNAMIC
+1 #insured-name                     (a70)
+1 #first-name                       (a25)
+1 #middle-name                      (a25)
+1 #last-name                        (a25)
+1 #suffix                           (a10)
+1 #plan                             (a3)
+1 #face-amount                      (n7.2)
+1 #cap                              (l)
+1 #cnt-email                        (p9)
+1 #mode                             (a1)                /* vt1
+*
+1 #TAB                              (A1) INIT <H'09'>
+1 #EMPTY-FILE-CMD                   (A)  DYNAMIC INIT <'>'>
+*
+1 #WEB-CHARGE-SUCCESSFUL-TEMPLATE   (A3) INIT <'ALO'>       /* CAP Allotment Loan only
+1 #WEB-CHARGE-SUCCESSFUL-TEMPLATE1  (A3) INIT <'ELO'>       /* CAP EZ-Pay Loan only
+1 #WEB-CHARGE-SUCCESSFUL-TEMPLATE2  (A3) INIT <'ANP'>       /* CAP Allotment New Policy
+1 #WEB-CHARGE-SUCCESSFUL-TEMPLATE3  (A3) INIT <'ENP'>       /* CAP EZ-Pay New Policy
+* 1 #daily-emailsent-report  (A) DYNAMIC INIT                                  /* vt4 \/
+*  <'/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/DailyEmailsentReport.txt'>
+1 #out-file     (a500)
+1 #name         (a70)
+1 #issue-date   (a10)
+1 #description  (a22)
+1 #alt-lp-date  (a10)                                                        /* vt4 /\
+*
+1 #PASS-COMMAND                        (A2) INIT <'AD'>
+*
+1 #next-month-n                 (n8)
+1 redefine #next-month-n
+  2 #next-month-n-yyyy      (n4)
+  2 #next-month-n-mm        (n2)
+  2 #next-month-n-dd        (n2)
+*
+1 #ssn               (n9)                               /* vt12 \/
+1 redefine #ssn
+  2 #ssn-3             (a3)
+  2 #ssn-2             (a2)
+  2 #ssn-4             (a4)
+1 #ssn-a             (a11)
+1 #Phone             (a) dynamic
+1 #e-mail            (a) Dynamic
+1 #e-mail1           (a60)                              /* vt12 /\
+*
+END-DEFINE
+*
+DEFINE WORK FILE 1 #EMAIL-DAILY-FILE TYPE 'ASCII-COMPRESSED'
+  ATTRIBUTES 'APPEND'
+*
+* DEFINE WORK FILE 2 #daily-emailsent-report  TYPE 'ASCII-COMPRESSED'           /* vt4  \/
+*  ATTRIBUTES 'APPEND'
+*
+compress 'CN'                #TAB
+  'Name'                     #TAB
+  'Issue Date'               #TAB
+  'Policy Number'            #TAB
+  'Email Type'               #TAB
+  'Date CAP E-mail created'  #TAB
+  'Email Amount'             #TAB
+  'SSN'                      #tab                                    /* vt12 \/
+  'Address1'                 #tab
+  'Address2'                 #tab
+  'Address3'                 #tab
+  'Phone'                    #tab
+  'E-mail'                   #tab                                    /* vt12 /\
+  into #out-file leaving no
+write work 2 #out-file                                                      /* vt4 /\
+*
+move *datn to #curr-date
+move *datx to #curr-date-d
+* #next-month-d                                                        /* vt6
+* #next-2-month-d                                                      /* vt6
+*
+*  move 20170601 to #curr-date                                  /* for test only  \/
+*  move '20170601' to #curr-date-a
+*  move edited #curr-date-a  to #curr-date-d (em=YYYYMMDD) /*
+*  move edited #curr-date-a to #next-month-d (em=YYYYMMDD)                                                  /* vt6 \/
+*  move edited #curr-date-a to #next-2-month-d(em=YYYYMMDD)     /* for test only  /\
+*  add 31     to #next-month-d
+*  add 60     to #next-2-month-d
+*  move edited #next-month-d (em=mmddyyyy) to #next-month-a
+* move 18    to #next-month-dd
+* move edited #next-2-month-d (em=mmddyyyy) to #next-2-month-a
+* *
+* move #next-month-mm to #work-mm
+* perform get-month-text
+* compress #next-month-dd ',' into #next-date leaving no
+* compress #month-text #next-date #next-month-YYYY to #next-month
+* move #next-2-month-mm to #work-mm
+* perform get-month-text
+* compress #month-text #next-2-month-yyyy into #next-2-month                                             /* vt6 /\
+*
+WRITE 'process started'
+* write '=' #next-month #next-2-month
+*
+read Status by ISN
+  reset #cap-date #plan #face-amount #mon-prem #aprem
+    #tot-amt-due #issue-date
+*
+  F1. for #i 1 9
+    if status.x-alt-lp-date (#i) ne 0
+        and status.status(#i) = 'D'     /* vt10
+      move status.x-alt-lp-date(#i)  to #cap-date
+      move status.x-alt-lp-ind (#i)  to #cap-pmt-type
+      move status.plan (#i)          to #plan
+      move status.face-amount  (#i)  to #face-amount
+      move status.annual-prem  (#i)  to #aprem
+      move status.x-alt-lp-amt (#i)  to #loan-amt-in              /* vt3
+      move status.mode         (#i)  to #mode                     /* vt1
+      move status.pad-code           to #pad-code                 /* vt2
+      move status.ownership-flag(#i) to #ownership-flag           /* vt2
+      move #i to #l                                               /* vt3
+      move true to #cap
+      escape bottom (f1.)
+    end-if
+  end-for
+*
+  if #curr-date = #cap-date
+*
+    perform get-next-months                                                  /* vt6 ticket 1589
+*
+    reset email-information
+*
+    move status.id-number  to cc-payment.id-number
+    move #curr-date        to cc-payment.parm-date       /* 08182011 vt
+*   callnat 'capncc11' cc-payment error-message
+*
+    perform get-total-amount                   /* vt3
+*
+    perform get-linked-cn-allotm-amt                               /* vt5
+    #tot-amt := #tot-amt +  #linked-cn-tot-amt                       /* vt5
+*
+    if #loan-amt = 0
+      perform get-loan-amount                  /* vt3 \/
+    else
+      move #loan-amt-in to #loan-amt           /* vt3 /\
+    end-if
+*
+    perform get-new-fields                       /* vt12
+*
+    f2. for #k 1 9
+      if #text(#k) ne ' '
+        if #k = 1
+          move #text(#k) to email-information.text-1
+        end-if
+        if #k  = 2
+          move #text(#k) to email-information.text-2
+        end-if
+        if #k = 3
+          move #text(#k) to email-information.text-3
+        end-if
+        if #k  = 4
+          move #text(#k) to email-information.text-4
+        end-if
+        if #k = 5
+          move #text(#k) to email-information.text-5
+        end-if
+        if #k  = 6
+          move #text(#k) to email-information.text-6
+        end-if
+        if #k = 7
+          move #text(#k) to email-information.text-7
+        end-if
+        if #k  = 8
+          move #text(#k) to email-information.text-8
+        end-if
+        if #k  = 9
+          move #text(#k) to email-information.text-9
+        end-if
+      end-if
+    end-for   /* f2
+*                                                      /* vt2   /\
+*
+    reset   #contact-id
+      #salutation-with-name
+      #cn
+*
+    if #cap
+      email-information.next-month             := #next-month
+      email-information.next-month-no-day      := #next-month-no-day               /* vt11
+      email-information.month-plus-two         := #next-2-month
+      email-information.premium-amount         := #mon-prem
+*
+      move edited #loan-amt (em=zzzz9.99) to email-information.cap-loan-amount
+      compress '$' *TRIM(email-information.cap-loan-amount) INTO
+        email-information.cap-loan-amount leaving no
+
+***     move edited #tot-amt (em=zzzzz9.99)  to email-information.total-amount-due  /* vt1 \/
+***      compress '$' *TRIM(email-information.total-amount-due) into
+***        email-information.total-amount-due leaving no                            /* vt1 /\
+*
+      move status.id-number to #Cn
+      move status.member-contact-id to #contact-id
+*
+      #SALUTATION-WITH-NAME := 'S1'
+      CALLNAT 'GPRS0CNT' #CONTACT-ID #SALUTATION-WITH-NAME
+*      #SALUTATION-WITH-NAME := EDIT_NAME_LOWCASE (< #SALUTATION-WITH-NAME >)          /* bz-NAME
+      #owner-name := #SALUTATION-WITH-NAME  
+*
+      #insured-name := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME,#MIDDLE-NAME,#LAST-NAME,#SUFFIX>)
+      compress #first-name #last-name into #insured-name
+      callnat 'gplnmsxx' #pol-num status.id-number #l
+*
+      move #insured-name to #name                               /* vt4 \/
+      if status.issue-date(#i) ne 0
+        move status.issue-date(#i) to #work-date
+        compress #work-date-mm '/' #work-date-dd '/' #work-date-yyyy
+          into #issue-date  leaving no
+      else
+        reset #issue-date
+      end-if
+      if status.x-alt-lp-date(#i) ne 0
+        move status.x-alt-lp-date(#i) to #work-date
+        compress #work-date-mm '/' #work-date-dd '/' #work-date-yyyy
+          into #alt-lp-date leaving no
+      else
+        reset #alt-lp-date
+      end-if                                               /* vt4  /\
+*
+      reset #pda-address
+      move status.member-contact-id to #add-contact-id
+      move 'P' to #add-type
+      callnat 'ADDN0001' #pda-address
+      EMAIL-INFORMATION.ADDRESS-LINE-1 := #add-line-1
+      EMAIL-INFORMATION.ADDRESS-LINE-2 := #add-line-2
+      EMAIL-INFORMATION.ADDRESS-LINE-3 := #add-line-3
+*
+      #POL-SEG                         := F_POLICY_SEGMENT(<#pol-num,#cn>)
+      IF #POL-SEG NE 0
+        #POLICY-SEGMENT    := #POL-SEG
+        #OWNER-EMAIL       := FUNCTION-OWNER-EMAIL(<#cn,#POLICY-SEGMENT>)
+      END-IF
+      IF #OWNER-EMAIL = ' '
+        #OWNER-EMAIL       := FUNCTION-MEMBER-EMAIL(<#cn>)
+      END-IF
+      IF #OWNER-EMAIL = ' '
+        #OWNER-EMAIL       := FUNCTION-CN-EMAIL(<#cn>)
+      END-IF
+      IF #OWNER-EMAIL = ' '
+        #OWNER-EMAIL       := '999'
+      END-IF
+
+      EMAIL-INFORMATION.DAL-CN              := status.id-number
+      EMAIL-INFORMATION.OWNER-EMAIL         := #OWNER-EMAIL
+*                                                      /* CAP Loan only
+      if status.cap-entry-date = 0
+          or (#cap-date gt status.issue-date(#i))                                     /* vt9
+        if #cap-pmt-type = 'L'                         /* allotment payment
+          EMAIL-INFORMATION.TEMPLATE-TYPE   := #WEB-CHARGE-SUCCESSFUL-TEMPLATE
+          #description := 'Allotment - Loan Only'                     /* vt4
+        else
+          if #cap-pmt-type = 'E'                      /* EZ-Pay payment
+            EMAIL-INFORMATION.TEMPLATE-TYPE := #WEB-CHARGE-SUCCESSFUL-TEMPLATE1
+            #description := 'EZ-pay - Loan Only'                      /* vt4
+          end-if
+        end-if
+      else                                                  /* CAP Policy + Loan
+        if #cap-pmt-type = 'L'                        /* allotment payment
+          EMAIL-INFORMATION.TEMPLATE-TYPE   := #WEB-CHARGE-SUCCESSFUL-TEMPLATE2
+          #description := 'Allotment - New Policy'                    /* vt4
+        else
+          if #cap-pmt-type = 'E'                      /* EZ-Pay payment
+            EMAIL-INFORMATION.TEMPLATE-TYPE := #WEB-CHARGE-SUCCESSFUL-TEMPLATE3
+            #description := 'EZ-pay - New Policy'                     /* vt4
+          end-if
+        end-if
+      end-if
+    end-if
+*
+    move edited #tot-amt (em=zzzzz9.99)  to email-information.total-amount-due  /* vt1 \/
+    compress '$' *TRIM(email-information.total-amount-due) into
+      email-information.total-amount-due leaving no                            /*  vt1 /\
+*
+    EMAIL-INFORMATION.POLICY-NUMBER      := #pol-num
+    EMAil-INFORMAtion.OWNER-NAME         := #owner-name
+    email-information.insured-name       := #insured-name
+    add 1 to #cnt-email
+    WRITE WORK FILE 1 EMAIL-INFORMATION
+*
+    compress status.id-number                #TAB                   /* vt4 \/
+      #name                                  #TAB
+      #issue-date                            #TAB
+      #pol-num                               #TAB
+      #description                           #TAB
+      #alt-lp-date                           #TAB
+      email-information.total-amount-due     #TAB
+      #ssn-a                                 #tab                   /* vt12 \/
+      #add-line-1                            #tab
+      #add-line-2                            #tab
+      #add-line-3                            #tab
+      #phone                                 #tab
+      #e-mail1                               #tab                   /* vt12 /\
+      into #out-file leaving no
+    write work 2 #out-file                                          /* vt4 /\
+*
+  end-if                       /* 06062011
+* END-IF
+*
+*****************                                                                         /* vt6 \/ ticket 1589
+  define subroutine get-next-months
+*****************
+*
+  move #cap-date to #next-month-n
+  add 1 to #next-month-n-mm
+  if #next-month-n-mm GT 12
+    add 1 to #next-month-n-yyyy
+    compute #next-month-n-mm := #next-month-n-mm - 12              /* vt8
+  end-if
+  move 18    to #next-month-n-dd
+  move #next-month-n-mm to #next-month-a-mm
+  move #next-month-n-yyyy to #next-month-a-yyyy
+  move #next-month-n-dd   to #next-month-a-dd
+  move #next-month-a-mm to #work-mm
+  perform get-month-text
+  compress #next-month-a-dd ',' into #next-date leaving no
+  compress #month-text #next-date #next-month-a-YYYY to #next-month
+  compress #month-text ',' into #work-month leaving no                  /* vt11
+  compress #work-month #next-month-a-yyyy into #next-month-no-day       /* vt11
+*
+  move edited #cap-date-a to #next-2-month-d(em=YYYYMMDD)
+  add 60     to #next-2-month-d
+  move edited #next-2-month-d (em=mmddyyyy) to #next-2-month-a
+  move #next-2-month-mm to #work-mm
+  perform get-month-text
+  compress #month-text #next-2-month-yyyy into #next-2-month
+
+  end-subroutine                                                                          /* vt6 /\
+*
+*****************
+  define subroutine get-loan-amount                    /* vt3
+*****************
+*
+*  f2.  find at with at.ssn = status.ssn               /* vt3
+  f3. find at with at.id-number = status.id-number       /* vt3
+    if no
+      move 85.80 to #loan-amt                         /* only for testin purposes 04/03/2013 was 107.25
+*    move 15.00  to #mon-prem                         /* vt3
+*    #tot-amt := #loan-amt + #mon-prem                /*         -''-  vt3
+      escape bottom (f3.)
+    end-norec
+*
+    if at.intro-flag = 'V'
+      escape top
+    end-if
+*
+    compute #face-amt = at.face-amt-units * 1000
+    if #face-amt = 0
+      compute #face-amt := #face-amount
+    end-if
+    if at.cap-loan-amt = 0
+      move 4000 to at.cap-loan-amt
+    end-if
+*
+    if at.cap-term = 0
+      move 48 to at.cap-term
+    end-if
+*
+    RESET #LOAN-amt
+    IF AT.CAP-IND = 'Y' AND (AT.CAP-LOAN-AMT NE 0)
+      if at.cap-loan-amt ne 0
+        DECIDE ON FIRST VALUE CAP-LOAN-AMT
+          VALUE 5000
+            IF CAP-TERM = 48 MOVE 107.25 TO #LOAN-amt END-IF
+            IF CAP-TERM = 36 MOVE 141.94 TO #LOAN-amt END-IF
+          VALUE 4000
+            IF CAP-TERM = 48 MOVE  85.80 TO #LOAN-amt END-IF
+            IF CAP-TERM = 36 MOVE 113.55 TO #LOAN-amt END-IF
+          VALUE 3000
+            IF CAP-TERM = 48 MOVE 64.35 TO #LOAN-amt END-IF
+            IF CAP-TERM = 36 MOVE 85.16 TO #LOAN-amt END-IF
+          VALUE 2500
+            IF CAP-TERM = 48 MOVE 53.62 TO #LOAN-amt END-IF
+            IF CAP-TERM = 36 MOVE 70.97 TO #LOAN-amt END-IF
+          VALUE 2000
+            IF CAP-TERM = 48 MOVE 42.90 TO #LOAN-amt END-IF
+            IF CAP-TERM = 36 MOVE 56.77 TO #LOAN-amt END-IF
+          VALUE 1000
+            IF CAP-TERM = 48 MOVE 21.45 TO #LOAN-amt END-IF
+            IF CAP-TERM = 36 MOVE 28.38 TO #LOAN-amt END-IF
+          NONE IGNORE
+        END-DECIDE
+      END-IF
+    end-if
+*
+  end-find
+*
+  end-subroutine
+*
+*****************
+  define subroutine get-month-text
+*****************
+  decide on  first value of #work-mm
+    value 1
+      move 'January' to #month-text
+    value 2
+      move 'February' to #month-text
+    value 3
+      move 'March' to #month-text
+    value 4
+      move 'April' to #month-text
+    value 5
+      move 'May' to #month-text
+    value 6
+      move 'June' to #month-text
+    value 7
+      move 'July' to #month-text
+    value 8
+      move 'August' to #month-text
+    value 9
+      move 'September' to #month-text
+    value 10
+      move 'October' to #month-text
+    value 11
+      move 'November' to #month-text
+    value 12
+      move 'December' to #month-text
+    none value
+      ignore
+  end-decide
+  end-subroutine
+*
+*****************
+  define subroutine get-total-amount
+*****************
+*
+  reset #pol-num1
+    #policy-nbr(*)
+    cc-payment
+    #tot-due (*)
+    #tot-due-allot(*)
+    #tot-due-ezpay(*)
+    #total-allot-amt
+    #total-ezpay-amt
+    #tot-due-a(*)
+    #type-loan-pmt
+    #tot-amt
+    #text(*)
+    #loan-amt
+*
+  move status.id-number to cc-payment.id-number
+*  move 20121031 to cc-payment.parm-date    /*  for test only!
+  move *datn    to cc-payment.parm-date    /*  for test only!
+
+  callnat 'capncc11' cc-payment error-message
+*
+  find stat with stat.id-number = status.id-number
+*
+    RESET PARM-SVC                                           /* vt5 \/
+    PARM-SVC.SVC-PLAN      := 'PSM'
+    PARM-SVC.SVC-MEMBER-ID := status.ID-NUMBER
+    PARM-SVC.ACTION        := 'GET'
+    PARM-SVC.TRANSACTION-TIMN := *TIMN
+    PARM-SVC.TRANSACTION-DATN := *DATN
+    CALLNAT 'SVCN0003' PARM-SVC #MSG                        /* vt5 /\
+*
+    for #m 1 9
+      callnat 'gplnmsxx' #pol-num1 status.id-number #m
+      move #pol-num1 to #policy-nbr (#m)
+      for #j 1 10
+        add due-amount(#m,#j) to #tot-due   (#m)
+      end-for
+*
+      if #policy-nbr(#m) ne ' '
+*
+*        if stat.mode(#m) = 'G'                             /* vt4
+        if cc-payment.PAYMENT-MODE (#m,*) = 'G'             /* vt4
+          IF PARM-SVC.SVC-MODE = 'G'                                        /* vt5 \/
+              AND PARM-SVC.SVC-PAY-UP NE 'Y'
+            ADD PARM-SVC.SVC-MONTHLY-RATE TO #tot-due(#m)
+            RESET PARM-SVC.SVC-MODE
+          END-IF                                                           /* vt5 /\
+          add #tot-due(#m) to #tot-due-allot (#m)
+*
+          add #tot-due(#m) to #total-allot-amt
+          if #tot-due-allot(#m) ne 0
+            move edited  #tot-due-allot(#m)(em=ZZZZ9.99)  to #tot-due-a (#m)
+            compress      POLICY-NBR (#m)     #tot-due-a (#m) into #text(#m)
+          end-if
+        else
+*          if stat.mode(#m) = 'E'                           /* vt4        
+          if cc-payment.PAYMENT-MODE (#m,*) = 'E'           /* vt4
+              or stat.pad-code = 'P' or (stat.pad-code = 'D' and stat.ownership-flag(#i) = 'D')
+            IF PARM-SVC.SVC-MODE = 'E'                                     /* vt5 \/
+                AND PARM-SVC.SVC-PAY-UP NE 'Y'
+              ADD PARM-SVC.SVC-MONTHLY-RATE TO #tot-due(#m)
+              RESET PARM-SVC.SVC-MODE
+            END-IF                                                         /* vt5 /\
+            add #tot-due (#m) to #tot-due-ezpay (#m)
+            add #tot-due(#m) to #total-ezpay-amt
+            if #tot-due-ezpay (#m) ne 0
+              move edited  #tot-due-ezpay(#m)(em=ZZZZ9.99)  to #tot-due-a (#m)
+              compress      POLICY-NBR (#m)     #tot-due-a (#m) into #text(#m)
+            end-if
+          end-if
+        end-if
+*
+        if stat.x-alt-lp-ind (#i) = 'L'
+          move 'A' to #type-loan-pmt
+          move stat.x-alt-lp-amt(#m) to #loan-amt
+          add #loan-amt to #tot-due-allot(#m)
+          add #loan-amt to #total-allot-amt
+          if #tot-due-allot(#m) ne 0
+            move edited  #tot-due-allot(#m)(em=ZZZZ9.99)  to #tot-due-a (#m)
+            compress      POLICY-NBR (#m)     #tot-due-a (#m) into #text(#m)
+          end-if
+        else
+          if stat.x-alt-lp-ind(#I) = 'E'
+            move 'E' to #type-loan-pmt
+            move x-alt-lp-amt(#m) to #loan-amt
+            add #loan-amt to #tot-due-ezpay(#m)
+            add #loan-amt to #total-ezpay-amt
+            if #tot-due-ezpay (#m) ne 0
+              move edited  #tot-due-ezpay(#m)(em=ZZZZ9.99)  to #tot-due-a (#m)
+              compress      POLICY-NBR (#m)     #tot-due-a (#m) into #text(#m)
+            end-if
+          end-if
+        end-if
+*
+        if #tot-due-a (#m) ne ' '
+          compress '$' *trim(#tot-due-a(#m)) into #tot-due-a(#m) leaving no
+          compress      POLICY-NBR (#m)     #tot-due-a (#m) into #text(#m)
+        end-if
+*
+      end-if
+*
+      move edited #total-allot-amt (em=zzzz9.99) to #total-allot-amt-a
+      move edited #total-ezpay-amt (em=zzzz9.99) to #total-ezpay-amt-a
+*
+      if   #type-loan-pmt = 'E'
+        move #total-ezpay-amt  to #tot-amt
+      end-if
+      if  #type-loan-pmt = 'A'
+        move #total-allot-amt  to #tot-amt
+      end-if
+    end-for
+*
+  end-find
+  end-subroutine
+*
+*****************                                                      /* vt12 \/
+  define subroutine get-new-fields
+*****************
+*
+  #ssn := f-get-ssn (<status.member-contact-id>)
+  compress #ssn-3 '-' #ssn-2 '-' #ssn-4 into #ssn-a leaving no
+*
+  #e-mail := f-pref-email(<status.member-contact-id>)
+  #e-mail1 := #e-mail
+*
+  #phone   := f-pref-phone(<status.member-contact-id>)
+*
+  end-subroutine                                                       /* vt12 /\
+*
+*****************
+  define subroutine get-linked-cn-allotm-amt                            /* vt5 \/
+*****************
+*
+  reset #linked-cn-tot-amt
+    #tot-due-lk(*)                                                        /* vt7
+  find (1) notes with id-number = status.id-number
+    for #j 1 to 60
+      if notes.note-text(#j) = mask ('*#ALOT:PAYS')
+        find lk-v with lk-v.member-key = note-text-alot-pays-cn(#j)
+          move lk-v.id-number to cc-payment.id-number
+          move *datn          to cc-payment.parm-date
+*          move 20121031      to cc-payment.parm-date     /* for test only!
+          callnat 'capncc11' cc-payment error-message
+          for #mlk 1 9
+            for #jlk 1 10
+              add due-amount(#mlk,#jlk) to #tot-due-lk   (#mlk)
+            end-for
+            if cc-payment.PAYMENT-MODE (#mlk,*) = 'G'
+              add #tot-due-lk(#mlk) to #linked-cn-tot-amt
+            end-if
+          end-for
+        end-find
+      end-if
+    end-for
+  end-find
+*
+  write '=' status.id-number  '='  #linked-cn-tot-amt
+  end-subroutine
+*                                                                     /* vt5 /\
+  at end of data
+    write 'all extarcted records :' #cnt-email
+  end-enddata
+END-read
+END

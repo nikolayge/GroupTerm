@@ -1,0 +1,199 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* MBCNEP62 - Created for Member Center MC-II                           *
+* Returns Paid-Off Accounts for the owner of policies                  *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE        TAG     REASON                                    *
+* YAK    12/22/2014          Program Written for MC-II                 *
+* YAK    08/01/2015  YK1     Replace LDA with partial view             *
+*                            Get policy id from Status file            *
+* YAK    09/25/2015  YK2     Fix logic to get issue date for CAP loans *
+* YAK    02/01/2015  YK3     Temporary fix until Function VAWL-TRUE    *
+*                            is fixed                                  *
+* YAK    02/29/2016  YK4     Fix issues with displaying pay-off loans  *
+*                            OI-4278                                   *
+* 1. Exclude CAP Loan LAPC (Sent to Collection)                        *
+* 2. Skip reversed loan pay-off transaction                            *
+* 3. Check Loan amount for reinstated loans                            *
+* YAK    03/27/2017  YK1     Payor Role
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEP06
+*
+LOCAL
+* YK1 >
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 C*ACTIVE-SEGMENTS
+  2 POLICY-ID (9)
+  2 PLAN (9)
+  2 STATUS (9)
+  2 PAY-STATUS (9)
+  2 ISSUE-DATE (9)
+  2 PAID-UP-DATE (9)
+  2 CONV-DURATION (9)
+  2 X-LOAN-AMOUNT (9)
+  2 X-LOAN-AMOUNT-2 (9)
+* < YK1
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER
+  2 TRANSACTION-DATN
+  2 ACCT-DATE
+  2 DESCRIPTION
+  2 POLICY-NUMBER
+  2 TXN-CODE
+  2 CASH-CODE
+*
+1 #I1                       (I2)
+1 #I2                       (N2)
+1 #II                       (N2)
+1 #Value-Added              (A) DYNAMIC CONST <'Value Added Whole Life'>
+1 #AnnuityLife              (A) DYNAMIC CONST <'Annuity Life'>
+1 #ServiceOnly              (A) DYNAMIC CONST <'Service Only'>
+1 #SinglePay                (A) DYNAMIC CONST <'Single Pay'>
+1 #FixedLinkedLoan          (A) DYNAMIC CONST <'Fixed Linked Loan'>
+1 #VarLinkedLoan            (A) DYNAMIC CONST <'Variable Linked Loan'>
+1 #CAPLoan                  (A) DYNAMIC CONST <'CAP Loan'>
+1 #Active                   (A) DYNAMIC CONST <'D'>
+1 #PaidUp                   (A) DYNAMIC CONST <'40'>
+1 #Policy                   (A) DYNAMIC CONST <'Policy'>
+1 #Loan                     (A) DYNAMIC CONST <'Loan'>
+1 #PayOffAccountName        (A) DYNAMIC
+1 #PAYOFF-DATE              (N8)
+1 #ISSUE-DATE               (N8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-A (A8)
+1 #POLICY-NUMBER            (A16)
+1 #AR-POLICY-NUMBER         (A16)
+1 #MATCH-FOUND              (L)
+1 #TRAN                     (A4)
+1 #FIX-LOAN                 (N7.2)       /* YK4
+1 #VAR-LOAN                 (N7.2)       /* YK4
+*
+END-DEFINE
+*
+FOR #I1 = 1 TO *OCCURRENCE(PaymentCN)
+  FIND(1) ST-V WITH ID-NUMBER = PaymentHistory.PaymentCN(#I1)
+    FOR #I2 = 1 TO C*ACTIVE-SEGMENTS
+      RESET #POLICY-NUMBER #TRAN #PAYOFF-DATE #ISSUE-DATE #MATCH-FOUND #FIX-LOAN #VAR-LOAN   /* YK4
+*     #POLICY-NUMBER := F-POL-NUMBER(<PaymentHistory.PaymentCN(#I1),#I2>)  /* YK1
+      #POLICY-NUMBER := ST-V.POLICY-ID(#I2)                                /* YK1
+      IF #POLICY-NUMBER = PaymentHistory.PolicyNumber (*)          /* YK5
+        #FIX-LOAN := ST-V.X-LOAN-AMOUNT(#I2)                                 /* YK4
+        #VAR-LOAN := ST-V.X-LOAN-AMOUNT-2(#I2)                               /* YK4
+        IF ST-V.STATUS(#I2) = #Active AND ST-V.PAY-STATUS(#I2) >= #PaidUp
+          DECIDE FOR FIRST CONDITION
+* YK3 Temporary fix until Function is fixed
+            WHEN VAWL-TRUE(<ST-V.PLAN(#I2)>) OR ST-V.PLAN(#I2) = MASK(NN'F') OR ST-V.PLAN(#I2) = MASK(N'P')
+              #PayOffAccountName := #Value-Added
+            WHEN IS-ANNUITY-LIFE(<ST-V.PLAN(#I2)>)
+              #PayOffAccountName := #AnnuityLife
+            WHEN ST-V.PLAN(#I2) = 'SO'
+              #PayOffAccountName := #ServiceOnly
+            WHEN ST-V.PLAN(#I2) = 'SP' or = 'SPF'
+              #PayOffAccountName := #SinglePay
+            WHEN ANY
+              C@PaidOffAccount := C@PaidOffAccount + 1
+              EXPAND ARRAY PaymentHistory.PaidOffAccount TO (*:C@PaidOffAccount)
+              COMPRESS 'Policy' #POLICY-NUMBER INTO PaidOffAccountName(C@PaidOffAccount)
+              COMPRESS '(' PaidOffAccountName(C@PaidOffAccount) ')' INTO PaidOffAccountName(C@PaidOffAccount) LEAVING NO
+              COMPRESS #PayOffAccountName PaidOffAccountName(C@PaidOffAccount) INTO PaidOffAccountName(C@PaidOffAccount)
+              PaymentHistory.PaidOffAccountType(C@PaidOffAccount) := #Policy
+              PaidOffAccountDate(C@PaidOffAccount) := FUNCTION-CALENDAR(<ST-V.PAID-UP-DATE(#I2),'V'>)
+            WHEN NONE
+              IGNORE
+          END-DECIDE
+        END-IF
+*
+        PERFORM FIND-PAID-OFF-LOANS
+      END-IF                                                       /* YK5
+    END-FOR
+  END-FIND
+END-FOR
+*
+**====================================
+DEFINE SUBROUTINE ADD-PAID-OFF-ACCOUNT
+**====================================
+*
+C@PaidOffAccount := C@PaidOffAccount + 1
+EXPAND ARRAY PaymentHistory.PaidOffAccount TO (*:C@PaidOffAccount)
+PaidOffAccountDate(C@PaidOffAccount) := FUNCTION-CALENDAR(<#PAYOFF-DATE,'V'>)
+PaidOffAccountName(C@PaidOffAccount) := #PayOffAccountName
+IF #PayOffAccountName = #FixedLinkedLoan OR = #VarLinkedLoan
+  COMPRESS 'Policy' #POLICY-NUMBER INTO PaidOffAccountName(C@PaidOffAccount)
+  COMPRESS '(' PaidOffAccountName(C@PaidOffAccount) ')' INTO PaidOffAccountName(C@PaidOffAccount) LEAVING NO
+  COMPRESS #PayOffAccountName PaidOffAccountName(C@PaidOffAccount) INTO PaidOffAccountName(C@PaidOffAccount)
+END-IF
+* YK4 >
+EXAMINE PaidOffAccountName(*) FOR PaidOffAccountName(C@PaidOffAccount) NUMBER #II
+IF #II > 1
+  RESET PaidOffAccountName(C@PaidOffAccount)
+  C@PaidOffAccount := C@PaidOffAccount - 1
+  RESIZE ARRAY PaymentHistory.PaidOffAccount TO (*:C@PaidOffAccount)
+END-IF
+* < YK4
+PaymentHistory.PaidOffAccountType(C@PaidOffAccount) := #Loan
+*
+END-SUBROUTINE
+*
+**===================================
+DEFINE SUBROUTINE FIND-PAID-OFF-LOANS
+**===================================
+*
+FIND AR-V WITH ID-NUMBER = ST-V.ID-NUMBER SORTED TRANSACTION-DATN DESCENDING
+  ACCEPT IF AR-V.TXN-CODE = 'FLNF' OR AR-V.TXN-CODE = 'FLNV'
+  DECIDE FOR FIRST CONDITION
+    WHEN AR-V.TXN-CODE = 'FLNF' AND ST-V.CONV-DURATION(#I2) = 999     /* YK4
+*     IF AR-V.DESCRIPTION = SCAN('SENT TO COLL')
+      IF AR-V.CASH-CODE = 'T' OR AR-V.CASH-CODE = 'Q' OR #FIX-LOAN <> 0     /* YK4
+        ESCAPE TOP
+      END-IF
+      #PayOffAccountName := #CAPLoan
+    WHEN AR-V.TXN-CODE = 'FLNF' AND #FIX-LOAN = 0     /* YK4
+      #PayOffAccountName := #FixedLinkedLoan
+    WHEN AR-V.TXN-CODE = 'FLNV' AND #VAR-LOAN = 0     /* YK4
+      #PayOffAccountName := #VarLinkedLoan
+    WHEN NONE
+      ESCAPE TOP
+  END-DECIDE
+  IF AR-V.POLICY-NUMBER <> ' '
+    IF AR-V.POLICY-NUMBER = #POLICY-NUMBER
+      #PAYOFF-DATE := AR-V.TRANSACTION-DATN
+      #MATCH-FOUND := TRUE
+      PERFORM ADD-PAID-OFF-ACCOUNT
+      ESCAPE TOP
+    END-IF
+  ELSE
+    RESET #AR-POLICY-NUMBER
+    EXAMINE AR-V.DESCRIPTION FOR 'CAP' DELETE                      /* YK2
+    EXAMINE AR-V.DESCRIPTION FOR 'MBR' DELETE                      /* YK2
+    AR-V.DESCRIPTION := *TRIM(AR-V.DESCRIPTION)                    /* YK2
+    #ISSUE-DATE-A := SUBSTR(AR-V.DESCRIPTION,1,8)
+    #ISSUE-DATE := VAL(#ISSUE-DATE-A)
+    #ISSUE-DATE := FUNCTION-DATE(<#ISSUE-DATE>)
+    FOR #II = 1 TO C*ACTIVE-SEGMENTS
+      IF #ISSUE-DATE = ST-V.ISSUE-DATE(#II)
+*       #AR-POLICY-NUMBER := F-POL-NUMBER(<ST-V.ID-NUMBER,#II>)    /* YK1
+        #AR-POLICY-NUMBER := ST-V.POLICY-ID(#II)                   /* YK1
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+    IF #II <= C*ACTIVE-SEGMENTS AND #AR-POLICY-NUMBER = #POLICY-NUMBER
+      #PAYOFF-DATE := AR-V.TRANSACTION-DATN
+      #MATCH-FOUND := TRUE
+      PERFORM ADD-PAID-OFF-ACCOUNT
+      ESCAPE TOP
+    END-IF
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,516 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPPENA    ** daily pending action processor
+DEFINE DATA
+* * * * * * * * *
+* DRW 02/29/2008 DW1 Handle Leap year
+* vxt 11/20/2016 vt1 Fix the production error 3098 for NX messages ?ticket 1924/
+* * * * * * * * * * * *
+LOCAL  USING GONERLXX
+LOCAL
+*
+1 #I1            (I2)
+1 #I2            (I2)
+1 #I3            (I2)
+1 #NOTE-NUM      (P8)
+1 #NT-ISN        (P8)
+*
+1 #DATN         (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY   (N4)
+  2 #DATN-MM     (N2)
+  2 #DATN-DD     (N2)
+*
+1 #PEN-DT-YYYYMMDD (N8)
+1 REDEFINE #PEN-DT-YYYYMMDD
+  2 #PEN-DT-YYYY (A4)
+  2 #PEN-DT-MM   (A2)
+  2 #PEN-DT-DD   (A2)
+*
+1 #TOMORROW     (N8)
+1 REDEFINE #TOMORROW
+  2 #TOMORROW-YYYY (N4)
+  2 #TOMORROW-MM   (N2)
+  2 #TOMORROW-DD   (N2)
+*
+1 #20-DAYS-AGO     (N8)
+1 REDEFINE #20-DAYS-AGO
+  2 #20-DAYS-AGO-YYYY (N4)
+  2 #20-DAYS-AGO-MM   (N2)
+  2 #20-DAYS-AGO-DD   (N2)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 NAME
+  2 REDEFINE NAME
+    3 NAME-6   (A6)
+  2 X-FIRST-PLACE-FEE (9)
+  2 X-LOAN-AMOUNT    (9)
+  2 X-ACCUM-INTEREST (9)
+  2 X-LOAN-AMOUNT-2  (9)
+  2 X-ACCUM-INTEREST-2 (9)
+  2 DEBIT-CREDIT-AMT
+  2 STATUS         (9)
+  2 PAY-STATUS     (9)
+  2 PAID-TO-DATE   (9)
+*
+1 PD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A     (A6)
+  2 ENTRY-DATE    (N8)
+  2 REC-ISN       (N8)
+  2 ISSUE-DATE    (N8)   /* isn of status rec
+  2 CODE          (A1)
+  2 USER          (A3)
+*
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER        (N6)
+  2 NOTE-CLERK-ID    (A3/60)
+  2 NOTE-DATE        (N8/60)
+  2 NOTE-LINE-NUM    (P1/60)
+  2 NOTE-TEXT        (A60/60)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC       (60)
+      4 NOTE-TEXT-1ST-3  (A3)
+      4 NOTE-TEXT-PAC-EFF-DT  (A10)
+      4 REDEFINE NOTE-TEXT-PAC-EFF-DT
+        5 NOTE-TEXT-PAC-DT-MM   (A2)
+        5 NOTE-TEXT-PAC-DT-F1   (A1)
+        5 NOTE-TEXT-PAC-DT-DD   (A2)
+        5 NOTE-TEXT-PAC-DT-F2   (A1)
+        5 NOTE-TEXT-PAC-DT-YYYY (A4)
+      4 NOTE-TEXT-PAC-FL-3    (A1)
+      4 NOTE-TEXT-PAC-MSG     (A46)
+*
+1 TRMS-V VIEW OF A-TERMINALS
+  2 CLERK-ID
+  2 MSG-JUST-SENT
+*
+1 NX-V VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 NOTE-DATE (N8/3)
+  2 DTS-DATN  (P9)
+  2 DTS-TIMN  (P7)
+  2 NOTE-CLERK-ID (A3/3)
+  2 NOTE-TEXT (A60/20)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC-15 (20)
+      4 NOTE-TEXT-1ST-6   (A6)
+      4 NOTE-TEXT-REST-54 (A54)
+*
+1 #PREM-DELQ    (L)
+1 #FPF-DELQ     (L)
+1 #REC-DELETED  (L)
+1 #AUTO-CHG     (L)
+1 #NOT-FND      (L)
+1 #TOT-VAR-LOAN   (P6.2)
+1 #TOT-VAR-INT    (P5.2)
+1 #TOT-FIX-LOAN   (P5.2)
+1 #TOT-FIX-INT    (P5.2)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+FORMAT LS=133 PS=76
+WRITE  TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'DAILY ACTION PENDING PROCESSOR'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+MOVE *DATN TO #DATN
+*
+MOVE *DATN TO #20-DAYS-AGO
+SUBTRACT 20 FROM #20-DAYS-AGO-DD
+IF #20-DAYS-AGO-DD LT 1
+  ADD 31 TO #20-DAYS-AGO-DD
+  SUBTRACT 1 FROM #20-DAYS-AGO-MM
+  IF #20-DAYS-AGO-MM LT 1
+    MOVE 12 TO #20-DAYS-AGO-MM
+    SUBTRACT 1 FROM #20-DAYS-AGO-YYYY
+  END-IF
+END-IF
+*
+IF *TIMN LT 1200000       /* BEFORE 12 noon
+  MOVE *DATN TO #TOMORROW   /* #datn really is tomorrow
+ELSE
+  MOVE *DATN TO #TOMORROW   /* #datn + 1 day is tomorrow
+  ADD 1 TO #TOMORROW-DD
+*  IF  ((#TOMORROW-MM = 02) AND (#TOMORROW-DD GT 28))               /*    DW1
+  IF  ((#TOMORROW-YYYY = 2008 OR = 2012 OR = 2016 OR = 2020)
+      AND (#TOMORROW-MM = 02) AND (#TOMORROW-DD GT 29))
+      OR  (((NOT #TOMORROW-YYYY = 2008 OR = 2012 OR = 2016 OR = 2020)
+      AND (#TOMORROW-MM = 02) AND (#TOMORROW-DD GT 28)))              /* END DW1
+*
+      OR ((#TOMORROW-MM = 4 OR =6 OR = 9 OR = 11) AND (#TOMORROW-DD GT 30))
+      OR (#TOMORROW-DD GT 31)
+    MOVE 1 TO #TOMORROW-DD
+    ADD 1 TO #TOMORROW-MM
+    IF #TOMORROW-MM GT 12
+      MOVE 1 TO #TOMORROW-MM
+      ADD 1  TO #TOMORROW-YYYY
+    END-IF
+  END-IF
+END-IF
+*
+READ PD-V BY ENTRY-DATE FROM #20-DAYS-AGO THRU 50000000 /* STOP AT
+  IF CODE NE 'S'   /* PENDING ACTION                    INVERTED DATES
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+* DISPLAY ENTRY-DATE REC-ISN ISSUE-DATE CODE USER
+  IF (REC-ISN = 0) OR (ISSUE-DATE = 0)
+    WRITE 'DELETED A PD WITH EFF DT OF' ENTRY-DATE
+    DELETE (0158)
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+* WRITE 'JUST BEFORE GET PD-V ISN - ISN = ' PD-V.REC-ISN
+* IF PD-V.REC-ISN = 136941
+*   WRITE 'DELETED PD WITH ISN OF' REC-ISN
+*   DELETE (0158)
+*   END TRANSACTION
+*   ESCAPE TOP
+* END-IF
+*
+* GET NT-V PD-V.REC-ISN
+  RESET #NOT-FND
+  FIND NT-V WITH ID-NUMBER = PD-V.ID-NUMBER
+    IF NO RECORDS FOUND
+      MOVE TRUE TO #NOT-FND
+      WRITE 'NT NOT FOUND USING MD ID-NUMBER'  PD-V.ID-NUMBER
+      WRITE   'MD CODE=' PD-V.CODE
+      WRITE   'MD USER=' PD-V.USER
+      WRITE   'MD ENTRY DATE=' PD-V.ENTRY-DATE
+      WRITE   'MD REC-ISN=' PD-V.REC-ISN
+    END-NOREC
+    MOVE *ISN TO #NT-ISN
+  END-FIND
+*
+  IF #NOT-FND
+    ESCAPE TOP
+  END-IF
+*
+* GET ST-V PD-V.ISSUE-DATE
+  RESET #NOT-FND
+  FIND ST-V WITH MEMBER-KEY = PD-V.ID-NUMBER-A
+    IF NO RECORDS FOUND
+      FIND ST-V WITH WIDOW-KEY = PD-V.ID-NUMBER-A
+        IF NO RECORDS FOUND
+          MOVE TRUE TO #NOT-FND
+          WRITE 'ST NOT FOUND USING MD ID-NUMBER'  PD-V.ID-NUMBER
+          WRITE   'MD CODE=' PD-V.CODE
+          WRITE   'MD USER=' PD-V.USER
+          WRITE   'MD ENTRY DATE=' PD-V.ENTRY-DATE
+          WRITE   'MD REC-ISN=' PD-V.REC-ISN
+        END-NOREC
+      END-FIND
+    END-NOREC
+  END-FIND
+*
+  IF #NOT-FND
+    ESCAPE TOP
+  END-IF
+*
+  GET NT-V #NT-ISN       /* needed to optionally update notes
+  RESET #REC-DELETED
+  FOR #I1 1 TO 60
+    IF   (NT-V.NOTE-TEXT (#I1) = MASK ('*@'))
+        AND (NT-V.NOTE-LINE-NUM (#I1) = 1)
+      RESET #TOT-VAR-LOAN #TOT-FIX-LOAN
+      FOR #I2 1 TO 9
+        ADD X-LOAN-AMOUNT      (#I2) TO #TOT-FIX-LOAN
+        ADD X-ACCUM-INTEREST   (#I2) TO #TOT-FIX-INT
+        ADD X-LOAN-AMOUNT-2    (#I2) TO #TOT-VAR-LOAN
+        ADD X-ACCUM-INTEREST-2 (#I2) TO #TOT-VAR-INT
+      END-FOR
+*
+      IF  ((NT-V.NOTE-TEXT-PAC-MSG(#I1) = MASK ('MR Sent /LPF'))
+          AND (#TOT-FIX-LOAN GT 0))
+          OR ((NT-V.NOTE-TEXT-PAC-MSG(#I1) = MASK ('MR Sent /LPF'))
+          AND (#TOT-FIX-LOAN = 0) AND (#TOT-FIX-INT = 0))
+          OR ((NT-V.NOTE-TEXT-PAC-MSG(#I1) = MASK ('MR Sent /LPV'))
+          AND (#TOT-VAR-LOAN GT 0))
+          OR ((NT-V.NOTE-TEXT-PAC-MSG(#I1) = MASK ('MR Sent /LPV'))
+          AND (#TOT-VAR-LOAN = 0) AND (#TOT-VAR-INT = 0))
+        MOVE TRUE TO #REC-DELETED
+        DELETE (0158)
+        WRITE ST-V.ID-NUMBER 'UN PD"D EDS NOTE -' NT-V.NOTE-TEXT (#I1)
+*
+        IF NOTE-TEXT-1ST-3 (#I1 + 1) = MASK ('*') /* on top of crit
+          COMPRESS '*' NOTE-TEXT-PAC-MSG (#I1)  /* notes- keep it crit
+            INTO NT-V.NOTE-TEXT (#I1) LEAVING NO
+        ELSE
+          MOVE NOTE-TEXT-PAC-MSG (#I1) TO NT-V.NOTE-TEXT (#I1)
+        END-IF
+        UPDATE (0219)   /* was 1650
+*
+        END TRANSACTION
+        ESCAPE BOTTOM
+      END-IF
+    END-IF
+  END-FOR
+*
+  IF #REC-DELETED
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF USER = 'EDS' /* generated by eds month-end
+    RESET #FPF-DELQ #PREM-DELQ
+*
+    FOR #I1 1 TO 9
+      IF X-FIRST-PLACE-FEE (#I1) NE 0
+        MOVE TRUE TO #FPF-DELQ
+      END-IF
+*
+      IF   (STATUS (#I1) = 'D')
+          AND (PAY-STATUS (#I1) LT '40')
+        IF PAID-TO-DATE (#I1) LT *DATN
+          MOVE TRUE TO #PREM-DELQ
+        END-IF
+      END-IF
+    END-FOR
+*
+    FOR #I1 1 TO 60
+      IF   (NT-V.NOTE-TEXT (#I1) = MASK ('*@'))
+          AND (NT-V.NOTE-CLERK-ID (#I1) = USER)
+          AND (NT-V.NOTE-LINE-NUM (#I1) = 1)
+        IF (((NT-V.NOTE-TEXT-PAC-MSG(#I1) = 'ALLOTMENT STOPPED GIVE APL')
+            OR (NT-V.NOTE-TEXT-PAC-MSG (#I1) = MASK ('PREMIUM OVERDUE')))
+            AND (NOT #PREM-DELQ))
+            OR ((NT-V.NOTE-TEXT-PAC-MSG (#I1) = MASK ('FPF UNPAID'))
+            AND (NOT #FPF-DELQ))
+          DELETE (0158)
+          WRITE ST-V.ID-NUMBER 'DELETED EDS NOTE -' NT-V.NOTE-TEXT (#I1)
+*
+          FOR #I2 #I1 TO 59
+            MOVE NT-V.NOTE-DATE     (#I2 + 1) TO NT-V.NOTE-DATE   (#I2)
+            MOVE NT-V.NOTE-CLERK-ID (#I2 + 1) TO NT-V.NOTE-CLERK-ID(#I2)
+            MOVE NT-V.NOTE-LINE-NUM (#I2 + 1) TO NT-V.NOTE-LINE-NUM(#I2)
+            MOVE NT-V.NOTE-TEXT     (#I2 + 1) TO NT-V.NOTE-TEXT   (#I2)
+          END-FOR
+*
+          RESET NT-V.NOTE-DATE     (60)
+          RESET NT-V.NOTE-CLERK-ID (60)
+          RESET NT-V.NOTE-LINE-NUM (60)
+          RESET NT-V.NOTE-TEXT     (60)
+          UPDATE (0219)
+*
+          ESCAPE BOTTOM
+        END-IF
+      END-IF
+    END-FOR
+*
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF ENTRY-DATE GT #TOMORROW    /* STOP SEARCHING WITH TOMORROW
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  FOR #I1 1 TO 60
+    IF   (NT-V.NOTE-TEXT (#I1) = MASK ('*@'))
+        AND (NT-V.NOTE-CLERK-ID (#I1) = USER)
+        AND (NT-V.NOTE-LINE-NUM (#I1) = 1)
+      MOVE NT-V.NOTE-TEXT-PAC-DT-MM (#I1) TO #PEN-DT-MM
+      MOVE NT-V.NOTE-TEXT-PAC-DT-DD (#I1) TO #PEN-DT-DD
+      MOVE NT-V.NOTE-TEXT-PAC-DT-YYYY (#I1) TO #PEN-DT-YYYY
+*
+      IF #PEN-DT-YYYYMMDD LE #TOMORROW
+        PERFORM SEND-NX
+      END-IF
+    END-IF
+  END-FOR
+*
+  END TRANSACTION
+END-READ
+*
+* * CHECK IF WE ARE NEAR TO BOTTOM OF "NX" AREA (950000)
+*
+READ (1) NT-V BY ID-NUMBER FROM 900000
+  WRITE 'lowest NX id-number is' NT-V.ID-NUMBER
+  IF NT-V.ID-NUMBER LT 953000  /* ONLY 3000 MORE TO GO TO 950000
+    MOVE 950000 TO #NOTE-NUM       /* SEND nx note
+*     READ (1) NX-V BY ID-NUMBER FROM #NOTE-NUM /* FIND NEXT NX NOTE               /* vt1 \/
+*       MOVE NX-V.ID-NUMBER TO #NOTE-NUM
+*     END-READ
+* *
+*     IF  (#NOTE-NUM LE 950000)
+*      OR (#NOTE-NUM GT 980000)
+*       MOVE 980000 TO #NOTE-NUM
+*     END-IF
+* *
+*     SUBTRACT 1 FROM #NOTE-NUM
+*
+    perform find-next-nx-num
+*                                                                                 /* vt1 /\
+    RESET NX-V
+    MOVE #NOTE-NUM                TO NX-V.ID-NUMBER
+    MOVE #TOMORROW                TO NX-V.DTS-DATN
+    MOVE 0100000                  TO NX-V.DTS-TIMN   /* to indicate 1 am
+    MOVE #TOMORROW                TO NX-V.NOTE-DATE (1)
+    MOVE 'EDS'                    TO NX-V.NOTE-CLERK-ID (1) /* from
+    MOVE 'VXT'                    TO NX-V.NOTE-CLERK-ID (2) /* to    /* vt was 'PAM'
+    MOVE 'UNV'                    TO NX-V.NOTE-CLERK-ID (3)
+    MOVE 1 TO #I3
+    COMPRESS 'Lowest "NX" Id-number is' NT-V.ID-NUMBER
+      'compress - run ZFXNXPXX' INTO NX-V.NOTE-TEXT (#I3)
+    WRITE // NX-V.NOTE-TEXT (#I3)
+*
+    STORE NX-V
+    MOVE 1 TO #I1
+    MOVE 'VXT' TO NT-V.NOTE-CLERK-ID (1)                          /* vt was 'PAM'
+    PERFORM SET-MSG-SENT-INDICATOR
+    END TRANSACTION
+  END-IF
+END-READ
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SEND-NX
+* * * * * * * * * * * * * * *
+*
+MOVE 950000 TO #NOTE-NUM       /* check for already existing pending nx
+READ NX-V BY ID-NUMBER FROM #NOTE-NUM
+  IF NX-V.ID-NUMBER GE 980000
+    END TRANSACTION
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF   (NX-V.NOTE-TEXT (4) = NT-V.NOTE-TEXT (#I1))  /* text match
+      AND (NX-V.NOTE-TEXT-1ST-6 (2) = ST-V.NAME-6)     /* mbr match
+      AND (NX-V.NOTE-CLERK-ID (2) = NT-V.NOTE-CLERK-ID (#I1)) /* user match
+    WRITE 'found matching pend' NT-V.ID-NUMBER NT-V.NOTE-CLERK-ID (#I1)
+      NX-V.NOTE-TEXT (4)   (EM=XXXXXXXXXXXXXX)
+    PERFORM SET-MSG-SENT-INDICATOR
+*
+    IF NX-V.NOTE-CLERK-ID (3) NE 'UNV'   /* has already seen it
+      MOVE #TOMORROW  TO NX-V.DTS-DATN
+      MOVE 0100000    TO NX-V.DTS-TIMN /* to indicate 1 am
+      MOVE #TOMORROW  TO NX-V.NOTE-DATE (1)
+      MOVE 'UNV' TO NX-V.NOTE-CLERK-ID (3)
+*   WRITE 'BEFORE UPDATE OF NX-V AT LINE 3250 - ID-NUMBER =' ID-NUMBER
+      UPDATE (0380)
+      END TRANSACTION
+    END-IF
+*
+    ESCAPE ROUTINE
+  END-IF
+  END TRANSACTION
+END-READ
+*
+MOVE 950000 TO #NOTE-NUM       /* SEND nx note
+* READ (1) NX-V BY ID-NUMBER FROM #NOTE-NUM /* FIND NEXT NX NOTE                         /* vt1 \/
+*   MOVE NX-V.ID-NUMBER TO #NOTE-NUM
+* END-READ
+* *
+* IF  (#NOTE-NUM LE 950000)
+*     OR (#NOTE-NUM GT 980000)
+*   MOVE 980000 TO #NOTE-NUM
+* END-IF
+* *
+* SUBTRACT 1 FROM #NOTE-NUM
+perform find-next-nx-num                                                                /* vt1 /\
+*
+RESET NX-V
+MOVE #NOTE-NUM                TO NX-V.ID-NUMBER
+MOVE #TOMORROW                TO NX-V.DTS-DATN
+MOVE 0100000                  TO NX-V.DTS-TIMN   /* to indicate 1 am
+MOVE #TOMORROW                TO NX-V.NOTE-DATE (1)
+MOVE 'EDS'                    TO NX-V.NOTE-CLERK-ID (1) /* from
+MOVE NT-V.NOTE-CLERK-ID (#I1) TO NX-V.NOTE-CLERK-ID (2) /* to
+MOVE 'UNV'                    TO NX-V.NOTE-CLERK-ID (3)
+MOVE 1 TO #I3
+COMPRESS '***** PENDING ACTION FOR "' NT-V.NOTE-CLERK-ID (#I1)
+  '" FOLLOWS *****'    INTO NX-V.NOTE-TEXT (#I3) LEAVING NO
+WRITE // NX-V.NOTE-TEXT (#I3)
+ADD 1 TO #I3
+COMPRESS ST-V.NAME '-' NT-V.ID-NUMBER INTO NX-V.NOTE-TEXT (#I3)
+* ABOVE NAME MUST BE FIRST FOR MATCHING PENDING LOGIC EARLIER ***
+WRITE NX-V.NOTE-TEXT (#I3)
+*
+ADD  2 TO #I3
+MOVE NT-V.NOTE-TEXT (#I1) TO NX-V.NOTE-TEXT (#I3) /* keep at 4th line
+WRITE NX-V.NOTE-TEXT (#I3)
+RESET #AUTO-CHG
+*
+IF NT-V.NOTE-TEXT-PAC-MSG (#I1) = MASK ('AUTO INFO CHG')
+  MOVE TRUE TO #AUTO-CHG
+END-IF
+*
+COMPUTE #I2 = #I1 + 1
+FOR #I2 #I2 TO 60     /* get rest of notes
+  IF NT-V.NOTE-LINE-NUM (#I2) LE 1
+    ESCAPE BOTTOM
+  END-IF
+*
+  ADD 1 TO #I3
+  MOVE NT-V.NOTE-TEXT (#I2) TO NX-V.NOTE-TEXT (#I3)
+  WRITE NX-V.NOTE-TEXT (#I3)
+END-FOR
+*
+ADD  2 TO #I3
+MOVE ' 1. Complete the action(s) above or print screen to do later'
+  TO NX-V.NOTE-TEXT (#I3)
+ADD  1 TO #I3
+MOVE ' 2. Delete the corresponding "NS" Note using "NU" delete'
+  TO NX-V.NOTE-TEXT (#I3)
+ADD  1 TO #I3
+MOVE ' 3. OR Remove the "*@" from the Note to retain the Note'
+  TO NX-V.NOTE-TEXT (#I3)
+ADD  1 TO #I3
+MOVE ' 4. Delete this Message using "XXX" on the "NX" Screen.'
+  TO NX-V.NOTE-TEXT (#I3)
+ADD  1 TO #I3
+MOVE ' 5. Using "YYY" will do step 2 and step 4' TO NX-V.NOTE-TEXT (#I3)
+ADD  1 TO #I3
+MOVE ' 6. Using "ZZZ" will do step 3 and step 4' TO NX-V.NOTE-TEXT (#I3)
+*
+IF #AUTO-CHG
+  ADD  1 TO #I3
+  MOVE ' 7. Using "WWW" will transfer info to "UP" for processing'
+    TO NX-V.NOTE-TEXT (#I3)
+END-IF
+*
+WRITE 'ABOVE NX IS ID-NUMBER' NX-V.ID-NUMBER
+STORE NX-V
+PERFORM SET-MSG-SENT-INDICATOR
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SET-MSG-SENT-INDICATOR
+* * * * * * * * * * * * * * *
+*
+FIND (1) TRMS-V WITH CLERK-ID = NT-V.NOTE-CLERK-ID (#I1)
+  MOVE 'Y' TO MSG-JUST-SENT
+  UPDATE (0492)
+* END TRANSACTION    /* REMOVED 8/6/2001
+END-FIND
+*
+END-SUBROUTINE
+*
+*****************
+define subroutine find-next-nx-num                             /* vt1 \/
+*****************
+*
+READ NX-V BY ID-NUMBER FROM #NOTE-NUM
+  IF #NOTE-NUM < NX-V.ID-NUMBER
+    ESCAPE BOTTOM
+  END-IF
+  IF NX-V.ID-NUMBER GE 980000
+    ESCAPE BOTTOM
+  END-IF
+  ADD 1 TO #NOTE-NUM
+END-READ
+*
+end-subroutine                                                /* vt1 /\
+*
+END

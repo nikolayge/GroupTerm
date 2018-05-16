@@ -1,0 +1,614 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* MBCN0100 - Return a list of saved documents
+*            Syncronize Add Member Documents with DV
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    07242015       Initial Creation
+* YAK    08202016       Add Digital Vault document upload from Member Center
+*                       and AUC - synchronization with DD screen,
+*                       FIR and Status files
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+*
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL USING OBJLCTRL
+LOCAL USING OBJLCONT
+LOCAL USING OBJLFIR
+LOCAL USING GPRATR03
+LOCAL USING GPRL0EML
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML          (A) DYNAMIC
+1 #I           (I2)
+1 #II          (I2)
+1 #ErrorCode   (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value       (A) DYNAMIC
+1 #CONT        (A2) INIT <'..'>
+1 #MEMBER      (A1) INIT <'M'>
+1 #SPOUSE      (A1) INIT <'S'>
+1 #F-SPOUSE    (A1) INIT <'X'>
+1 #IMAGED      (A1) INIT <'I'>
+1 #AuthIndicator (A) DYNAMIC
+1 #AuthIndicatorID (N1)
+1 #AuthIndicators (A1/3) CONST <'B','U','I'>
+1 #DD_AuthIndicators (A/3) DYNAMIC CONST <'ORIGINAL','COPY','='>
+1 #MarriageCertificate (A) DYNAMIC CONST <'55'>
+1 #BirthCertificate    (A) DYNAMIC CONST <'67'>
+1 #DeathNotification (A/4) DYNAMIC CONST <'156','157','158','159'>
+1 #ServiceDocument (A) DYNAMIC CONST <'Services'>
+1 #SEND-DEATH-NOTIFICATION (L)
+1 #SEND-MAX-NOTIFICATION   (L)
+1 #SEND-NO-DD-UPDATE-NOTIFICATION (L)
+1 #DOCUMENT-NAME-TRUNCATION (L)
+1 #LookUpKey   (A4) CONST <'DDOC'>
+1 #LookUpValue (A7)
+*
+1 MemberDocuments
+  2 CN   (N6)
+  2 ActionType (A) DYNAMIC
+  2 SystemSource      (A) DYNAMIC
+  2 DocumentSource    (A) DYNAMIC
+  2 UserId            (A) DYNAMIC
+  2 DocumentTitleId   (A) DYNAMIC
+  2 AuthIndicatorID   (A) DYNAMIC
+  2 DocumentRelation  (A) DYNAMIC
+  2 DocumentDate      (N8)
+  2 DocumentRelName   (A) DYNAMIC
+  2 DocumentContactId (N8)
+  2 CompanyName       (A) DYNAMIC
+  2 SpouseName        (A) DYNAMIC
+  2 SpouseContactId   (N8)
+  2 FillDescription   (A) DYNAMIC
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 DATE-OF-DIVORCE
+  2 FORMER-SPOUSE-CONTACT-ID
+  2 FORMER-SPOUSE-STATUS (A1)
+  2 FORMER-SPOUSE-DATE-OF-MARRIAGE
+  2 FORMER-SPOUSE-DATE-OF-DIVORCE
+  2 DATE-ACCT-UPDATE
+  2 DATE-OTHER-UPDATE
+  2 BIRTH-CERT-CODE
+  2 STATUS-CODE
+  2 MARRIAGE-CERT-CODE
+  2 FS-BIRTH-CERT-CD
+  2 FS-MARR-CERT-CD
+  2 SPOUSE-CONTACT-ID
+  2 BIRTH-CERT-CODE-SP
+  2 STATUS-CODE-SP
+  2 DATE-OF-MARRIAGE
+  2 LAST-FM-DATE
+*
+1 #DD_Description (A) DYNAMIC
+1 #DD_Name        (A) DYNAMIC
+1 #DD_Date        (A) DYNAMIC
+*
+1 #ContactId      (N8)
+1 REDEFINE #ContactId
+  2 #ContactId_A  (A8)
+*
+1 #FOUND          (L)
+1 #DEPENDENT-ROLE (A1/2) INIT <'K','G'>
+1 #DATN           (N8)
+1 FUNCTION_CODE   (A) DYNAMIC CONST <'DVUpload'>
+1 #AUC         (A) DYNAMIC CONST <'AUC'>
+1 #CLERK       (A) DYNAMIC INIT <'MBR'>
+1 #USER        (A) DYNAMIC INIT <'MEMBER'>
+1 #FIRDocument (A/100) DYNAMIC
+*
+END-DEFINE
+*
+#DATN := *DATN
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic
+*
+IF MemberDocuments.SystemSource = #AUC AND MemberDocuments.UserID <> ' '
+  #CLERK := FUNCTION-WEB-USER(<MemberDocuments.UserID>)(1)
+  #USER  := FUNCTION-WEB-USER(<MemberDocuments.UserID>)(2)
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN MemberDocuments.ActionType = '0'    /* Get documents
+    FIND FIR-V WITH ID-NUMBER = MemberDocuments.CN
+      FOR #I = 1 TO C*DOCUMENT
+        #II := #II + 1
+        IF SUBSTR(FIR-V.DOCUMENT(#I),1,2) = #CONT
+          FIR-V.DOCUMENT(#I) := SUBSTR(FIR-V.DOCUMENT(#I),3)
+          COMPRESS #FIRDocument(#II) FIR-V.DOCUMENT(#I) INTO #FIRDocument(#II)
+        ELSE
+          #FIRDocument(#II) := FIR-V.DOCUMENT(#I)
+        END-IF
+      END-FOR
+    END-FIND
+  WHEN MemberDocuments.ActionType = '1'    /* Add document
+    PERFORM ADD-DOCUMENT
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+DECIDE ON FIRST VALUE MemberDocuments.ActionType
+  VALUE '0'
+    PERFORM COMPOSE-GET-XML
+  VALUE '1'
+    PERFORM WRITE-TRANSACTION-LOG
+    END TRANSACTION
+    PERFORM COMPOSE-XML
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+IF #SEND-DEATH-NOTIFICATION OR #SEND-MAX-NOTIFICATION
+  PERFORM SEND-NOTIFICATION
+END-IF
+*
+RESPONSE-DATA := XML
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+* <DigitalVaultUpload>
+*   <CN>111111</CN>
+*   <ActionType>1</ActionType>
+*   <DocumentType> XXXX </DocumentType>
+*   <DocumentTitle> XXXX </DocumentTitle>
+*   <AuthIndicatorID> XXXX </AuthIndicatorID>
+*   <DocumentRelation> child </DocumentRelation>
+*   <DocumentRelName> Lion E Meese </DocumentRelation>
+*   <DocumentDate> 20160614 </DocumentDate>
+* </DigitalVaultUpload>
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberDocuments'
+    Ignore
+  VALUE 'MemberDocuments/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      MemberDocuments.CN := VAL(#value)
+    END-IF
+  VALUE 'MemberDocuments/ActionType/$'
+    MemberDocuments.ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload'
+    Ignore
+  VALUE 'DigitalVaultUpload/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      MemberDocuments.CN := VAL(#value)
+    END-IF
+  VALUE 'DigitalVaultUpload/ActionType/$'
+    MemberDocuments.ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/SystemSource/$'
+    MemberDocuments.SystemSource := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/DocumentSource/$'
+    MemberDocuments.DocumentSource := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/User/$'
+    MemberDocuments.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/DocumentTitleID/$'
+    MemberDocuments.DocumentTitleId := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/AuthIndicatorID/$'
+    MemberDocuments.AuthIndicatorID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/DocumentRelation/$'
+    MemberDocuments.DocumentRelation := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/DocumentRelName/$'
+    MemberDocuments.DocumentRelName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/DocumentContactID/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8)
+      MemberDocuments.DocumentContactId := VAL(#value)
+    END-IF
+  VALUE 'DigitalVaultUpload/CompanyName/$'
+    MemberDocuments.CompanyName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/SpouseName/$'
+    MemberDocuments.SpouseName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'DigitalVaultUpload/SpouseContactID/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8)
+      MemberDocuments.SpouseContactId := VAL(#value)
+    END-IF
+  VALUE 'DigitalVaultUpload/DocumentDate/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8)
+      MemberDocuments.DocumentDate := VAL(#value)
+    END-IF
+  VALUE 'DigitalVaultUpload/FillDescription/$'
+    MemberDocuments.FillDescription := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*  CODE  PREFIX
+*    O   ORIGINAL
+*    C   PHOTO COPY
+*    I   IMAGED
+* not used
+*    B   ORIGINAL AND IMAGED
+*    A   ATTESTED
+*    F   CERTIFIED
+*
+******************************
+DEFINE SUBROUTINE ADD-DOCUMENT
+******************************
+*
+IF MemberDocuments.DocumentRelation = #MEMBER
+  MemberDocuments.DocumentContactId := F-GET-CONTACT-ID(<MemberDocuments.CN>)
+END-IF
+IF MemberDocuments.AuthIndicatorID <> ' '
+  #AuthIndicatorID := VAL(MemberDocuments.AuthIndicatorID)
+ELSE
+  #AuthIndicatorID := 3
+END-IF
+*
+DECIDE FOR EVERY CONDITION
+* Marriage Certificate
+  WHEN MemberDocuments.DocumentTitleId = #MarriageCertificate
+    PERFORM UPDATE-MARRIAGE-DATA
+* Birth Certificate
+  WHEN MemberDocuments.DocumentTitleId = #BirthCertificate
+    PERFORM UPDATE-BIRTH-CERT-DATA
+* FIR Document
+  WHEN NONE
+    IF MemberDocuments.DocumentTitleId = #DeathNotification(*)
+      #SEND-DEATH-NOTIFICATION := TRUE
+    END-IF
+    PERFORM ADD-VAULT-DOCUMENT
+END-DECIDE
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE ADD-VAULT-DOCUMENT
+************************************
+*
+COMPRESS FULL #LookUpKey MemberDocuments.DocumentTitleId INTO #LookUpValue LEAVING NO
+#DD_Description := F-GET-VALUE(<#LookUpValue>)
+* If this is an internal document - do not update DD screen
+IF #DD_Description = ' '
+  PERFORM COMPOSE-XML
+  RESPONSE-DATA := XML
+  ESCAPE MODULE
+END-IF
+IF MemberDocuments.DocumentDate <> 0
+  #DD_Date := FUNCTION-CALENDAR(<MemberDocuments.DocumentDate,'6'>) 
+ELSE
+  #DD_Date := FUNCTION-CALENDAR(<#DATN,'6'>) 
+END-IF  
+#DD_Name := MemberDocuments.DocumentRelName
+DECIDE FOR FIRST CONDITION
+  WHEN #DD_Description = SCAN('MBR/<Fill>')
+    EXAMINE #DD_Description FOR '<Fill>' REPLACE MemberDocuments.SpouseName
+    RESET #DD_Name
+  WHEN #DD_Description = SCAN('SPS/<Fill>')
+    EXAMINE #DD_Description FOR '<Fill>' REPLACE MemberDocuments.DocumentRelName
+    RESET #DD_Name
+  WHEN #DD_Description = SCAN('<MBR/SPS>')
+    IF MemberDocuments.DocumentRelation = #SPOUSE
+      EXAMINE #DD_Description FOR '<MBR/SPS>' REPLACE 'SPS'
+    ELSE
+      EXAMINE #DD_Description FOR '<MBR/SPS>' REPLACE 'MBR'
+    END-IF
+  WHEN #DD_Description = SCAN('<Insurance Company Name>')
+    EXAMINE #DD_Description FOR '<Insurance Company Name>' REPLACE MemberDocuments.CompanyName
+  WHEN #DD_Description = SCAN('<Company Name>')
+    EXAMINE #DD_Description FOR '<Company Name>' REPLACE MemberDocuments.CompanyName
+  WHEN #DD_Description = SCAN('<Relation>')
+    EXAMINE #DD_Description FOR '<Relation>' REPLACE MemberDocuments.DocumentRelName
+    RESET #DD_Name
+  WHEN #DD_Description = SCAN('<Fill>')
+    EXAMINE #DD_Description FOR '<Fill>' REPLACE MemberDocuments.FillDescription
+  WHEN NONE
+    IGNORE
+END-DECIDE
+#AuthIndicator := #DD_AuthIndicators(#AuthIndicatorID)
+IF #AuthIndicatorID = 3
+  COMPRESS #AuthIndicator #DD_Description INTO #DD_Description LEAVING NO
+ELSE
+  COMPRESS #AuthIndicator #DD_Description INTO #DD_Description
+END-IF
+COMPRESS #DD_Description #DD_Name #DD_Date INTO #DD_Description
+AFTER_IMAGE.DOCUMENT-NAME := #DD_Description
+* If this is a Service document - do not update DD screen, only create TR
+IF MemberDocuments.DocumentSource = #ServiceDocument
+  ESCAPE ROUTINE
+END-IF
+
+FIND NUMBER FIR-V WITH ID-NUMBER = MemberDocuments.CN
+IF *NUMBER = 0
+  FIR-V.ID-NUMBER := MemberDocuments.CN
+  STORE FIR-V
+END-IF
+
+F1.
+FIND(1) FIR-V WITH ID-NUMBER = MemberDocuments.CN
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN C*DOCUMENT >= 72
+      #SEND-NO-DD-UPDATE-NOTIFICATION := TRUE
+      PERFORM SEND-NOTIFICATION
+      PERFORM COMPOSE-XML
+      RESPONSE-DATA := XML
+      ESCAPE MODULE
+    WHEN C*DOCUMENT >= 70
+      #SEND-MAX-NOTIFICATION := TRUE
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+  #I := C*DOCUMENT + 1
+  BEFORE_IMAGE.DATE-LAST-UPDATE := FIR-V.DOCU-LAST-FM-DATE
+  FIR-V.DOCUMENT(#I) := #DD_Description
+  REPEAT
+    IF *LENGTH(#DD_Description) > 37
+      EXAMINE DIRECTION BACKWARD SUBSTR(#DD_Description,1,37) FOR ' ' POSITION #II
+      FIR-V.DOCUMENT(#I) := SUBSTR(#DD_Description,1,#II)
+      #II := #II + 1
+      #DD_Description := SUBSTR(#DD_Description,#II)
+      COMPRESS #CONT #DD_Description INTO #DD_Description
+      #I := #I + 1
+      IF #I > 72
+        #DOCUMENT-NAME-TRUNCATION := TRUE
+        ESCAPE BOTTOM
+      ELSE  
+        FIR-V.DOCUMENT(#I) := #DD_Description
+      END-IF  
+    ELSE
+      ESCAPE BOTTOM
+    END-IF
+  END-REPEAT
+  FIR-V.DOCU-LAST-FM-DATE := #DATN
+  UPDATE (F1.)
+END-FIND
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE UPDATE-MARRIAGE-DATA
+**************************************
+*
+* FORMER-SPOUSE-DATE-OF-MARRIAGE
+* FORMER-SPOUSE-DATE-OF-DIVORCE
+* DATE-OF-MARRIAGE
+* MARRIAGE-CERT-CODE
+* FS-MARR-CERT-CD
+* SPOUSE-CONTACT-ID
+* FORMER-SPOUSE-CONTACT-ID
+#AuthIndicator := #AuthIndicators(#AuthIndicatorID)
+F2.
+FIND(1) ST-V WITH ID-NUMBER = MemberDocuments.CN
+  DECIDE FOR FIRST CONDITION
+    WHEN MemberDocuments.DocumentContactId = ST-V.MEMBER-CONTACT-ID AND ST-V.SPOUSE-CONTACT-ID <> 0
+        AND MemberDocuments.SpouseContactId = ST-V.SPOUSE-CONTACT-ID
+      IF ST-V.DATE-OF-MARRIAGE = 0
+        BEFORE_IMAGE.MARRIAGE-DATE := ST-V.DATE-OF-MARRIAGE
+        ST-V.DATE-OF-MARRIAGE := MemberDocuments.DocumentDate
+        AFTER_IMAGE.MARRIAGE-DATE := ST-V.DATE-OF-MARRIAGE
+      END-IF
+      BEFORE_IMAGE.MARRIAGE-CERT-CD := ST-V.MARRIAGE-CERT-CODE
+      ST-V.MARRIAGE-CERT-CODE := #AuthIndicator
+      AFTER_IMAGE.MARRIAGE-CERT-CD := ST-V.MARRIAGE-CERT-CODE
+      BEFORE_IMAGE.DATE-LAST-UPDATE := ST-V.LAST-FM-DATE
+      ST-V.LAST-FM-DATE := #DATN
+      BEFORE_IMAGE.DOCUMENT-NAME := AFTER_IMAGE.DOCUMENT-NAME := 'Spouse MCC'
+      UPDATE (F2.)
+    WHEN MemberDocuments.DocumentContactId = ST-V.MEMBER-CONTACT-ID AND ST-V.FORMER-SPOUSE-CONTACT-ID <> 0
+        AND MemberDocuments.SpouseContactId = ST-V.FORMER-SPOUSE-CONTACT-ID
+      IF ST-V.FORMER-SPOUSE-DATE-OF-MARRIAGE = 0
+        BEFORE_IMAGE.MARRIAGE-DATE := ST-V.FORMER-SPOUSE-DATE-OF-MARRIAGE
+        ST-V.FORMER-SPOUSE-DATE-OF-MARRIAGE := MemberDocuments.DocumentDate
+        AFTER_IMAGE.MARRIAGE-DATE := ST-V.FORMER-SPOUSE-DATE-OF-MARRIAGE
+      END-IF
+      BEFORE_IMAGE.MARRIAGE-CERT-CD := ST-V.FS-MARR-CERT-CD
+      ST-V.FS-MARR-CERT-CD := #AuthIndicator
+      AFTER_IMAGE.MARRIAGE-CERT-CD := ST-V.FS-MARR-CERT-CD
+      BEFORE_IMAGE.DATE-LAST-UPDATE := ST-V.LAST-FM-DATE
+      ST-V.LAST-FM-DATE := #DATN
+      BEFORE_IMAGE.DOCUMENT-NAME := AFTER_IMAGE.DOCUMENT-NAME := 'Former Spouse MCC'
+      UPDATE (F2.)
+    WHEN NONE
+      PERFORM ADD-VAULT-DOCUMENT
+  END-DECIDE
+END-FIND
+*
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE UPDATE-BIRTH-CERT-DATA
+****************************************
+* Contact file
+* CT-V.BIRTH-CERT-CODE
+* Dependent on FIR file
+* FIR-V.DEPN-BIRTH-CD
+* Spouse/Former Spouse on Status file
+* ST-V.BIRTH-CERT-CODE-SP
+* ST-V.FS-BIRTH-CERT-CD
+#AuthIndicator := #AuthIndicators(#AuthIndicatorID)
+IF MemberDocuments.DocumentContactId <> 0
+  F3.
+  FIND(1) CT-V WITH CONTACT-ID = MemberDocuments.DocumentContactId
+    CT-V.BIRTH-CERT-CODE := #AuthIndicator
+    UPDATE (F3.)
+  END-FIND
+  IF MemberDocuments.DocumentRelation = #MEMBER
+    F4.
+    FIND(1) ST-V WITH ID-NUMBER = MemberDocuments.CN
+      BEFORE_IMAGE.BIRTH-CERT-CD := ST-V.BIRTH-CERT-CODE
+      BEFORE_IMAGE.DATE-LAST-UPDATE := ST-V.LAST-FM-DATE
+      ST-V.BIRTH-CERT-CODE := #AuthIndicator
+      AFTER_IMAGE.BIRTH-CERT-CD := ST-V.BIRTH-CERT-CODE
+      ST-V.LAST-FM-DATE := #DATN
+      BEFORE_IMAGE.DOCUMENT-NAME := AFTER_IMAGE.DOCUMENT-NAME := 'Member BCC'
+      UPDATE (F4.)
+    END-FIND
+  ELSE
+    #ContactID := F-GET-CONTACT-ID(<MemberDocuments.CN>)
+    FIND CR-V WITH CONTACT-1-ID = #ContactId
+      ACCEPT IF CR-V.CONTACT-2-ID = MemberDocuments.DocumentContactId
+      DECIDE FOR FIRST CONDITION
+        WHEN CR-V.ROLE-2-CD = #DEPENDENT-ROLE(*)
+          F5.
+          FIND(1) FIR-V WITH DEPN-CONTACT-ID = MemberDocuments.DocumentContactId
+            #ContactId := MemberDocuments.DocumentContactId
+            EXAMINE DEPN-CI_A(*) FOR #ContactId_A INDEX #I
+            IF #I <> 0
+              BEFORE_IMAGE.BIRTH-CERT-CD := FIR-V.DEPN-BIRTH-CD(#I)
+              BEFORE_IMAGE.DATE-LAST-UPDATE := FIR-V.DP-LAST-FM-DATE
+              FIR-V.DEPN-BIRTH-CD(#I) := #AuthIndicator
+              FIR-V.DP-LAST-FM-DATE := #DATN
+              AFTER_IMAGE.BIRTH-CERT-CD := FIR-V.DEPN-BIRTH-CD(#I)
+              AFTER_IMAGE.DOCUMENT-NAME := 'Dependent BCC'
+              COMPRESS '(' MemberDocuments.DocumentRelName ')' INTO MemberDocuments.DocumentRelName LEAVING NO
+              COMPRESS AFTER_IMAGE.DOCUMENT-NAME MemberDocuments.DocumentRelName INTO AFTER_IMAGE.DOCUMENT-NAME
+              BEFORE_IMAGE.DOCUMENT-NAME := AFTER_IMAGE.DOCUMENT-NAME
+              UPDATE (F5.)
+            END-IF
+          END-FIND
+        WHEN CR-V.ROLE-2-CD = #SPOUSE OR = #F-SPOUSE
+          F6.
+          FIND(1) ST-V WITH ID-NUMBER = MemberDocuments.CN
+            IF CR-V.ROLE-2-CD = #SPOUSE
+              BEFORE_IMAGE.BIRTH-CERT-CD := ST-V.BIRTH-CERT-CODE-SP
+              BEFORE_IMAGE.DATE-LAST-UPDATE := ST-V.LAST-FM-DATE
+              #DD_Name := 'Spouse BCC'
+              ST-V.BIRTH-CERT-CODE-SP := #AuthIndicator
+              AFTER_IMAGE.BIRTH-CERT-CD := ST-V.BIRTH-CERT-CODE-SP
+              ST-V.LAST-FM-DATE := #DATN
+              BEFORE_IMAGE.DOCUMENT-NAME := AFTER_IMAGE.DOCUMENT-NAME := 'Spouse BCC'
+            ELSE
+              BEFORE_IMAGE.BIRTH-CERT-CD := ST-V.FS-BIRTH-CERT-CD
+              BEFORE_IMAGE.DATE-LAST-UPDATE := ST-V.LAST-FM-DATE
+              ST-V.FS-BIRTH-CERT-CD := #AuthIndicator
+              AFTER_IMAGE.BIRTH-CERT-CD := ST-V.FS-BIRTH-CERT-CD
+              ST-V.LAST-FM-DATE := #DATN
+              BEFORE_IMAGE.DOCUMENT-NAME := AFTER_IMAGE.DOCUMENT-NAME := 'Former Spouse BCC'
+            END-IF
+            UPDATE (F6.)
+          END-FIND
+        WHEN ANY
+          ESCAPE BOTTOM
+        WHEN NONE
+          IGNORE
+      END-DECIDE
+    END-FIND
+  END-IF
+ELSE
+  PERFORM ADD-VAULT-DOCUMENT
+END-IF
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+#ContactID    := F-GET-CONTACT-ID(<MemberDocuments.CN>)
+TR_ID_NUMBER  := MemberDocuments.CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<#ContactID>)
+TR_CLERK      := #CLERK
+CALLNAT 'GPRNTR03' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE SEND-NOTIFICATION
+***********************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #SEND-NO-DD-UPDATE-NOTIFICATION
+    P_TO     := 'memberbenefits@aafmaa.com'
+    COMPRESS 'Cannot update DD screen for CN' MemberDocuments.CN '.' INTO P_MSG(1) LEAVING NO
+    P_MSG(2) := 'Member already has 72 documents on file.'
+  WHEN #SEND-MAX-NOTIFICATION
+    P_TO     := 'memberbenefits@aafmaa.com'
+    COMPRESS 'Number of documents getting close to MAX for CN' MemberDocuments.CN '.' INTO P_MSG(1) LEAVING NO
+    IF #DOCUMENT-NAME-TRUNCATION
+      P_MSG(2) := 'Document name truncated.'
+    END-IF  
+  WHEN #SEND-DEATH-NOTIFICATION
+    P_TO     := 'SurvivorBenefits@aafmaa.com'
+    COMPRESS 'Death Certificate uploaded to DV for CN' MemberDocuments.CN '.' INTO P_MSG(1) LEAVING NO
+    P_MSG(2) := MemberDocuments.DocumentRelName
+  WHEN ANY
+*   P_CC     := 'ykegeles@aafmaa.com'
+    P_SUBJ   := '"DV Upload warning"'
+    CALLNAT 'GPRS0EML' p_EMAIL
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS
+  '<DigitalVaultUpload>'
+  '<CN>' MemberDocuments.CN '</CN>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</DigitalVaultUpload>'
+  INTO XML LEAVING NO
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-GET-XML
+*********************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS
+  '<MemberDocuments>'
+  '<CN>' MemberDocuments.CN '</CN>'
+  '<DocumentList>' INTO XML LEAVING NO
+FOR #I = 1 TO #II
+  COMPRESS XML '<Document>' '<![CDATA[' #FIRDocument(#I) ']]>' '</Document>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</DocumentList>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</MemberDocuments>'
+  INTO XML LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+END

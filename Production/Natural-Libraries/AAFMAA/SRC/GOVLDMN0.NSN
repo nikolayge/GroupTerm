@@ -1,0 +1,268 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* CRM 
+* Validate Member's /Military/Pesonal Information
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* BZ    05222011       Initial Creation
+* RSE   05292012   RE1 Increase validation array size  
+********************************************************
+*
+DEFINE DATA PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING GPRAMINF
+LOCAL USING GPRAPINF
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 FUNCTION_CODE     (A) DYNAMIC CONST <'MILITARY'>
+1 #DEL              (A) DYNAMIC CONST <';'>
+1 #FIR-REQUEST      (A50)
+1 #I                (I2)
+1 #VALUE            (A) DYNAMIC
+1 v_Err        (A3) INIT <'0'>
+1 v_Err_Nat    (N4)
+1 v_Err_X      (I4)
+1 v_Err_Dscr (A) DYNAMIC
+1 #TR-DATE-LAST-UPDATE (N8)
+*
+* 1 v_A4000     (A4000)     /*  --db
+*
+1 v_V
+   2 #ERROR-CODE    (A3/1:50)       /* RE1
+   2 #VALIDATE-FLAG (A1/1:50)       /* RE1
+   
+END-DEFINE
+*************
+* RESPONSE-DATA:= 
+* '<Contact><ErrorCode>123</ErrorCode><ErrorDescription>Hello Bjorn!;Erorr-2</ErrorDescription></Contact>'
+* ESCAPE ROUTINE 
+*************
+ON ERROR 
+     v_Err_Nat := *ERROR-NR
+     COMPRESS 'Natural Error:'  *PROGRAM *ERROR-NR  'Error Line:' *ERROR-LINE INTO v_Err_Dscr
+     COMPRESS '<Contact>' '<ErrorCode>' v_Err_Nat '</ErrorCode>' 
+              '<ErrorDescription>' v_Err_Dscr '</ErrorDescription>' 
+              '</Contact>'   INTO RESPONSE-DATA LEAVING NO SPACE
+     ESCAPE ROUTINE 
+END-ERROR
+*
+* DEFINE WORK FILE 12 '/usr/SAG/AAFMAA/batch/workfiles/TEMP/SAS/CRM_VLD.XML' TYPE 'ASCII-COMPRESSED'  /*  --db
+* WRITE WORK FILE 12 VARIABLE '- - - - - - - - - - - - - - - - - -'
+* v_A4000 := REQUEST-DATA                                                                             /*  --db
+* WRITE WORK FILE 12 VARIABLE v_A4000                                                                          /*  --db
+* WRITE WORK FILE 12 VARIABLE '- - - - - - - - - - - - - - - - - -'
+* CLOSE WORK 12
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+ PERFORM PROCESS-REQUEST-1
+ PERFORM PROCESS-REQUEST-2
+
+PERFORM COMPOSE-XML
+*
+
+*********************************
+DEFINE SUBROUTINE PROCESS-REQUEST-1
+*********************************
+*
+* Call Business logic program for Mil. validation
+EXPAND ARRAY #OTHERS.#ERROR-CODE TO (1:50)               /* RE1 formerly 22
+EXPAND ARRAY #OTHERS.#VALIDATE-FLAG TO (1:50)            /* RE1 formerly 22
+#OTHERS.#VALIDATE-FLAG (*) := 'Y'
+#OTHERS.#SYSTEM := 'CRM'
+CALLNAT 'GPRNMINF' #MILITARY-INFO #OTHERS
+**v_V.#VALIDATE-FLAG(1:22) := #OTHERS.#VALIDATE-FLAG(1:22)  /* RE1 START
+**v_V.#ERROR-CODE(1:22)    := #OTHERS.#ERROR-CODE(1:22)
+v_V.#VALIDATE-FLAG(1:50) := #OTHERS.#VALIDATE-FLAG(1:50)
+v_V.#ERROR-CODE(1:50)    := #OTHERS.#ERROR-CODE(1:50)       /* RE1 END
+IF v_V.#ERROR-CODE(1) <> ' '
+  PERFORM COMPOSE-VALIDATION-ERROR
+*         v_A4000 := RESPONSE-DATA                       /*  --db
+*         WRITE WORK FILE 12 VARIABLE v_A4000            /*  --db
+*         CLOSE WORK 12
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+******************************************************************************
+DEFINE SUBROUTINE PROCESS-REQUEST-2
+********************************
+* Call Business logic program for Dates and SSN validation
+**EXPAND ARRAY #PERSONAL-OTHERS.#ERROR-CODE TO (1:5)      /* RE1 START
+**EXPAND ARRAY #PERSONAL-OTHERS.#VALIDATE-FLAG TO (1:5)
+EXPAND ARRAY #PERSONAL-OTHERS.#ERROR-CODE TO (1:30)        
+EXPAND ARRAY #PERSONAL-OTHERS.#VALIDATE-FLAG TO (1:30)    /* RE1 END 
+*
+#PERSONAL-OTHERS.#VALIDATE-FLAG (*) := 'Y'
+#PERSONAL-OTHERS.#SYSTEM := 'CRM'
+
+CALLNAT 'GPRNPINF' #PERSONAL-INFO #PERSONAL-OTHERS
+* PRINT #PERSONAL-OTHERS.#ERROR-CODE (1:4) #PERSONAL-OTHERS.#VALIDATE-FLAG (1:4)
+RESET v_V
+**v_V.#VALIDATE-FLAG(1:5) := #PERSONAL-OTHERS.#VALIDATE-FLAG(1:5)   /* RE1 START
+**v_V.#ERROR-CODE(1:5)    := #PERSONAL-OTHERS.#ERROR-CODE(1:5)
+v_V.#VALIDATE-FLAG(1:30) := #PERSONAL-OTHERS.#VALIDATE-FLAG(1:30)
+v_V.#ERROR-CODE(1:30)    := #PERSONAL-OTHERS.#ERROR-CODE(1:30)       /* RE1 END
+IF v_V.#ERROR-CODE(1) <> ' '
+  PERFORM COMPOSE-VALIDATION-ERROR
+*         v_A4000 := RESPONSE-DATA                       /*  --db
+*         WRITE WORK FILE 12 VARIABLE v_A4000            /*  --db
+*         CLOSE WORK 12                                  /*  --db
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+
+
+
+
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+
+  VALUE 'Contact/DateOfBirth/$'                                      /* ok 12 !
+    #VALUE := *TRIM(XML_PARSER_CONTENT)
+    IF #VALUE IS (N8) THEN
+        #MILITARY-INFO.Date-Of-Birth := VAL(#VALUE)
+        #PERSONAL-INFO.DATE-OF-BIRTH := VAL(#VALUE)                   /* ?
+*        PRINT *PROGRAM *LINE #MILITARY-INFO.Date-Of-Birth XML_PARSER_XPATH   /* --db
+    END-IF
+  VALUE 'Contact/DateOfDeath/$'                                      /* ok 12 !
+    #VALUE := *TRIM(XML_PARSER_CONTENT)
+    IF #VALUE IS (N8) THEN
+        #MILITARY-INFO.Date-Of-Death := VAL(#VALUE)
+        #PERSONAL-INFO.Date-Of-Death := VAL(#VALUE)
+*        PRINT *PROGRAM *LINE #MILITARY-INFO.Date-Of-Death XML_PARSER_XPATH   /* --db
+    END-IF
+  VALUE 'Contact/DateOfMarriage/$'                                     /* ok 2
+    #VALUE := *TRIM(XML_PARSER_CONTENT)
+    IF #VALUE IS (N8) THEN
+        #PERSONAL-INFO.DATE-OF-MARRIAGE := VAL(#VALUE)
+*        PRINT *PROGRAM *LINE #PERSONAL-INFO.MARRIAGE XML_PARSER_XPATH   /* --db
+    END-IF
+  VALUE 'Contact/DateOfDivorce/$'                                     /* ?? 
+    #VALUE := *TRIM(XML_PARSER_CONTENT)
+    IF #VALUE IS (N8) THEN
+        #PERSONAL-INFO.DATE-OF-DIVORCE := VAL(#VALUE)
+*        PRINT *PROGRAM *LINE #PERSONAL-INFO.MARRIAGE XML_PARSER_XPATH   /* --db
+    END-IF
+  VALUE 'Contact/GovtID/$'
+    #VALUE := *TRIM(XML_PARSER_CONTENT)
+    IF #VALUE IS (N9) THEN
+      #PERSONAL-INFO.SSN := VAL(#value)
+*        PRINT *PROGRAM *LINE #PERSONAL-INFO.SSN XML_PARSER_XPATH   /* --db
+    END-IF
+    
+  VALUE 'Contact/MilitaryStatus/$'                                   /* ok !
+        #MILITARY-INFO.MILITARY-STATUS := *TRIM(XML_PARSER_CONTENT) 
+*        PRINT *PROGRAM *LINE #MILITARY-INFO.MILITARY-STATUS XML_PARSER_XPATH  /* --db
+  VALUE 'Contact/DIEMS/$'                                            /* ok 
+        #VALUE := *TRIM(XML_PARSER_CONTENT)
+        IF #VALUE IS (N8) THEN
+           #MILITARY-INFO.DATE-INIT-ENTRY-MIL-SVC := VAL(#VALUE)     
+        END-IF
+*        PRINT *PROGRAM *LINE #MILITARY-INFO.DATE-INIT-ENTRY-MIL-SVC XML_PARSER_XPATH       /*  --db
+  VALUE 'Contact/BranchOfService/$'                                  /* ok !
+        #MILITARY-INFO.MILITARY-SERVICE := *TRIM(XML_PARSER_CONTENT) 
+*        PRINT *PROGRAM *LINE #MILITARY-INFO.MILITARY-SERVICE XML_PARSER_XPATH       /*  --db 
+  VALUE 'Contact/MilitaryRankId/$'                                    /* ok !
+        #VALUE := *TRIM(XML_PARSER_CONTENT)
+        IF #VALUE IS (N6) THEN
+           #MILITARY-INFO.RANK-ID := VAL(#VALUE)
+        END-IF
+*        PRINT *PROGRAM *LINE #MILITARY-INFO.RANK-ID XML_PARSER_XPATH       /*  --db
+  VALUE 'Contact/DateOfPromotion/$'                                /* ok !  
+        #VALUE := *TRIM(XML_PARSER_CONTENT)
+        IF #VALUE IS (N8) THEN
+           #MILITARY-INFO.DATE-OF-RANK := VAL(#VALUE)
+*           PRINT *PROGRAM *LINE #MILITARY-INFO.DATE-OF-RANK XML_PARSER_XPATH       /*  --db
+        END-IF
+  VALUE 'Contact/DateOfPreviousPromotion/$'                        /* ok !
+        #VALUE := *TRIM(XML_PARSER_CONTENT)
+        IF #VALUE IS (N8) THEN
+           #MILITARY-INFO.PRIOR-DATE-OF-RANK := VAL(#VALUE)  
+*           PRINT *PROGRAM *LINE #MILITARY-INFO.PRIOR-DATE-OF-RANK XML_PARSER_XPATH /* --db
+        END-IF
+  VALUE 'Contact/PEBD/$'                                           /* ok !
+        #VALUE := *TRIM(XML_PARSER_CONTENT)
+        IF #VALUE IS (N8) THEN
+           #MILITARY-INFO.BASE-PAY-EF-DATE := VAL(#VALUE)    
+*           PRINT *PROGRAM *LINE #MILITARY-INFO.BASE-PAY-EF-DATE  XML_PARSER_XPATH     /* --db
+        END-IF
+  VALUE 'Contact/BASD/$'                                            /* ok !
+        #VALUE := *TRIM(XML_PARSER_CONTENT)
+        IF #VALUE IS (N8) THEN
+           #MILITARY-INFO.ACTIVE-DUTY-BASE-DATE := VAL(#VALUE)     
+*           PRINT *PROGRAM *LINE #MILITARY-INFO.ACTIVE-DUTY-BASE-DATE  XML_PARSER_XPATH   /* --db      
+        END-IF
+  VALUE 'Contact/SBPOption/$'                                              /* ok  !
+        #MILITARY-INFO.MIL-SBP-OPT := *TRIM(XML_PARSER_CONTENT)       
+*        PRINT *PROGRAM *LINE #MILITARY-INFO.MIL-SBP-OPT  XML_PARSER_XPATH                  /* --db             
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+* ===================================================================================
+DEFINE SUBROUTINE PARSER_ERROR
+
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+* ===================================================================================
+DEFINE SUBROUTINE COMPOSE-XML
+
+IF v_Err <> '0'
+  v_Err_Dscr := F-ERROR-DESCRIPTION(<v_Err>)
+END-IF
+COMPRESS '<Contact>'
+  '<ErrorCode>' v_Err '</ErrorCode>' -
+  '<ErrorDescription>' v_Err_Dscr '</ErrorDescription>' -
+  '</Contact>'
+  INTO RESPONSE-DATA LEAVING NO SPACE
+END-SUBROUTINE
+* ===================================================================================
+DEFINE SUBROUTINE COMPOSE-VALIDATION-ERROR
+
+v_Err := '1'
+COMPRESS '<Contact>' 
+         '<ErrorCode>' v_Err '</ErrorCode>' '<ErrorDescription>' INTO RESPONSE-DATA LEAVING NO
+FOR #I = 1 TO *OCCURRENCE(v_V.#ERROR-CODE)
+  IF v_V.#ERROR-CODE(#I) <> ' '
+    v_Err_Dscr := F-ERROR-DESCRIPTION(<v_V.#ERROR-CODE(#I)>)
+    IF v_Err_Dscr <> ' '
+       COMPRESS RESPONSE-DATA  v_Err_Dscr ' Code=' v_V.#ERROR-CODE(#I)  #DEL INTO RESPONSE-DATA LEAVING NO SPACE
+    ELSE
+       COMPRESS RESPONSE-DATA  'Warning! Error Code=' v_V.#ERROR-CODE(#I) ' Error definition was not found.'  
+          #DEL INTO RESPONSE-DATA LEAVING NO  SPACE
+    END-IF   
+  END-IF
+END-FOR
+  COMPRESS RESPONSE-DATA    '</ErrorDescription>' '</Contact>' INTO RESPONSE-DATA LEAVING NO SPACE
+END-SUBROUTINE
+*
+END

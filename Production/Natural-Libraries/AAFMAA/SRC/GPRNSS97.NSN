@@ -1,0 +1,1462 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+*   PGM-ID GPRNSS97 1997 VALUE-ADDED NON-SMOKER & VAR TERM RATES
+*    FINDS THE 1997 PREM RATE BASED ON PLAN/AGE/ISSUE-YYYY
+*    in 2/2003 we added Sub-Standard Premium or RATED Premium logoc
+*******************************************************************************
+*                     MODIFICATION LOG                                        *
+* USER  DATE     TAG   REASON                                                 *
+* DRW   12032004  DW1  Add LTII rates eff 1/1/2005                            *
+* DRW   02212005  DW2  Add AL (Annuity Life) rates                            *
+* DRW   04272005  DW3  Allow AGE 18/19 for AL LTII                            *
+* DRW   05162005  DW4  Add SEX in linkage to determine Male/Female rates      *
+*                      for LTII Rates if Iss Dt on or after 6/1/2005          *
+* PAM   12282007  PM5  Added LTII Male, Non-Smoker Super Select rates for 2008*
+* YAK   10032012  YK1  Use function to identify Level Term II plans           *
+* NGG   20121112  NG1  Changes for LTII new rates and NoMedicalTerm           *
+* JNT   20131030  JT1  1M Policy support                                      *
+* NGG   20140304  NG2  New service SAS AGE OVERFLOW
+*******************************************************************************
+*
+DEFINE DATA PARAMETER
+** to find rates scan for OL/20-PAY/30-PAY/7-PAY/SNG-PRM
+1 #CGA-SCR-COMMAND (A2)
+1 #CGA-SCR-ID      (N9)
+1 #CGA-SCR-SUFFIX  (A3)
+1 #PLAN-PASS       (A3) BY VALUE
+1 REDEFINE #PLAN-PASS
+  2 #PLAN-PASS-A1   (A1)
+  2 #PLAN-PASS-N2   (N2)
+1 #AGE             (N2)
+1 #APREM           (N7.2)                                         /* JT1
+1 #ISSUE-DATE      (N8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-YYYY (N4)
+  2 #ISSUE-MMDD (N4)
+1 #SMOK-FLAG       (A1)
+1 #FAC-AMT         (N7.2)
+1 #PRM-SEL         (I2)
+1 #SEX             (A1)   /* DW4
+*
+LOCAL
+/* NG2 VAWL NEW RATES                   START
+1 #VAWL-KEY (A15) 1 REDEFINE #VAWL-KEY
+  2 #GENDER-1    (A1)
+  2 #NICOTINE-1  (A1)
+  2 #PLAN-CODE-1 (A3)
+  2 #AGE-1       (A2)
+  2 #EFF-DATE    (A8)
+1 PRTES-V VIEW OF A-PRODUCT-RATES
+  2 WL-PLAN-CODE (A3)
+  2 WL-SEGMENT   (A1)
+  2 WL-RATE      (N7.2)
+  2 VAWL-KEY     (A15)
+1 #RATE1 (N7.2)
+1 #RATE2 (N7.2)
+/* NG2 VAWL NEW RATES                   END
+1 VT-V VIEW OF A-PRODUCT-RATES
+  2 VAR-TERM-KEY   (A5)
+  2 VAR-TERM-RATE        (N3.2/65)
+  2 VAR-TERM-RATE-2005   (N3.2/65)    /* DW1
+  2 VAR-TERM-RATE-2005-06-FEMALE  (N3.2/65)    /* DW4
+  2 VAR-TERM-RIDER-RATE  (N3.2/65)
+  2 VAR-TERM-RATE-2008-MALE-NS-SS (N3.2/65)    /* PM5
+*
+1 #VAR-TERM-POL-FEE  (N1.2) INIT <3.20>   /* monthly policy fee
+1 #VAR-TERM-POL-FEE-2005  (N1.2) INIT <5.00> /* monthly policy fee DW1
+1 #VAR-TERM-POL-FEE-2008  (N1.2) INIT <5.00> /* No policy fee in 2008 rates  PM5
+1 #VAR-TERM-KEY  (A5)
+1 REDEFINE #VAR-TERM-KEY
+ 2 #VAR-TERM-TYPE  (A2)  /* SS= SUPER SELECT / SE= SELECT / ST= STANDARD
+  2 #VAR-SM-NS      (A1)  /* S=SMOKER / N=NON-SMOKER or F/G if Female
+  2 #VAR-ISS-AGE    (N2)  /* iss age from 18 to 75
+*
+1 #SCN-TYPE  (A45)
+1 #SCN-PREM         (N5.2/81)
+1 #SCN-PREM-AFT-10K (N5.2/81)
+*
+1 #1ST-10K        (N5.6)
+1 #ADDL-10K       (N5.6)
+1 #POLICY-FEE     (N5.6)
+1 #PREM-6-6       (N6.6)
+1 #APREM-6         (N6)
+1 #WHOLE-DOLLARS   (N7)
+1 #I1      (I2)
+1 #INDEX1  (I2)
+1 #INDEX2  (I2)
+*
+1 #VT-DISPLAY-VARIABLES
+  2 #ALL-DONE             (L)
+  2 #REDO                 (L)
+  2 #VT-1                 (I2)
+  2 #VT-2                 (I2)
+  2 #VT-3                 (I2)
+  2 #SCR-SMOKE            (A1)
+  2 #SCR-AGE              (N2)
+  2 #SCR-TERM             (N2)
+  2 #SCR-PLAN             (A2)
+  2 #HOLD-SMOKE           (A1)
+  2 #HOLD-AGE             (N2)
+  2 #HOLD-TERM            (N2)
+  2 #HOLD-PLAN            (A2)
+  2 #DISPLAY-AGE-1        (A2/20)
+  2 #DISPLAY-TERM-1       (A2/20)
+  2 #DISPLAY-RATE-1       (N3.2/20)
+  2 #DISPLAY-RATE-1-FEM   (N3.2/20)   /* DW4
+  2 #DISPLAY-RIDER-1      (N3.2/20)
+  2 #DISPLAY-PLAN-1       (A2/20)
+  2 #DISPLAY-AGE-2        (A2/20)
+  2 #DISPLAY-TERM-2       (A2/20)
+  2 #DISPLAY-RATE-2       (N3.2/20)
+  2 #DISPLAY-RATE-2-FEM   (N3.2/20)   /* DW4
+  2 #DISPLAY-RIDER-2      (N3.2/20)
+  2 #DISPLAY-PLAN-2       (A2/20)
+*
+1 #PREMIUM-TABLE
+  2 #TYPE-OF-PLAN (10)
+*  (1)<'SI'>  /* non-smk - SNG PRM (mult by 10) after 1996
+*  (2)<'SI'>  /* non-smk - SNG PRM after 10k (mult by 10) after 1996
+*  (3)<'7 '>  /* non-osmk - 7-pay after 1996
+*  (4)<'7 '>  /* non-smk - 7-pay after 10k after 1996
+*  (5)<'20'>  /* non-smk - 20-pay after 1996
+*  (6)<'20'>  /* non-smk - 20-pay after 10k after 1996
+*  (7)<'30'>  /* non-smk - 30-pay after 1996
+*  (8)<'30'>  /* non-smk - 30-pay after 10k after 1996
+*  (9)<'OL'>  /* non-smk - OL after 1996
+*  (10)<'OL'>  /* non-smk - OL after 10k after 1996
+*  (xx)<'RT'>  /* 5-yr Renewable Term (Decreasing Prems/Level Coverage)
+*  (xx)<'DT'>  /* Decreasing Term     (Level Prems/Decreasing Coverage)
+*  (xx)<'SO'>  /* Services Only
+    3 #PLAN-PREM (81)   /* AGE 0 THRU 80
+      4 #PREM-PLAN (P3.2) INIT
+*   SNG-PRM  (must be multiplied by 10) - after 1996
+        (1,1)<143.70>
+        (1,2)<144.02>
+        (1,3)<144.85>
+        (1,4)<145.76>
+        (1,5)<146.71>
+        (1,6)<147.74>
+        (1,7)<148.84>
+        (1,8)<150.02>
+        (1,9)<151.27>
+        (1,10)<152.62>
+        (1,11)<154.05>
+        (1,12)<155.55>
+        (1,13)<157.14>
+        (1,14)<158.71>
+        (1,15)<160.67>
+        (1,16)<162.66>
+        (1,17)<164.56>
+        (1,18)<166.42>
+        (1,19)<168.25>
+        (1,20)<170.21>
+        (1,21)<172.28>
+        (1,22)<174.49>
+        (1,23)<176.91>
+        (1,24)<179.54>
+        (1,25)<182.37>
+        (1,26)<185.38>
+        (1,27)<188.60>
+        (1,28)<192.04>
+        (1,29)<195.70>
+        (1,30)<199.59>
+        (1,31)<203.69>
+        (1,32)<207.99>
+        (1,33)<212.47>
+        (1,34)<217.13>
+        (1,35)<222.00>
+        (1,36)<227.11>
+        (1,37)<232.45>
+        (1,38)<238.07>
+        (1,39)<243.96>
+        (1,40)<250.12>
+        (1,41)<256.52>
+        (1,42)<263.16>
+        (1,43)<269.97>
+        (1,44)<276.96>
+        (1,45)<284.17>
+        (1,46)<291.65>
+        (1,47)<299.37>
+        (1,48)<307.40>
+        (1,49)<315.73>
+        (1,50)<324.26>
+        (1,51)<332.96>
+        (1,52)<341.82>
+        (1,53)<350.66>
+        (1,54)<359.50>
+        (1,55)<368.50>
+        (1,56)<377.76>
+        (1,57)<387.25>
+        (1,58)<397.07>
+        (1,59)<407.24>
+        (1,60)<417.58>
+        (1,61)<428.04>
+        (1,62)<438.57>
+        (1,63)<448.82>
+        (1,64)<458.88>
+        (1,65)<469.13>
+        (1,66)<479.16>
+        (1,67)<490.34>
+        (1,68)<501.79>
+        (1,69)<514.05>
+        (1,70)<527.25>
+        (1,71)<541.53>
+        (1,72)<549.90>
+        (1,73)<552.61>
+        (1,74)<555.22>
+        (1,75)<576.05>
+        (1,76)<601.38>
+        (1,77)<626.77>
+        (1,78)<652.33>
+        (1,79)<677.73>
+        (1,80)<703.10>
+        (1,81)<728.13>
+*   SNG-PRM  after 10K (must be multiplied by 10) - after 1996
+        (2,1)<033.79>
+        (2,2)<034.30>
+        (2,3)<035.36>
+        (2,4)<036.49>
+        (2,5)<037.67>
+        (2,6)<038.94>
+        (2,7)<040.29>
+        (2,8)<041.72>
+        (2,9)<043.22>
+        (2,10)<044.83>
+        (2,11)<046.53>
+        (2,12)<048.31>
+        (2,13)<050.17>
+        (2,14)<052.10>
+        (2,15)<054.29>
+        (2,16)<056.58>
+        (2,17)<058.78>
+        (2,18)<060.94>
+        (2,19)<063.08>
+        (2,20)<065.34>
+        (2,21)<067.73>
+        (2,22)<070.26>
+        (2,23)<073.01>
+        (2,24)<075.99>
+        (2,25)<079.17>
+        (2,26)<082.55>
+        (2,27)<086.14>
+        (2,28)<089.96>
+        (2,29)<094.02>
+        (2,30)<098.31>
+        (2,31)<102.82>
+        (2,32)<107.54>
+        (2,33)<112.44>
+        (2,34)<117.54>
+        (2,35)<122.85>
+        (2,36)<128.40>
+        (2,37)<134.20>
+        (2,38)<140.28>
+        (2,39)<146.65>
+        (2,40)<153.29>
+        (2,41)<160.18>
+        (2,42)<167.31>
+        (2,43)<174.61>
+        (2,44)<182.10>
+        (2,45)<189.82>
+        (2,46)<197.80>
+        (2,47)<206.04>
+        (2,48)<214.59>
+        (2,49)<223.44>
+        (2,50)<232.50>
+        (2,51)<241.73>
+        (2,52)<251.11>
+        (2,53)<260.47>
+        (2,54)<269.82>
+        (2,55)<279.35>
+        (2,56)<289.10>
+        (2,57)<299.10>
+        (2,58)<309.44>
+        (2,59)<320.13>
+        (2,60)<330.99>
+        (2,61)<341.97>
+        (2,62)<353.02>
+        (2,63)<363.76>
+        (2,64)<374.29>
+        (2,65)<385.02>
+        (2,66)<395.92>
+        (2,67)<407.19>
+        (2,68)<419.14>
+        (2,69)<431.93>
+        (2,70)<445.70>
+        (2,71)<460.57>
+        (2,72)<469.29>
+        (2,73)<472.13>
+        (2,74)<474.87>
+        (2,75)<496.56>
+        (2,76)<522.75>
+        (2,77)<549.01>
+        (2,78)<575.44>
+        (2,79)<601.73>
+        (2,80)<627.99>
+        (2,81)<653.91>
+*   7-PAY - after 1996
+        (3,1)<20.00>
+        (3,2)<20.00>
+        (3,3)<20.50>
+        (3,4)<20.70>
+        (3,5)<20.90>
+        (3,6)<21.00>
+        (3,7)<21.10>
+        (3,8)<21.30>
+        (3,9)<21.50>
+        (3,10)<21.70>
+        (3,11)<21.90>
+        (3,12)<22.10>
+        (3,13)<22.30>
+        (3,14)<22.50>
+        (3,15)<22.80>
+        (3,16)<23.20>
+        (3,17)<23.40>
+        (3,18)<23.70>
+        (3,19)<23.90>
+        (3,20)<24.20>
+        (3,21)<24.40>
+        (3,22)<24.80>
+        (3,23)<25.10>
+        (3,24)<25.50>
+        (3,25)<25.70>
+        (3,26)<26.20>
+        (3,27)<26.70>
+        (3,28)<27.30>
+        (3,29)<27.70>
+        (3,30)<28.40>
+        (3,31)<28.90>
+        (3,32)<29.60>
+        (3,33)<30.20>
+        (3,34)<30.80>
+        (3,35)<31.50>
+        (3,36)<32.20>
+        (3,37)<33.00>
+        (3,38)<33.80>
+        (3,39)<34.60>
+        (3,40)<35.60>
+        (3,41)<36.40>
+        (3,42)<37.40>
+        (3,43)<38.40>
+        (3,44)<39.40>
+        (3,45)<40.40>
+        (3,46)<41.50>
+        (3,47)<42.60>
+        (3,48)<43.70>
+        (3,49)<45.00>
+        (3,50)<46.20>
+        (3,51)<47.40>
+        (3,52)<48.70>
+        (3,53)<50.00>
+        (3,54)<51.30>
+        (3,55)<52.70>
+        (3,56)<54.00>
+        (3,57)<55.40>
+        (3,58)<56.90>
+        (3,59)<58.40>
+        (3,60)<60.00>
+        (3,61)<61.50>
+        (3,62)<63.20>
+        (3,63)<64.80>
+        (3,64)<66.40>
+        (3,65)<68.00>
+        (3,66)<69.70>
+        (3,67)<71.30>
+        (3,68)<73.20>
+        (3,69)<75.10>
+        (3,70)<77.20>
+        (3,71)<79.50>
+*   7-PAY - after 10k - after 1996
+        (4,1)<4.80>
+        (4,2)<4.80>
+        (4,3)<5.00>
+        (4,4)<5.20>
+        (4,5)<5.40>
+        (4,6)<5.60>
+        (4,7)<5.70>
+        (4,8)<5.90>
+        (4,9)<6.20>
+        (4,10)<6.40>
+        (4,11)<6.60>
+        (4,12)<6.90>
+        (4,13)<7.10>
+        (4,14)<7.40>
+        (4,15)<7.70>
+        (4,16)<8.10>
+        (4,17)<8.40>
+        (4,18)<8.70>
+        (4,19)<9.00>
+        (4,20)<9.30>
+        (4,21)<9.60>
+        (4,22)<10.00>
+        (4,23)<10.40>
+        (4,24)<10.80>
+        (4,25)<11.20>
+        (4,26)<11.70>
+        (4,27)<12.20>
+        (4,28)<12.80>
+        (4,29)<13.30>
+        (4,30)<14.00>
+        (4,31)<14.60>
+        (4,32)<15.30>
+        (4,33)<16.00>
+        (4,34)<16.70>
+        (4,35)<17.40>
+        (4,36)<18.20>
+        (4,37)<19.00>
+        (4,38)<19.90>
+        (4,39)<20.80>
+        (4,40)<21.80>
+        (4,41)<22.70>
+        (4,42)<23.80>
+        (4,43)<24.80>
+        (4,44)<25.90>
+        (4,45)<27.00>
+        (4,46)<28.10>
+        (4,47)<29.30>
+        (4,48)<30.50>
+        (4,49)<31.80>
+        (4,50)<33.10>
+        (4,51)<34.40>
+        (4,52)<35.80>
+        (4,53)<37.10>
+        (4,54)<38.50>
+        (4,55)<39.90>
+        (4,56)<41.30>
+        (4,57)<42.80>
+        (4,58)<44.30>
+        (4,59)<45.90>
+        (4,60)<47.50>
+        (4,61)<49.10>
+        (4,62)<50.80>
+        (4,63)<52.50>
+        (4,64)<54.10>
+        (4,65)<55.80>
+        (4,66)<57.50>
+        (4,67)<59.20>
+        (4,68)<61.10>
+        (4,69)<63.10>
+        (4,70)<65.20>
+        (4,71)<67.60>
+*   20-PAY - after 1996
+        (5,1)<8.60>
+        (5,2)<8.60>
+        (5,3)<8.80>
+        (5,4)<9.10>
+        (5,5)<9.40>
+        (5,6)<9.70>
+        (5,7)<10.00>
+        (5,8)<10.10>
+        (5,9)<10.10>
+        (5,10)<10.20>
+        (5,11)<10.30>
+        (5,12)<10.50>
+        (5,13)<10.60>
+        (5,14)<10.70>
+        (5,15)<10.80>
+        (5,16)<10.90>
+        (5,17)<11.10>
+        (5,18)<11.20>
+        (5,19)<11.30>
+        (5,20)<11.40>
+        (5,21)<11.60>
+        (5,22)<11.70>
+        (5,23)<11.90>
+        (5,24)<12.00>
+        (5,25)<12.20>
+        (5,26)<12.40>
+        (5,27)<12.70>
+        (5,28)<12.80>
+        (5,29)<13.10>
+        (5,30)<13.40>
+        (5,31)<13.70>
+        (5,32)<14.00>
+        (5,33)<14.30>
+        (5,34)<14.60>
+        (5,35)<15.00>
+        (5,36)<15.30>
+        (5,37)<15.60>
+        (5,38)<16.00>
+        (5,39)<16.50>
+        (5,40)<16.90>
+        (5,41)<17.30>
+        (5,42)<17.80>
+        (5,43)<18.30>
+        (5,44)<18.90>
+        (5,45)<19.30>
+        (5,46)<19.90>
+        (5,47)<20.50>
+        (5,48)<21.10>
+        (5,49)<21.70>
+        (5,50)<22.30>
+        (5,51)<23.00>
+        (5,52)<23.70>
+        (5,53)<24.40>
+        (5,54)<25.10>
+        (5,55)<25.90>
+        (5,56)<26.70>
+        (5,57)<27.50>
+        (5,58)<28.30>
+        (5,59)<29.20>
+        (5,60)<30.20>
+        (5,61)<31.20>
+        (5,62)<32.20>
+        (5,63)<33.20>
+        (5,64)<34.20>
+        (5,65)<35.40>
+        (5,66)<36.50>
+        (5,67)<37.70>
+        (5,68)<39.10>
+        (5,69)<40.60>
+        (5,70)<42.40>
+        (5,71)<44.40>
+**   20-PAY - after 10K - after 1996
+        (6,1)<2.30>
+        (6,2)<2.30>
+        (6,3)<2.40>
+        (6,4)<2.50>
+        (6,5)<2.60>
+        (6,6)<2.60>
+        (6,7)<2.70>
+        (6,8)<2.80>
+        (6,9)<2.90>
+        (6,10)<3.00>
+        (6,11)<3.10>
+        (6,12)<3.30>
+        (6,13)<3.40>
+        (6,14)<3.50>
+        (6,15)<3.70>
+        (6,16)<3.80>
+        (6,17)<4.00>
+        (6,18)<4.10>
+        (6,19)<4.30>
+        (6,20)<4.40>
+        (6,21)<4.60>
+        (6,22)<4.70>
+        (6,23)<4.90>
+        (6,24)<5.10>
+        (6,25)<5.30>
+        (6,26)<5.50>
+        (6,27)<5.80>
+        (6,28)<6.00>
+        (6,29)<6.30>
+        (6,30)<6.60>
+        (6,31)<6.90>
+        (6,32)<7.20>
+        (6,33)<7.60>
+        (6,34)<7.90>
+        (6,35)<8.30>
+        (6,36)<8.60>
+        (6,37)<9.00>
+        (6,38)<9.40>
+        (6,39)<9.90>
+        (6,40)<10.30>
+        (6,41)<10.80>
+        (6,42)<11.30>
+        (6,43)<11.80>
+        (6,44)<12.40>
+        (6,45)<12.90>
+        (6,46)<13.50>
+        (6,47)<14.10>
+        (6,48)<14.70>
+        (6,49)<15.30>
+        (6,50)<16.00>
+        (6,51)<16.70>
+        (6,52)<17.40>
+        (6,53)<18.10>
+        (6,54)<18.80>
+        (6,55)<19.60>
+        (6,56)<20.40>
+        (6,57)<21.20>
+        (6,58)<22.00>
+        (6,59)<22.90>
+        (6,60)<23.90>
+        (6,61)<24.90>
+        (6,62)<25.90>
+        (6,63)<26.90>
+        (6,64)<27.90>
+        (6,65)<29.00>
+        (6,66)<30.10>
+        (6,67)<31.30>
+        (6,68)<32.60>
+        (6,69)<34.10>
+        (6,70)<35.80>
+        (6,71)<37.70>
+**    30-PAY - after 1996
+        (7,1)<7.90>
+        (7,2)<7.90>
+        (7,3)<8.00>
+        (7,4)<8.00>
+        (7,5)<8.10>
+        (7,6)<8.20>
+        (7,7)<8.20>
+        (7,8)<8.20>
+        (7,9)<8.30>
+        (7,10)<8.40>
+        (7,11)<8.50>
+        (7,12)<8.60>
+        (7,13)<8.70>
+        (7,14)<8.80>
+        (7,15)<8.90>
+        (7,16)<9.00>
+        (7,17)<9.10>
+        (7,18)<9.20>
+        (7,19)<9.30>
+        (7,20)<9.40>
+        (7,21)<9.50>
+        (7,22)<9.60>
+        (7,23)<9.70>
+        (7,24)<9.90>
+        (7,25)<10.10>
+        (7,26)<10.30>
+        (7,27)<10.40>
+        (7,28)<10.60>
+        (7,29)<10.80>
+        (7,30)<11.00>
+        (7,31)<11.30>
+        (7,32)<11.50>
+        (7,33)<11.70>
+        (7,34)<12.00>
+        (7,35)<12.30>
+        (7,36)<12.60>
+        (7,37)<13.00>
+        (7,38)<13.30>
+        (7,39)<13.70>
+        (7,40)<14.00>
+        (7,41)<14.40>
+        (7,42)<14.80>
+        (7,43)<15.30>
+        (7,44)<15.70>
+        (7,45)<16.20>
+        (7,46)<16.70>
+        (7,47)<17.30>
+        (7,48)<17.80>
+        (7,49)<18.40>
+        (7,50)<19.00>
+        (7,51)<19.70>
+        (7,52)<20.30>
+        (7,53)<21.10>
+        (7,54)<21.80>
+        (7,55)<22.50>
+        (7,56)<23.30>
+        (7,57)<24.10>
+        (7,58)<25.00>
+        (7,59)<26.00>
+        (7,60)<26.90>
+        (7,61)<28.10>
+        (7,62)<29.10>
+        (7,63)<30.30>
+        (7,64)<31.30>
+        (7,65)<32.60>
+        (7,66)<33.80>
+        (7,67)<35.10>
+        (7,68)<36.70>
+        (7,69)<38.30>
+        (7,70)<40.20>
+        (7,71)<42.40>
+**    30-PAY - after 10k - after 1996
+        (8,1)<1.90>
+        (8,2)<1.90>
+        (8,3)<2.00>
+        (8,4)<2.00>
+        (8,5)<2.10>
+        (8,6)<2.20>
+        (8,7)<2.20>
+        (8,8)<2.30>
+        (8,9)<2.40>
+        (8,10)<2.50>
+        (8,11)<2.60>
+        (8,12)<2.70>
+        (8,13)<2.80>
+        (8,14)<2.90>
+        (8,15)<3.00>
+        (8,16)<3.10>
+        (8,17)<3.30>
+        (8,18)<3.40>
+        (8,19)<3.50>
+        (8,20)<3.60>
+        (8,21)<3.70>
+        (8,22)<3.90>
+        (8,23)<4.00>
+        (8,24)<4.20>
+        (8,25)<4.40>
+        (8,26)<4.60>
+        (8,27)<4.80>
+        (8,28)<5.00>
+        (8,29)<5.20>
+        (8,30)<5.40>
+        (8,31)<5.70>
+        (8,32)<5.90>
+        (8,33)<6.20>
+        (8,34)<6.50>
+        (8,35)<6.80>
+        (8,36)<7.10>
+        (8,37)<7.50>
+        (8,38)<7.80>
+        (8,39)<8.20>
+        (8,40)<8.60>
+        (8,41)<9.00>
+        (8,42)<9.40>
+        (8,43)<9.90>
+        (8,44)<10.30>
+        (8,45)<10.80>
+        (8,46)<11.30>
+        (8,47)<11.90>
+        (8,48)<12.40>
+        (8,49)<13.00>
+        (8,50)<13.60>
+        (8,51)<14.30>
+        (8,52)<14.90>
+        (8,53)<15.60>
+        (8,54)<16.30>
+        (8,55)<17.00>
+        (8,56)<17.80>
+        (8,57)<18.60>
+        (8,58)<19.50>
+        (8,59)<20.40>
+        (8,60)<21.30>
+        (8,61)<22.40>
+        (8,62)<23.40>
+        (8,63)<24.50>
+        (8,64)<25.50>
+        (8,65)<26.70>
+        (8,66)<27.90>
+        (8,67)<29.10>
+        (8,68)<30.60>
+        (8,69)<32.20>
+        (8,70)<34.00>
+        (8,71)<36.00>
+** OL - after 1996
+        (9,1)<6.40>
+        (9,2)<6.40>
+        (9,3)<6.40>
+        (9,4)<6.40>
+        (9,5)<6.50>
+        (9,6)<6.60>
+        (9,7)<6.60>
+        (9,8)<6.70>
+        (9,9)<6.80>
+        (9,10)<6.80>
+        (9,11)<6.90>
+        (9,12)<7.00>
+        (9,13)<7.10>
+        (9,14)<7.20>
+        (9,15)<7.30>
+        (9,16)<7.40>
+        (9,17)<7.50>
+        (9,18)<7.60>
+        (9,19)<7.70>
+        (9,20)<7.80>
+        (9,21)<7.90>
+        (9,22)<8.00>
+        (9,23)<8.20>
+        (9,24)<8.30>
+        (9,25)<8.50>
+        (9,26)<8.70>
+        (9,27)<8.80>
+        (9,28)<9.00>
+        (9,29)<9.20>
+        (9,30)<9.50>
+        (9,31)<9.70>
+        (9,32)<9.90>
+        (9,33)<10.20>
+        (9,34)<10.50>
+        (9,35)<10.80>
+        (9,36)<11.10>
+        (9,37)<11.40>
+        (9,38)<11.80>
+        (9,39)<12.20>
+        (9,40)<12.60>
+        (9,41)<13.00>
+        (9,42)<13.40>
+        (9,43)<13.90>
+        (9,44)<14.40>
+        (9,45)<14.90>
+        (9,46)<15.50>
+        (9,47)<16.00>
+        (9,48)<16.60>
+        (9,49)<17.30>
+        (9,50)<17.90>
+        (9,51)<18.60>
+        (9,52)<19.40>
+        (9,53)<20.10>
+        (9,54)<20.90>
+        (9,55)<21.70>
+        (9,56)<22.50>
+        (9,57)<23.50>
+        (9,58)<24.40>
+        (9,59)<25.40>
+        (9,60)<26.40>
+        (9,61)<27.60>
+        (9,62)<28.70>
+        (9,63)<29.90>
+        (9,64)<31.00>
+        (9,65)<32.30>
+        (9,66)<33.60>
+        (9,67)<35.00>
+        (9,68)<36.50>
+        (9,69)<38.20>
+        (9,70)<40.10>
+        (9,71)<42.40>
+        (9,72)<43.70>
+        (9,73)<44.30>
+        (9,74)<44.70>
+        (9,75)<49.60>
+        (9,76)<55.20>
+        (9,77)<61.30>
+        (9,78)<67.60>
+        (9,79)<74.20>
+        (9,80)<81.20>
+        (9,81)<88.50>
+** OL - after 10K - after 1996
+        (10,1)<1.50>
+        (10,2)<1.50>
+        (10,3)<1.60>
+        (10,4)<1.60>
+        (10,5)<1.70>
+        (10,6)<1.80>
+        (10,7)<1.80>
+        (10,8)<1.90>
+        (10,9)<2.00>
+        (10,10)<2.00>
+        (10,11)<2.10>
+        (10,12)<2.20>
+        (10,13)<2.30>
+        (10,14)<2.40>
+        (10,15)<2.50>
+        (10,16)<2.60>
+        (10,17)<2.70>
+        (10,18)<2.80>
+        (10,19)<2.90>
+        (10,20)<3.00>
+        (10,21)<3.10>
+        (10,22)<3.20>
+        (10,23)<3.40>
+        (10,24)<3.50>
+        (10,25)<3.70>
+        (10,26)<3.90>
+        (10,27)<4.00>
+        (10,28)<4.20>
+        (10,29)<4.40>
+        (10,30)<4.70>
+        (10,31)<4.90>
+        (10,32)<5.10>
+        (10,33)<5.40>
+        (10,34)<5.70>
+        (10,35)<6.00>
+        (10,36)<6.30>
+        (10,37)<6.60>
+        (10,38)<6.90>
+        (10,39)<7.30>
+        (10,40)<7.70>
+        (10,41)<8.10>
+        (10,42)<8.50>
+        (10,43)<9.00>
+        (10,44)<9.50>
+        (10,45)<9.90>
+        (10,46)<10.50>
+        (10,47)<11.00>
+        (10,48)<11.60>
+        (10,49)<12.20>
+        (10,50)<12.80>
+        (10,51)<13.50>
+        (10,52)<14.20>
+        (10,53)<14.90>
+        (10,54)<15.70>
+        (10,55)<16.40>
+        (10,56)<17.20>
+        (10,57)<18.10>
+        (10,58)<19.00>
+        (10,59)<19.90>
+        (10,60)<20.90>
+        (10,61)<22.00>
+        (10,62)<23.10>
+        (10,63)<24.20>
+        (10,64)<25.30>
+        (10,65)<26.50>
+        (10,66)<27.70>
+        (10,67)<29.00>
+        (10,68)<30.50>
+        (10,69)<32.10>
+        (10,70)<33.90>
+        (10,71)<36.00>
+        (10,72)<37.30>
+        (10,73)<37.80>
+        (10,74)<38.20>
+        (10,75)<42.70>
+        (10,76)<48.00>
+        (10,77)<53.60>
+        (10,78)<59.60>
+        (10,79)<65.80>
+        (10,80)<72.40>
+        (10,81)<79.40>
+END-DEFINE
+********************************************************************************
+*
+IF #CGA-SCR-SUFFIX = 'PRM'
+  PERFORM DISPLAY-PREMS
+END-IF
+*
+* WRITE 'INTO GPRNSS97' #CGA-SCR-SUFFIX #PLAN-PASS #FAC-AMT
+* IF #PLAN-PASS-A1 = 'U' OR = 'V' OR = 'W'   /* LTII PLAN                /* YK1
+*               OR = 'X' OR = 'Y' OR = 'Z'   /* LTII WITH RIDER PLAN     /* YK1
+IF F-LT2-TRUE (<#PLAN-PASS>)
+  RESET #APREM
+*
+  MOVE #SMOK-FLAG TO #VAR-SM-NS
+*
+  MOVE #AGE TO #VAR-ISS-AGE
+  DECIDE ON FIRST VALUE #PLAN-PASS-A1
+    VALUE 'U' MOVE 'ST' TO #VAR-TERM-TYPE
+    VALUE 'V' MOVE 'SE' TO #VAR-TERM-TYPE
+    VALUE 'W' MOVE 'SS' TO #VAR-TERM-TYPE
+    VALUE 'X' MOVE 'ST' TO #VAR-TERM-TYPE
+    VALUE 'Y' MOVE 'SE' TO #VAR-TERM-TYPE
+    VALUE 'Z' MOVE 'SS' TO #VAR-TERM-TYPE
+    VALUE 'S' MOVE 'ST' TO #VAR-TERM-TYPE            /* YK1
+    VALUE 'R' MOVE 'SE' TO #VAR-TERM-TYPE            /* YK1
+    VALUE 'Q' MOVE 'SS' TO #VAR-TERM-TYPE            /* YK1
+VALUE 'T' MOVE 'SA' TO #VAR-TERM-TYPE            /* Annual Renewable YK1
+      #APREM := F-LTII-RENEW-RATES (< #AGE >)        /* NG1
+      COMPUTE #PREM-6-6 = #APREM * (#FAC-AMT / 10000)
+      MOVE ROUNDED #PREM-6-6 TO #APREM
+      COMPUTE #APREM = #APREM * 12
+      ESCAPE ROUTINE
+    NONE      IGNORE
+  END-DECIDE
+*
+  IF #PLAN-PASS-A1 = 'Q' OR= 'R' OR= 'S'             /* NG1
+    CALLNAT 'GPRNLTT1'
+      #AGE
+      #ISSUE-DATE
+      #SMOK-FLAG
+      #VAR-TERM-TYPE
+      #SEX
+      #PLAN-PASS-N2
+      #FAC-AMT
+      #APREM
+  ELSE
+    FIND (1) VT-V WITH VAR-TERM-KEY = #VAR-TERM-KEY
+      MOVE #PLAN-PASS-N2 TO #I1
+*
+    IF   (#ISSUE-DATE GE 20080101)                                /* PM5
+        AND (#SEX = 'M')                                          /* PM5
+        AND (#VAR-TERM-TYPE = 'SS')                               /* PM5
+      COMPUTE #PREM-6-6 = VAR-TERM-RATE-2008-MALE-NS-SS (#I1)     /* PM5
+        * (#FAC-AMT / 10000)                                      /* PM5
+    ELSE                                                          /* PM5
+      IF   (#ISSUE-DATE GE 20050601)  /* 1/1/2005 rates           /* DW4
+          AND (#SEX = 'F')                                        /* DW4
+        COMPUTE #PREM-6-6 = VAR-TERM-RATE-2005-06-FEMALE (#I1)    /* DW4
+            * (#FAC-AMT / 10000)
+        ELSE
+          IF #ISSUE-DATE GE 20050101  /* 1/1/2005 rates          /* DW1
+       COMPUTE #PREM-6-6 = VAR-TERM-RATE-2005 (#I1) * (#FAC-AMT / 10000)
+          ELSE
+            COMPUTE #PREM-6-6 = VAR-TERM-RATE (#I1) * (#FAC-AMT / 10000)
+          END-IF
+        END-IF
+      END-IF                                                     /* PM5
+*
+      MOVE ROUNDED #PREM-6-6 TO #APREM
+*
+      IF #PLAN-PASS-A1 = 'X' OR = 'Y' OR = 'Z'   /* ADD RIDER COST
+      COMPUTE #PREM-6-6 = VAR-TERM-RIDER-RATE (#I1) * (#FAC-AMT / 10000)
+        ADD ROUNDED #PREM-6-6 TO #APREM
+      END-IF
+*
+    IF #ISSUE-DATE GE 20080101                                    /* PM5
+        AND (#SEX = 'M')                                          /* PM5
+        AND (#VAR-TERM-TYPE = 'SS')                               /* PM5
+      ADD #VAR-TERM-POL-FEE-2008 TO #APREM                        /* PM5
+    ELSE                                                          /* PM5
+        IF #ISSUE-DATE GE 20050101  /* 1/1/2005 rates    /* DW1
+          ADD #VAR-TERM-POL-FEE-2005 TO #APREM
+        ELSE
+          ADD #VAR-TERM-POL-FEE TO #APREM
+        END-IF
+      END-IF                                                     /* PM5
+*
+    END-FIND
+  END-IF
+  IF #CGA-SCR-SUFFIX = 'SB1'
+    COMPUTE ROUNDED #APREM = #APREM * 1.5
+  END-IF
+*
+  IF #CGA-SCR-SUFFIX = 'SB2'
+    COMPUTE ROUNDED #APREM = #APREM * 2
+  END-IF
+*
+  IF #CGA-SCR-SUFFIX = 'SB3'
+    COMPUTE ROUNDED #APREM = #APREM * 2.5
+  END-IF
+*
+  COMPUTE #APREM = #APREM * 12
+*
+  ESCAPE ROUTINE
+END-IF
+*
+IF #PLAN-PASS = 'EZ'      /* NG1
+  CALLNAT 'GPRNNMT1'
+    #AGE
+    #SEX
+    #FAC-AMT
+    #APREM
+  ESCAPE ROUTINE
+END-IF
+/*
+IF #PLAN-PASS = '7P'
+  MOVE 3 TO #INDEX1
+ELSE
+  IF #PLAN-PASS = '20' OR = '20P'
+    MOVE 5 TO #INDEX1
+  ELSE
+    IF #PLAN-PASS = '30' OR = '30P'
+      MOVE 7 TO #INDEX1
+    ELSE
+      IF #PLAN-PASS = 'OL' OR = 'SP'   /* bz-Temp Fix  07/31/2017 comment out OR 'SP' ???
+        MOVE 9 TO #INDEX1
+      ELSE
+        MOVE 1 TO #INDEX1  /* single premium (must be "SI")
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+*   Whole life premiums  NEW RATES NG2   START
+*
+#GENDER-1    := #SEX
+#PLAN-CODE-1 := #PLAN-PASS
+DECIDE ON FIRST VALUE OF #PLAN-CODE-1
+  VALUE '7'
+    #PLAN-CODE-1 := '7P'
+  VALUE '20'
+    #PLAN-CODE-1 := '20P'
+  VALUE '30'
+    #PLAN-CODE-1 := '30P'
+  VALUE 'SI'
+    #PLAN-CODE-1 := 'SP'
+  NONE VALUE
+    IGNORE
+END-DECIDE
+#NICOTINE-1  := #SMOK-FLAG
+IF #NICOTINE-1 = 'S'
+  #NICOTINE-1 := 'Y'
+END-IF
+MOVE EDITED #AGE (EM=Z9) TO #AGE-1
+MOVE EDITED #ISSUE-DATE (EM=99999999) TO #EFF-DATE
+*
+RESET #RATE1 #RATE2
+READ PRTES-V DESCENDING BY VAWL-KEY STARTING FROM #VAWL-KEY
+  IF SUBSTR(VAWL-KEY,1,7) NE SUBSTR(#VAWL-KEY,1,7)
+    ESCAPE BOTTOM
+  END-IF
+  IF PRTES-V.WL-SEGMENT = '1'
+    #RATE1 := WL-RATE
+  ELSE
+    #RATE2 := WL-RATE
+  END-IF
+END-READ
+IF #RATE1 > 0 AND #RATE2 > 0
+  #APREM := #RATE1 + ( #FAC-AMT - 10000.00) / 10000.00 * #RATE2
+ELSE
+  PERFORM LEGACY-VAWL
+END-IF
+*   Whole life premiums  NEW RATES NG2   END
+*
+IF   (#CGA-SCR-SUFFIX = MASK ('SB'N))
+ AND (#INDEX1 = 1 OR = 3 OR = 5 OR = 7 OR = 9)  /* flx could be any term
+  IF #CGA-SCR-SUFFIX = 'SB1'
+    COMPUTE ROUNDED #APREM = #APREM * 1.125
+  END-IF
+*
+  IF #CGA-SCR-SUFFIX = 'SB2'
+    COMPUTE ROUNDED #APREM = #APREM * 1.25
+  END-IF
+*
+  IF #CGA-SCR-SUFFIX = 'SB3'
+    COMPUTE ROUNDED #APREM = #APREM * 1.375
+  END-IF
+END-IF
+*
+IF #CGA-SCR-SUFFIX = 'PFE'
+    OR #CGA-SCR-SUFFIX = 'A10'
+  IF #RATE1 > 0 AND #RATE2 > 0   /* NG2
+    IF #CGA-SCR-SUFFIX = 'A10'
+      #APREM := #RATE2
+    ELSE  /* PFE
+      #APREM := #RATE1 - #RATE2
+    END-IF
+  ELSE
+    COMPUTE #INDEX2 = #AGE + 1 /* since 1st entry is for age 0
+    IF #INDEX2 > 81 THEN ASSIGN #INDEX2 = 81 END-IF
+    MOVE #PREM-PLAN (#INDEX1,     #INDEX2) TO #1ST-10K
+    MOVE #PREM-PLAN (#INDEX1 + 1, #INDEX2) TO #ADDL-10K
+    IF #CGA-SCR-SUFFIX = 'A10'   /* asking for addl $10k prem
+      MOVE #ADDL-10K TO #APREM
+      IF #INDEX1 = 1
+        COMPUTE #APREM = #APREM * 10
+      END-IF
+    END-IF
+    IF #CGA-SCR-SUFFIX = 'PFE'   /* asking for POLICY FEE
+      COMPUTE #APREM = #1ST-10K - #ADDL-10K
+      IF #INDEX1 = 1
+        COMPUTE #APREM = #APREM * 10
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+* 1997 prems were entered as monthly for 7p/20p/30p/ol
+IF NOT #INDEX1 = 1   /* all except SP/SI
+  MULTIPLY #APREM BY 12
+END-IF
+*
+DEFINE SUBROUTINE LEGACY-VAWL
+/*                -----------
+COMPUTE #INDEX2 = #AGE + 1 /* since 1st entry is for age 0
+IF #INDEX2 > 81 THEN ASSIGN #INDEX2 = 81 END-IF
+*
+MOVE #PREM-PLAN (#INDEX1,     #INDEX2) TO #1ST-10K
+MOVE #PREM-PLAN (#INDEX1 + 1, #INDEX2) TO #ADDL-10K
+*
+IF #INDEX1 = 1  /*sng-prms are for $10k & must be * 10
+  IF #FAC-AMT LE 10000.00
+    COMPUTE #PREM-6-6
+      = (#1ST-10K * 10) * (#FAC-AMT / 10000)
+    MOVE ROUNDED #PREM-6-6 TO #WHOLE-DOLLARS
+    MOVE #WHOLE-DOLLARS TO #APREM
+  ELSE
+    COMPUTE #PREM-6-6
+      = (#1ST-10K * 10)
+      + ((#ADDL-10K * 10) * ((#FAC-AMT - 10000) / 10000))
+    MOVE ROUNDED #PREM-6-6 TO #APREM-6
+    MOVE #APREM-6 TO #APREM
+    MOVE ROUNDED #APREM TO #WHOLE-DOLLARS
+    MOVE #WHOLE-DOLLARS TO #APREM
+  END-IF
+ELSE
+  IF #FAC-AMT LE 10000.00
+    COMPUTE #PREM-6-6 = #1ST-10K * (#FAC-AMT / 10000)
+    MOVE ROUNDED #PREM-6-6 TO #APREM
+  ELSE
+    COMPUTE #PREM-6-6 = #1ST-10K /* 1st $10k
+      + (#ADDL-10K * ((#FAC-AMT - 10000) / 10000))
+    MOVE ROUNDED #PREM-6-6 TO #APREM
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DISPLAY-PREMS
+* * * * * * * * * * * * * * * * *
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+*
+IF #PRM-SEL = 1                /* DW2
+  INPUT USING MAP 'GPREMM07'   /* AL premiums   DW2
+*                                GPREMM07 is also in GPRSMS97
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+REPEAT UNTIL #PRM-SEL GT 5     /* Display 1997 WL prems if requested
+  DECIDE ON FIRST VALUE #PRM-SEL
+    VALUE 1  MOVE 1 TO #INDEX1
+      MOVE '1997 SNG-PREMIUMS per $10k' TO #SCN-TYPE
+    VALUE 2  MOVE 3 TO #INDEX1
+      MOVE '1997 7-PAY mnthly-prems per $10k'   TO #SCN-TYPE
+    VALUE 3  MOVE 5 TO #INDEX1
+      MOVE '1997 20-PAY mnthly prems per $10k'  TO #SCN-TYPE
+    VALUE 4  MOVE 7 TO #INDEX1
+      MOVE '1997 30-PAY mnthly prems per $10k'  TO #SCN-TYPE
+    VALUE 5  MOVE 9 TO #INDEX1
+      MOVE '1997-OL mnthly prems per $10k'      TO #SCN-TYPE
+    VALUE 6  IGNORE
+    VALUE 7  IGNORE
+    VALUE 8  IGNORE
+    VALUE 9  IGNORE
+    VALUE 10 IGNORE
+    VALUE 11 IGNORE
+    VALUE 12 IGNORE
+    VALUE 13 IGNORE
+    NONE IGNORE
+  END-DECIDE
+*
+  COMPRESS #SCN-TYPE '-NON-smoker' INTO #SCN-TYPE
+*
+  MOVE #PREM-PLAN (#INDEX1, *)     TO #SCN-PREM (*)
+  MOVE #PREM-PLAN (#INDEX1 + 1, *) TO #SCN-PREM-AFT-10K (*)
+*
+  IF #INDEX1 = 1    /* all sng prems are entered as dimes
+    MULTIPLY #SCN-PREM (*) BY 10
+    MULTIPLY #SCN-PREM-AFT-10K (*) BY 10
+  END-IF
+*
+  INPUT USING MAP 'GPREMM02'
+*
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+*
+  ADD 1 TO #PRM-SEL
+END-REPEAT
+*
+IF #PRM-SEL = 15 OR = 16 OR = 17 OR= 19       /* DW1 PM5 NG1
+  PERFORM DISPLAY-LTII-PREMS
+END-IF
+*
+IF #PRM-SEL = 20                              /* NG1 EZ Term
+  CALLNAT 'GPRNNMT2'
+    #CGA-SCR-COMMAND
+    #CGA-SCR-ID
+    #CGA-SCR-SUFFIX
+END-IF
+*
+MOVE 'GM' TO #CGA-SCR-COMMAND
+FETCH 'G1000PXX'
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DISPLAY-LTII-PREMS
+* * * * * * * * * * * * * * * * *
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+MOVE 'N' TO #SCR-SMOKE
+RESET #SCR-TERM #SCR-AGE
+*
+IF #PRM-SEL = 19       /* Rates eff 1/1/2013    NG1
+  CALLNAT 'GPRNLTT2'
+    #CGA-SCR-COMMAND
+    #CGA-SCR-ID
+    #CGA-SCR-SUFFIX
+  ESCAPE ROUTINE
+END-IF
+*
+REPEAT UNTIL #ALL-DONE
+*
+  MOVE #SCR-TERM  TO #HOLD-TERM
+  MOVE #SCR-AGE   TO #HOLD-AGE
+  MOVE #SCR-SMOKE TO #HOLD-SMOKE
+  MOVE #SCR-PLAN  TO #HOLD-PLAN
+  MOVE +1         TO #VT-2 #VT-3
+*
+  READ VT-V BY VAR-TERM-KEY
+    MOVE VAR-TERM-KEY TO #VAR-TERM-KEY
+    IF #VAR-SM-NS NE #SCR-SMOKE
+      ESCAPE TOP
+    END-IF
+*
+    IF #SCR-AGE NE 0
+        AND #VAR-ISS-AGE NE #SCR-AGE
+      ESCAPE TOP
+    END-IF
+*
+    IF #SCR-PLAN NE ' '
+        AND #VAR-TERM-TYPE NE #SCR-PLAN
+      ESCAPE TOP
+    END-IF
+*
+    FOR #VT-1 1 TO 65
+      IF #SCR-TERM NE 0
+          AND #VT-1 NE #SCR-TERM
+        ESCAPE TOP
+      END-IF
+*
+      IF #PRM-SEL = 17           /* Rates eff 1/1/2008     /* PM5
+        IF   (VAR-TERM-RATE-2008-MALE-NS-SS (#VT-1) = 0)   /* PM5
+          ESCAPE TOP                                       /* PM5
+        END-IF                                             /* PM5
+      ELSE                                                 /* PM5
+        IF #PRM-SEL = 16       /* Rates eff 1/1/2005       /* DW1
+          IF   (VAR-TERM-RATE-2005 (#VT-1) = 0)            /* DW1
+              AND (VAR-TERM-RIDER-RATE (#VT-1) = 0)
+            ESCAPE TOP
+          END-IF
+        ELSE                  /* must be Original LTII rates  /* DW1
+          IF VAR-TERM-RATE (#VT-1) = 0
+              AND VAR-TERM-RIDER-RATE (#VT-1) = 0
+            ESCAPE TOP
+          END-IF
+        END-IF
+      END-IF                                               /* PM5
+*
+      IF #VT-3 GT 20
+          AND #VT-2 GT 20
+        IF #PRM-SEL = 17                                   /* PM5
+          INPUT MARK *#SCR-AGE USING MAP 'GPREMM08'        /* PM5
+        ELSE                                               /* PM5
+          IF #PRM-SEL = 16       /* Rates eff 1/1/2005     /* DW1
+            INPUT MARK *#SCR-AGE USING MAP 'GPREMM06'
+          ELSE                   /* must be Original LTII rates  /* DW1
+            INPUT MARK *#SCR-AGE USING MAP 'GPREMM05'
+          END-IF
+        END-IF                                             /* PM5
+*
+        IF #CGA-SCR-COMMAND NE '*'
+          FETCH 'G1000PXX'
+        END-IF
+*
+        IF NOT #SCR-SMOKE EQ 'N' OR EQ 'S'
+          REINPUT 'Invalid Smoker Flag' MARK *#SCR-SMOKE
+        END-IF
+*
+        IF #SCR-AGE NE 0
+            AND (#SCR-AGE LT 18 OR #SCR-AGE GT 75)   /* DW3
+          REINPUT 'Invalid Issue Age' MARK *#SCR-AGE
+        END-IF
+*
+        IF NOT #SCR-PLAN = ' ' OR = 'SS' OR = 'SE' OR = 'ST'
+          REINPUT USING HELP
+            MARK *#SCR-PLAN
+        END-IF
+*
+        IF #SCR-TERM NE 0
+          IF (#SCR-PLAN = 'SE' OR = 'SS')
+              AND (#SCR-TERM LT 5 OR #SCR-TERM GT 25)
+            REINPUT 'Invalid Term For Plan' MARK *#SCR-TERM
+          ELSE
+            IF (#SCR-TERM LT 5 OR #SCR-TERM GT 65)
+              REINPUT 'Invalid Term For Plan' MARK *#SCR-TERM
+            END-IF
+          END-IF
+        END-IF
+*
+        MOVE +1 TO #VT-2 #VT-3
+        RESET #DISPLAY-AGE-1 (*) #DISPLAY-TERM-1 (*) #DISPLAY-PLAN-1 (*)
+          #DISPLAY-RATE-1(*) #DISPLAY-RIDER-1 (*) #DISPLAY-AGE-2 (*)
+          #DISPLAY-TERM-2(*) #DISPLAY-PLAN-2 (*) #DISPLAY-RATE-2 (*)
+          #DISPLAY-RIDER-2 (*)
+          #DISPLAY-RATE-1-FEM (*) #DISPLAY-RATE-2-FEM (*)
+*
+      END-IF
+*
+      IF #SCR-SMOKE NE #HOLD-SMOKE
+          OR #SCR-AGE  NE #HOLD-AGE
+          OR #SCR-PLAN NE #HOLD-PLAN
+          OR #SCR-TERM NE #HOLD-TERM
+        MOVE #SCR-SMOKE TO #HOLD-SMOKE
+        MOVE #SCR-AGE   TO #HOLD-AGE
+        MOVE #SCR-PLAN  TO #HOLD-PLAN
+        MOVE #SCR-TERM  TO #HOLD-TERM
+        MOVE TRUE TO #REDO
+        ESCAPE BOTTOM
+      END-IF
+*
+      IF #VT-3 LE 20
+        MOVE #VAR-ISS-AGE                 TO #DISPLAY-AGE-1 (#VT-3)
+        MOVE #VT-1                        TO #DISPLAY-TERM-1 (#VT-3)
+        MOVE #VAR-TERM-TYPE               TO #DISPLAY-PLAN-1 (#VT-3)
+*
+        IF #PRM-SEL = 17         /* Rates eff 1/1/2008    /* PM5
+   MOVE VAR-TERM-RATE-2008-MALE-NS-SS (#VT-1) TO #DISPLAY-RATE-1 (#VT-3)
+          MOVE VAR-TERM-RATE-2005-06-FEMALE (#VT-1)       /* PM5
+            TO #DISPLAY-RATE-1-FEM (#VT-3)                /* PM5
+        ELSE                                              /* PM5
+          IF #PRM-SEL = 16       /* Rates eff 1/1/2005    /* DW1
+            MOVE VAR-TERM-RATE-2005 (#VT-1)   TO #DISPLAY-RATE-1 (#VT-3)
+            MOVE VAR-TERM-RATE-2005-06-FEMALE (#VT-1)     /* DW4
+              TO #DISPLAY-RATE-1-FEM (#VT-3)
+          ELSE
+            MOVE VAR-TERM-RATE (#VT-1)        TO #DISPLAY-RATE-1 (#VT-3)
+          END-IF
+        END-IF                                            /* PM5
+*
+        MOVE VAR-TERM-RIDER-RATE (#VT-1)  TO #DISPLAY-RIDER-1 (#VT-3)
+        ADD +1                            TO #VT-3
+      ELSE
+        MOVE #VAR-ISS-AGE                 TO #DISPLAY-AGE-2 (#VT-2)
+        MOVE #VT-1                        TO #DISPLAY-TERM-2 (#VT-2)
+        MOVE #VAR-TERM-TYPE               TO #DISPLAY-PLAN-2 (#VT-2)
+*
+        IF #PRM-SEL = 17         /* Rates eff 1/1/2008    /* PM5
+   MOVE VAR-TERM-RATE-2008-MALE-NS-SS (#VT-1) TO #DISPLAY-RATE-2 (#VT-2)
+          MOVE VAR-TERM-RATE-2005-06-FEMALE (#VT-1)       /* PM5
+            TO #DISPLAY-RATE-2-FEM (#VT-2)                /* PM5
+        ELSE                                              /* PM5
+          IF #PRM-SEL = 16       /* Rates eff 1/1/2005    /* DW1
+            MOVE VAR-TERM-RATE-2005 (#VT-1)   TO #DISPLAY-RATE-2 (#VT-2)
+            MOVE VAR-TERM-RATE-2005-06-FEMALE (#VT-1)     /* DW4
+              TO #DISPLAY-RATE-2-FEM (#VT-2)
+          ELSE
+            MOVE VAR-TERM-RATE (#VT-1)        TO #DISPLAY-RATE-2 (#VT-2)
+          END-IF
+        END-IF                                            /* PM5
+*
+        MOVE VAR-TERM-RIDER-RATE (#VT-1)  TO #DISPLAY-RIDER-2 (#VT-2)
+        ADD +1                            TO #VT-2
+      END-IF
+    END-FOR
+*
+    IF #REDO
+      ESCAPE BOTTOM
+    END-IF
+  END-READ
+*
+  IF #REDO
+    RESET #REDO
+  ELSE
+    IF #PRM-SEL = 17         /* Rates eff 1/1/2008 /* PM5
+      INPUT MARK *#SCR-AGE USING MAP 'GPREMM08'    /* PM5
+    ELSE                                           /* PM5
+      IF #PRM-SEL = 16       /* Rates eff 1/1/2005 /* DW1
+        INPUT MARK *#SCR-AGE USING MAP 'GPREMM06'
+      ELSE
+        INPUT MARK *#SCR-AGE USING MAP 'GPREMM05'
+      END-IF
+    END-IF                                         /* PM5
+*
+    IF #CGA-SCR-COMMAND NE '*'
+      FETCH 'G1000PXX'
+    END-IF
+*
+    IF NOT #SCR-SMOKE EQ 'N' OR EQ 'S'
+      REINPUT 'INVALID SMOKER FLAG' MARK *#SCR-SMOKE
+    END-IF
+*
+    IF #SCR-AGE NE 0
+        AND (#SCR-AGE LT 18 OR #SCR-AGE GT 75)    /* DW3
+      REINPUT 'INVALID ISSUE AGE' MARK *#SCR-AGE
+    END-IF
+*
+    IF NOT #SCR-PLAN = ' ' OR = 'SS' OR = 'SE' OR = 'ST'
+      REINPUT USING HELP
+        MARK *#SCR-PLAN
+    END-IF
+*
+    IF #SCR-TERM NE 0
+      IF (#SCR-PLAN = 'SE' OR = 'SS')
+          AND (#SCR-TERM LT 5 OR #SCR-TERM GT 25)
+        REINPUT 'INVALID TERM FOR PLAN' MARK *#SCR-TERM
+      ELSE
+        IF (#SCR-TERM LT 5 OR #SCR-TERM GT 65)
+          REINPUT 'INVALID TERM FOR PLAN' MARK *#SCR-TERM
+        END-IF
+      END-IF
+    END-IF
+*
+    IF #SCR-SMOKE NE #HOLD-SMOKE
+        OR #SCR-AGE  NE #HOLD-AGE
+        OR #SCR-PLAN NE #HOLD-PLAN
+        OR #SCR-TERM NE #HOLD-TERM
+      MOVE #SCR-SMOKE TO #HOLD-SMOKE
+      MOVE #SCR-AGE   TO #HOLD-AGE
+      MOVE #SCR-PLAN  TO #HOLD-PLAN
+      MOVE #SCR-TERM  TO #HOLD-TERM
+      RESET #DISPLAY-AGE-1 (*) #DISPLAY-TERM-1 (*) #DISPLAY-PLAN-1 (*)
+        #DISPLAY-RATE-1 (*) #DISPLAY-RIDER-1 (*) #DISPLAY-AGE-2 (*)
+        #DISPLAY-TERM-2 (*) #DISPLAY-PLAN-2 (*) #DISPLAY-RATE-2 (*)
+        #DISPLAY-RIDER-2 (*)
+    ELSE
+      MOVE TRUE TO #ALL-DONE
+    END-IF
+  END-IF
+END-REPEAT
+*
+END-SUBROUTINE
+*
+END

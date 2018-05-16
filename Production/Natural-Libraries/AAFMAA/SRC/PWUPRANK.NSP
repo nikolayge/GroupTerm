@@ -1,0 +1,190 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: PWUPRANK - member information update
+* update IAS with the extract from Proxy Ballot website
+* runs by request when the extract is available
+* This program to update RANK only
+*******************************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* YAK  06242009 n/a  Initial creation
+*******************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLSTAT
+LOCAL USING OBJLTRRG
+*
+LOCAL
+1 #INPUT-RECORD      (A1000)
+1 #CN-NUMBER         (A) Dynamic
+1 #RANK              (A) Dynamic
+1 #E-MAIL            (A) Dynamic
+1 #HOME-PHONE        (A) Dynamic
+1 #WORK-PHONE        (A) Dynamic
+1 #FAX-NUMBER        (A) Dynamic
+1 #DATE-UPDATE-W     (A) Dynamic
+1 #ANN-RPT-FLAG      (A) Dynamic
+*
+1 #I         (N2)
+1 #I1        (N2)
+1 #ERROR     (L)
+1 #DOMAIN    (A60)
+1 #DATE-UPDATE    (N8)                /* FROM WEBSITE
+1 #ID-NUMBER            (A6)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-N        (N6)
+1 #TRX  (I2)
+1 #SFX  (I2)
+1 #W-OLD-NEW-DATA  (A125)
+1 REDEFINE #W-OLD-NEW-DATA
+  2 #W-DESCRIPTION (A10)
+  2 #W-DATA        (A115)
+*
+1 #COMMAND       (A2)
+1 #RANK-PASS     (A3)
+1 #INVALID       (L)
+1 #RANK-PAY      (P2)
+1 #RANK-LITERAL  (A23)
+1 #RANK-DISPLAY  (A5)
+1 #UPDATE-DATE   (L)
+*
+1 #TAB           (A1) INIT <H'09'>
+1 #ERROR-MESSAGE (A78)
+1 #PHONE-A       (A20)
+1 #PHONE         (N10)
+1 REDEFINE #PHONE
+  2 #PHONE-10     (A10)
+1 #PHONE-INTR-EXT (A6)
+*
+1 #REC-READ           (N4)
+1 #CNT-RANK          (N4)
+1 #CNT-ANN-RPT-FLAG  (N4)
+1 #CNT-FAX-NUMBER    (N4)
+1 #CNT-HOME-NUMBER   (N4)
+1 #CNT-WORK-NUMBER   (N4)
+1 #CNT-E-MAIL        (N4)
+1 #CNT-ALL           (N4)
+1 #CNT-RECENT-CHANGE (N4)
+1 #CNT-RANK-INVALID  (N4)
+1 #CNT-HOME-PHONE-INVALID (N4)
+1 #CNT-WORK-PHONE-INVALID (N4)
+1 #CNT-FAX-NUMBER-INVALID (N4)
+1 #CNT-ANN-RPT-FLAG-INVALID (N4)
+1 #CNT-E-MAIL-INVALID     (N4)
+1 #CNT-HOME-PHONE-SAME    (N4)
+1 #CNT-WORK-PHONE-SAME    (N4)
+1 #CNT-FAX-NUMBER-SAME    (N4)
+1 #CNT-RANK-SAME          (N4)
+1 #CNT-ANN-RPT-FLAG-SAME  (N4)
+1 #CNT-E-MAIL-SAME        (N4)
+*
+END-DEFINE
+*
+DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/RANK_IAS_INPUT.TXT'
+READ WORK FILE 1 ONCE #INPUT-RECORD
+READ WORK FILE 1 #INPUT-RECORD
+  IF #INPUT-RECORD = MASK ('ID-NUMBER')
+    ESCAPE TOP
+  END-IF
+*  EXAMINE #INPUT-RECORD TRANSLATE INTO UPPER CASE
+  SEPARATE #INPUT-RECORD INTO #CN-NUMBER #RANK IGNORE WITH DELIMITER #TAB
+  RESET #ERROR
+  #REC-READ := #REC-READ + 1
+  #CN-NUMBER := *TRIM(#CN-NUMBER)
+  #ID-NUMBER-N := VAL(#CN-NUMBER)
+*
+*  #DATE-UPDATE := 20090413
+  FIND(1) ST-V WITH MEMBER-KEY = #ID-NUMBER
+    IF #RANK NE ' '
+      #RANK-PASS := #RANK
+      EXAMINE #RANK-PASS TRANSLATE INTO UPPER CASE
+      CALLNAT 'GRANKSXX' #COMMAND #RANK-PASS ST-V.MILITARY-SERVICE
+        #INVALID #RANK-PAY #RANK-LITERAL #RANK-DISPLAY
+      IF #INVALID
+        COMPRESS #ID-NUMBER ' RANK WILL NOT CHANGE. RANK ' #RANK ' INVALID'
+          INTO #ERROR-MESSAGE
+        WRITE #ERROR-MESSAGE
+        #CNT-RANK-INVALID := #CNT-RANK-INVALID + 1
+        RESET #RANK
+      END-IF
+    END-IF
+    PERFORM UPDATE-WRITE-TR-LOG
+    UPDATE
+  END-FIND
+  END TRANSACTION
+END-WORK
+*
+WRITE 
+  'RECORDS READ                     ' #REC-READ           /
+  'RANK INVALID                     ' #CNT-RANK-INVALID   /
+  'RANK UPDATED                     ' #CNT-RANK           /
+  'RANK SAME                        ' #CNT-RANK-SAME
+*
+*************************************
+DEFINE SUBROUTINE UPDATE-WRITE-TR-LOG
+*************************************
+*
+RESET #TRX #SFX TR-V
+IF #RANK NE ' '
+  IF ST-V.RANK NE #RANK
+    #SFX := #SFX + 1
+    #TRX := #TRX + 1
+    #UPDATE-DATE := TRUE
+    #W-DESCRIPTION := 'RANK'
+    SYNC-FLD-NUM(#SFX) := 10
+    #W-DATA := SYNC-FLD-OLD-DATA(#SFX) := ST-V.RANK
+    OLD-DATA (#TRX) := #W-OLD-NEW-DATA
+    #W-DATA := SYNC-FLD-NEW-DATA(#SFX) := #RANK
+    NEW-DATA (#TRX) := #W-OLD-NEW-DATA
+    ST-V.RANK := #RANK
+    #CNT-RANK := #CNT-RANK + 1
+  ELSE
+    #CNT-RANK-SAME := #CNT-RANK-SAME + 1
+  END-IF
+END-IF
+*
+IF #TRX > 0
+  IF #UPDATE-DATE
+    MOVE *DATN TO ST-V.DATE-OTHER-UPDATE
+  END-IF
+  PERFORM WRITE-TRLOG
+  PERFORM WRITE-REPORT
+END-IF
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE WRITE-TRLOG
+*****************************
+*
+TR-V.ID-NUMBER   := ST-V.ID-NUMBER
+TR-V.NAME        := ST-V.NAME
+TR-V.PROCESS-IND := ST-V.PROCESS-IND
+TR-V.DATE-LAST-UPDATE := ST-V.DATE-OTHER-UPDATE
+TR-V.CLERK-ID    := 'EDS'
+TR-V.TERMINAL-ID := *INIT-ID
+TR-V.TRANSACTION-DATN := *DATN
+TR-V.TRANSACTION-TIMN := *TIMN
+COMPRESS 'WEB-UPDATE' NEW-DATA(1) INTO NEW-DATA(1)
+STORE TR-V
+#CNT-ALL := #CNT-ALL + 1
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE WRITE-REPORT
+******************************
+*
+WRITE 'TR' TR-V.ID-NUMBER   '      PRIOR                     NEW'
+FOR #I1 1 TO 32
+  IF OLD-DATA (#I1) NE ' '
+    WRITE OLD-DATA (#I1) (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+      NEW-DATA (#I1) (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+  ELSE
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+END-SUBROUTINE
+END

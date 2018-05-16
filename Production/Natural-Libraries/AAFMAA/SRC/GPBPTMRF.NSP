@@ -1,0 +1,426 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPBPTMRF - Term Refund Processing
+*                        Issue outstanding term refund checks
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE       TAG     REASON                                     *
+*                                                                      *
+* PAM    03/18/2011 None    Program written                            *
+* PAM    03/29/2011 PM1     Shortened note                             *
+* PAM    03/29/2011 PM1     Shortened note                             *
+* NG     09/19/2013 NG1     Address normalization                      *
+* VXT    03/16/2014 vt1     add 2 missing fields from PE group of term refunds
+* vxt    01/02/2015 vt2     /Ticket 3205/                              *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING OBJLCONT
+LOCAL USING G3500AAD
+LOCAL
+*
+1 #INPUT-FILE-FIELDS
+  2 #INPUT                (A500)
+  2 #TAB                  (A1) INIT <H'09'>
+  2 #INP-CN               (A)  DYNAMIC
+  2 #INP-AMOUNT           (A)  DYNAMIC
+*
+1 #WORK-FIELDS
+  2 #DO-NOT-REF           (L)
+  2 #I1                   (I2)
+  2 #INT                  (I2)
+  2 #CN                   (N6)
+  2 #AMOUNT               (N11.2)
+  2 #TOTAL-OUTS           (N11.2)
+  2 #TOT-REFUND           (N11.2)
+  2 #TOT-MISMATCH         (N11.2)
+  2 #TOT-BYPASSED         (N11.2)
+  2 #MISMATCH-CNT         (N5)
+  2 #BYPASSED-CNT         (N5)
+  2 #NUM-REFUNDS          (N5)
+  2 #CNT-2                (N5)
+  2 #YYYYMMDD             (N8)
+  2 REDEFINE #YYYYMMDD
+    3 #YYYY                (A4)
+    3 #MM                  (A2)
+    3 #DD                  (A2)
+  2 #TODAY-MMDDYYYY-A    (A8)
+  2 #DISP-REFUND          (A11)             /* vt2 was a25
+  2 #HOLD-CUR-ACCT-UPDT   (N8)
+*
+1 #NAME-FIELDS
+  2 #FIRST                (A25)
+  2 #MIDDLE               (A25)
+  2 #LAST                 (A25)
+  2 #SUFFIX               (A10)
+  2 #NAME-ACCTG           (A50)
+  2 #NAME-PEACHTREE       (A)   DYNAMIC
+*
+1 #PEACHTREE             (A500)
+1 #PEACHTREE-AMOUNT      (A25)
+*
+1 #COMMA                 (A1) INIT <','>
+1 #DISP-AMOUNT           (A8)
+1 #DISP-CN               (A6)
+1 #YEAR-TEXT             (A25)
+1 #NOTE-YEAR-TEXT        (A25)
+1 #DATX                  (A10)
+1 #DATN                  (N8)
+1 #TIMN                  (N7)
+*
+1 NT-V VIEW OF A-NOTES
+  2 C*NOTE-TABLE
+  2 NOTE-CLERK-ID         (500)
+  2 NOTE-LINE-NUM         (500)
+  2 NOTE-DATE             (500)
+  2 NOTE-TEXT             (500)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 MEMBER-CONTACT-ID
+  2 DATE-OF-DEATH
+  2 PAD-CODE
+  2 INTRO-FLAG
+* 2 ADDRESS-CHG-CODE                  /* NG1
+  2 DATE-ACCT-UPDATE
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 OUT-TERM-REF-AMOUNT     (99)
+  2 OUT-TERM-REF-YEAR       (99)
+  2 OUT-TERM-REF-ENTRY-DATE (99)
+  2 new-pol-iss-date        (99)                       /* vt1
+  2 new-term-pol-nbr        (99)                       /* vt1
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER             (N6)
+  2 PROCESS-IND           (A1)
+  2 TRANSACTION-DATN      (P9)
+  2 TRANSACTION-TIMN      (P7)
+  2 TXN-CODE              (A4)
+  2 SEQUENCE-NUM          (N1)
+  2 NAME                  (A25)
+  2 TXN-ACCT-NUMBER       (N3)
+  2 ACCT-DATE             (N8)
+  2 DATE-LAST-ACCT-UPDATE (N8)
+  2 DEBIT-AMOUNT          (P7.2)
+  2 CREDIT-AMOUNT         (P7.2)
+  2 DESCRIPTION           (A20)
+  2 MESSAGE-CODE          (A1)
+  2 AALP-FLAG             (A1)
+  2 CLERK-ID              (A3)
+  2 TERMINAL-ID           (A8)
+  2 CASH-CODE             (A1)
+  2 SG-CATEGORY-1         (A2/15)
+  2 SG-CATEGORY-2         (A2/15)
+  2 SG-AMOUNT             (N6.2/15)
+*
+1 #COUNTERS
+  2 #RECS-READ            (P5)
+  2 #RECS-SELECTED        (P5)
+*
+1 #MULTIPLE-OWNER        (L)
+1 #NON-INS-OWNER         (L)
+1 #OWNER-OCC-9           (9)
+  2 #OWNER-FLAG           (A1)
+  2 #OWNER-CN             (N6/10)
+  2 #OWNER-CN-BY-POL      (N6)
+  2 #OWNER-CN-SEG         (I2/9)
+  2 #ISS-DATE             (N8/9)
+  2 #ISS-DATE-DISP        (A10/9)
+*     beneficiary info output
+  2 #BENE-TYPE            (A1/2)
+  2 #BENE-TEST            (A60/10)
+*
+1 #NOTE-TEXT             (A60/10)
+*
+END-DEFINE
+************************************************************************
+*
+ON ERROR
+  PRINT  (1) "CN:" ST-V.ID-NUMBER  "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /
+    #INPUT /
+    #INP-CN #INP-AMOUNT
+END-ERROR
+
+FORMAT (1) LS=133 PS=76
+WRITE  (1) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'PROGRAM EXCEPTIONS'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Term Refunds'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+DEFINE WORK FILE 1 TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 TYPE 'ASCII-COMPRESSED'
+*
+COMPRESS '1,2,3,4,5,6,7,8,9,10' INTO #PEACHTREE LEAVING NO
+WRITE WORK FILE 2 #PEACHTREE
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #MM #DD #YYYY INTO #TODAY-MMDDYYYY-A LEAVING NO
+*
+#DATX := *DAT4U
+#DATN := *DATN
+#TIMN := *TIMN
+*
+READ WORK FILE 1 RECORD #INPUT
+  IF #INPUT NE MASK (9)
+    ESCAPE TOP
+  END-IF
+*
+  SEPARATE #INPUT INTO #INP-CN #INP-AMOUNT IGNORE WITH DELIMITER #TAB
+  #CN     := VAL(#INP-CN)
+  EXAMINE #INP-AMOUNT FOR '$' DELETE
+  #AMOUNT := VAL(#INP-AMOUNT)
+  IF #AMOUNT < 0 #AMOUNT := #AMOUNT * -1 END-IF
+*
+  ST01. FIND (1) ST-V WITH ST-V.ID-NUMBER = #CN
+    IF NO RECORD FOUND
+      WRITE (1) #CN 1X 'Bypassed - CN not found'
+      WRITE (2) #CN 1X 'Bypassed - CN not found'
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    RESET #TOTAL-OUTS #YEAR-TEXT #NOTE-YEAR-TEXT
+    FOR #I1 1 TO 100
+      IF ST-V.OUT-TERM-REF-AMOUNT (#I1) = 0
+        ESCAPE BOTTOM
+      ELSE
+        ADD ST-V.OUT-TERM-REF-AMOUNT (#I1) TO #TOTAL-OUTS
+        IF #YEAR-TEXT = ' '
+          #YEAR-TEXT := ST-V.OUT-TERM-REF-YEAR (#I1)
+        ELSE
+          COMPRESS #YEAR-TEXT ',' ST-V.OUT-TERM-REF-YEAR (#I1) INTO #YEAR-TEXT LEAVING NO
+        END-IF
+*
+        IF #NOTE-YEAR-TEXT = ' '
+          #NOTE-YEAR-TEXT := ST-V.OUT-TERM-REF-YEAR (#I1)
+        ELSE
+          COMPRESS #NOTE-YEAR-TEXT ',' ST-V.OUT-TERM-REF-YEAR (#I1) INTO #NOTE-YEAR-TEXT LEAVING NO
+        END-IF
+      END-IF
+    END-FOR
+*
+    COMPRESS #YEAR-TEXT '.' INTO #YEAR-TEXT LEAVING NO
+*
+    IF #AMOUNT NE #TOTAL-OUTS
+      WRITE (1) #CN 'Bypassed - Term refund Mismatch - File Term refund ='
+        #AMOUNT 'IAS Term refund =' #TOTAL-OUTS
+      WRITE (2) #CN 'Bypassed - Term refund Mismatch - File Term refund ='
+        #AMOUNT 'IAS Term refund =' #TOTAL-OUTS
+      ADD +1 TO #MISMATCH-CNT
+      ADD #AMOUNT TO #TOT-MISMATCH
+      ESCAPE TOP
+    END-IF
+*
+    RESET #DO-NOT-REF
+    FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+      FOR #I1 1 TO C*NOTE-TABLE
+        IF  NOTE-TEXT (#I1) = MASK ('DO NOT REFUND')
+            OR NOTE-TEXT (#I1) = MASK ('*DO NOT REFUND')
+            OR NOTE-TEXT (#I1) = MASK ('* DO NOT REFUND')
+            OR NOTE-TEXT (#I1) = MASK ('**DO NOT REFUND')
+          MOVE TRUE TO #DO-NOT-REF
+        END-IF
+      END-FOR
+    END-FIND
+*
+    IF #DO-NOT-REF
+      WRITE (1) #CN 'Bypassed - Do not refund note'
+      ADD +1 TO #BYPASSED-CNT
+      ADD #AMOUNT TO #TOT-BYPASSED
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+*
+    IF F-UNDEL-ADDRESS (< ST-V.MEMBER-CONTACT-ID >)              /*NG1 BEGIN
+*     IF ST-V.ADDRESS-CHG-CODE = 'U'
+*      OR ST-V.ADDRESS-CHG-CODE = 'V'                            /*NG1 END
+      WRITE (1) #CN 'Bypassed - Undeliverable Address'
+      WRITE (2) #CN 'Bypassed - Undeliverbale Address'
+      ADD +1 TO #BYPASSED-CNT
+      ADD #AMOUNT TO #TOT-BYPASSED
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+*
+    CALLNAT 'GOWNRSXX'
+      ST-V.ID-NUMBER
+      #NON-INS-OWNER
+      #MULTIPLE-OWNER
+      #OWNER-OCC-9 (1:9)
+*
+    IF #NON-INS-OWNER
+      WRITE (1) #CN 'Bypassed - Non-Insured Owner'
+      WRITE (2) #CN 'Bypassed - Non-Insured Owner'
+      ADD +1 TO #BYPASSED-CNT
+      ADD #AMOUNT TO #TOT-BYPASSED
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+*
+    IF ST-V.DATE-OF-DEATH NE 0
+      WRITE (1) #CN 'Bypassed - Member Deceased'
+      WRITE (2) #CN 'Bypassed - Member Deceased'
+      ADD +1 TO #BYPASSED-CNT
+      ADD #AMOUNT TO #TOT-BYPASSED
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+*
+    ADD #AMOUNT TO #TOT-REFUND
+    ADD +1 TO #NUM-REFUNDS
+    MOVE EDITED #AMOUNT (EM=ZZZ,ZZ9.99) TO #DISP-REFUND
+    move left #disp-refund to #disp-refund                     /* vt2
+    COMPRESS '$' #DISP-REFUND INTO #DISP-REFUND LEAVING NO
+*
+    RESET #CONTACT-SEG #EXT-FORMATED-NAME #EXT-DEAR-FORMATED-NAME
+      #FIRST-ADDRESS #SECOND-ADDRESS #THIRD-ADDRESS
+*
+    #CGA-SCR-ID := ST-V.ID-NUMBER
+*
+    CALLNAT 'G3500SAD'
+      #CGA-MASTER
+      #PDA-AREA-G3500AAD
+*
+    RESET #LAST #FIRST #MIDDLE #SUFFIX #NAME-PEACHTREE #NAME-ACCTG
+    FIND (1) CT-V WITH CT-V.CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+      #LAST       := CT-V.LAST-NAME
+      #FIRST      := CT-V.FIRST-NAME
+      #MIDDLE     := CT-V.MIDDLE-NAME
+      #SUFFIX     := CT-V.SUFFIX
+*
+      #NAME-ACCTG := FUNCTION-DISP-CT-NAME(<#FIRST,#MIDDLE,#LAST,#SUFFIX>)
+      COMPRESS #FIRST #MIDDLE #LAST #SUFFIX INTO #NAME-PEACHTREE
+      EXAMINE #NAME-PEACHTREE FOR #COMMA REPLACE WITH ' '
+      EXAMINE #LAST FOR #COMMA REPLACE WITH ' '
+    END-FIND
+*
+    PERFORM TERM-REFUND-LETTER-PROCESS
+*
+    #HOLD-CUR-ACCT-UPDT   := ST-V.DATE-ACCT-UPDATE
+    ST-V.DATE-ACCT-UPDATE := #DATN
+    ST-V.DTS-DATN         := #DATN
+    ST-V.DTS-TIMN         := #TIMN
+*
+    PERFORM ACCT-REG-AND-NOTE
+*
+    PERFORM PEACHTREE
+*
+    ADD 1 TO #CNT-2
+    DISPLAY (2) #CNT-2
+      'CN'       ST-V.ID-NUMBER
+      'Amount'   #AMOUNT (EM=Z,ZZZ,ZZ9.99)
+      'Name'     NAME
+*
+    RESET ST-V.OUT-TERM-REF-AMOUNT (*)
+      ST-V.OUT-TERM-REF-YEAR (*)
+      ST-V.OUT-TERM-REF-ENTRY-DATE (*)
+      st-v.new-pol-iss-date  (*)                         /* vt1
+      st-v.new-term-pol-nbr(*)                           /* vt1
+*
+    UPDATE (ST01.)
+  END-FIND
+*
+  END TRANSACTION
+END-WORK
+*
+NEWPAGE (1)
+WRITE (1) ///
+WRITE (1) #NUM-REFUNDS  (EM=Z,ZZ9)      '     Num Refunds'
+WRITE (1) #TOT-REFUND   (EM=ZZZ,ZZZ.99) 'Total Term Refunds'
+WRITE (1) ' '
+WRITE (1) #MISMATCH-CNT (EM=Z,ZZ9)      '     Num Mismatched'
+WRITE (1) #TOT-MISMATCH (EM=ZZZ,ZZZ.99) 'Total mismatch amt'
+WRITE (1) ' '
+WRITE (1) #BYPASSED-CNT (EM=Z,ZZ9)      '     Num Bypassed - other'
+WRITE (1) #TOT-BYPASSED (EM=ZZZ,ZZZ.99) 'Total bypassed - other'
+*
+WRITE (2) ///
+WRITE (2) #NUM-REFUNDS  (EM=Z,ZZ9)      '     Num Refunds'
+WRITE (2) #TOT-REFUND   (EM=ZZZ,ZZZ.99) 'Total Term Refunds'
+WRITE (2) ' '
+WRITE (2) #MISMATCH-CNT (EM=Z,ZZ9)      '     Num Mismatched'
+WRITE (2) #TOT-MISMATCH (EM=ZZZ,ZZZ.99) 'Total mismatch amt'
+WRITE (2) ' '
+WRITE (2) #BYPASSED-CNT (EM=Z,ZZ9)      '     Num Bypassed - other'
+WRITE (2) #TOT-BYPASSED (EM=ZZZ,ZZZ.99) 'Total bypassed - other'
+*
+************************************************************************
+DEFINE SUBROUTINE PEACHTREE
+************************************************************************
+*
+MOVE EDITED #AMOUNT (EM=ZZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+*
+COMPRESS                             /* first field is blank
+  #COMMA #NAME-PEACHTREE             /* col 2
+  #COMMA #NAME-PEACHTREE             /* col 3
+  #COMMA #TODAY-MMDDYYYY-A           /* col 4
+  #COMMA 'Refund CN' #CN             /* col 5
+  #COMMA '1010 - 00'                 /* col 6
+  #COMMA '1'                         /* col 7
+  #COMMA #LAST 'CN' #CN              /* col 8
+  #COMMA '2237 - 00'                 /* col 9
+  #COMMA #PEACHTREE-AMOUNT           /* col 10
+  INTO #PEACHTREE LEAVING NO
+*
+WRITE WORK FILE 2 #PEACHTREE
+RESET #PEACHTREE
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE ACCT-REG-AND-NOTE
+************************************************************************
+*
+RESET ACCT-REG-V
+ACCT-REG-V.ID-NUMBER                 := ST-V.ID-NUMBER
+ACCT-REG-V.PROCESS-IND               := ST-V.PROCESS-IND
+ACCT-REG-V.TRANSACTION-DATN          := #DATN
+ACCT-REG-V.ACCT-DATE                 := #DATN
+ACCT-REG-V.TRANSACTION-TIMN          := #TIMN
+ACCT-REG-V.TERMINAL-ID               := *INIT-ID
+ACCT-REG-V.CLERK-ID                  := 'EDS'
+ACCT-REG-V.NAME                      := #NAME-ACCTG
+ACCT-REG-V.CASH-CODE                 := 'P'
+ACCT-REG-V.TXN-CODE                  := 'RTRC'
+ACCT-REG-V.TXN-ACCT-NUMBER           := 111
+ACCT-REG-V.DEBIT-AMOUNT              := #AMOUNT
+ACCT-REG-V.DESCRIPTION               := 'Outs Term Ref Check'
+*
+IF #HOLD-CUR-ACCT-UPDT = 0
+  ACCT-REG-V.DATE-LAST-ACCT-UPDATE   := #DATN
+ELSE
+  ACCT-REG-V.DATE-LAST-ACCT-UPDATE   := #HOLD-CUR-ACCT-UPDT
+END-IF
+*
+STORE ACCT-REG-V
+*
+* COMPRESS 'Term refund check for' #NOTE-YEAR-TEXT 'processed to Finance' #DISP-REFUND INTO #NOTE-TEXT(1) /* PM1
+COMPRESS 'Term ref ck for' #NOTE-YEAR-TEXT 'proc"d to Finance' #DISP-REFUND INTO #NOTE-TEXT(1)            /* PM1
+MOVE 1 TO #INT
+MOVE 'EDS' TO #CGA-CLERK
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE TERM-REFUND-LETTER-PROCESS
+************************************************************************
+*
+MOVE EDITED ST-V.ID-NUMBER (EM=999999) TO #DISP-CN
+COMPRESS #EXT-DEAR-FORMATED-NAME ':' INTO #EXT-DEAR-FORMATED-NAME LEAVING NO
+*
+WRITE (3) NOTITLE USING FORM 'GPBFTMRF'
+*
+END-SUBROUTINE
+*
+END

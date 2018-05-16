@@ -1,0 +1,113 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  bz 02/20/2016 
+* GPL/GP2 Proj  
+* Create One children record for every GIPO issued
+* Indicate Return all children 
+*
+DEFINE DATA 
+PARAMETER
+1 p_P2P
+  2 p_Action     (N2) BY VALUE    /* 1 Create a child 
+                                  /* 2 Returns all children with types and No of children
+                                  /* 3 Returns No of parents for child policy of this(GIPO) type
+                                  /* 4 Returns No of children for parent of this(GIPO) type
+   2 p_Pol       (A16)  BY VALUE         /* Parent Policy
+   2 p_RC        (N4)   /* 1-Parm Error: Unknown action
+                        /* 2-Parm Error: p_Pol is blank   
+                        /* 3-Parm Error: Not specified p_Pol_Ch (action=1,2)
+                        /* 4-Parm Error: Blank p_Pol_Ch(1) (action=1)
+                        /* 5-Pol Relation already exist(action=1)   
+ /* !removed!             /* 6-Child/Child-type  array too small(action=2)   
+                        /* ERROR-NR-Natural error  
+  2 p_No          (N6)    BY VALUE RESULT          /* No of:  A) Children actions 2,4; B) Parent action 3
+  2 p_Pol_Ch      (A16/*) BY VALUE RESULT OPTIONAL /* Children Policies-IDs: 1-New child, 2-Retrns all children
+  2 p_Pol_Ch_Type (A6/*)  BY VALUE RESULT OPTIONAL /* Type of children: 1-Type of new child, 2-Retrns all types
+  2 p_Type        (A4)    OPTIONAL
+*
+LOCAL
+ 1 P2P-V VIEW OF A-P2P-RELATION
+   2 PARENT-ID           (A16)   /*  DE  Parent Policy: GPL/GP2
+   2 CHILD-ID            (A16)   /*  DE  Child Policy : GIPO
+   2 REL-TYPE            (A4)    /*  Type of Relation (GIPO)
+   2 CHILD-TYPE          (A6)    /*  Type of Child (GPL-21,GPL-25,GPL-28; GP2-21,GP2-25,GP2-30,GP2-35,GP2-40)
+   2 DATE-CREATED        (N8)    /*  Action date
+1 #i                (I2)
+1 v_Type            (A4)
+END-DEFINE
+ON ERROR
+  WRITE NOTITLE '--' *DAT4U *TIMX *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR  / 
+         3x 'Action:' p_Action 'Policy:' p_Pol  'No of policy children:' p_No      /
+         P2P-V
+  p_RC := *ERROR-NR
+  ESCAPE ROUTINE
+END-ERROR
+  p_RC := 0       
+  IF p_Type NOT SPECIFIED v_Type := 'GIPO'
+  ELSE v_Type := p_Type
+  END-IF
+  IF p_Pol = ' '          p_RC := 2 ESCAPE ROUTINE END-IF 
+  IF p_Pol_Ch NOT SPECIFIED OR p_Pol_Ch_Type NOT SPECIFIED
+     IF (p_Action=1 OR=2) p_RC := 3 ESCAPE ROUTINE END-IF 
+  END-IF
+  
+  DECIDE ON FIRST VALUE p_Action
+  VALUE 1                                       /* Create Child (AI screen)
+    IF p_Pol_Ch(1) = ' ' p_RC := 4 ESCAPE ROUTINE END-IF
+    FIND(1) P2P-V WITH  PARENT-ID = p_Pol AND CHILD-ID = p_Pol_Ch(1)
+            WHERE REL-TYPE = v_Type
+          IF NO RECORD FOUND  
+             PARENT-ID      := p_Pol
+             CHILD-ID       := p_Pol_Ch(1)
+             CHILD-TYPE     := p_Pol_Ch_Type(1)
+             DATE-CREATED   := *DATN
+             REL-TYPE       := 'GIPO'
+             STORE P2P-V
+             ESCAPE BOTTOM
+          END-NOREC
+          p_RC := 5
+    END-FIND
+  VALUE 2                        /* Find all children
+    RESIZE ARRAY p_Pol_Ch TO (1:1)
+    RESIZE ARRAY p_Pol_Ch_Type TO (1:1)
+    RESET p_Pol_Ch(*) p_Pol_Ch_Type(*)
+    FIND P2P-V WITH  PARENT-ID = p_Pol
+        WHERE REL-TYPE = v_Type
+          IF NO RECORD FOUND
+             p_No := 0
+             p_Pol_Ch(*) := ' '
+             p_Pol_Ch_Type(*) := ' '
+             ESCAPE BOTTOM  
+          END-NOREC
+             #i := #i + 1
+             IF #i > 1
+                EXPAND ARRAY p_Pol_Ch TO (1:#i)
+                EXPAND ARRAY p_Pol_Ch_Type  TO (1:#i)
+             END-IF
+*             IF *UBOUND(p_Pol_Ch(*)) < #i p_RC := 6 ESCAPE ROUTINE END-IF 
+*             IF *UBOUND(p_Pol_Ch_Type(*)) < #i p_RC := 6 ESCAPE ROUTINE END-IF
+             p_Pol_Ch(#i) := CHILD-ID
+             p_Pol_Ch_Type(#i) := CHILD-TYPE
+    END-FIND
+    p_No := #i
+  VALUE 3
+    F3. 
+    FIND P2P-V WITH CHILD-ID = p_Pol
+         WHERE REL-TYPE = v_Type
+    END-FIND     
+    p_No := *COUNTER(F3.)
+  VALUE 4
+    F4. 
+    FIND P2P-V WITH PARENT-ID = p_Pol
+         WHERE REL-TYPE = v_Type
+    END-FIND     
+    p_No := *COUNTER(F4.)
+   
+  NONE 
+   p_RC := 1  
+ END-DECIDE
+ END
+  

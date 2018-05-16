@@ -1,0 +1,175 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID : CRIDRSAM
+*
+* UPDATER FOR AM FPRP/FPRR/RIDP/RIDR (DUES PROCESSOR)
+*****************************************************
+* YAK  04292009  YK1  Fix error processing for BATCH         
+* PAM  03202012  PM1  Use sungard category for ACH reversals
+* YAK  02122014  YK2  Do not use Rider balance field 
+*****************************************************
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #ST-V-RID-FPF          (P3.2/9)
+1 #ST-V-RID-BALANCE      (P5.2/9)
+1 #ST-V-RID-TOT-PAID     (P5.2)
+1 #ST-V-RID-PLAN         (A2/9)
+1 REDEFINE #ST-V-RID-PLAN
+ 2 #ST-V-RID-PLAN-OCC  (9)
+  3 #ST-V-RID-PLAN-1  (A1)
+  3 #ST-V-RID-PLAN-2  (N1)
+1 #ST-V-RID-EFF-DT       (N8/9)
+1 #ST-V-RID-PD-TO        (N8/9)
+1 REDEFINE #ST-V-RID-PD-TO
+ 2 #ST-V-RID-PD-TO-OCC   (9)
+  3 #ST-V-RID-PD-TO-YYYYMM (N6)
+  3 #ST-V-RID-PD-TO-DD     (N2)
+1 #ST-V-MODE             (A1/9) /* NOT NOW NEEDED
+*
+1 #ILN1       (I2)
+1 #ILN2       (I2)
+1 #SG-TBL (15)
+ 2 #SG-CAT1 (A2)
+ 2 #SG-CAT2 (A2)
+ 2 #SG-AMT  (N6.2)
+1 #LX      (I2)
+1 #ERROR-MESSAGE       (A75) OPTIONAL     /* YK1
+*
+LOCAL
+*
+1 #I1     (I2)
+1 #I2     (I2)
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM (N6)
+ 2 REDEFINE #YYYYMM
+  3 #YYYY  (N4)
+  3 #MM    (N2)
+ 2 #DD     (N2)
+1 #TOTAL-AMT-DISP (A8)
+1 #DISP-MSG       (A75)
+*
+1 #ACH-SG         (A2)     /* PM1
+END-DEFINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+IF #SG-CAT1 (1) NE ' '      /* PM1
+  #ACH-SG := #SG-CAT1 (1)   /* PM1
+  RESET #SG-CAT1 (1)        /* PM1
+END-IF                      /* PM1
+*
+IF #ST-V-RID-PLAN (#LX) = ' '
+    MOVE 'This Pol has no Rider plan' TO #DISP-MSG
+    IF *DEVICE = 'BATCH'                         /* YK1
+        #ERROR-MESSAGE := #DISP-MSG              /* YK1
+        ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE                                         /* YK1
+      REINPUT #DISP-MSG
+      MARK *#SCR-ISS-DT (#ILN1)
+    END-IF                                       /* YK1   
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'FPRP'
+  IF #SCR-TRAN-AMT (#ILN1) GT #ST-V-RID-FPF (#LX)
+    MOVE EDITED #ST-V-RID-FPF (#LX) (EM=ZZZ.99) TO #TOTAL-AMT-DISP
+    COMPRESS 'Tran amt exceeds RIDER FPF of ' #TOTAL-AMT-DISP
+                                      INTO   #DISP-MSG
+    IF *DEVICE = 'BATCH'                         /* YK1
+        #ERROR-MESSAGE := #DISP-MSG              /* YK1
+        ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE                                         /* YK1                                          
+      REINPUT #DISP-MSG
+      MARK *#SCR-TRAN-AMT (#ILN1)  
+    END-IF                                       /* YK1  
+  END-IF
+*
+  SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-RID-FPF (#LX)
+  ADD #SCR-TRAN-AMT (#ILN1) TO #ST-V-RID-TOT-PAID
+* ADD #ST-V-RID-FPF (#LX) TO #ST-V-RID-BALANCE (#LX)       /* YK2
+* RESET #ST-V-RID-FPF (#LX)                                /* YK2
+*
+  MOVE '1Y'                  TO #SG-CAT1 (1)
+  MOVE 'RD'                  TO #SG-CAT2 (1)
+  MOVE #SCR-TRAN-AMT (#ILN1) TO #SG-AMT  (1)
+*
+  ESCAPE ROUTINE
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'FPRR'
+  IF #SCR-ADJ (#ILN1) = '-'
+    SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-RID-FPF (#LX)
+    ADD      #SCR-TRAN-AMT (#ILN1)   TO #ST-V-RID-TOT-PAID
+  ELSE
+    ADD #SCR-TRAN-AMT (#ILN1)        TO #ST-V-RID-FPF (#LX)
+    SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-RID-TOT-PAID
+  END-IF
+*
+  MOVE '1Y'                  TO #SG-CAT1 (1)
+  MOVE 'RD'                  TO #SG-CAT2 (1)
+  MOVE #SCR-TRAN-AMT (#ILN1) TO #SG-AMT  (1)
+*
+  ESCAPE ROUTINE
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'RIDP'
+* SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-RID-BALANCE (#LX)      /* YK2
+  ADD #SCR-TRAN-AMT (#ILN1) TO #ST-V-RID-TOT-PAID
+*
+  PERFORM SUNGARD
+*
+  ESCAPE ROUTINE
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'RIDR'
+  IF #SCR-ADJ (#ILN1) = '-'
+*   SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-RID-BALANCE (#LX)    /* YK2
+    ADD      #SCR-TRAN-AMT (#ILN1) TO   #ST-V-RID-TOT-PAID
+  ELSE
+*   ADD #SCR-TRAN-AMT (#ILN1)      TO #ST-V-RID-BALANCE (#LX)      /* YK2
+    SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-RID-TOT-PAID
+  END-IF
+*
+  PERFORM SUNGARD
+*
+  ESCAPE ROUTINE
+END-IF
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE SUNGARD
+* * * * * * * * * * * * * *
+*
+FOR #I1 1 TO 9  /* BASE 1Y/RN ON FIND 1ST RIDER POL
+  IF #ST-V-RID-PLAN (#I1) NE ' '
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF #I1 GT 9   /* PREVENT INDEX ABEND
+  MOVE 1 TO #I1
+END-IF
+*
+MOVE #ST-V-RID-EFF-DT (#I1) TO #YYYYMMDD
+ADD 1 TO #YYYY
+*
+IF #ST-V-RID-PD-TO-YYYYMM (#I1) LT #YYYYMM
+  MOVE '1Y' TO #SG-CAT1 (1)
+ELSE
+  MOVE 'RN' TO #SG-CAT1 (1)
+END-IF
+*
+IF #ACH-SG NE ' '           /*  use original code for ACH reversals /* PM1
+  #SG-CAT1 (1) := #ACH-SG                                           /* PM1
+END-IF                                                              /* PM1
+*
+MOVE 'RD' TO #SG-CAT2 (1)
+MOVE #SCR-TRAN-AMT (#ILN1) TO #SG-AMT (1)
+*
+END-SUBROUTINE
+*
+END

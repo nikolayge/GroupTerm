@@ -1,0 +1,227 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram CQRN0001.
+/**
+/** :author nguentchev
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* NGG   20130708   NG1   Change PO command                             *
+*                                                                      *
+DEFINE DATA
+PARAMETER
+1 #XML_INPUT             (A) DYNAMIC BY VALUE
+1 #XML_RESPONSE          (A) DYNAMIC
+1 #QQREQ                 (L) OPTIONAL
+LOCAL USING CQRA001
+LOCAL USING QQRA001
+LOCAL
+1 #GENDER             (A1)
+1 #CGA-SCR-COMMAND    (A2) /* Not Used
+1 #CGA-SCR-ID         (N9) /* Not Used
+1 #CGA-SCR-SUFFIX     (A3)
+1 #PLAN-LEGACY        (A3) 1 REDEFINE #PLAN-LEGACY
+  2 #PLAN-1    (A1)
+  2 #PLAN-2    (A2)
+1 #AGE                (N2)
+1 #NICOTINE           (A1)
+1 #RELATION           (A1)
+1 #CALC-DATE-A        (A8) 1 REDEFINE #CALC-DATE-A
+  2 #CALC-DATE        (N8)
+1 #AGE-DAYS           (N8.2)
+1 #AGE-DECIMAL        (N3.2)
+1 #FAC-AMT            (N7.2)
+1 #APREM              (N7.2)
+1 #DOB                (D)
+1 BLANK               (A1) CONST <' '>
+1 SERVICE             (A1) CONST <'S'>
+1 #J                  (I2)
+1 #K                  (I2)
+END-DEFINE
+*
+IF #QQREQ SPECIFIED
+  CALLNAT 'QQRNPRS' #XML_INPUT CustomerQuickQuote
+  MOVE BY NAME CustomerQuickQuote TO CustomerQuote
+ELSE
+  CALLNAT 'CQRNPRS' #XML_INPUT CustomerQuote /* Parsing
+END-IF
+*
+IF CustomerQuote.ErrorCode NE 0  /* ON ERROR when parsing
+  CALLNAT 'CQRNSRZ' #XML_RESPONSE CustomerQuote
+  ESCAPE ROUTINE
+END-IF
+*
+DECIDE FOR EVERY CONDITION
+  WHEN CustomerQuote.DOB = BLANK
+    COMPRESS CustomerQuote.ErrorDescription 'DOB is missing'
+      INTO CustomerQuote.ErrorDescription
+  WHEN NOT CUSTOMERQUOTE.GENDER = 'M' OR= 'F' OR= 'MALE' OR= 'FEMALE'
+    COMPRESS CustomerQuote.ErrorDescription '; Gender is missing'
+      INTO CustomerQuote.ErrorDescription
+  WHEN CustomerQuote.C@Product = 0 AND CustomerQuote.Age = 0
+    COMPRESS CustomerQuote.ErrorDescription '; Quick Quote Age is missing'
+      INTO CustomerQuote.ErrorDescription
+  WHEN CustomerQuote.C@Product = 0 AND CustomerQuote.QuickQuoteAmount = 0
+    COMPRESS CustomerQuote.ErrorDescription '; Quick Quote Amount is missing'
+      INTO CustomerQuote.ErrorDescription
+  WHEN NONE IGNORE
+END-DECIDE
+IF CustomerQuote.Age =0 AND CustomerQuote.DOB = ' ' OR= '00010101'
+* Set DOB 6 months ago Default options in case of No age and No DOB
+  #DOB :=  *DATX - 183
+  MOVE EDITED #DOB (EM=YYYYMMDD) TO #CALC-DATE-A
+  CustomerQuote.DOB := #CALC-DATE-A
+  CustomerQuote.Relation := 'CHILD'
+END-IF
+IF CustomerQuote.QuickQuoteAmount = 0
+    AND CustomerQuote.C@Product = 0
+  CustomerQuote.ErrorCode := 2
+END-IF
+*
+IF CustomerQuote.ErrorCode = 0
+*
+  PERFORM SET-AND-RUN
+*
+  FOR #J 1 TO C@Product
+    IF CustomerQuote.Eligibility ( #J )
+      DECIDE FOR FIRST CONDITION
+        WHEN RatedClass ( #J ) = 1
+          #CGA-SCR-SUFFIX := 'SB1'
+        WHEN RatedClass ( #J ) = 2
+          #CGA-SCR-SUFFIX := 'SB2'
+        WHEN RatedClass ( #J ) = 3
+          #CGA-SCR-SUFFIX := 'SB3'
+        WHEN NONE
+          RESET #CGA-SCR-SUFFIX
+      END-DECIDE
+      #PLAN-LEGACY := CustomerQuote.Code (#J)
+      PERFORM CALL-QE
+      CustomerQuote.Succeeded ( #J ) := TRUE
+    END-IF
+  END-FOR
+END-IF
+*
+CALLNAT 'CQRNSRZ' #XML_RESPONSE CustomerQuote
+*
+DEFINE CALL-QE
+/*     =======
+FOR #K 1 TO C@QuotePackage ( #J )
+  RESET CustomerQuote.Premium (#J, #K)
+  IF CustomerQuote.ErrorDesc (#J) NE BLANK
+    ESCAPE TOP
+  END-IF
+*
+  IF #PLAN-LEGACY = 'SP'
+    ASSIGN #PLAN-LEGACY := 'SI'
+  END-IF
+  #FAC-AMT := FaceAmount (#J, #K)
+  RESET #APREM
+  MOVE EDITED *DATX (EM=YYYYMMDD) TO #CALC-DATE-A
+*                                                    
+  CALLNAT 'GPREMSXX'
+    #CGA-SCR-COMMAND
+    #CGA-SCR-ID
+    #CGA-SCR-SUFFIX
+    #PLAN-LEGACY
+    #AGE
+    #APREM
+    #CALC-DATE
+    #NICOTINE
+    #FAC-AMT
+    #GENDER
+    CustomerQuote.ProductType (#J)
+*
+  Premium (#J, #K) := #APREM
+  IF NOT #PLAN-LEGACY EQ 'SI' OR= 'SAS'
+    COMPUTE ROUNDED CustomerQuote.Premium (#J, #K) =
+      CustomerQuote.Premium (#J, #K) / 12
+  END-IF
+  IF #PLAN-LEGACY = 'RT' OR= 'LT'
+    RefundAmount (#J, #K) := CustomerQuote.Premium (#J, #K) * 0.9
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+/*
+DEFINE SET-AND-RUN
+/*     ============
+CustomerQuote.Gender := *TRIM (CustomerQuote.Gender)
+MOVE *TRANSLATE(CustomerQuote.Gender, UPPER) TO CustomerQuote.Gender
+IF CustomerQuote.Gender = 'MALE'  OR= 'M'
+  #GENDER := 'M'
+ELSE
+  #GENDER := 'F'
+END-IF
+CustomerQuote.Relation := *TRIM (CustomerQuote.Relation)
+MOVE *TRANSLATE(CustomerQuote.Relation, UPPER)
+  TO CustomerQuote.Relation
+EXAMINE CustomerQuote.Relation FOR 'SPOUSE' GIVING POSITION #J
+IF #J > 0
+  #RELATION := 'S'
+ELSE
+  EXAMINE CustomerQuote.Relation FOR 'CHILD'  GIVING POSITION #J
+  IF #J > 0
+    #RELATION := 'K'
+  ELSE
+    EXAMINE CustomerQuote.Relation FOR 'GRANDCHILD'  GIVING POSITION #J
+    IF #J > 0
+      #RELATION := 'G'
+    ELSE
+      #RELATION := 'M'
+    END-IF
+  END-IF
+END-IF
+*
+IF CustomerQuote.IsNicotine
+  #NICOTINE := 'S'
+ELSE
+  #NICOTINE := 'N'
+END-IF
+*
+IF CustomerQuote.Age > 0
+  IF CustomerQuote.Age > 99
+    #AGE := 99
+  ELSE
+    #AGE := CustomerQuote.Age
+  END-IF
+  #AGE-DECIMAL := #AGE
+ELSE
+  #CALC-DATE-A := CustomerQuote.DOB
+  IF #CALC-DATE-A = MASK (YYYYMMDD)
+    MOVE EDITED CustomerQuote.DOB TO #DOB (EM=YYYYMMDD)
+    #AGE-DAYS := *DATX - #DOB
+    COMPUTE ROUNDED #AGE-DECIMAL = #AGE-DAYS / 365.00
+    RESET #AGE
+    REPEAT UNTIL #AGE-DAYS < 365
+        OR #AGE GE 99
+      SUBTRACT 365 FROM #AGE-DAYS
+      ADD 1 TO #AGE
+    END-REPEAT
+  ELSE
+    CustomerQuote.ErrorCode := 2
+    CustomerQuote.ErrorDescription := 'Age or Date of birth required'
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF CustomerQuote.C@Product = 0
+  CALLNAT 'CQRNQQ'  /* Get all eligible products ... Quick Quote request
+    #RELATION
+    #GENDER
+    #NICOTINE
+    #AGE
+    #AGE-DECIMAL
+    CustomerQuote
+END-IF
+CALLNAT 'CQRNCHKE' /* Check if requested products are eligible
+  #RELATION
+  #GENDER
+  #NICOTINE
+  #AGE
+  #AGE-DECIMAL
+  CustomerQuote
+END-SUBROUTINE
+END

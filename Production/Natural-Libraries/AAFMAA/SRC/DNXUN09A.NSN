@@ -1,0 +1,317 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM ID: DNXUN09A
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* NGG   20100225  None    Program written.                             *
+* NGG   20110121  NG1     Add control variable for selection column                                                                     *
+************************************************************************
+DEFINE DATA
+PARAMETER
+1 #CONTACT-ID        (N8)
+1 #NOK-CONTACT-ID    (N8)
+1 #CGA-USER-COMPANY  (A1)
+1 #CLERK-ID          (A3)
+1 #MSG               (A72)
+
+LOCAL
+1 #PARENT-COID   (N8)
+1 J              (I4)
+1 #PAGE          (N2)
+1 #TOT-PAGES     (N2)
+1 #TOT-REL       (N3)
+1 #L             (N7)
+1 #SELECT        (A1/15)
+1 #CV-SELECT     (C/15)        /* NG1
+1 #RELATIONS
+  2 #RID            (N8/150)
+  2 #ROLE-DESC      (A12/150)
+  2 #RNAME          (A25/150)
+  2 #RDOB           (A10/150)
+  2 #RDOD           (A4/150)
+  2 #CN             (A6/150)
+
+1 #CONTACT-NAME  (A25)
+1 #D             (D)
+1 #SSN           (N9)
+1 #DOB           (A10)
+1 #DOD           (A4)
+1 #ID-NUMBER     (A14)
+
+1 FIRS VIEW OF A-FIRS
+  2 C*DEPENDENT-TABLE
+  2 DEPN-CONTACT-ID (99)
+  2 DEPN-STATUS-CD  (99)
+
+1 BLANK     (A1) CONST <' '>
+1 #DEAD     (A4) CONST <'Dcsd'>
+1 CONTACT VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 ID-NUMBER
+  2 FIRST-NAME
+  2 MIDDLE-NAME
+  2 LAST-NAME
+  2 SUFFIX
+  2 DATE-OF-BIRTH 2 REDEFINE DATE-OF-BIRTH
+    3 DATE-OF-BIRTH-A (A8)
+  2 DATE-OF-DEATH 2 REDEFINE DATE-OF-DEATH
+    3 DATE-OF-DEATH-A (A8)
+  2 SSN
+1 CONTACT-REL VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+1 CountNotes VIEW OF A-CONTACT-NOTES
+
+1 #ORIG-COMMAND      (A2)  INIT <'CB'>
+1 #MODE              (A1)
+1 #MEMBER-CN         (N6)
+1 P_PARMS
+  2 P_ERROR_NUM (I4) /*ERROR NUMBER
+  2 P_ERROR_LINE (I4) /*ERROR LINE
+  2 P_ERROR_PROGRAM (A32)
+  2 P_ERROR_LIB (A32)
+  2 P_ERROR_DBID (I4)
+  2 P_ERROR_FNR (I4)
+  2 P_ERROR_TIME (T)
+  2 P_ERROR_PGM_TYPE (A1)
+  2 P_ERROR_PGM_TYPE_LONG (A11)
+  2 P_ERROR_LANG (I4)
+  2 P_ERROR_LEVEL (I4)
+  2 P_ERROR_CLASS (I1)
+  2 P_ERROR_TYPE (I1)
+
+1 #OREL         (A25) CONST <'--- Other Relations -----'>
+END-DEFINE
+
+SET KEY PF3  NAMED 'Exit'
+SET KEY PF4  NAMED 'Cnt'
+SET KEY PF7  NAMED 'Prev'
+SET KEY PF8  NAMED 'Next'
+SET KEY PF12 NAMED 'Reln'
+
+IF #CONTACT-ID <= 0
+  ESCAPE ROUTINE
+END-IF
+
+ON ERROR
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  COMPRESS 'Application error' P_ERROR_NUM 'In program' P_ERROR_PROGRAM
+    'Error line' P_ERROR_LINE
+    INTO #MSG
+  INPUT //// #MSG (AD=IO)
+    / 'Please call production support'
+  #MSG := 'PF3'
+  ESCAPE ROUTINE
+END-ERROR
+
+FIND CONTACT WITH CONTACT-ID = #CONTACT-ID
+  ASSIGN #PARENT-COID = CONTACT.CONTACT-ID
+  #CONTACT-NAME := FUNCTION-DISP-CT-NAME(<FIRST-NAME,MIDDLE-NAME,LAST-NAME,SUFFIX>)
+  #SSN := CONTACT.SSN
+  IF DATE-OF-BIRTH > 0
+    MOVE EDITED DATE-OF-BIRTH-A TO #D (EM=YYYYMMDD)
+    MOVE EDITED #D (EM=MM/DD/YYYY) TO #DOB
+  ELSE
+    RESET #DOB
+  END-IF
+  IF DATE-OF-DEATH > 0
+    #DOD := #DEAD
+  ELSE
+    RESET #DOD
+  END-IF
+  IF CONTACT.ID-NUMBER > 0
+    COMPRESS '( CN' CONTACT.ID-NUMBER ')' INTO #ID-NUMBER
+    #MEMBER-CN := CONTACT.ID-NUMBER
+  ELSE
+    RESET #ID-NUMBER #MEMBER-CN
+    IF #DOD = BLANK
+      FIND FIRS WITH DEPN-CONTACT-ID = #CONTACT-ID
+        FOR #L 1 TO C*DEPENDENT-TABLE
+          IF DEPN-CONTACT-ID (#L) = #CONTACT-ID
+              AND FIRS.DEPN-STATUS-CD (#L) = 'D'
+            #DOD := #DEAD
+          END-IF
+        END-FOR
+      END-FIND
+    END-IF
+  END-IF
+END-FIND
+
+RESET J #RELATIONS
+FIND CONTACT-REL WITH CONTACT-1-ID = #PARENT-COID
+  ADD 1 TO J
+  ASSIGN #RID (J) = CONTACT-2-ID
+  #ROLE-DESC (J) := FUNCTION-DISP-RL-DESC(<ROLE-2-CD>)
+  FIND CONTACT WITH CONTACT-ID = CONTACT-2-ID
+    #RNAME (J) := FUNCTION-DISP-CT-NAME(<FIRST-NAME,MIDDLE-NAME,LAST-NAME,SUFFIX>)
+    IF DATE-OF-BIRTH > 0
+      MOVE EDITED DATE-OF-BIRTH-A TO #D (EM=YYYYMMDD)
+      MOVE EDITED #D (EM=MM/DD/YYYY) TO #RDOB (J)
+    ELSE
+      RESET #RDOB (J)
+    END-IF
+    IF DATE-OF-DEATH > 0
+      #RDOD (J) := #DEAD
+    ELSE
+      IF CONTACT.ID-NUMBER > 0
+        RESET #RDOD (J)
+      ELSE
+        FIND FIRS WITH DEPN-CONTACT-ID = CONTACT-2-ID
+          FOR #L 1 TO C*DEPENDENT-TABLE
+            IF FIRS.DEPN-CONTACT-ID (#L) = CONTACT-2-ID
+                AND FIRS.DEPN-STATUS-CD (#L) = 'D'
+              #DOD := #DEAD
+            END-IF
+          END-FOR
+        END-FIND
+      END-IF
+    END-IF
+    IF ID-NUMBER NE 0
+      MOVE EDITED ID-NUMBER (EM=999999) TO #CN ( J )
+    ELSE
+      RESET #CN ( J )
+    END-IF
+    COMPRESS FUNCTION-ROLE-DECORATION (<#RID (J)>)
+      #ROLE-DESC (J) INTO #ROLE-DESC (J) LEAVING NO
+  END-FIND
+END-FIND
+
+ADD 1 TO J
+ASSIGN #RNAME (J) := #OREL
+FIND CONTACT-REL WITH CONTACT-2-ID = #PARENT-COID
+  ADD 1 TO J
+  ASSIGN #RID (J) = CONTACT-1-ID
+  IF ROLE-1-CD = 'M'
+    ASSIGN ROLE-1-CD = ROLE-2-CD
+  END-IF
+  IF ROLE-2-CD = 'G'
+    #ROLE-DESC  (J) := 'GRNDPARENT'
+  ELSE
+    #ROLE-DESC  (J) := FUNCTION-DISP-RL-DESC(<ROLE-1-CD>)
+  END-IF
+  FIND CONTACT WITH CONTACT-ID = CONTACT-1-ID
+    #RNAME (J) := FUNCTION-DISP-CT-NAME(<FIRST-NAME,MIDDLE-NAME,LAST-NAME,SUFFIX>)
+    IF DATE-OF-BIRTH > 0
+      MOVE EDITED DATE-OF-BIRTH-A TO #D (EM=YYYYMMDD)
+      MOVE EDITED #D (EM=MM/DD/YYYY) TO #RDOB (J)
+    ELSE
+      RESET #RDOB (J)
+    END-IF
+    IF DATE-OF-DEATH > 0
+      #RDOD (J) := #DEAD
+    ELSE
+      IF CONTACT.ID-NUMBER > 0
+        RESET #RDOD (J)
+      ELSE
+        FIND FIRS WITH DEPN-CONTACT-ID = CONTACT-1-ID
+          FOR #L 1 TO C*DEPENDENT-TABLE
+            IF FIRS.DEPN-CONTACT-ID (#L) = CONTACT-1-ID
+                AND FIRS.DEPN-STATUS-CD (#L) = 'D'
+              #DOD := #DEAD
+            END-IF
+          END-FOR
+        END-FIND
+      END-IF
+    END-IF
+    IF ID-NUMBER NE 0
+      MOVE EDITED ID-NUMBER (EM=999999) TO #CN ( J )
+    ELSE
+      RESET #CN ( J )
+    END-IF
+    COMPRESS FUNCTION-ROLE-DECORATION (<#RID (J)>)
+      #ROLE-DESC (J) INTO #ROLE-DESC (J) LEAVING NO
+  END-FIND
+END-FIND
+
+#TOT-REL := J - 1
+IF #TOT-REL > 15
+  SET KEY PF5  NAMED 'PgUp'
+  SET KEY PF6  NAMED 'PgDn'
+END-IF
+DIVIDE 15 INTO #TOT-REL GIVING #TOT-PAGES REMAINDER #PAGE
+IF #PAGE > 0
+  ADD 1 TO #TOT-PAGES
+END-IF
+#PAGE := 1
+#L := 1
+REPEAT
+  RESET #SELECT (*)
+  MOVE (AD=P) TO #CV-SELECT (*)                  /* NG1    \/\/
+  FOR J 0 14
+    IF #RNAME ( #L + J ) NE BLANK
+        AND #RNAME ( #L + J ) NE #OREL
+      MOVE (AD=DU) TO #CV-SELECT ( J + 1 )
+    END-IF
+  END-FOR                                       /* NG1    \/\/
+  INPUT USING MAP 'DNXUM009'
+  DECIDE ON FIRST VALUE OF *PF-KEY
+    VALUE 'PF4'
+      #MODE := 'U'
+      CALLNAT 'GUPCISXX'
+        #CONTACT-ID                /* Members CONTACT-ID
+        #NOK-CONTACT-ID            /* Spouse/Dependent/Other CONTACT-ID
+        #ORIG-COMMAND
+        #MEMBER-CN                 /* CN or ID-NUMBER
+        #CGA-USER-COMPANY
+        #CLERK-ID
+        #MODE
+        #MSG
+      CALLNAT 'DNXUN09A'
+        #CONTACT-ID
+        #NOK-CONTACT-ID
+        #CGA-USER-COMPANY
+        #CLERK-ID
+        #MSG
+    VALUE 'PF5'
+      IF #PAGE > 1
+        SUBTRACT 1 FROM #PAGE
+        SUBTRACT 15 FROM #L
+      END-IF
+    VALUE 'PF6'
+      IF #TOT-REL >= #L + 15
+        ADD 1 TO #PAGE
+        ADD 15 TO #L
+      END-IF
+    VALUE 'PF12','PF4'
+      PERFORM CHECK-CURS-LINE
+    VALUE 'ENTR'
+      FOR J 1 15
+        DECIDE ON FIRST VALUE OF #SELECT (J)
+          VALUE 'X'
+            J := #L + J - 1
+            #NOK-CONTACT-ID := #RID (J)
+            #MSG := 'PF3'
+            ESCAPE BOTTOM
+          VALUE 'D'
+            IGNORE
+          NONE VALUE IGNORE
+        END-DECIDE
+      END-FOR
+    NONE VALUE IGNORE
+  END-DECIDE
+  UNTIL *PF-KEY = 'PF3' OR= 'PF7' OR= 'PF8'
+    OR #NOK-CONTACT-ID > 0
+END-REPEAT
+
+DEFINE CHECK-CURS-LINE
+/*     ===============
+IF *CURS-LINE > 4 AND *CURS-LINE < 20
+  J := *CURS-LINE - 4
+END-IF
+IF #RID (J) > 0
+  IF *PF-KEY = 'PF12'
+    CALLNAT 'GPF12SXX' #RID (J)
+  ELSE
+    CALLNAT 'GDIF4XXX' #CONTACT-ID #RID (J)
+  END-IF
+END-IF
+END-SUBROUTINE
+
+END

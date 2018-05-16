@@ -1,0 +1,291 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Web Charge Module - called via EntireX
+* WCCNCC10 - Accepts Request Data from WebCharge
+*            calls calculation module, creates Response XML
+* Called from    - NATSERV2 (EntireX server module)
+*
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+* USER   DATE      TAG  REASON
+* YAK    07012009       Initial Creation
+* YAK    15012009  YK1  Add field to indicate that payment
+*                       cannot exceed due amount displayed
+*                       (currently used for loan payments)
+* YAK    12102010  YK2  Increase EM mask for DEFAULT-AMOUNT
+*                       and DUE-AMOUNT from N5.2 to N6.2.
+*                       Increase corresponding fields in WCCA0011
+* YAK    12012011  YK3  Changes to include Premier Services
+* YAK    10032012  YK4  Use function to identify Level Term II plans
+* YAK    04072014  YK5  Add "Pay By Check" functionality
+* YAK    09082014  YK6  "Pay By Check" phase II
+* YAK    09082014  YK7  New PDA's for MC-II
+* YAK    07222015  YK8  Return multiple Bank Accounts for WebCharge
+* YAK    09092015  YK9  Fix 4 digit zip code
+* YAK    10092015  YK10 Add City/State for credit cards
+* YAK    02252016  YK11 Add GUID (CC store in SAGE)
+***********************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A8192)
+1 RESPONSE-DATA     (A8192)        /* Out
+1 RETURN-CODE       (A4)           /* Out
+1 RETURN-MESSAGE    (A100)         /* Out
+LOCAL USING WCCL0010
+LOCAL USING WCCA0011
+LOCAL USING OBJACC01               /* YK7
+LOCAL USING MBCAEC50               /* YK8
+LOCAL
+1 ERROR-MESSAGE   (A100)
+1 XML             (A) DYNAMIC
+1 #CX             (I4)
+1 #CY             (I4)
+1 #CZ             (I4)
+1 #I              (I2)
+1 #I1             (I2)
+*
+1 #FATAL-ERROR    (A4) INIT <'1011'>
+1 #SUCCESS-CODE   (A4) INIT <'0000'>
+1 #SUCCESS-MESSAGE (A50) INIT <'REQUEST PROCESSED SUCCESSFULLY'>
+1 #NO-DUE-CODE    (A4) INIT <'0001'>
+1 #NO-DUE-MESSAGE (A50) INIT <'No payments are due at this time'>
+1 #GENERIC-MESSAGE (A50) INIT <'Contact Policy Services'>
+1 #AMOUNT         (A) DYNAMIC
+1 #DATE           (A20)
+1 #PAYMENT-ID     (N4)
+1 #TRUE           (A4) INIT <'true'>
+1 #FALSE          (A5) INIT <'false'>
+1 #FLEX-PLAN      (A2)
+1 #FLEX-KEY       (A3)
+1 ERROR-LOG       (A100)
+1 #FULL-NAME      (A) DYNAMIC
+1 #GET            (A) DYNAMIC CONST <'GET-GUID'> /* YK11
+1 #GET-ST         (A) DYNAMIC CONST <'GET-ST'>  /* YK6
+1 #GET-ALL        (A) DYNAMIC CONST <'GET-ALL'> /* YK8
+1 #NO-ECHECK-DATA-EXIST (A) DYNAMIC CONST <'087'> /* YK8
+1 #ErrorCode      (A3) INIT <'0'>               /* YK8
+1 ST-V VIEW OF A-STATUS                         /* YK5
+  2 ID-NUMBER                                   /* YK5
+  2 PROCESS-IND                                 /* YK5
+*
+END-DEFINE
+*
+XML := REQUEST-DATA
+EXAMINE XML FOR '<CN>' POSITION #I
+IF #I = 0
+  RETURN-CODE    := '0003'
+  RETURN-MESSAGE := 'Invalid XML structure for the request data'
+  ESCAPE ROUTINE
+END-IF
+EXAMINE XML FOR '<CN>' DELETE
+EXAMINE XML FOR '</CN>' POSITION #I
+IF #I = 0
+  RETURN-CODE    := '0003'
+  RETURN-MESSAGE := 'Invalid XML structure for the request data'
+  ESCAPE ROUTINE
+END-IF
+EXAMINE XML FOR '</CN>' DELETE
+XML := *TRIM(XML)
+IF XML IS (N6)
+  CN := XML
+  CC-PAYMENT.ID-NUMBER := VAL(CN)
+ELSE
+  RETURN-CODE    := '0002'
+  RETURN-MESSAGE := 'Invalid CN number'
+  ESCAPE ROUTINE
+END-IF
+*
+CC-PAYMENT.PARM-DATE := *DATN
+* EXPAND ARRAY PAY-POLICY TO (*:1)
+* EXPAND ARRAY AVAILABLE-PAYMENT TO (1:*,1:10)
+CALLNAT 'WCCNCC11' CC-PAYMENT ERROR-MESSAGE
+IF SUBSTR(ERROR-MESSAGE,1,4) = #FATAL-ERROR
+  RETURN-CODE    := SUBSTR(ERROR-MESSAGE,1,4)
+  RETURN-MESSAGE := #GENERIC-MESSAGE
+  COMPRESS '*MemberCN*' CC-PAYMENT.ID-NUMBER ERROR-MESSAGE INTO ERROR-MESSAGE
+  WRITE WORK FILE 1 VARIABLE ERROR-MESSAGE
+  RESET RESPONSE-DATA
+  ESCAPE ROUTINE
+END-IF
+*
+* EXPAND ARRAY POLICY TO (*:C@POLICY)
+*
+PERFORM POPULATE-CREDIT-CARD-INFO
+PERFORM POPULATE-BANK-ACCOUNT-INFO
+* YK5
+* Temporary disallow "Pay By Check" for Service Only
+Member.ServiceOnly := #FALSE
+FIND(1) ST-V WITH ID-NUMBER = CC-PAYMENT.ID-NUMBER
+  IF PROCESS-IND = 'S'
+    Member.ServiceOnly := #TRUE
+  END-IF
+END-FIND
+*
+PERFORM POPULATE-PAYMENT-ARRAY
+*
+* Create XML structure
+* YK8 -  changes in Copycode
+RESET XML
+INCLUDE WCCCS001 "XML" "#CX" "#CY" "#CZ"           
+RESPONSE-DATA  := XML
+IF RETURN-CODE = ' '
+  RETURN-CODE    := #SUCCESS-CODE
+  RETURN-MESSAGE := #SUCCESS-MESSAGE
+END-IF
+*
+* Populate Credit Card Information
+*
+*******************************************
+DEFINE SUBROUTINE POPULATE-CREDIT-CARD-INFO
+*******************************************
+*
+PARM-CC-DATA.#ACTION := #GET
+PARM-CC-DATA.#PARM-ID-NUMBER := CC-PAYMENT.ID-NUMBER
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+C@CREDITCARD := 1
+EXPAND ARRAY CREDITCARD TO (*:C@CREDITCARD)
+*
+FOR #I = 1 TO C@CREDITCARD
+  CardNumber(#I)    := PARM-CC-INFO.CC-NUMBER
+  ExMonth   (#I)    := PARM-CC-INFO.CC-EXPIRATION-MONTH
+  ExYear    (#I)    := PARM-CC-INFO.CC-EXPIRATION-YEAR
+  CardGUID  (#I)    := PARM-CC-INFO.CC-GUID              /* YK11 
+  Street    (#I)    := PARM-CC-INFO.CCHOLDER-STREET-ADDR
+  City      (#I)    := PARM-CC-INFO.CCHOLDER-CITY        /* YK10
+  State     (#I)    := PARM-CC-INFO.CCHOLDER-STATE-CD    /* YK10
+* ZipCode   (#I)    := PARM-CC-INFO.CCHOLDER-ZIP-CODE    /* YK9
+  IF PARM-CC-INFO.CCHOLDER-ZIP-CODE <> 0                 /* YK9 
+    MOVE EDITED PARM-CC-INFO.CCHOLDER-ZIP-CODE (EM=99999) TO ZipCode(#I)
+  END-IF  
+  #FULL-NAME        := PARM-CC-INFO.CCHOLDER-NAME
+  #FULL-NAME        := FUNCTION-FORM-NAME(<#FULL-NAME,'C'>)
+  CardHolder(#I)    := #FULL-NAME
+END-FOR
+*
+END-SUBROUTINE
+*
+* Populate Bank Account Information
+*
+********************************************
+DEFINE SUBROUTINE POPULATE-BANK-ACCOUNT-INFO    /* YK8
+********************************************
+*
+EXPAND ARRAY Account TO (*:1)
+BankAccounts.ActionType := #GET-ALL
+BankAccounts.ViewCN := CC-PAYMENT.ID-NUMBER
+CALLNAT 'MBCNEC51' BankAccounts #ErrorCode
+IF #ErrorCode = #NO-ECHECK-DATA-EXIST
+  #ErrorCode := '0'                             /* no bank account data exist
+END-IF
+*
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE POPULATE-PAYMENT-ARRAY
+****************************************
+*
+* C@CREDITCARD := 1                     /* Only 1 currently available
+IF C@PAY-POLICY NE 0
+  C@POLICY     := C@PAY-POLICY
+ELSE
+  C@POLICY := 0
+  #PAYMENT-ID := C@POLICY
+  COMPRESS '*MemberCN*' CC-PAYMENT.ID-NUMBER #NO-DUE-CODE #NO-DUE-MESSAGE
+    INTO ERROR-MESSAGE
+  WRITE WORK FILE 1 VARIABLE ERROR-MESSAGE
+  RETURN-CODE    := #NO-DUE-CODE
+  RETURN-MESSAGE := #GENERIC-MESSAGE
+  ESCAPE ROUTINE
+END-IF
+*
+* EXPAND ARRAY CREDITCARD TO (*:C@CREDITCARD)
+* EXPAND ARRAY POLICY TO (*:C@POLICY)
+FOR #I = 1 TO C@POLICY
+  C@PAYMENT(#I) := C@AVAILABLE-PAYMENT(#I)
+* EXPAND ARRAY PAYMENT TO (*:*,1:10)
+END-FOR
+*
+NAME := INSURED-NAME
+FOR #I = 1 TO C@POLICY
+  POLICYNUMBER(#I) := POLICY-NBR(#I)
+  DECIDE FOR FIRST CONDITION
+    WHEN (SUBSTR(PLAN-TYPE(#I),3,1) = 'F' AND PLAN-TYPE(#I) NE 'SPF')
+      #FLEX-PLAN := SUBSTR(PLAN-TYPE(#I),1,2)
+      #FLEX-KEY  := '99F'
+* WHEN SUBSTR(PLAN-TYPE(#I),1,1) = 'U' OR = 'V' OR = 'W' OR = 'X' OR = 'Y' OR = 'Z'  /* YK4
+    WHEN F-LT2-TRUE(<PLAN-TYPE(#I)>)                                                   /* YK4
+      #FLEX-PLAN := SUBSTR(PLAN-TYPE(#I),2,2)
+      COMPRESS SUBSTR(PLAN-TYPE(#I),1,1) '99' INTO #FLEX-KEY LEAVING NO
+    WHEN ANY
+      POLICYNAME(#I) := FUNCTION-PLAN(<#FLEX-KEY>)(1)
+      EXAMINE POLICYNAME(#I) FOR '99' REPLACE #FLEX-PLAN
+    WHEN NONE
+      POLICYNAME(#I) := FUNCTION-PLAN(<PLAN-TYPE(#I)>)(1)
+  END-DECIDE
+  #DATE := FUNCTION-CALENDAR(<ISSUE-DATE(#I),'S'>)                /* YK3
+  IF FACE-AMOUNT(#I) <> 0                                         /* YK3
+    COMPRESS 'Policy' POLICYNUMBER(#I) INTO POLICYNUMBER(#I)      /* YK3
+    MOVE EDITED FACE-AMOUNT(#I) (EM=Z,ZZZ,ZZ9.99) TO #AMOUNT
+    #AMOUNT := *TRIM(#AMOUNT)
+    COMPRESS '$' #AMOUNT INTO #AMOUNT LEAVING NO
+* #DATE := FUNCTION-CALENDAR(<ISSUE-DATE(#I),'S'>)                /* YK3
+    COMPRESS 'for' #AMOUNT 'issued' #DATE
+      INTO POLICYDESC(#I)
+  ELSE                                                            /* YK3
+    COMPRESS 'issue date' #DATE INTO POLICYDESC(#I)               /* YK3
+  END-IF                                                          /* YK3
+  COMPRESS MIN-PREMIUMS(#I) '-' MAX-PREMIUMS(#I) '-' DEFAULT-PREM(#I)
+    INTO MAXPREMIUMS(#I) LEAVING NO
+  FOR #I1 = 1 TO C@PAYMENT(#I)
+    #PAYMENT-ID := #PAYMENT-ID + 1
+    ID(#I,#I1) := #PAYMENT-ID
+    IF CC-PAYABLE(#I,#I1)= 'T'
+      CCPAYABLE(#I,#I1) := #TRUE
+    ELSE
+      CCPAYABLE(#I,#I1) := #FALSE
+    END-IF
+    IF VAR-AMOUNT(#I,#I1) = 'T'
+      VARIABLEAMT(#I,#I1) := #TRUE
+    ELSE
+      VARIABLEAMT(#I,#I1) := #FALSE
+    END-IF
+    IF EXCEED-AMT(#I,#I1) = 'T'           /* YK1
+      EXCEEDAMT(#I,#I1) := #TRUE          /* YK1
+    ELSE                                  /* YK1
+      EXCEEDAMT(#I,#I1) := #FALSE         /* YK1
+    END-IF                                /* YK1
+    PAYMENTTYPE(#I,#I1) := TRAN-TYPE(#I,#I1)
+    PAYMENTDESC(#I,#I1) := FUNCTION-PAYMENT-TYPE(<TRAN-TYPE(#I,#I1)>)(1)
+    PAYMENTDESC2(#I,#I1):= FUNCTION-PAYMENT-TYPE(<TRAN-TYPE(#I,#I1)>)(2)
+    IF PAYMENT-NOTE(#I,#I1) NE ' '
+      COMPRESS PAYMENT-NOTE(#I,#I1) PAYMENTDESC2(#I,#I1) INTO PAYMENTDESC2(#I,#I1)
+    END-IF
+    PAYMENTMODE(#I,#I1) := FUNCTION-PAYMENT-MODE(<PAYMENT-MODE(#I,#I1)>)(1)
+    IF FUNCTION-PAYMENT-MODE(<PAYMENT-MODE(#I,#I1)>)(2) NE ' '
+      COMPRESS FUNCTION-PAYMENT-MODE(<PAYMENT-MODE(#I,#I1)>)(2) PAYMENTMODE(#I,#I1)
+        INTO PAYMENTMODE(#I,#I1)
+    END-IF
+    IF PAID-TO-DATE(#I,#I1) NE 0
+      DUEDATE(#I,#I1) := FUNCTION-CALENDAR(<PAID-TO-DATE(#I,#I1),'S'>)
+    ELSE
+      DUEDATE(#I,#I1) := 'None'
+    END-IF
+    MOVE EDITED DEFAULT-AMOUNT(#I,#I1) (EM=ZZZ,ZZ9.99) TO DEFAULTAMOUNT(#I,#I1)
+    DEFAULTAMOUNT(#I,#I1) := *TRIM(DEFAULTAMOUNT(#I,#I1))
+    IF DEFAULT-AMOUNT(#I,#I1) < 0
+      COMPRESS '-' DEFAULTAMOUNT(#I,#I1) TO DEFAULTAMOUNT(#I,#I1) LEAVING NO
+    END-IF
+    MOVE EDITED DUE-AMOUNT(#I,#I1) (EM=ZZZ,ZZ9.99) TO AMOUNT(#I,#I1)
+    AMOUNT(#I,#I1) := *TRIM(AMOUNT(#I,#I1))
+    IF DUE-AMOUNT(#I,#I1) < 0
+      COMPRESS '-' AMOUNT(#I,#I1) TO AMOUNT(#I,#I1) LEAVING NO
+    END-IF
+  END-FOR
+END-FOR
+END-SUBROUTINE
+END

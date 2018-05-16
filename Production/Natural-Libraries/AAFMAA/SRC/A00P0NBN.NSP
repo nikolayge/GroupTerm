@@ -1,0 +1,289 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* A00P0NBN  bz  01/20/2015
+*           TT1 10/07/2015 READ NEW BENE FILE
+*           YF1 05/22/2017 Added gsceales to email recipients, removed atrahin
+* Find New Policies without beneficiaries
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER    DATE      TAG     REASON                                     *
+* NGG    20180509   NG1     SOLA Project                               *
+************************************************************************
+DEFINE DATA
+LOCAL USING GPRL0EML
+LOCAL USING POSLROLE
+LOCAL
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER            /* D
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER_A      (A6)
+  2 ENTRY-DATE           /* D
+  2 CODE
+  2 ISSUE-DATE
+*
+1 ST-V VIEW OF A-STATUS
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 NAME
+  2 SSN
+  2 C*ACTIVE-SEGMENTS
+  2 ACTIVE-SEGMENTS(9)
+    3 STATUS
+    3 PLAN
+    3 POLICY-ID        /* TT1
+    3 ISSUE-DATE
+    3 REDEFINE ISSUE-DATE
+      4 ISSUE-DATE_A   (A8)
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2  SSN
+  2  NAME
+  2  USER-SOURCE
+  2  ID-NUMBER
+  2  MEMBER-CN
+  2  AT-STATUS
+  2  ACTION-DATE
+  2  PLAN
+  2 C*ST-NOTE-TBL
+  2 ST-NOTE-TBL (50)
+    3 ST-NOTE-USER     (A3)
+    3 ST-NOTE-DATE     (N8)
+    3 ST-NOTE-STATUS   (A2)
+*
+1 v_CN              (N6)
+1 v_Date_From       (N8)
+1 REDEFINE v_Date_From
+  2 v_Date_From_A   (A8)
+1 v_Date_To         (N8)
+1 N08_From          (N8)
+1 N08_To            (N8)
+1 N08               (N8)
+1 REDEFINE  N08
+  2 N08_A           (A08)
+1 #D                (D)
+1 A10_1             (A10)
+1 A10_2             (A10)
+1 v_User            (A3)
+1 #i                (N2)
+1 #j                (N2)
+1 c_Out             (N2)
+1 v_A               (A)   DYNAMIC
+*
+1  f_Dir            (A)   DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK">
+1  f_Name           (A)   DYNAMIC INIT <"New_pol_No_Beneficiaries.TXT">
+1  f_Rep            (A80)
+1  v_PN             (I1)     INIT  <1>
+1  v_RC             (I4)
+1  dm               (A1)     INIT <H'09'>
+*
+1 p_FTP_PS
+  2 ftp_Parm      (A) DYNAMIC INIT<'@@DIR, @@NAME, @@WIN, @@NAME,  -e '>
+  2 ftp_Msg       (A) DYNAMIC
+  2 ftp_RC        (N4)
+1 win_Dir         (A) DYNAMIC INIT <'ftp/NewBiz'>
+1 v_RC_EML        (N4)
+*
+1 eml_Parm        (A) DYNAMIC INIT <'cat @@FILE | mailx -s "@@SUBJ" -c bzaslavskiy@aafmaa.com -r "AT_noreply@aafmaa.com" "@@TO"  > /dev/null 2>&1' >
+1 eml_Subj        (A) DYNAMIC
+1 eml_To          (A) DYNAMIC INIT
+<'cbrown@aafmaa.com,geiben@aafmaa.com,gsceales@aafmaa.com,ehazen@aafmaa.com,ecox@aafmaa.com'> /* YF1
+1 msg_0           (A) DYNAMIC INIT <'All new policies have beneficiaries'>
+1 v_Days          (I2) INIT <1>
+*********************************
+1 #Prod_Debug     (L) INIT <FALSE> 
+*********************************
+1 v_Parm   (A35)
+
+1 DesignationStatus  (A1)    /* NG1
+1 DesignationID      (N8)    /* NG1
+1 AT-number          (N8)    /* NG1
+
+END-DEFINE
+
+ON ERROR
+WRITE(0)  "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR / "CN:" v_CN  'Segments' #i
+END-ERROR
+
+WRITE NOTITLE '--' *DATX *TIMX         / 
+  'Program      ' *PROGRAM /
+  'Device       ' *DEVICE  /
+  'Environment  '  F-IS-DEV(<>)(EM=Env-Prod/Env-Test) /
+  'Run Mode     ' #Prod_Debug (EM=ForceTest-N/ForceTest-Y)
+
+IF *DEVICE = 'BATCH'
+  REPEAT UNTIL *DATA = 0         
+    INPUT v_PARM
+    PRINT v_PARM
+    DECIDE FOR FIRST CONDITION
+      WHEN  v_PARM = SCAN ('TEST')
+        #Prod_Debug := TRUE
+        PRINT 3x 'Run as a test'
+      WHEN  v_PARM = SCAN ('DAYS')
+        SEPARATE v_PARM INTO A10_1 A10_2 WITH DELIMITER '='
+        IF A10_2 IS (N3)
+          v_Days := val(A10_2)
+        ELSE
+          v_Days := 1
+        END-IF
+        PRINT 3x 'Period set to' A10_2
+      WHEN v_PARM = SCAN ('@')
+        #i := #i + 1
+        v_A := *TRIM(v_PARM)
+        IF #i = 1
+          eml_To := v_A
+        ELSE
+          COMPRESS eml_To ',' v_A INTO eml_To LEAVING NO SPACE
+        END-IF
+      WHEN NONE IGNORE
+    END-DECIDE
+  END-REPEAT
+  PRINT '='eml_To
+END-IF
+
+IF F-IS-DEV(<>) OR #Prod_Debug
+*  eml_To   := 'bzaslavskiy@aafmaa.com'
+  eml_To   := 'nguentchev@aafmaa.com,ashetty@aafmaa.com'
+  PRINT 'Test eml' eml_To
+  win_Dir  := 'ftp/TEST'
+END-IF
+
+COMPRESS f_Dir '/' f_Name INTO f_Rep LEAVING NO SPACE
+IF *DEVICE <> 'BATCH'
+  v_PN := 1   v_RC := PRT_FN_PUT(<v_PN, f_Rep>)
+END-IF
+PRINT 'Execution date' *DATX
+#D := *DATX - v_Days                                  /*  -- Attantion --
+PRINT 'Date From' #D
+MOVE EDITED #D(EM=YYYYMMDD) TO v_Date_From_A
+v_Date_To   := *DATN
+FORMAT(1)  LS=120
+N08_From := 99999999 - v_Date_From
+N08_To   := 99999999 - v_Date_To
+FMD.
+FIND MD-V WITH ENTRY-DATE <= N08_From AND ENTRY-DATE >= N08_To
+  IF NO RECORD FOUND
+    PRINT(1) 'No MD records for period'
+    ESCAPE BOTTOM
+  END-NOREC
+*    PRINT  MD-V.ID-NUMBER
+  IF *COUNTER(FMD.) = 1
+ PRINT 3x *NUMBER(FMD.) 'CNs with new policies since' #D (EM=MM/DD/YYYY)
+  END-IF
+  IF CODE <> 'N' AND CODE <> 'A' ESCAPE TOP END-IF
+  IF ISSUE-DATE = 0 ESCAPE TOP END-IF
+  v_CN := MD-V.ID-NUMBER
+  FIND(1) ST-V  WITH ID-NUMBER = v_CN END-FIND
+  IF PROCESS-IND = 'C' OR INTRO-FLAG = 'A'  ESCAPE TOP END-IF
+  PERFORM sbr_Bene_By_Policy
+END-FIND
+PRINT NOTITLE *DATX *TIMX '-- Find new policies without beneficiaries --' /
+  'Found:' c_Out
+PERFORM sbr_EML
+PERFORM sbr_FTP
+PRINT 'Email sent RC=' v_RC_EML
+PRINT 'FTP executed RC=' ftp_RC / ftp_Msg
+* =====================================================================================
+DEFINE sbr_Bene_By_Policy
+FOR #i = 1 TO C*ACTIVE-SEGMENTS
+IF ST-V.PLAN(#i) = ' ' OR ST-V.ISSUE-DATE(#i) = 0 OR STATUS(#i) <> 'D' ESCAPE TOP END-IF
+  IF ST-V.ISSUE-DATE(#i) = MD-V.ISSUE-DATE
+    N08  := 99999999 - ENTRY-DATE
+    MOVE EDITED N08_A TO #D (EM=YYYYMMDD)
+    MOVE EDITED #D (EM=MM/DD/YYYY) TO A10_1
+    MOVE EDITED ST-V.ISSUE-DATE_A(#i) TO #D (EM=YYYYMMDD)
+    MOVE EDITED #D (EM=MM/DD/YYYY) TO A10_2
+
+/*   SOLA creates Designation in N status   NG1
+    DesignationID := GET-POLICY-DSGN (< ST-V.POLICY-ID(#i) >)
+    if DesignationID > 0
+      DesignationStatus := GET-DSGN-STATUS (< DesignationID >)
+    else
+      reset DesignationStatus
+    end-if
+* SOLA changes  NG1   Start                                        
+* Get all contacts with role primary beneficiary by policy-id   
+*     Fpol.
+*     FIND POL-V WITH POLICY-NUMBER = ST-V.POLICY-ID(#i)
+*         WHERE RELATION = 5 OR = 6
+*       ESCAPE BOTTOM
+*     END-FIND
+*     IF *COUNTER(Fpol.) = 0 
+
+    if DesignationID = 0 OR DesignationStatus = 'N'
+      RESET at-number
+      v_User := ' ? '
+      FIND  AT-V WITH AT-V.SSN = ST-V.SSN /* AT-V.NAME = ST-V.NAME
+          WHERE ACTION-DATE >= v_Date_From AND ACTION-DATE <= v_Date_To
+        if AT-V.PLAN = ST-V.PLAN(#i)
+          at-number := AT-V.ID-NUMBER
+          FOR #j = C*ST-NOTE-TBL TO 1 STEP -1
+            IF ST-NOTE-STATUS(#j) = 'A'
+              v_User := ST-NOTE-USER(#j)
+              ESCAPE BOTTOM
+            END-IF
+          END-FOR
+          escape bottom
+        end-if
+      END-FIND
+      if at-number > 0
+        c_Out := c_Out + 1
+        IF c_Out = 1 PERFORM sbr_Print_Title END-IF
+        WRITE(1)  MD-V.ID-NUMBER(EM=999999)
+          dm A10_1
+          dm A10_2
+          dm AT-V.ID-NUMBER
+          dm v_User
+          dm ST-V.PLAN(#i)
+          dm ST-V.NAME
+      end-if
+    END-IF
+* SOLA changes  NG1   End 
+  END-IF
+END-FOR
+END-SUBROUTINE
+* ======================================================================================
+DEFINE sbr_EML
+IF c_Out <> 0
+  PRINT(1) // 'Link to report:'
+  COMPRESS '\\aaf-iad-ftp\' win_Dir '\' f_Name INTO v_A LEAVING NO SPACE
+  EXAMINE v_A FOR '/' REPLACE '\'
+  PRINT(1) v_A
+ELSE
+  PRINT(1) msg_0
+END-IF
+MOVE EDITED v_Date_From_A TO #D (EM=YYYYMMDD)
+MOVE EDITED #D (EM=LLL-DD', 'YYYY) TO v_A
+COMPRESS  'Policies without Beneficiaries from' v_A  ' Found:' c_Out INTO eml_Subj
+EXAMINE eml_Parm FOR '@@SUBJ' REPLACE eml_Subj
+EXAMINE eml_Parm FOR '@@TO'   REPLACE eml_To
+EXAMINE eml_Parm FOR '@@FILE' REPLACE f_Rep
+CLOSE PRINTER (1)
+*  PRINT eml_Parm
+call 'shcmd' eml_Parm
+v_RC_EML := RET('shcmd')
+END-SUBROUTINE
+* ======================================================================================
+DEFINE sbr_FTP
+EXAMINE ftp_Parm FOR '@@DIR'  REPLACE f_Dir
+EXAMINE ftp_Parm FOR '@@NAME' REPLACE f_NAME
+EXAMINE ftp_Parm FOR '@@WIN'  REPLACE win_Dir
+* PRINT ftp_Parm
+CALLNAT 'FTP-PS' p_FTP_PS
+END-SUBROUTINE
+* ======================================================================================
+DEFINE sbr_Print_Title
+IF #Prod_Debug
+  WRITE(1)  NOTITLE  '*** Executed in test mode ***'  //
+END-IF
+MOVE EDITED v_Date_From_A TO #D (EM=YYYYMMDD)
+WRITE(1)  NOTITLE  *PROGRAM(EM=XXXXXXXX' v.1.3 ') 2x *DATX 2x *TIMX 2x '-- New Policies without Beneficiaries --' 2x
+  F-IS-DEV(<>)(EM=Prod/Dev) 2x 'DB:' GET_DBN(<>)(EM=999 AL=3) /
+  'Period:' #D(EM=MM/DD/YYYY) '-' *DATX(EM=MM/DD/YYYY) //
+' CN    '  dm 'Entry Date' dm 'Issue Date' dm 'AT Number' dm 'User' dm 'Plan' dm 'Name'
+*  PRINT 'Running from' v_Date_From (EM=9999-99-99) 'to' v_Date_To (EM=9999-99-99)
+END-SUBROUTINE
+* 
+END

@@ -1,0 +1,932 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPATDP - Report Processing for Application Deposits ********
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    05192005  None    Program Written.                            *
+* PAM    08172005  PM1     Added Active AT number to deposit report.   *
+* PAM    08262005  PM2     Added SORT on time for applied report.      *
+* PAM    09212005  PM3     Reset ALL detail lines for NX note.         *
+* SAG  12012005 RH1  SS - Replaced the HEC constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII                     *
+* YAK    12262006  YK1     Display on the report matched deposits for  *
+*                          last 90 days only                           *
+* PAM    02262007  PM4     Add CEB to report distribution              *
+* PAM    12062007  PM5     Added credit card deposit reporting         *
+* PAM    07102008  PM6     Revise ADCR NX file to eliminate application*
+*                          withdrawls and mutliple policies            *
+* PAM    09152008  PM7     Do not include APFP's or APFR's from EZPAY  *
+* PAM    10282008  PM8     Added BADJ's to daily reports               *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL  USING GONERLXX
+LOCAL
+*
+1 ATR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER                      (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A                  (A6)
+  2 NAME                           (A25)
+  2 REDEFINE NAME
+    3 SSN                          (N9)
+    3 REST                         (A16)
+  2 CLERK-ID                       (A3)
+  2 TRANSACTION-DATN               (P9)
+  2 TRANSACTION-TIMN               (P7)
+  2 TXN-CODE                       (A4)
+  2 MONTH-END                      (A1)      /* PM7
+  2 MESSAGE-CODE                   (A1)
+  2 DEBIT-AMOUNT                   (P7.2)
+  2 CREDIT-AMOUNT                  (P7.2)
+  2 DESCRIPTION                    (A20)
+  2 REDEFINE DESCRIPTION
+    3 DESC-MEMBER-NUM              (A6)
+    3 DESC-1                       (A1)
+    3 DESC-SENT-BY                 (A1)
+    3 DESC-2                       (A1)
+    3 DESC-TYPE                    (A1)
+    3 DESC-3                       (A1)
+    3 DESC-CHECK-NUM               (A6)
+    3 DESC-4                       (A1)
+    3 DESC-APPLY-IND               (A1)
+    3 DESC-REST                    (A1)
+*
+1 DP-V VIEW OF A-DEPOSITS
+  2 SSN                            (P9.0)
+  2 DEPOSIT-OCC                    (99)
+    3 AMOUNT                       (P7.2)
+    3 DATE                         (N8)
+    3 REDEFINE DATE
+      4 DATE-YYYY                  (A4)
+      4 DATE-MM                    (A2)
+      4 DATE-DD                    (A2)
+    3 SENT-BY                      (A1)
+    3 TYPE                         (A1)
+    3 CHECK-NUM                    (A6)
+    3 SPLIT                        (A1)
+    3 NAME                         (A25)
+    3 ADDR-1                       (A25)
+    3 ADDR-2                       (A25)
+    3 CITY                         (A22)
+    3 STATE                        (A2)
+    3 ZIP-CODE                     (N9)
+    3 REDEFINE ZIP-CODE
+      4 ZIP-CODE-5                 (A5)
+      4 ZIP-CODE-4-N               (N4)
+      4 REDEFINE ZIP-CODE-4-N
+        5 ZIP-CODE-4-A             (A4)
+    3 APPLIED-DATE                 (N8)
+    3 REDEFINE APPLIED-DATE
+      4 APPLIED-DATE-YYYY          (A4)
+      4 APPLIED-DATE-MM            (A2)
+      4 APPLIED-DATE-DD            (A2)
+    3 APPLIED-CN                   (N6)
+    3 CC-NUM                       (A16)                          /* PM5
+    3 REDEFINE CC-NUM                                             /* PM5
+     4 CC-NUM-12                   (A12)                          /* PM5
+     4 CC-NUM-4                    (A4)                           /* PM5
+*
+1 ST-V VIEW OF A-STATUS
+  2 SSN                            (N9)
+  2 DEBIT-CREDIT-AMT                                              /* PM6
+*
+1 AT-V VIEW OF A-APPL-TRACKING                                    /* PM1
+  2 SSN                            (N9)
+  2 ID-NUMBER                      (N6)
+  2 INTRO-FLAG                     (A1)
+  2 AT-STATUS                      (A2)
+*
+1 #DEPOSIT-TABLE
+  2 #DEPOSIT-OCC                   (0106)
+    3 #CLERK                       (A3)
+    3 #SSN                         (N9)
+    3 REDEFINE #SSN
+      4 #SSN-1-3                   (A3)
+      4 #SSN-4-5                   (A2)
+      4 #SSN-6-9                   (A4)
+    3 #ID-NUMBER                   (N6)
+    3 REDEFINE #ID-NUMBER                                        /* PM6
+     4 #ID-NUMBER-A                (A6)                          /* PM6
+    3 #TRAN-CODE                   (A4)
+    3 #TRAN-TIME                   (P7)
+    3 #AMOUNT                      (P7.2)
+    3 #TYPE                        (A1)                          /* PM5
+*
+1 #CLERKS-TABLE-APFP
+  2 #CLERK-OCC-APFP                (50)
+    3 #CLERK-ID-APFP               (A3)
+    3 #CLERK-TOTAL-APFP            (P9.2)
+    3 #CLERK-GRAND-TOTAL-CASH      (P9.2)                        /* PM5
+    3 #CLERK-GRAND-TOTAL-CREDIT    (P9.2)                        /* PM5
+    3 #CLERK-GRAND-TOTAL-APFP      (P9.2)
+*
+1 #APFP-GRAND-TOTAL                (P11.2)
+*
+1 #APFR-AMOUNT                     (P9.2)
+1 #RDCR-AMOUNT                     (P9.2)
+1 #FPFP-AMOUNT                     (P9.2)
+1 #FPRP-AMOUNT                     (P9.2)
+1 #ADCR-AMOUNT                     (P9.2)
+1 #BADJ-AMOUNT                     (P9.2)                       /* PM8
+1 #CASH-AMOUNT                     (P9.2)
+1 #TOTAL-APFR-AMOUNT               (P11.2)
+1 #TOTAL-RDCR-AMOUNT               (P11.2)
+1 #TOTAL-FPFP-AMOUNT               (P11.2)
+1 #TOTAL-FPRP-AMOUNT               (P11.2)
+1 #TOTAL-ADCR-AMOUNT               (P11.2)
+1 #TOTAL-BADJ-AMOUNT               (P11.2)                      /* PM8
+1 #TOTAL-CASH-AMOUNT               (P11.2)
+1 #DISPLAY-APFR-AMOUNT             (A14)
+1 #DISPLAY-RDCR-AMOUNT             (A14)
+1 #DISPLAY-FPFP-AMOUNT             (A14)
+1 #DISPLAY-FPRP-AMOUNT             (A14)
+1 #DISPLAY-ADCR-AMOUNT             (A14)
+1 #DISPLAY-BADJ-AMOUNT             (A14)                        /* PM8
+1 #DISPLAY-CASH-AMOUNT             (A14)
+1 #DISPLAY-CK-CC-NUM               (A6)                         /* PM5
+*
+1 #NUMBER-CLERKS-APFP              (P5)
+1 #I1                              (I2)
+1 #I2                              (I2)
+1 #I3                              (I2)
+1 #I4                              (I2)
+1 #CREDIT                          (L)                            /* PM5
+*
+1 #EXTRACT-RECORD                  (A250)
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+1 #DISPLAY-AMOUNT                  (A14)
+1 #DEPOSIT-DATE                    (A10)
+1 #DATE-APPLIED                    (A10)
+1 #ZIP-CODE                        (A10)
+1 #DISPLAY-SSN                     (A11)
+1 #APPLIED-CN                      (A8)
+1 #ACTIVE-APP                      (A8)                           /* PM1
+1 #TOTAL-LIABILITY-AMOUNT          (P11.2)
+1 #BATCH-TIME                      (P7)
+1 #HOLD-TIME                       (P7)
+1 #HOLD-SSN                        (N9)
+1 REDEFINE #HOLD-SSN
+  2 #HOLD-SSN-1-3                  (A3)
+  2 #HOLD-SSN-4-5                  (A2)
+  2 #HOLD-SSN-6-9                  (A4)
+1 #HOLD-CLERK                      (A3)
+*
+1 #TIME                            (N7)
+1 #TO-DATE                         (N8)
+1 #FROM-DATE                       (N8) INIT <00000001>         /* 1 day
+1 #DATE-FOR-APP                    (N8)
+1 REDEFINE #DATE-FOR-APP
+  2 #DATE-FOR-APP-YYYY             (A4)
+  2 #DATE-FOR-APP-MM               (A2)
+  2 #DATE-FOR-APP-DD               (A2)
+1 #NUM-DAYS-DIFF                   (N8)
+1 #ACTION-CODE-E                   (A1) INIT <'E'>
+1 #ACTION-CODE-A                   (A1) INIT <'A'>
+*
+1 #INVALID                         (L)
+1 #CLERK-ABB-NAME-PASS             (A20)
+*
+1 #NOTE-TEXT                       (A60/5)
+1 REDEFINE #NOTE-TEXT
+  2 #NOTE-TEXT-OCC                 (5)
+    3 #CN-OCC                      (3)
+      4 #CN                        (N6)
+      4 #SPACE                     (A1)
+      4 #NX-AMOUNT                 (A10)
+      4 #SPACE-2                   (A3)
+*
+1 #CLERK-ID                        (A3)  INIT <'EDS'>
+1 #TO-INIT                         (A3)  INIT <'KHB'>
+1 #TO-INIT-2                       (A3)  INIT <'CEB'>             /* PM4
+1 #TODAY-DATE                      (N8)                           /* YK1
+1 #DATE-MINUS-90                   (N8)                           /* YK1
+1 #DATE-90                         (N8)  INIT <00000090>          /* YK1
+*
+END-DEFINE
+************************************************************************
+*
+MOVE *TIMN TO #TIME
+*
+IF #TIME LT 1200000 /* between midnight & noon (Normal daily cycle time)
+  MOVE *DATN TO #TO-DATE
+  CALLNAT 'GDATESXX'
+    #TO-DATE
+    #FROM-DATE
+    #DATE-FOR-APP
+    #ACTION-CODE-E
+ELSE
+  MOVE *DATN TO #DATE-FOR-APP
+END-IF
+*
+RESET #NUMBER-CLERKS-APFP #DEPOSIT-TABLE #CLERKS-TABLE-APFP
+*
+READ ATR-V BY TRANSACTION-DATN FROM #DATE-FOR-APP
+  IF ATR-V.TRANSACTION-DATN NE #DATE-FOR-APP
+    ESCAPE TOP
+  END-IF
+*
+  IF  (ATR-V.TXN-CODE = 'APFP' AND NOT ATR-V.MONTH-END = 'Y')        /* PM7
+   OR (ATR-V.TXN-CODE = 'APFR' AND NOT ATR-V.MESSAGE-CODE = 'E')     /* PM7
+      OR ((ATR-V.TXN-CODE = 'ADCR' OR = 'RDCR' OR = 'FPFP' OR = 'FPRP'
+                       OR = 'BADJ')                                  /* PM8           
+      AND (ATR-V.MESSAGE-CODE = '1'))
+    IGNORE                                                        /* PM2
+  ELSE                                                            /* PM2
+    ESCAPE TOP                                                    /* PM2
+  END-IF
+*
+END-ALL                                                           /* PM2
+*
+SORT BY ATR-V.TRANSACTION-DATN ATR-V.TRANSACTION-TIMN             /* PM2
+    USING ATR-V.ID-NUMBER ATR-V.NAME ATR-V.CLERK-ID ATR-V.TXN-CODE
+    ATR-V.MESSAGE-CODE ATR-V.DEBIT-AMOUNT ATR-V.CREDIT-AMOUNT
+    ATR-V.DESCRIPTION
+  PERFORM LOAD-CLERK-TABLE
+  PERFORM LOAD-APP-TABLE
+END-SORT                                                          /* PM2
+*
+PERFORM CREATE-APFP-APFR-REPORTS
+*
+PERFORM CREATE-NX-MESSAGE
+*
+PERFORM CREATE-DEPOSIT-DOWNLOADS
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-CLERK-TABLE
+************************************************************************
+*
+IF ATR-V.TXN-CODE = 'APFP'
+  FOR #I1 1 TO 50
+    IF #CLERK-ID-APFP (#I1) = ' '
+      MOVE ATR-V.CLERK-ID TO #CLERK-ID-APFP (#I1)
+      ADD +1 TO #NUMBER-CLERKS-APFP
+    END-IF
+*
+    IF #CLERK-ID-APFP (#I1) = ATR-V.CLERK-ID     /* Clerk already loaded
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-APP-TABLE
+************************************************************************
+*
+FOR #I1 1 TO 1000
+  IF #CLERK (#I1) = ' '
+      AND #SSN (#I1) = 0
+      AND #AMOUNT (#I1) = 0
+    MOVE ATR-V.CLERK-ID TO #CLERK (#I1)
+    MOVE ATR-V.TXN-CODE TO #TRAN-CODE (#I1)
+    MOVE ATR-V.TRANSACTION-TIMN TO #TRAN-TIME (#I1)
+    DECIDE FOR FIRST CONDITION
+      WHEN ATR-V.TXN-CODE = 'APFP'
+        MOVE ATR-V.CREDIT-AMOUNT TO #AMOUNT (#I1)
+        MOVE ATR-V.SSN TO #SSN (#I1)
+        MOVE ATR-V.DESC-TYPE TO #TYPE (#I1)                  /* PM5
+      WHEN ATR-V.TXN-CODE = 'APFR'
+        MOVE ATR-V.DEBIT-AMOUNT TO #AMOUNT (#I1)
+        MOVE ATR-V.SSN TO #SSN (#I1)
+        MOVE ATR-V.DESC-TYPE TO #TYPE (#I1)                  /* PM5
+      WHEN ATR-V.TXN-CODE = 'RDCR'
+        MOVE ATR-V.DEBIT-AMOUNT TO #AMOUNT (#I1)
+        MOVE ATR-V.ID-NUMBER TO #ID-NUMBER (#I1)
+      WHEN ATR-V.TXN-CODE = 'ADCR'
+        MOVE ATR-V.CREDIT-AMOUNT TO #AMOUNT (#I1)
+        MOVE ATR-V.ID-NUMBER TO #ID-NUMBER (#I1)
+        IF ATR-V.DESCRIPTION = 'APP WITHDRAWN'               /* PM6
+          #TYPE (#I1) := 'W'                                 /* PM6
+        END-IF                                               /* PM6
+      WHEN ATR-V.TXN-CODE = 'BADJ'                           /* PM8
+        MOVE ATR-V.CREDIT-AMOUNT TO #AMOUNT (#I1)            /* PM8
+        MOVE ATR-V.ID-NUMBER TO #ID-NUMBER (#I1)             /* PM8
+      WHEN ATR-V.TXN-CODE = 'FPFP'
+        MOVE ATR-V.CREDIT-AMOUNT TO #AMOUNT (#I1)
+        MOVE ATR-V.ID-NUMBER TO #ID-NUMBER (#I1)
+      WHEN ATR-V.TXN-CODE = 'FPRP'
+        MOVE ATR-V.CREDIT-AMOUNT TO #AMOUNT (#I1)
+        MOVE ATR-V.ID-NUMBER TO #ID-NUMBER (#I1)
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+*
+    IF NOT ATR-V.TXN-CODE = 'APFP' OR = 'APFR'
+      FIND ST-V WITH ST-V.MEMBER-KEY = ATR-V.ID-NUMBER-A
+        IF NO RECORDS FOUND
+          FIND ST-V WITH ST-V.WIDOW-KEY = ATR-V.ID-NUMBER-A
+            IF NO RECORDS FOUND
+              MOVE ATR-V.ID-NUMBER TO #SSN (#I1)
+            END-NOREC
+*
+            MOVE ST-V.SSN TO #SSN (#I1)
+          END-FIND
+        END-NOREC
+*
+        MOVE ST-V.SSN TO #SSN (#I1)
+      END-FIND
+    END-IF
+*
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-APFP-APFR-REPORTS
+************************************************************************
+*
+COMPRESS #DATE-FOR-APP-MM #DATE-FOR-APP-DD #DATE-FOR-APP-YYYY
+  INTO #EXTRACT-RECORD WITH '/'
+COMPRESS 'Deposits Received on' #EXTRACT-RECORD /* APFP report Title
+  INTO #EXTRACT-RECORD
+WRITE WORK 1 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+IF #NUMBER-CLERKS-APFP GT 0                     /* APFP report
+  MOVE 'SSN' TO #EXTRACT-RECORD                 /* Headings SSN/CLERK
+  FOR #I1 1 TO #NUMBER-CLERKS-APFP
+    RESET #CLERK-ABB-NAME-PASS
+    CALLNAT 'GCKNMSXX' #CLERK-ID-APFP (#I1)
+      #INVALID
+      #CLERK-ABB-NAME-PASS
+*
+    IF #INVALID
+      MOVE #CLERK-ID-APFP (#I1) TO #CLERK-ABB-NAME-PASS
+    END-IF
+*
+    COMPRESS #EXTRACT-RECORD #TAB #CLERK-ABB-NAME-PASS
+      INTO #EXTRACT-RECORD LEAVING NO
+  END-FOR
+  COMPRESS #EXTRACT-RECORD #TAB 'TOTAL' INTO #EXTRACT-RECORD LEAVING NO
+*
+  WRITE WORK 1 #EXTRACT-RECORD
+  RESET #EXTRACT-RECORD
+*
+  FOR #I2 1 TO 1000                             /* Report - Amounts
+    IF #CLERK (#I2) = ' '
+        AND #SSN (#I2) = 0
+        AND #ID-NUMBER (#I2) = 0
+        AND #AMOUNT (#I2) = 0
+      IF #BATCH-TIME NE 0                       /* Create Batch Totals
+        PERFORM CREATE-BATCH-TOTALS
+      END-IF
+*
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF #TRAN-CODE (#I2) NE 'APFP'
+      ESCAPE TOP
+    END-IF
+*
+    IF #BATCH-TIME = 0
+      RESET #CREDIT                            /* PM5
+      IF #TYPE (#I2) = 'K'                     /* PM5
+        #CREDIT := TRUE                        /* PM5
+      END-IF                                   /* PM5
+      MOVE #TRAN-TIME (#I2) TO #BATCH-TIME
+    END-IF
+*
+    IF #TRAN-TIME (#I2) NE #BATCH-TIME          /* Create Batch Totals
+      PERFORM CREATE-BATCH-TOTALS
+    END-IF
+*
+    RESET #DISPLAY-AMOUNT #DISPLAY-SSN
+*   MOVE EDITED #SSN (#I2) (EM=999999999) TO #DISPLAY-SSN
+    COMPRESS #SSN-1-3 (#I2) #SSN-4-5 (#I2) #SSN-6-9 (#I2)
+      INTO #DISPLAY-SSN WITH '-'
+    COMPRESS #DISPLAY-SSN #TAB INTO #EXTRACT-RECORD LEAVING NO
+    FOR #I1 1 TO #NUMBER-CLERKS-APFP
+      IF #CLERK-ID-APFP (#I1) = #CLERK (#I2)
+        MOVE EDITED #AMOUNT (#I2) (EM=ZZZZZZZZ9.99) TO #DISPLAY-AMOUNT
+        MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+        COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT
+          INTO #EXTRACT-RECORD LEAVING NO
+        ADD #AMOUNT (#I2) TO #CLERK-TOTAL-APFP (#I1)
+        ADD #AMOUNT (#I2) TO #CLERK-GRAND-TOTAL-APFP (#I1)
+        IF #CREDIT                                                 /* PM5
+          ADD #AMOUNT (#I2) TO #CLERK-GRAND-TOTAL-CREDIT (#I1)     /* PM5
+        ELSE                                                       /* PM5
+          ADD #AMOUNT (#I2) TO #CLERK-GRAND-TOTAL-CASH (#I1)       /* PM5
+        END-IF                                                     /* PM5
+      END-IF
+*
+      IF #I1 < #NUMBER-CLERKS-APFP
+        COMPRESS #EXTRACT-RECORD #TAB INTO #EXTRACT-RECORD LEAVING NO
+      END-IF
+    END-FOR
+*
+    WRITE WORK 1 #EXTRACT-RECORD
+    RESET #EXTRACT-RECORD
+  END-FOR
+*
+*                        /* Grand Totals
+  RESET #APFP-GRAND-TOTAL
+  COMPRESS 'GRAND TOTALS - CASH' #TAB INTO #EXTRACT-RECORD LEAVING NO
+  FOR #I1 1 TO #NUMBER-CLERKS-APFP
+    RESET #DISPLAY-AMOUNT
+    MOVE EDITED #CLERK-GRAND-TOTAL-CASH (#I1) (EM=ZZZZZZZZZ.99)
+      TO #DISPLAY-AMOUNT
+    ADD #CLERK-GRAND-TOTAL-CASH (#I1) TO #APFP-GRAND-TOTAL
+    MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+    COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT #TAB
+      INTO #EXTRACT-RECORD LEAVING NO
+  END-FOR
+  MOVE EDITED #APFP-GRAND-TOTAL (EM=ZZZZZZZZZZZ.99) TO #DISPLAY-AMOUNT
+  MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+  COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT INTO #EXTRACT-RECORD
+    LEAVING NO
+*
+  WRITE WORK 1 #EXTRACT-RECORD
+  RESET #EXTRACT-RECORD #APFP-GRAND-TOTAL
+*
+  COMPRESS 'GRAND TOTALS - CREDIT' #TAB INTO #EXTRACT-RECORD LEAVING NO
+  FOR #I1 1 TO #NUMBER-CLERKS-APFP
+    RESET #DISPLAY-AMOUNT
+    MOVE EDITED #CLERK-GRAND-TOTAL-CREDIT (#I1) (EM=ZZZZZZZZZ.99)
+      TO #DISPLAY-AMOUNT
+    ADD #CLERK-GRAND-TOTAL-CREDIT (#I1) TO #APFP-GRAND-TOTAL
+    MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+    COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT #TAB
+      INTO #EXTRACT-RECORD LEAVING NO
+  END-FOR
+  MOVE EDITED #APFP-GRAND-TOTAL (EM=ZZZZZZZZZZZ.99) TO #DISPLAY-AMOUNT
+  MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+  COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT INTO #EXTRACT-RECORD
+    LEAVING NO
+*
+  WRITE WORK 1 #EXTRACT-RECORD
+  RESET #EXTRACT-RECORD #APFP-GRAND-TOTAL
+*
+  COMPRESS 'GRAND TOTALS' #TAB INTO #EXTRACT-RECORD LEAVING NO
+  FOR #I1 1 TO #NUMBER-CLERKS-APFP
+    RESET #DISPLAY-AMOUNT
+    MOVE EDITED #CLERK-GRAND-TOTAL-APFP (#I1) (EM=ZZZZZZZZZ.99)
+      TO #DISPLAY-AMOUNT
+    ADD #CLERK-GRAND-TOTAL-APFP (#I1) TO #APFP-GRAND-TOTAL
+    MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+    COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT #TAB
+      INTO #EXTRACT-RECORD LEAVING NO
+  END-FOR
+  MOVE EDITED #APFP-GRAND-TOTAL (EM=ZZZZZZZZZZZ.99) TO #DISPLAY-AMOUNT
+  MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+  COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT INTO #EXTRACT-RECORD
+    LEAVING NO
+*
+  WRITE WORK 1 #EXTRACT-RECORD
+  RESET #EXTRACT-RECORD
+END-IF
+*
+COMPRESS #DATE-FOR-APP-MM #DATE-FOR-APP-DD #DATE-FOR-APP-YYYY
+  INTO #EXTRACT-RECORD WITH '/'                 /* APFR Report Title
+COMPRESS 'Funds Applied or Removed on' #EXTRACT-RECORD
+  INTO #EXTRACT-RECORD
+WRITE WORK 2 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+COMPRESS 'SSN' #TAB                             /* APFR report
+  'APFR' #TAB                                   /* Heading
+  'RDCR' #TAB
+  'FPFP' #TAB
+  'FPRP' #TAB
+  'ADCR' #TAB
+  'BADJ' #TAB                                   /* PM8
+  'ADJUSTMENT' #TAB
+  'CLERK' INTO #EXTRACT-RECORD LEAVING NO
+WRITE WORK 2 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+FOR #I2 1 TO 1000                               /* Report Body
+  IF #CLERK (#I2) = ' '
+      AND #SSN (#I2) = 0
+      AND #ID-NUMBER (#I2) = 0
+      AND #AMOUNT (#I2) = 0
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF NOT #TRAN-CODE (#I2) = 'APFR' OR = 'RDCR' OR = 'FPFP' OR = 'FPRP'
+    OR = 'ADCR' OR = 'BADJ'                    /* PM8
+    ESCAPE TOP
+  END-IF
+*
+  IF #HOLD-CLERK = ' ' AND #HOLD-TIME = 0 AND #HOLD-SSN = 0
+    MOVE #CLERK (#I2) TO #HOLD-CLERK
+    MOVE #TRAN-TIME (#I2) TO #HOLD-TIME
+    MOVE #SSN (#I2) TO #HOLD-SSN
+  END-IF
+*
+  IF #CLERK (#I2) NE #HOLD-CLERK
+      OR #TRAN-TIME (#I2) NE #HOLD-TIME
+      OR #SSN (#I2) NE #HOLD-SSN
+    PERFORM WRITE-FUNDS-APPLIED-RECORD
+    MOVE #CLERK (#I2) TO #HOLD-CLERK
+    MOVE #TRAN-TIME (#I2) TO #HOLD-TIME
+    MOVE #SSN (#I2) TO #HOLD-SSN
+  END-IF
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN #TRAN-CODE (#I2) = 'APFR'
+      ADD #AMOUNT (#I2) TO #APFR-AMOUNT
+    WHEN #TRAN-CODE (#I2) = 'RDCR'
+      ADD #AMOUNT (#I2) TO #RDCR-AMOUNT
+    WHEN #TRAN-CODE (#I2) = 'FPFP'
+      ADD #AMOUNT (#I2) TO #FPFP-AMOUNT
+    WHEN #TRAN-CODE (#I2) = 'FPRP'
+      ADD #AMOUNT (#I2) TO #FPRP-AMOUNT
+    WHEN #TRAN-CODE (#I2) = 'ADCR'
+      ADD #AMOUNT (#I2) TO #ADCR-AMOUNT
+    WHEN #TRAN-CODE (#I2) = 'BADJ'                                /* PM8
+      ADD #AMOUNT (#I2) TO #BADJ-AMOUNT                           /* PM8
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+*
+IF  #APFR-AMOUNT NE 0 OR #RDCR-AMOUNT NE 0 OR #FPFP-AMOUNT NE 0
+ OR #FPRP-AMOUNT NE 0 OR #ADCR-AMOUNT NE 0 OR #BADJ-AMOUNT NE 0   /* PM8
+  PERFORM WRITE-FUNDS-APPLIED-RECORD
+END-IF
+*
+RESET #DISPLAY-SSN #DISPLAY-APFR-AMOUNT #DISPLAY-RDCR-AMOUNT
+  #DISPLAY-FPFP-AMOUNT #DISPLAY-FPRP-AMOUNT #DISPLAY-ADCR-AMOUNT 
+  #DISPLAY-CASH-AMOUNT #CLERK-ABB-NAME-PASS #DISPLAY-BADJ-AMOUNT  /* PM8
+*                                          /* APFR Report Totals
+MOVE EDITED #TOTAL-APFR-AMOUNT (EM=ZZZZZZZZZZ9.99)
+  TO #DISPLAY-APFR-AMOUNT
+MOVE LEFT #DISPLAY-APFR-AMOUNT TO #DISPLAY-APFR-AMOUNT
+MOVE EDITED #TOTAL-RDCR-AMOUNT (EM=ZZZZZZZZZZ9.99)
+  TO #DISPLAY-RDCR-AMOUNT
+MOVE LEFT #DISPLAY-RDCR-AMOUNT TO #DISPLAY-RDCR-AMOUNT
+MOVE EDITED #TOTAL-FPFP-AMOUNT (EM=ZZZZZZZZZZ9.99)
+  TO #DISPLAY-FPFP-AMOUNT
+MOVE LEFT #DISPLAY-FPFP-AMOUNT TO #DISPLAY-FPFP-AMOUNT
+MOVE EDITED #TOTAL-FPRP-AMOUNT (EM=ZZZZZZZZZZ9.99)
+  TO #DISPLAY-FPRP-AMOUNT
+MOVE LEFT #DISPLAY-FPRP-AMOUNT TO #DISPLAY-FPRP-AMOUNT
+MOVE EDITED #TOTAL-ADCR-AMOUNT (EM=ZZZZZZZZZZ9.99)
+  TO #DISPLAY-ADCR-AMOUNT
+MOVE LEFT #DISPLAY-ADCR-AMOUNT TO #DISPLAY-ADCR-AMOUNT
+MOVE EDITED #TOTAL-BADJ-AMOUNT (EM=ZZZZZZZZZZ9.99)                /* PM8
+  TO #DISPLAY-BADJ-AMOUNT                                         /* PM8
+MOVE LEFT #DISPLAY-BADJ-AMOUNT TO #DISPLAY-BADJ-AMOUNT            /* PM8
+MOVE EDITED #TOTAL-CASH-AMOUNT (EM=ZZZZZZZZZZ9.99)
+  TO #DISPLAY-CASH-AMOUNT
+MOVE LEFT #DISPLAY-CASH-AMOUNT TO #DISPLAY-CASH-AMOUNT
+*
+COMPRESS 'TOTALS'             #TAB
+  #DISPLAY-APFR-AMOUNT #TAB
+  #DISPLAY-RDCR-AMOUNT #TAB
+  #DISPLAY-FPFP-AMOUNT #TAB
+  #DISPLAY-FPRP-AMOUNT #TAB
+  #DISPLAY-ADCR-AMOUNT #TAB
+  #DISPLAY-BADJ-AMOUNT #TAB                                       /* PM8
+  #DISPLAY-CASH-AMOUNT #TAB INTO #EXTRACT-RECORD LEAVING NO
+*
+WRITE WORK 2 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE WRITE-FUNDS-APPLIED-RECORD
+************************************************************************
+*
+RESET #DISPLAY-SSN #DISPLAY-APFR-AMOUNT #DISPLAY-RDCR-AMOUNT
+  #DISPLAY-FPFP-AMOUNT #DISPLAY-FPRP-AMOUNT #DISPLAY-ADCR-AMOUNT
+  #DISPLAY-CASH-AMOUNT #CLERK-ABB-NAME-PASS #DISPLAY-BADJ-AMOUNT  /* PM8
+*
+CALLNAT 'GCKNMSXX' #HOLD-CLERK
+  #INVALID
+  #CLERK-ABB-NAME-PASS
+*
+IF #INVALID
+  MOVE #HOLD-CLERK TO #CLERK-ABB-NAME-PASS
+END-IF
+*
+COMPUTE #CASH-AMOUNT = #APFR-AMOUNT + #RDCR-AMOUNT - #FPFP-AMOUNT
+  - #FPRP-AMOUNT - #ADCR-AMOUNT - #BADJ-AMOUNT                   /* PM8
+*
+* MOVE EDITED #HOLD-SSN    (EM=999999999)    TO #DISPLAY-SSN
+COMPRESS #HOLD-SSN-1-3 #HOLD-SSN-4-5 #HOLD-SSN-6-9
+  INTO #DISPLAY-SSN WITH '-'
+MOVE EDITED #APFR-AMOUNT (EM=ZZZZZZZZ9.99) TO #DISPLAY-APFR-AMOUNT
+MOVE LEFT #DISPLAY-APFR-AMOUNT             TO #DISPLAY-APFR-AMOUNT
+MOVE EDITED #RDCR-AMOUNT (EM=ZZZZZZZZ9.99) TO #DISPLAY-RDCR-AMOUNT
+MOVE LEFT #DISPLAY-RDCR-AMOUNT             TO #DISPLAY-RDCR-AMOUNT
+MOVE EDITED #FPFP-AMOUNT (EM=ZZZZZZZZ9.99) TO #DISPLAY-FPFP-AMOUNT
+MOVE LEFT #DISPLAY-FPFP-AMOUNT             TO #DISPLAY-FPFP-AMOUNT
+MOVE EDITED #FPRP-AMOUNT (EM=ZZZZZZZZ9.99) TO #DISPLAY-FPRP-AMOUNT
+MOVE LEFT #DISPLAY-FPRP-AMOUNT             TO #DISPLAY-FPRP-AMOUNT
+MOVE EDITED #ADCR-AMOUNT (EM=ZZZZZZZZ9.99) TO #DISPLAY-ADCR-AMOUNT
+MOVE LEFT #DISPLAY-ADCR-AMOUNT             TO #DISPLAY-ADCR-AMOUNT
+MOVE EDITED #BADJ-AMOUNT (EM=ZZZZZZZZ9.99) TO #DISPLAY-BADJ-AMOUNT /* PM8
+MOVE LEFT #DISPLAY-BADJ-AMOUNT             TO #DISPLAY-BADJ-AMOUNT /* PM8
+MOVE EDITED #CASH-AMOUNT (EM=ZZZZZZZZ9.99) TO #DISPLAY-CASH-AMOUNT
+MOVE LEFT #DISPLAY-CASH-AMOUNT             TO #DISPLAY-CASH-AMOUNT
+*
+COMPRESS #DISPLAY-SSN         #TAB
+  #DISPLAY-APFR-AMOUNT #TAB
+  #DISPLAY-RDCR-AMOUNT #TAB
+  #DISPLAY-FPFP-AMOUNT #TAB
+  #DISPLAY-FPRP-AMOUNT #TAB
+  #DISPLAY-ADCR-AMOUNT #TAB
+  #DISPLAY-BADJ-AMOUNT #TAB                                        /* PM8
+  #DISPLAY-CASH-AMOUNT #TAB
+  #CLERK-ABB-NAME-PASS INTO #EXTRACT-RECORD LEAVING NO
+*
+WRITE WORK 2 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+ADD #APFR-AMOUNT TO #TOTAL-APFR-AMOUNT
+ADD #RDCR-AMOUNT TO #TOTAL-RDCR-AMOUNT
+ADD #FPFP-AMOUNT TO #TOTAL-FPFP-AMOUNT
+ADD #FPRP-AMOUNT TO #TOTAL-FPRP-AMOUNT
+ADD #ADCR-AMOUNT TO #TOTAL-ADCR-AMOUNT
+ADD #BADJ-AMOUNT TO #TOTAL-BADJ-AMOUNT                            /* PM8
+ADD #CASH-AMOUNT TO #TOTAL-CASH-AMOUNT
+*
+RESET #APFR-AMOUNT #RDCR-AMOUNT #FPFP-AMOUNT #FPRP-AMOUNT
+  #ADCR-AMOUNT #CASH-AMOUNT #BADJ-AMOUNT                          /* PM8
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-BATCH-TOTALS
+************************************************************************
+*
+COMPRESS 'BATCH TOTALS' INTO #EXTRACT-RECORD LEAVING NO
+IF #CREDIT                                                        /* PM5
+  COMPRESS #EXTRACT-RECORD '- CREDIT' INTO #EXTRACT-RECORD        /* PM5
+ELSE                                                              /* PM5
+  COMPRESS #EXTRACT-RECORD '- CASH'   INTO #EXTRACT-RECORD        /* PM5
+END-IF                                                            /* PM5
+FOR #I1 1 TO #NUMBER-CLERKS-APFP
+  RESET #DISPLAY-AMOUNT
+  MOVE EDITED #CLERK-TOTAL-APFP (#I1) (EM=ZZZZZZZZZ.99)
+    TO #DISPLAY-AMOUNT
+  ADD #CLERK-TOTAL-APFP (#I1) TO #APFP-GRAND-TOTAL
+  MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+  COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT #TAB INTO #EXTRACT-RECORD
+    LEAVING NO
+END-FOR
+*
+MOVE EDITED #APFP-GRAND-TOTAL (EM=ZZZZZZZZZZZ.99) TO #DISPLAY-AMOUNT
+MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+COMPRESS #EXTRACT-RECORD #DISPLAY-AMOUNT INTO #EXTRACT-RECORD
+  LEAVING NO
+*
+WRITE WORK 1 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD #CLERK-TOTAL-APFP(*) #APFP-GRAND-TOTAL
+WRITE WORK 1 #EXTRACT-RECORD
+WRITE WORK 1 #EXTRACT-RECORD
+*
+MOVE #TRAN-TIME (#I2) TO #BATCH-TIME
+RESET #CREDIT                                                    /* PM5
+IF #TYPE (#I2) = 'K'                                             /* PM5
+  #CREDIT := TRUE                                                /* PM5
+END-IF                                                           /* PM5
+
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-NX-MESSAGE
+************************************************************************
+*
+COMPRESS #DATE-FOR-APP-MM #DATE-FOR-APP-DD #DATE-FOR-APP-YYYY
+  INTO #NOTE-TEXT (1) WITH '/'
+COMPRESS 'Credits to members" accounts from FPF process on'
+  #NOTE-TEXT (1) INTO #NOTE-TEXT (1)
+*
+MOVE 2 TO #I4
+RESET #I3
+*
+FOR #I2 1 TO 1000
+  IF #CLERK (#I2) = ' '
+      AND #SSN (#I2) = 0
+      AND #AMOUNT (#I2) = 0
+    IF #I3 GT 0
+      PERFORM SEND-NX
+    END-IF
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #TRAN-CODE (#I2) = 'ADCR'
+    FIND (1) ST-V WITH MEMBER-KEY = #ID-NUMBER-A (#I2)  /* PM6
+    END-FIND                                            /* PM6
+    IF #TYPE (#I2) = 'W'                                /* PM6
+     OR ST-V.DEBIT-CREDIT-AMT = 0                       /* PM6
+      ESCAPE TOP                                        /* PM6
+    END-IF                                              /* PM6
+    ADD +1 TO #I3
+    RESET #NX-AMOUNT (#I4,#I3) #CN (#I4,#I3)
+    MOVE EDITED #AMOUNT (#I2) (EM=ZZZZZZ9.99) TO #NX-AMOUNT (#I4,#I3)
+    MOVE LEFT #NX-AMOUNT (#I4,#I3) TO #NX-AMOUNT (#I4,#I3)
+    COMPRESS '$' #NX-AMOUNT (#I4,#I3) INTO #NX-AMOUNT (#I4,#I3)
+      LEAVING NO
+    MOVE #ID-NUMBER (#I2) TO #CN (#I4,#I3)
+*
+    IF #I3 = 3
+      IF #I4 = 5   /* full note
+        PERFORM SEND-NX
+      ELSE
+        ADD +1 TO #I4
+        RESET #I3
+      END-IF
+    END-IF
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-DEPOSIT-DOWNLOADS
+************************************************************************
+*
+COMPRESS 'SSN'          #TAB
+  'AMOUNT'       #TAB
+  'DEPOSIT DATE' #TAB
+  'DAYS OLD'     #TAB
+  'APPLIED DATE' #TAB
+  'APPLIED CN'   #TAB
+  'ACTIVE APP'   #TAB
+  'SENT BY'      #TAB
+  'TYPE'         #TAB
+  'CK #/CC #'    #TAB                                            /* PM5
+  'SPLIT'        #TAB
+  'NAME'         #TAB
+  'ADDR-1'       #TAB
+  'ADDR-2'       #TAB
+  'CITY'         #TAB
+  'STATE'        #TAB
+  'ZIPCODE' INTO #EXTRACT-RECORD LEAVING NO
+*
+WRITE WORK 3 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+COMPRESS 'SSN'   #TAB
+  'AMOUNT'       #TAB
+  'DEPOSIT DATE' #TAB
+  'DAYS OLD'     #TAB
+  'SENT BY'      #TAB
+  'TYPE'         #TAB
+  'CK #/CC #'    #TAB                                             /* PM5
+  'SPLIT' INTO #EXTRACT-RECORD LEAVING NO
+*
+WRITE WORK 4 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+#TODAY-DATE := *DATN                                              /* YK1
+CALLNAT 'GDATESXX'                                                /* YK1
+#TODAY-DATE #DATE-90 #DATE-MINUS-90 #ACTION-CODE-E                /* YK1
+*
+READ DP-V BY SSN FROM 000001000
+*
+  RESET #DISPLAY-SSN
+* MOVE EDITED DP-V.SSN (EM=999999999) TO #DISPLAY-SSN
+  MOVE DP-V.SSN                       TO #HOLD-SSN
+  COMPRESS #HOLD-SSN-1-3 #HOLD-SSN-4-5 #HOLD-SSN-6-9
+    INTO #DISPLAY-SSN WITH '-'
+*
+  FOR #I1 1 TO 99
+    IF DP-V.AMOUNT (#I1) = 0
+      ESCAPE BOTTOM
+    END-IF
+*
+* Do not display matched deposits older than 90 days on the       /* YK1
+* report (per Cliff Brown)                                        /* YK1
+*
+    IF DP-V.APPLIED-DATE (#I1) NE 0 AND                           /* YK1
+      DP-V.APPLIED-DATE(#I1) < #DATE-MINUS-90                     /* YK1
+      ESCAPE TOP                                                  /* YK1
+    END-IF                                                        /* YK1
+    RESET #NUM-DAYS-DIFF #DISPLAY-AMOUNT #DEPOSIT-DATE
+      #DATE-APPLIED #APPLIED-CN #ZIP-CODE #ACTIVE-APP             /* PM1
+      #DISPLAY-CK-CC-NUM                                          /* PM5
+*
+    IF DP-V.APPLIED-DATE (#I1) EQ 0
+      CALLNAT 'GDATESXX'
+        #DATE-FOR-APP
+        DP-V.DATE (#I1)
+        #NUM-DAYS-DIFF
+        #ACTION-CODE-A
+    END-IF
+*
+    MOVE EDITED DP-V.AMOUNT (#I1) (EM=ZZZZZZ9.99) TO #DISPLAY-AMOUNT
+    MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+    COMPRESS DP-V.DATE-MM (#I1) DP-V.DATE-DD (#I1) DP-V.DATE-YYYY (#I1)
+      INTO #DEPOSIT-DATE WITH '/'
+    IF DP-V.APPLIED-DATE (#I1) NE 0
+      COMPRESS DP-V.APPLIED-DATE-MM (#I1) DP-V.APPLIED-DATE-DD (#I1)
+        DP-V.APPLIED-DATE-YYYY (#I1) INTO #DATE-APPLIED WITH '/'
+    END-IF
+    IF DP-V.APPLIED-CN (#I1) NE 0
+      MOVE EDITED DP-V.APPLIED-CN (#I1) (EM=999999) TO #APPLIED-CN
+    ELSE                                                          /* PM1
+      FIND AT-V WITH AT-V.SSN = DP-V.SSN                          /* PM1
+        IF AT-V.INTRO-FLAG = 'V'                                  /* PM1
+         OR AT-V.AT-STATUS = 'A'                                  /* PM1
+         OR AT-V.AT-STATUS = MASK ('W')                           /* PM1
+          ESCAPE TOP                                              /* PM1
+        END-IF                                                    /* PM1
+*
+        MOVE EDITED AT-V.ID-NUMBER (EM=999999) TO #ACTIVE-APP     /* PM1
+      END-FIND                                                    /* PM1
+    END-IF
+    IF DP-V.ZIP-CODE (#I1) NE 0
+      MOVE DP-V.ZIP-CODE-5 (#I1) TO #ZIP-CODE
+      IF DP-V.ZIP-CODE-4-N (#I1) NE 0
+        COMPRESS #ZIP-CODE '-' DP-V.ZIP-CODE-4-A (#I1) INTO #ZIP-CODE
+          LEAVING NO
+      END-IF
+    END-IF
+*
+    IF DP-V.TYPE (#I1) = 'K'                                      /* PM5
+      #DISPLAY-CK-CC-NUM := DP-V.CC-NUM-4 (#I1)                   /* PM5
+    ELSE                                                          /* PM5
+      #DISPLAY-CK-CC-NUM := DP-V.CHECK-NUM (#I1)                  /* PM5
+    END-IF                                                        /* PM5
+*
+    COMPRESS #DISPLAY-SSN  #TAB
+      #DISPLAY-AMOUNT      #TAB
+      #DEPOSIT-DATE        #TAB
+      #NUM-DAYS-DIFF       #TAB
+      #DATE-APPLIED        #TAB
+      #APPLIED-CN          #TAB
+      #ACTIVE-APP          #TAB
+      DP-V.SENT-BY (#I1)   #TAB
+      DP-V.TYPE (#I1)      #TAB
+      #DISPLAY-CK-CC-NUM   #TAB                                   /* PM5
+      DP-V.SPLIT (#I1)     #TAB
+      DP-V.NAME (#I1)      #TAB
+      DP-V.ADDR-1 (#I1)    #TAB
+      DP-V.ADDR-2 (#I1)    #TAB
+      DP-V.CITY (#I1)      #TAB
+      DP-V.STATE (#I1)     #TAB
+      #ZIP-CODE INTO #EXTRACT-RECORD LEAVING NO
+*
+    WRITE WORK 3 #EXTRACT-RECORD
+    RESET #EXTRACT-RECORD
+*
+    IF DP-V.APPLIED-DATE (#I1) NE 0
+      ESCAPE TOP
+    END-IF
+*
+    ADD DP-V.AMOUNT (#I1) TO #TOTAL-LIABILITY-AMOUNT
+*
+    COMPRESS #DISPLAY-SSN         #TAB
+      #DISPLAY-AMOUNT      #TAB
+      #DEPOSIT-DATE        #TAB
+      #NUM-DAYS-DIFF       #TAB
+      DP-V.SENT-BY (#I1)   #TAB
+      DP-V.TYPE (#I1)      #TAB
+      #DISPLAY-CK-CC-NUM   #TAB                                  /* PM5
+      DP-V.SPLIT (#I1)     INTO #EXTRACT-RECORD LEAVING NO
+*
+    WRITE WORK 4 #EXTRACT-RECORD
+    RESET #EXTRACT-RECORD
+  END-FOR
+END-READ
+*
+MOVE 'TOTAL' TO #DISPLAY-SSN
+MOVE EDITED #TOTAL-LIABILITY-AMOUNT (EM=ZZZZZZZZZZ9.99)
+  TO #DISPLAY-AMOUNT
+*
+COMPRESS #DISPLAY-SSN         #TAB
+  #DISPLAY-AMOUNT      #TAB
+  #TAB
+  #TAB
+  #TAB
+  #TAB
+  #TAB
+  INTO #EXTRACT-RECORD LEAVING NO
+*
+WRITE WORK 4 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE SEND-NX
+************************************************************************
+*
+MOVE '*NX' TO #CGA-SCR-SUFFIX
+FETCH RETURN 'G4090PNX' #CLERK-ID #TO-INIT #NOTE-TEXT (1:5)
+FETCH RETURN 'G4090PNX' #CLERK-ID #TO-INIT-2 #NOTE-TEXT (1:5)     /* PM4
+* RESET #NOTE-TEXT (2:4) #I3                                      /* PM3
+RESET #NOTE-TEXT (2:5) #I3                                        /* PM3
+MOVE 2 TO #I4
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+END

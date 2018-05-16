@@ -1,0 +1,382 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram AUCNCPG1.
+/**
+/** :author nguentchev
+/**
+/**
+DEFINE DATA
+PARAMETER USING AUCACP01
+LOCAL USING POSAGET
+LOCAL USING ERROR_L
+LOCAL USING POSLROLE
+LOCAL
+1 BLANK     (A1) CONST <' '>
+1 Title     (A) DYNAMIC
+1 #ContactID (N8)
+1 #HAS-OWNER (L)
+1 #INSURED   (L)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 C*ACTIVE-SEGMENTS (N2)
+  2 PLAN  (9)
+  2 POLICY-ID       (9)
+  2 ISSUE-DATE      (9)
+  2 X-LOAN-AMOUNT   (9)
+  2 X-LOAN-AMOUNT-2 (9)
+  2 CONV-DURATION   (9)
+  2 STATUS          (9)
+*
+1 #POLICY-RELATIONS-2 (1:*) /*Output
+  2 ADD-USER (A8)
+  2 ADD-DATE (N8.0)
+  2 ADD-TIME (N7.0)
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8.0)
+  2 LAST-UPD-TIME (N7.0)
+  2 POLICY-NUMBER (A16)
+  2 CONTACT-ID (N8.0)
+  2 RELATION (N2.0)
+  2 REFERENCE-NUMBER (N6.0)
+  2 REFERENCE-TYPE (A1)
+  2 PRIMARY-OWNER (A1)
+  2 NI-OWNER (A1)
+  2 DESIGNATION-ID (N8.0)
+  2 SETTLEMENT-TYPE (A1)
+  2 BENE-FRACTION (A10)
+  2 BENE-PERCENT (F8)
+  2 BENE-RESTRICTED (A1)
+  2 BENE-TYPE (A1)
+  2 BENE-SHARE-TYPE (A1)
+  2 POLICY-STATUS (A1)
+  2 OWNERSHIP-RESTRICT (A1)
+  2 OWNERSHIP-RESTRICT-DATE (N8)
+  2 VERSION                 (N8)
+1 PN         (I2)
+1 #POLICY-ID         (A16/99)
+1 #POLICY-ISSUE-DATE (N8/1:99)
+1 #PLAN            (A3/99)
+1 #X-LOAN-AMOUNT   (P7.2/99)
+1 #X-LOAN-AMOUNT-2 (P7.2/99)
+1 #CAP             (L/99)
+1 #STATUS          (A1/99)
+1 J         (I2)
+1 L         (I4)
+1 K         (I4)
+1 I         (I2)
+1 #SKIP     (L)
+1 #ERROR-CODE (A3)
+END-DEFINE
+*
+IF PolicyContactRoles.ContactID = 0
+    AND PolicyContactRoles.CN = 0
+  PolicyContactRoles.ErrorCode := 1
+  ESCAPE ROUTINE
+END-IF
+IF PolicyContactRoles.ContactID = 0
+  FIND (1) ST-V WITH ID-NUMBER = PolicyContactRoles.CN
+    PolicyContactRoles.ContactID := ST-V.MEMBER-CONTACT-ID
+  END-FIND
+END-IF
+IF PolicyContactRoles.CN = 0
+  FIND (1) ST-V WITH MEMBER-CONTACT-ID = PolicyContactRoles.ContactID
+    PolicyContactRoles.CN := ST-V.ID-NUMBER
+  END-FIND
+END-IF
+*
+* Get contact related policies
+*
+RESET Policies PN
+CALLNAT 'POSNPRDS' PolicyContactRoles.ContactID
+  AllRoles
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG NE BLANK
+  #ERROR-CODE := SUBSTR(#MSG,1,3)
+  PolicyContactRoles.ErrorCode := VAL (#ERROR-CODE)
+    PolicyContactRoles.ErrorDescription
+    := F-ERROR-DESCRIPTION(<#ERROR-CODE>)
+  ESCAPE ROUTINE
+END-IF
+*
+* Populate policy data for multiple CN records : more than 9 policies
+*
+FIND ST-V WITH MEMBER-CONTACT-ID = PolicyContactRoles.ContactID
+  FOR I 1 TO C*ACTIVE-SEGMENTS
+    ADD 1 TO PN
+    #POLICY-ID (PN) := POLICY-ID (I)
+    #POLICY-ISSUE-DATE(PN) := ST-V.ISSUE-DATE(I)
+    #PLAN   (PN) := ST-V.PLAN   (I)
+    #STATUS (PN) := ST-V.STATUS (I)
+    #X-LOAN-AMOUNT (PN)   := X-LOAN-AMOUNT   (I)
+    #X-LOAN-AMOUNT-2 (PN) := X-LOAN-AMOUNT-2 (I)
+    IF CONV-DURATION (I) = 999
+      #CAP (PN) := TRUE
+    ELSE
+      #CAP (PN) := FALSE
+    END-IF
+  END-FOR
+END-FIND
+*
+FOR J 1 #NUMBER-OF-RELATIONS
+  IF #POLICY-RELATIONS.POLICY-STATUS (J) NE 'D' /* ACTIVE
+    ESCAPE TOP
+  END-IF
+  IF C@ContactPolicy = 0 /* First policy
+    PolicyContactRoles.C@ContactPolicy := 1
+    EXPAND ARRAY PolicyContactRoles.ContactPolicy TO (1:1)
+    PolicyContactRoles.C@Role(1) := 1
+    EXPAND ARRAY PolicyContactRoles.Role TO (*,1:1)
+    EXPAND ARRAY PolicyContactRoles.ID TO (*,1:1)
+    MOVE 1 TO K L
+    PERFORM INIT-NEXT-POLICY
+  ELSE
+    PERFORM CHECK-POLICY-ID /* RETURNS L=POLICY-IDX, K=ROLE-IDX
+  END-IF
+*
+  Role (L,K) := TRANSLATE-RELATION  (< #POLICY-RELATIONS.RELATION (J) >)
+  ID (L,K) := #POLICY-RELATIONS.RELATION (J)
+*
+
+  IF #POLICY-RELATIONS.RELATION (J) = PrimaryOwner
+    PolicyOwnerCN (L) := #POLICY-RELATIONS.REFERENCE-NUMBER (J)
+    PolicyOwnerCI (L) := #POLICY-RELATIONS.CONTACT-ID (J)
+    IF #POLICY-RELATIONS.REFERENCE-NUMBER (J) = 0
+        OR PolicyContactRoles.CN EQ PolicyOwnerCN (L)
+      #ContactID := ContactID
+      PolicyOwnerCN (L) := PolicyContactRoles.CN
+      PolicyOwnerCI (L) := PolicyContactRoles.ContactID
+    ELSE
+      IF PolicyContactRoles.CN NE PolicyOwnerCN (L)
+        FIND (1) ST-V WITH ID-NUMBER = PolicyOwnerCN (L)
+          #ContactID := ST-V.MEMBER-CONTACT-ID
+        END-FIND
+      END-IF
+    END-IF
+    Title := 'LETTER'
+    CALLNAT 'GPRS0CNT' #ContactID Title
+*   PolicyOwnerName (L) := EDIT_NAME_LOWCASE(<Title>) /* bz-Name
+    PolicyOwnerName (L) := Title                      /* bz-NAme
+  END-IF
+*
+*   IF #POLICY-RELATIONS.RELATION (J) = INSURED
+*     PolicyInsuredCN (L) := #POLICY-RELATIONS.REFERENCE-NUMBER (J)
+*     IF #POLICY-RELATIONS.REFERENCE-NUMBER (J) = 0
+*         OR PolicyContactRoles.CN EQ PolicyInsuredCN (L)
+*       #ContactID := ContactID
+*       PolicyInsuredCN (L) := PolicyContactRoles.CN
+*     ELSE
+*       IF PolicyContactRoles.CN NE PolicyInsuredCN (L)
+*         FIND (1) ST-V WITH ID-NUMBER = PolicyInsuredCN (L)
+*           #ContactID := ST-V.MEMBER-CONTACT-ID
+*         END-FIND
+*       END-IF
+*     END-IF
+*     Title := 'LETTER'
+*     CALLNAT 'GPRS0CNT' #ContactID Title
+*     PolicyOwnerName (L) := Title
+*   END-IF
+*
+  IF #POLICY-RELATIONS.RELATION (J) = InsuredRole
+    IF #POLICY-RELATIONS.REFERENCE-NUMBER (J) > 0
+      PolicyInsuredCN(L)   := #POLICY-RELATIONS.REFERENCE-NUMBER (J)
+      PolicyInsuredCI(L)   := #POLICY-RELATIONS.CONTACT-ID (J)
+    ELSE
+      IGNORE
+    END-IF
+    Title := 'LETTER'
+    CALLNAT 'GPRS0CNT' #POLICY-RELATIONS.CONTACT-ID(J) Title
+*    PolicyInsuredName(L) := EDIT_NAME_LOWCASE(<Title>)  /* bz-Name
+     PolicyInsuredName(L) := Title                       /* bz-NAme
+*     END-IF
+    FOR I 1 TO PN
+      IF #STATUS (I) NE 'D'
+        ESCAPE TOP
+      END-IF
+      IF #POLICY-ID (I) = PolicyID (L)
+*        PolicyDescription (L) := FUNCTION-PRODUCT-2 (< #PLAN (I) >) (2)
+        PolicyIssueDate(L) := #POLICY-ISSUE-DATE(I)
+        PolicyDescription (L) := FUNCTION-PRODUCT (< #PLAN (I) >)
+        LinkedLoan (L) := 'X'
+        DECIDE FOR EVERY CONDITION
+          WHEN #X-LOAN-AMOUNT (I) > 0
+            IF #CAP (I)
+              LinkedLoan (L) := 'CAP loan'
+            ELSE
+              LinkedLoan (L) := 'Fixed loan'
+            END-IF
+          WHEN #X-LOAN-AMOUNT-2 (I) > 0
+            IF LinkedLoan (L) = 'X'
+              LinkedLoan (L) := 'Var loan'
+            ELSE
+              COMPRESS LinkedLoan (L) ',Var loan'
+                INTO LinkedLoan (L) LEAVING NO
+            END-IF
+          WHEN NONE
+            LinkedLoan (L) := 'No loan'
+        END-DECIDE
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+*
+END-FOR
+*
+PERFORM CHECK-ALL-DATA
+*
+DEFINE INIT-NEXT-POLICY
+/*     ----------------
+LastUpdatedDate (L) := #POLICY-RELATIONS.LAST-UPD-DATE (J)
+LastUpdatedTime (L) := #POLICY-RELATIONS.LAST-UPD-TIME (J)
+LastUpdatedUser (L) := FUNCTION-NAME (< #POLICY-RELATIONS.LAST-UPD-USER (J) >)
+PolicyID        (L) := #POLICY-RELATIONS.POLICY-NUMBER (J)
+END-SUBROUTINE
+*
+DEFINE CHECK-POLICY-ID
+/*     ---------------
+FOR L 1 TO C@ContactPolicy
+  IF PolicyID (L) = #POLICY-RELATIONS.POLICY-NUMBER (J)
+    ADD 1 TO PolicyContactRoles.C@Role(L)
+    K := PolicyContactRoles.C@Role(L)
+    EXPAND ARRAY PolicyContactRoles.Role TO (*,1:K)
+    EXPAND ARRAY PolicyContactRoles.ID TO (*,1:K)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+IF L > C@ContactPolicy  /* Next policy
+  ADD 1 TO PolicyContactRoles.C@ContactPolicy
+  L := PolicyContactRoles.C@ContactPolicy
+  EXPAND ARRAY PolicyContactRoles.ContactPolicy TO (1:L)
+  MOVE 1 TO PolicyContactRoles.C@Role(L)
+  EXPAND ARRAY PolicyContactRoles.Role TO (*,1:1)
+  EXPAND ARRAY PolicyContactRoles.ID TO (*,1:1)
+  PERFORM INIT-NEXT-POLICY
+  K := 1
+END-IF
+END-SUBROUTINE
+*
+DEFINE CHECK-ALL-DATA
+/*     --------------
+FOR L 1 TO C@ContactPolicy
+  RESET #HAS-OWNER #INSURED
+  FOR K 1 TO PolicyContactRoles.C@Role(L)
+    DECIDE ON FIRST VALUE OF Role (L,K)
+      VALUE 'Owner'
+        #HAS-OWNER := TRUE
+      VALUE 'Insured'
+        #INSURED := TRUE
+        ESCAPE BOTTOM
+      NONE VALUE
+        IGNORE
+    END-DECIDE
+  END-FOR
+  IF NOT #INSURED
+    RESET #NUMBER-OF-RELATIONS #MSG
+    PolicyDescription (L) := 'Insured missing'
+*
+*  Get insured contact related to the policy: main contact is not insured one
+*
+    #RELATIONSHIP-TYPE := InsuredRole
+    CALLNAT 'POSNCNTS'
+      PolicyID            (L)
+      #RELATIONSHIP-TYPE
+      #NUMBER-OF-RELATIONS
+      #POLICY-RELATIONS-2 (*)
+      #ISNS(*)
+      #MSG
+    IF #MSG = BLANK
+      FOR K 1 TO #NUMBER-OF-RELATIONS
+        IF #POLICY-RELATIONS-2.RELATION (K) = InsuredRole
+          FIND ST-V WITH MEMBER-CONTACT-ID
+              = #POLICY-RELATIONS-2.CONTACT-ID (K)
+            FOR I 1 TO C*ACTIVE-SEGMENTS
+              IF POLICY-ID (I) = PolicyID (L)
+                PolicyIssueDate(L) := ST-V.ISSUE-DATE(I)
+                  PolicyDescription (L)
+*                  := FUNCTION-PRODUCT-2 (< PLAN (I) >) (2)
+                  := FUNCTION-PRODUCT (< PLAN (I) >)
+                LinkedLoan (L) := 'X'
+                DECIDE FOR EVERY CONDITION
+                  WHEN X-LOAN-AMOUNT (I) > 0
+                    IF CONV-DURATION (I) = 999
+                      LinkedLoan (L) := 'CAP loan'
+                    ELSE
+                      LinkedLoan (L) := 'Fixed loan'
+                    END-IF
+                  WHEN X-LOAN-AMOUNT-2 (I) > 0
+                    IF LinkedLoan (L) = 'X'
+                      LinkedLoan (L) := 'Var loan'
+                    ELSE
+                      COMPRESS LinkedLoan (L) ',Var loan'
+                        INTO LinkedLoan (L) LEAVING NO
+                    END-IF
+                  WHEN NONE
+                    LinkedLoan (L) := 'No loan'
+                END-DECIDE
+                ESCAPE BOTTOM
+              END-IF
+            END-FOR
+          END-FIND
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-IF
+  END-IF
+*   IF NOT #HAS-OWNER /* Removed.  Not sure if this is needed
+  RESET #NUMBER-OF-RELATIONS #MSG
+*
+*  Get owner contact related to the policy: main contact is not owner
+*
+  #RELATIONSHIP-TYPE := PrimaryOwner
+  CALLNAT 'POSNCNTS'
+    PolicyID            (L)
+    #RELATIONSHIP-TYPE
+    #NUMBER-OF-RELATIONS
+    #POLICY-RELATIONS-2 (*)
+    #ISNS(*)
+    #MSG
+  IF #MSG = BLANK
+    FOR K 1 TO #NUMBER-OF-RELATIONS
+      IF #POLICY-RELATIONS-2.RELATION (K) = PrimaryOwner
+        Title := 'LETTER'
+        CALLNAT 'GPRS0CNT' #POLICY-RELATIONS-2.CONTACT-ID (K) Title
+*        PolicyOwnerName (L) := EDIT_NAME_LOWCASE(<Title>)          /* bz-Name
+        PolicyOwnerName (L) := Title                               /* bz-NAme
+        PolicyOwnerCN (L) := #POLICY-RELATIONS-2.REFERENCE-NUMBER (K)
+        PolicyOwnerCI (L) := #POLICY-RELATIONS-2.CONTACT-ID (K)
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+
+  #RELATIONSHIP-TYPE := InsuredRole
+  CALLNAT 'POSNCNTS'
+    PolicyID            (L)
+    #RELATIONSHIP-TYPE
+    #NUMBER-OF-RELATIONS
+    #POLICY-RELATIONS-2 (*)
+    #ISNS(*)
+    #MSG
+  IF #MSG = BLANK
+    FOR K 1 TO #NUMBER-OF-RELATIONS
+*       IF #POLICY-RELATIONS-2.RELATION (K) = OWNER
+      Title := 'LETTER'
+      CALLNAT 'GPRS0CNT' #POLICY-RELATIONS-2.CONTACT-ID (K) Title
+*      PolicyInsuredName (L) := EDIT_NAME_LOWCASE(<Title>)     /* bz-Name
+      PolicyInsuredName (L) := Title                          /* bz-NAme
+      PolicyInsuredCN (L) := #POLICY-RELATIONS-2.REFERENCE-NUMBER (K)
+      ESCAPE BOTTOM
+*       END-IF
+    END-FOR
+  END-IF
+*  END-IF
+END-FOR
+END-SUBROUTINE
+*
+END

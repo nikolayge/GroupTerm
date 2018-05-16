@@ -1,0 +1,127 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: REP-RID - RIDER EXPIRATION WARNING
+* The logic was a part of ATHPEXCP program
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* YAK 02/18/2014   YK3  Use function to identify Level Term II plans
+* TMT 06/17/2014   TT1  Contact Normalization DOB and SEX
+************************************************************************
+DEFINE DATA
+LOCAL USING OBJLSTAT
+LOCAL
+*
+1 #EXCEPTIONS          (A100)
+1 #NOTE-TEXT           (A60/10)
+1 #YOUNGEST-DEP-AGE    (N4)
+1 #FBR-LTR-SENT        (L)
+1 #TAB       (A1) INIT <H'09'>
+*
+1 NT-V VIEW OF A-NOTES
+  2 C*NOTE-TABLE
+  2 NOTE-TEXT   (A60/500)
+*
+1 FR-V VIEW OF A-FIRS
+  2 C*DEPENDENT-TABLE
+  2 DEPN-DATE-OF-BIRTH   (14)
+*
+*
+1 #COUNTERS
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #I3               (I2)
+*
+1 #DATN        (N8)
+1 #RUN-DATE    (A10)
+*
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY   (N4)
+    3 #MM     (N2)
+  2 #DD     (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A   (A8)
+*
+1 SPOUSE-CN               (N8.0)            /* TT1
+1 DATE-OF-BIRTH-SP        (N8.0)            /* TT1
+END-DEFINE
+*
+*******************************************************************
+*
+DEFINE WORK FILE 1 "/usr/SAG/AAFMAA/batch/workfiles/ATHLB/PARMRUND.TXT"
+DEFINE WORK FILE 2 "/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/Rider_exceptions.txt"
+COMPRESS 'CN' 'Exception Description' INTO #EXCEPTIONS WITH DELIMITER #TAB
+WRITE WORK FILE 2 #EXCEPTIONS
+*
+#DATN := *DATN
+*
+READ ST-V BY ID-NUMBER = 1900
+*
+  FOR #I1 = 1 TO C*ACTIVE-SEGMENTS
+    IF STATUS(#I1) <> 'D'
+      ESCAPE TOP
+    END-IF
+*
+    IF RID-PLAN (#I1) NE ' '
+      RESET #FBR-LTR-SENT
+      FIND NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+        FOR #I2 1 TO C*NOTE-TABLE
+          IF NOTE-TEXT (#I2) = MASK ('SENT FBR LTR')
+            MOVE TRUE TO #FBR-LTR-SENT
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+      END-FIND
+*
+      MOVE 99 TO #YOUNGEST-DEP-AGE
+      FIND FR-V WITH ID-NUMBER = ST-V.ID-NUMBER
+        FOR #I3 1 TO C*DEPENDENT-TABLE
+          IF DEPN-DATE-OF-BIRTH (#I3) NE 0
+            #YYYYMMDD := #DATN
+            SUBTRACT DEPN-DATE-OF-BIRTH (#I3) FROM #YYYYMMDD
+            IF #YYYY LT #YOUNGEST-DEP-AGE
+              MOVE #YYYY TO #YOUNGEST-DEP-AGE
+            END-IF
+          END-IF
+        END-FOR
+      END-FIND
+*
+  RESET SPOUSE-CN DATE-OF-BIRTH-SP                                  /* TT1
+  SPOUSE-CN := FUNCTION-SPOUSE-CI(<ST-V.MEMBER-CONTACT-ID>)         /* TT1
+  DATE-OF-BIRTH-SP  := GET-DATE-OF-BIRTH(<SPOUSE-CN>)               /* TT1
+*  
+      IF  ((RID-PLAN (#I1) = MASK ('C'))
+          AND (#YOUNGEST-DEP-AGE GE 20))                   /* 1-year prior to ineligibility
+          OR  ((RID-PLAN (#I1) NE MASK ('C'))
+          AND (DATE-OF-BIRTH-SP = 0)
+          AND (#YOUNGEST-DEP-AGE GE 20))                   /* 1-year prior to ineligibility
+        IF #FBR-LTR-SENT
+          COMPRESS 'Rider with elig concerns-LTR SENT-plan=' RID-PLAN (#I1) 'Youngest=' #YOUNGEST-DEP-AGE
+            'sps-dob=' DATE-OF-BIRTH-SP INTO #EXCEPTIONS
+        ELSE
+          #EXCEPTIONS := '## Rider with Elig Concerns'
+        END-IF
+        COMPRESS ST-V.ID-NUMBER #TAB #EXCEPTIONS INTO #EXCEPTIONS
+        WRITE WORK 2 #EXCEPTIONS
+      END-IF
+*
+      IF  (RID-PD-TO(#I1) = PAID-TO-DATE (#I1))
+        IGNORE
+      ELSE
+        COMPRESS '## Rider with bad pd-to-date mode' MODE (#I1)    /* DW24
+          INTO #EXCEPTIONS
+        COMPRESS ST-V.ID-NUMBER #TAB #EXCEPTIONS INTO #EXCEPTIONS
+        WRITE WORK FILE 2 #EXCEPTIONS
+      END-IF
+    END-IF
+  END-FOR
+*
+END-READ
+*
+END

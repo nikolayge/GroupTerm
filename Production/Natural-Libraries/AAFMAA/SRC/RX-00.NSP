@@ -1,0 +1,364 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* RX-00 Invoke RX-1000 outside of AT
+* bz Aug 29, 2017. Ver-2.3(10/05/2017)
+* Does not create AT Note, Does not require AT status PU,
+* Recreates Reports and DAL submission
+* Allows arbitrary modification for DB
+*
+* try
+* 1. input field error for RX-1000
+
+DEFINE DATA
+LOCAL USING RX000LDA
+LOCAL
+1 p_Parms
+  2 p_AT       (N6)
+  2 p_Clerk    (A3)
+  2 p_Mode     (A1)
+  2 p_Message  (A) DYNAMIC
+  2 p_RC       (N4)
+*
+1 AT-V VIEW of A-APPL-TRACKING
+  2 CONTACT-ID              (N8)
+  2 SSN
+  2 NAME
+  2 MEMBER-CN
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 FULL-NAME
+    3 FIRST-NAME            (A25)
+    3 MIDDLE-NAME           (A25)
+    3 LAST-NAME             (A25)
+  2 SSN                    (N9)  (EM=999-99-9999)
+  2 DATE-OF-BIRTH          (N8)   (EM=9999-99-99)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DATE-OF-BIRTH_A      (A8)
+  2 GENDER-CD              (A1)
+* ------------------------------------------------------------------------
+1 f_Log      (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/Log.txt'>
+1 #i        (I2)
+*
+1 c_Stat
+  2 c_R       (I2)
+  2 c_R_H     (I2)
+  2 c_R_M     (I2)
+  2 c_R_L     (I2)
+  2 c_R_Err   (I2)
+  2 c_ST_H    (I2)
+  2 c_ST_C    (I2)
+  2 c_ST_N    (I2)
+  2 c_ST_E    (I2)
+  2 c_ST_I    (I2)
+  2 c_ST_Err  (I2)
+*
+1 Sel        (N1)
+1 v_RC       (A4)
+1 l_Test     (L)
+1 v_A        (A) DYNAMIC
+1 v_B        (A) DYNAMIC
+1 cv_Input   (C)
+1 cv_Test    (C)
+1 l_Conf     (L)
+1 Env        (A4)
+1 l_1        (A79)
+1 l_2        (A79)
+/* data for details
+1 f_Result           (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/RESULT/@@AT_Result.xml'>
+1 f_html             (A) DYNAMIC INIT <'file:\\@@FTP-URI\FTP\NewBiz\rxReports\Details_@@AT.html'>
+1 p_Parms-Det
+  2 El_B     (A10/300)
+  2 El_E     (A10/300)
+  2 Fills (999)
+    3 Fl_r      (A/17) DYNAMIC
+    3 it_Name   (A58/20)
+    3 it_Cd     (A20/20)
+/* data for details End
+***
+1 day_From       (N8)
+1 day_To         (N8)
+1 l_T_Only       (L)
+1 ver  (A20)  INIT <'-- RX ver.2.3 --'>
+END-DEFINE
+ON ERROR
+  IF p_RC = 9
+    PRINT NOTITLE  'Please notify MSS' //
+      '-'(60) /
+      'AT:' p_AT  'Selection' Sel ///
+      / p_Message / 'RC:' p_RC /
+      '-'(50) //
+      'Hit Enter to continue'
+    ESCAPE ROUTINE
+  ELSE
+    PRINT NOTITLE  'Please notify MSS' //
+      *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /
+      'AT:' p_AT  'Selection' Sel ///
+      'Hit Enter to continue'
+    ESCAPE ROUTINE
+  END-IF
+END-ERROR
+FORMAT LS=80
+DEFINE WINDOW WIN-Conf
+  SIZE 4 * 30
+  BASE 18 / 30
+  TITLE ' Confirmation window '
+  CONTROL SCREEN
+
+MOVE EDITED F-IS-DEV(<>)(EM=Prod/Test) TO Env
+SET KEY PF2
+SET KEY PF3
+SET KEY PF4
+l_Test := F-IS-DEV(<>)
+IF *DATA > 0
+  INPUT p_AT p_Clerk
+  IF p_AT <> 0
+    MOVE (AD=P) TO cv_Input
+  END-IF
+ELSE
+  p_Clerk := *INIT-USER
+  MOVE (AD=U) TO cv_Input
+END-IF
+IF l_Test MOVE (AD=P) TO cv_Test  END-IF
+IF p_AT <> 0 FIND(1) AT-V WITH ID-NUMBER = p_AT END-FIND END-IF
+
+REPEAT
+  sel := 0
+  INPUT  (AD=O IP=OFF)
+    01/2  *DAT4U(AD=I)  15x   '-- RX ver.2.3 --'(I)   28x *TIMX(AD=I)
+    03/2  'AT:' p_AT (AD=IM EM=ZZZZZZ CV=cv_Input) 4x 'User:' p_Clerk (AD=O)  50x Env
+    04/2  'CN:' MEMBER-CN 4x 'SSN :' AT-V.SSN(EM=999-99-9999) 10x AT-V.NAME(AD=O)
+    06/2  'Force Test'   l_Test(AD=MI EM=N/Y CV=cv_Test)
+    08/10  '1 - View summary and reports (IAS, PreAuth)'
+    09/10  '2 - Recreate report and DAL, without requests to vendor'
+    10/10  '3 - Request RX (The same as PR->PU after MIB)'
+    11/10  '4 - View Statistic'
+    12/10  '5 - Delete this RX (for test records only)'
+    13/10  '6 - View saved RX / and delete test records'
+    14/10  '--------------------------------------------------------'
+    15/10  Sel(AD=MU EM=9)  '  Select Function' 10x 'Return code:' v_RC(AD=O)
+    17/1  p_Message (AD=IO AL=79)
+    23/5  'PF3=Exit'(I)
+  IF *PF-KEY = 'PF3' ESCAPE ROUTINE END-IF
+  IF l_Test p_Mode := 'T' END-IF
+  p_Message := ' '
+  p_RC := 0
+  IF  p_AT = 0 AND ( sel <> 4 AND sel <> 6) REINPUT 'Please enter AT' END-IF
+  DECIDE ON FIRST VALUE Sel
+    VALUE 1
+      FIND(1) AT-V WITH ID-NUMBER = p_AT
+        IF NO RECORD FOUND
+          COMPRESS 'AT not found for AT:' p_AT INTO p_Message
+          ESCAPE BOTTOM
+        END-NOREC
+        FIND(1) RX-V WITH RX-SSN = AT-V.SSN
+          IF NO RECORD FOUND
+            COMPRESS 'RX not found by SSN:' AT-V.SSN 'for AT:' p_AT INTO p_Message
+            ESCAPE BOTTOM
+          END-NOREC
+          PERFORM sbr_Show
+        END-FIND
+      END-FIND
+    VALUE 2
+      FIND(1) AT-V WITH ID-NUMBER = p_AT
+        IF NO RECORD FOUND
+          COMPRESS 'AT not found for AT:' p_AT INTO p_Message
+          ESCAPE BOTTOM
+        END-NOREC
+        FIND(1) RX-V WITH RX-SSN = AT-V.SSN
+          IF NO RECORD FOUND
+            COMPRESS 'RX not found by SSN:' AT-V.SSN 'for AT:' p_AT INTO p_Message
+            ESCAPE BOTTOM
+          END-NOREC
+          v_B := f_Result
+          IF
+              l_Test COMPRESS p_AT '-T' INTO v_A LEAVING NO SPACE
+          ELSE
+            v_A := p_AT
+          END-IF
+          /* Parse Details
+          EXAMINE v_B FOR '@@AT' REPLACE v_A
+          IF NOT FN_Exist(<v_B>)
+            p_message := 'Result file not found'
+            PRINT v_B / '-'(50) 
+            ESCAPE TOP
+          END-IF
+          DEFINE WORK FILE 1 v_B TYPE 'UNFORMATTED'
+          READ WORK FILE 1 ONCE p_Message
+          CLOSE WORK 1
+          CALLNAT 'RX-2001' p_Parms p_Parms-Det
+          /* Parse Details End
+          CALLNAT 'RX-3000' p_Parms p_Parms-Det
+          IF p_RC <> 0
+            COMPRESS 'Report fail' p_Message INTO p_Message
+          ELSE
+            p_Message := 'Report recreated'
+            PERFORM sbr_Show
+          END-IF
+        END-FIND
+      END-FIND
+    VALUE 3
+      p_RC := 0
+      CALLNAT 'RX-0000' p_Parms
+*      PRINT *PROGRAM *LINE(EM=ZZZ9) p_Message
+      IF p_RC = 0 AND p_Message <> 'Cancel'
+        v_RC := ' '
+        l_Conf := FALSE
+        INPUT WINDOW='WIN-Conf' (AD=M IP=OFF)
+          2x 'Save RX Results N/Y' l_Conf (EM=N/Y)
+        IF l_Conf
+          END TRANSACTION
+        ELSE
+          BACKOUT TRANSACTION
+          COMPRESS p_Message '* No changes saved' INTO p_Message
+        END-IF
+      ELSE
+        BACKOUT TRANSACTION
+        v_RC := p_RC
+      END-IF
+    VALUE 4
+      RESET c_Stat
+      READ RX-V
+*       WRITE RX-SSN ':' RX-AT ':' RX-CLERK ':' RX-UPD  ':' RX-TRACK
+        c_R := c_R + 1
+        DECIDE ON FIRST VALUE RX-STATUS
+          VALUE 'Drugs found'           c_ST_H := c_ST_H + 1
+            DECIDE ON FIRST VALUE S-MAX
+              VALUE 'HIGH'   c_R_H := c_R_H + 1
+              VALUE 'MEDIUM' c_R_M := c_R_M + 1
+              VALUE 'LOW'    c_R_L := c_R_L + 1
+              NONE           c_R_Err := c_R_Err + 1
+            END-DECIDE
+          VALUE 'Eligibility only'  c_ST_C := c_ST_C + 1
+          VALUE 'No information'    c_ST_N := c_ST_N + 1
+          VALUE 'E'                 c_ST_E := c_ST_E + 1
+          VALUE 'In Process'        c_ST_I := c_ST_I + 1
+          NONE                      c_ST_Err := c_ST_Err + 1
+        END-DECIDE
+
+
+      END-READ
+      INPUT (IP=OFF AD=O)
+        01/1  *DAT4U(AD=I)  15x   ver(AD=I)   23x *TIMX(AD=I)
+        03/3  '-'(18) 'RX Statistics'(I) '-'(19)
+        05/3  ' RX Requests :'  c_R      30T 'Drugs found      :' c_ST_H
+        06/3                             30T 'Eligibility only :' c_ST_C
+        07/3                             30T 'No information   :' c_ST_N
+        08/3  ' High        :'  c_R_H    30T 'Error status     :' c_ST_E
+        09/3  ' Medium      :'  c_R_M    30T 'In Process       :' c_ST_I
+        10/3  ' Low         :'  c_R_L    30T 'Unknown status   :' c_R_Err
+    VALUE 5
+      FIND(1) RX-V WITH RX-AT = p_AT
+          WHERE RX-CLERK = 'TST'
+        IF NO RECORD FOUND
+          p_Message := 'RX test record not found'
+          ESCAPE BOTTOM
+        END-NOREC
+        l_Conf := FALSE
+        INPUT WINDOW='WIN-Conf' (AD=M IP=OFF)
+          2x 'Delete all tests N/Y' l_Conf (EM=N/Y)
+        IF l_Conf
+          DELETE
+          END TRANSACTION
+          p_Message := 'RX test records have been deleted'
+        ELSE
+          p_Message := 'RX test records was not deleted'
+        END-IF
+
+      END-FIND
+    VALUE 6
+      l_Conf   := FALSE
+      l_T_only := FALSE
+      day_From := 20171201
+      day_To := *DATN
+
+      INPUT (IP=OFF)
+        01/1 *DAT4U  15x 'View saved RX records'(I) 20x *TIMX
+        03/2 'Startiing Date       :' Day_From(AD=MU EM=9999-99-99)
+        04/2 'End Date             :' Day_To(AD=MU EM=9999-99-99)
+        05/2 'Show only tests      :' l_T_only(AD=MU EM=N/Y)
+        06/2 'Delete tests         :' l_Conf (AD=MU EM=N/Y)
+        12/2 'Use PF3 to exit scrolling'
+      WRITE  '  AT    :   SSN      :    Date   : Usr :  Status           Max    RX  Elg'(AD=I)
+      READ RX-V BY RX-AT
+          WHERE  RX-UPD >= Day_From OR RX-UPD <= Day_To
+
+        IF l_Conf AND RX-CLERK = 'TST'
+          DELETE
+          END TRANSACTION
+          p_Message := 'RX test records have been deleted'
+        END-IF
+        WRITE  RX-AT ':' RX-SSN ':' RX-UPD ':' RX-CLERK ':' RX-STATUS S-MAX S-RX S-Elig
+        IF *PF-KEY ='PF3' ESCAPE BOTTOM END-IF
+      END-READ
+    NONE IGNORE
+  END-DECIDE
+END-REPEAT
+* -------------------------------------------------------------
+DEFINE sbr_Show
+*      ----------
+*  EXAMINE RX-URL FOR '?' POSITION #i
+*  #i := #i + 1
+*  v_A := SUBSTRING(RX-URL, #i)
+INPUT  (IP=OFF AD=O)
+  01/1  *DAT4U(AD=I)  15x   ver(AD=I)   23x *TIMX(AD=I)
+  03/03 'Results for' 'AT:' RX-AT(AD=I) 3x 'SSN:' RX-SSN(AD=I EM=999-99-9999)
+  3x 'Date:' RX-UPD(AD=I EM=9999-99-99) 3x 'User:' RX-CLERK(AD=I)
+  04/03 'Applicant:' 'CN' MEMBER-CN(AD=I) 25x AT-V.NAME(AD=I)
+  05/03 'Status:' RX-STATUS(AD=I)
+  06/01  '-'(78)
+  08/24 'Max Priority    :'  S-MAX
+  09/24 'Eligible        :'  S-ELIG
+  10/24 'Fills           :'  S-RX
+  11/24 'High            :'  S-HIGH
+  12/24 'Medium          :'  S-MEDIUM
+  13/24 'Low             :'  S-LOW
+  17/03 'PF2-Local Report         PF4-PreAuth report         ENTER-Exit'(I)
+  20/1  'URL'
+  21/1  RX-URL(AL=79)
+/* add PF2 go to preauthorized Img, PF4 go to site by URL ==> sbr_Show
+DECIDE ON FIRST VALUE *PF-KEY
+  VALUE 'PF2'
+    v_B := f_html
+    IF l_Test
+      COMPRESS p_AT '-T' INTO v_A LEAVING NO SPACE
+      EXAMINE v_B FOR '@@FTP-URI' REPLACE 'ftp.testing.local' /* 'ftp.aafmaa.com'
+    ELSE
+      v_A := p_AT
+      EXAMINE v_B FOR '@@FTP-URI' REPLACE 'ftp.aafmaa.com'
+    END-IF
+    EXAMINE v_B FOR '@@AT' REPLACE v_A
+    SET CONTROL 'N' INPUT " "
+    PRINT v_B /
+      // 3x 'Hit magic keys'(I) 'ctrl-PF2'(U) 'to view report'(I)
+      / 3x 'or'(I) 'ENTER'(U) 'to continue'(I)
+  VALUE  'PF4'
+    p_Message := ' '
+    CALLNAT 'RX-4000' p_Parms
+    IF p_RC <> 0
+      COMPRESS 'PreAuth request fail.' p_Message INTO  p_Message
+    ELSE
+      p_Message := *TRIM(p_Message)
+      EXAMINE p_Message FOR '?' POSITION #i
+      IF #i = 0
+        PRINT NOTITLE ' Error to recreate report' / p_Message
+        p_RC := 3
+        ESCAPE ROUTINE
+      END-IF
+      l_1 := SUBSTR(p_Message,1,#i)
+      #i := #i + 1
+      l_2 := SUBSTR(p_Message,#i)
+      INPUT (AD=OL IP=OFF)
+        1/1   l_1
+        2/1   l_2
+        5/5  'IntelliScript image is available only 15 sec'
+        7/5  'Hit magic keys'(I) 'ctrl-PF4'(U) 'to view report'(I)
+        8/5  'or'(I) 'ENTER'(U) 'to continue'(I)
+    END-IF
+  NONE IGNORE
+END-DECIDE
+
+END-SUBROUTINE
+END

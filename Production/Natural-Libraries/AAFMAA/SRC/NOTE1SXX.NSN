@@ -1,0 +1,157 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram AXXX2SCN.
+/**
+/** :author nguentchev
+/* TODO: Enter your code here
+define data
+parameter
+1 #Contact-ID       (N8)
+1 #PAGE-NBR         (I4)
+1 #PAGE-DATA
+  2 #PAGE            (N2)
+  2 #TOT-PAGES       (N2)
+  2 #NOTE-TEXT       (A60/1:V)
+  2 #NOTE-DATES      (A10/1:V)
+  2 #NOTE-CO         (A1/1:V)
+  2 #NOTE-CLERK      (A3/1:V)
+1 #ISN-LIST
+  2 #ISN-NBR         (I4)
+  2 #NOTE-ISN        (P8/99)
+  2 #NOTE-PAGE       (I2/99)
+  2 #NOTE-PAGE-OVL   (I2/99)
+  2 #NOTE-LINE       (I2/99)
+LOCAL
+1 BLANK            (A1) CONST <' '>
+1 #60              (I2) CONST <60>
+1 #18              (I2) CONST <18>
+/*        Notes screen map
+1 #L               (I2)
+1 #X               (I2)
+1 #NTEXT           (A) DYNAMIC
+
+1 #MIS             (I4)   /* Number of messages on screen
+1 #Browse          (I4)   /* Browse pointer
+1 #LINE-NBR        (I4)   /* Last line on the screen
+
+1 #CUR-ISN         (P8)
+1 #j               (I4)
+1 #NOTE-TIME       (A7) 1 REDEFINE #NOTE-TIME
+  2 #NOTE-TIME-N   (N7)
+1 #NOTE-DATE       (A8) 1 REDEFINE #NOTE-DATE
+  2 #NOTE-DATE-N   (N8)
+1 #Sample-note     (A78) CONST
+  <'This is sample note. Please type over the real note text...'>
+
+1 CountNotes view of A-CONTACT-NOTES
+  2 C*NOTE-TEXT
+
+1 BrowseNotes view of A-CONTACT-NOTES
+  2 USER-COMPANY   (A1)
+  2 USER-ID        (A3)
+  2 CONTACT-ID     (N8) /* D
+  2 NOTE-TIME      (N7)
+  2 NOTE-DATE      (N8) 2 REDEFINE NOTE-DATE
+    3 NOTE-DATE-A  (A8)
+  2 C*NOTE-TEXT
+  2 NOTE-TEXT      (A78/99) 2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-S  (99)
+      4 NOTE-LINE   (A60)
+      4 NOTE-FUTURE (A18)
+1 #D  (D)
+END-DEFINE
+
+IF #PAGE-NBR <= 0
+  RESET #ISN-LIST
+  FIND CountNotes WITH CONTACT-ID = #Contact-ID
+      SORTED BY NOTE-DATE-TIME DESCENDING
+    ADD 1 TO #ISN-NBR
+    assign #NOTE-ISN ( #ISN-NBR ) = *ISN
+  END-FIND
+  IF #ISN-NBR = 0
+    ESCAPE ROUTINE
+  END-IF
+  #PAGE-NBR := 1
+  #Browse   := 1
+ELSE
+  FOR #Browse 1 TO 99
+    IF #NOTE-PAGE-OVL ( #Browse ) = #PAGE-NBR   /* Overflow match
+        OR #NOTE-PAGE ( #Browse ) = 0           /* First time F8
+        OR #NOTE-PAGE ( #Browse ) = #PAGE-NBR   /* No overflow match
+      escape BOTTOM
+    END-IF
+  END-FOR
+  IF #NOTE-ISN ( #Browse ) = 0
+    ASSIGN #PAGE-NBR = #PAGE
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+
+RESET #PAGE-DATA
+#LINE-NBR := 1
+
+REPEAT
+  IF #NOTE-PAGE ( #Browse ) = 0         /* NOTE OVERFLOW
+    #NOTE-PAGE ( #Browse ) := #PAGE-NBR
+  END-IF
+  #NOTE-LINE ( #Browse ) := #LINE-NBR
+  get BrowseNotes #NOTE-ISN ( #Browse )
+  MOVE EDITED BrowseNotes.NOTE-DATE-A  TO #D (EM=YYYYMMDD)
+  MOVE EDITED #D (EM=MM/DD/YYYY) TO #NOTE-DATES (#LINE-NBR)
+  #NOTE-CO     (#LINE-NBR) := BrowseNotes.USER-COMPANY
+  #NOTE-CLERK  (#LINE-NBR) := BrowseNotes.USER-ID
+
+  FOR #X 1 TO BrowseNotes.C*NOTE-TEXT
+    #NOTE-TEXT ( #LINE-NBR ) := BrowseNotes.NOTE-LINE (#X)
+    ADD 1 TO #LINE-NBR
+    IF #LINE-NBR > #18
+      IF #X < BrowseNotes.C*NOTE-TEXT
+        #NOTE-PAGE-OVL ( #Browse ) := #PAGE-NBR + 1
+      END-IF
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+
+  ADD 1 TO #Browse
+  until #NOTE-ISN ( #Browse ) = 0
+    OR #LINE-NBR > #18
+END-REPEAT
+
+ASSIGN #PAGE = #PAGE-NBR
+IF #TOT-PAGES <= #PAGE
+  IF #LINE-NBR > #18
+    #TOT-PAGES := #PAGE + 1
+  ELSE
+    #TOT-PAGES := #PAGE
+  END-IF
+END-IF
+
+DEFINE REFORMAT
+/*     --------
+#NTEXT := BrowseNotes.NOTE-TEXT (1)
+FOR #J 2 TO BrowseNotes.C*NOTE-TEXT
+  COMPRESS #NTEXT BrowseNotes.NOTE-TEXT ( #J ) INTO #NTEXT
+    LEAVING NO
+END-FOR
+
+#L := *LENGTH ( #NTEXT )
+#X := 1
+REPEAT UNTIL #L <= 0
+  IF #LINE-NBR > #18
+    #NOTE-PAGE-OVL ( #Browse ) := #PAGE-NBR + 1
+    ESCAPE BOTTOM
+  END-IF
+  IF #L > #60
+    MOVE SUBSTR ( #NTEXT,#X,#60) TO #NOTE-TEXT ( #LINE-NBR )
+  ELSE
+    MOVE SUBSTR ( #NTEXT,#X,#L) TO #NOTE-TEXT ( #LINE-NBR )
+  END-IF
+  SUBTRACT #60 FROM #L
+  ADD #60 TO #X
+  ADD 1 TO #LINE-NBR
+END-REPEAT
+END-SUBROUTINE
+END

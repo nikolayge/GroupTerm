@@ -1,0 +1,382 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: G1200PPF  ** PDF processing **
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* DRW    01252005  DW1     add Cap Options Info   (COP)                *
+* DRW    02242005  DW2     add Blank PDF Option   (BLK)                *
+* DRW    03032005  PM3     changed (COP) to (CAP) - adjusted dates     *
+* TDM    06222005  TM1     ADDED CALL TO PROCESS AFSC PDF FORMS        *
+* DRW    09192007  DW2     Reset Invalid Characters for PDF to '*'
+* DRW    10102007  DW3     Remove PDF Processing for ANN STMT
+* TMT    10072013  TT1     ADDRESS NORMALIZATION                       *
+* bz     30-11-2015  bz OI-4051 Remove Beneficiary forms
+* vxt    04/13/2016 vt1    Add a mec flag
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX        /* WORK FIELDS FOR 'GONERCXX'
+LOCAL
+*
+1 #PDF-chars-100    (a100)                      /* DW2
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 NAME                      /* TT1 REMOVED ADDRESS INFORMATION FROM A-STATUS VIEW
+  2 SSN
+  2 ALOT-AMT
+  2 RANK
+  2 X-LOAN-AMOUNT (9)
+  2 X-ALT-LP-IND  (9)
+  2 X-ALT-LP-AMT  (9)
+  2 CONV-DURATION (9)
+  2 FACE-AMOUNT   (9)
+  2 ANNUAL-PREM   (9)
+  2 mec-ind       (9)               /* vt1
+  2 status        (9)               /* vt1
+*
+1 #FILL-BLNKS (A78/24)
+1 #AS-OF-DATE   (A10)
+1 #YYYYMMDD     (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY    (N4)
+  2 #MM      (N2)
+  2 #DD      (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A  (A4)
+  2 #MM-A    (A2)
+  2 #DD-A    (A2)
+*
+1 #NAME      (A25)   /* DW1
+1 #LAST      (A25)   /* DW1
+1 #FIRST-20  (A20)   /* DW1
+1 #ERR-MSG   (A60)   /* DW1
+1 #MI        (A1)    /* DW1
+*
+1 #SPLIT    (A1)     /* DW1
+1 #STREET   (A25)    /* DW1
+1 #STREET-2 (A25)    /* DW1
+1 #CITY     (A22)    /* DW1
+1 #STATE    (A2)     /* DW1
+1 #ZIP         (N9)  /* DW1
+1 REDEFINE #ZIP
+  2 #ZIP-CODE-5-A  (A5)
+  2 #ZIP-CODE-4-A  (A4)
+1 REDEFINE #ZIP
+  2 #ZIP-CODE-5    (N5)
+  2 #ZIP-CODE-4    (N4)
+1 #ZIP-A       (A10)  /* DW1
+*
+1 #DONE      (L)      /* DW1
+1 #CAP-PAYOFF-DT (N8) /* DW1
+1 #REMAINDER (P5.2)   /* DW1
+1 #DUES      (N3.2)   /* DW1
+1 #PREM-W-DUES  (P5.2) /* DW1
+1 #I1        (I2)
+1 #CAP-X     (I2)    /* DW1
+1 #SUBTYPE    (A1)
+* 1 #USER       (A14)                                             /* PM3
+1 #USER       (A15)                                               /* PM3
+1 #SSN        (A11)
+*
+1 #LOAN-RQST      (A1)
+1 #SETTL          (A1)
+1 #IRS-712        (A1)
+* 1 #ANN-STMT       (A1)     /* DW3
+1 #NC             (A1)
+1 #AT-APPL        (A1)
+1 #INS-CLAIM      (A1)
+1 #CAP-OPTIONS    (A1)
+*
+1 #AMT-12   (A12)
+*
+1 #MONTH-TABLE                                                    /* PM3
+  2 #JAN           (A6) INIT <'01 Jan'>
+  2 #FEB           (A6) INIT <'02 Feb'>
+  2 #MAR           (A6) INIT <'03 Mar'>
+  2 #APR           (A6) INIT <'04 Apr'>
+  2 #MAY           (A6) INIT <'05 May'>
+  2 #JUNE          (A6) INIT <'06 Jun'>
+  2 #JULY          (A6) INIT <'07 Jul'>
+  2 #AUG           (A6) INIT <'08 Aug'>
+  2 #SEPT          (A6) INIT <'09 Sep'>
+  2 #OCT           (A6) INIT <'10 Oct'>
+  2 #NOV           (A6) INIT <'11 Nov'>
+  2 #DEC           (A6) INIT <'12 Dec'>
+*
+1 REDEFINE #MONTH-TABLE                                           /* PM3
+  2 MONTH-OCC      (12)
+    3 #MONTH-NUM    (N2)
+    3 #MONTH-SPACE  (A1)
+    3 #MONTH-LIT    (A3)
+1 #replay       (a1)            /* vt1
+1 #mec          (l)             /* vt1
+1 #i            (i2)            /* vt1
+*
+END-DEFINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+INCLUDE GONERCXX            /* NATURAL ERROR ROUTINE
+*
+DEFINE WINDOW Replay                             /* vt1  \/
+  SIZE 9 * 42
+  BASE 5/14
+  FRAMED ON POSITION SYMBOL AUTO                 /* vt1  /\
+*
+*
+IF #CGA-USER-COMPANY = 'S' OR #CGA-CLERK = 'TDM'             /* TM1
+  FETCH 'G1300PPF'
+END-IF
+*
+GET ST-V #CGA-ISN
+*
+IF NOT #CGA-SCR-SUFFIX = 'LOA' OR = 'SET' OR = 'IRS'
+    OR = 'CER' OR = 'APP' OR = 'INS'                  /* Removed 'ANN'  DW3
+    OR = 'CAP'           /* DW1 DW2 PM3
+  MOVE *DATN TO #YYYYMMDD
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #AS-OF-DATE WITH '/'
+*
+  MOVE '*' TO #CGA-SCR-COMMAND
+  INPUT MARK *#LOAN-RQST USING MAP 'G1200MPF'
+*
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+IF (#LOAN-RQST NE ' ') OR (#CGA-SCR-SUFFIX = 'LOA')
+*                                                          /* vt1  \/
+  reset #mec
+  for #i 1 9
+    if st-v.mec-ind(#i) = 'Y'
+        and st-v.status(#i) = 'D'
+      move true to #mec
+      escape bottom
+    end-if
+  end-for
+  if #mec
+    SET WINDOW 'Replay'
+    REPEAT
+      move '?' to #replay
+      INPUT WINDOW ='Replay' USING MAP 'C2398MCI'
+      if #replay = ' '
+        reinput  'Must Enter (Y)es or (N)o'
+          mark *#replay
+      end-if
+      if #replay = 'Y'
+        escape bottom
+      end-if
+      if #replay = 'N'
+        fetch 'G1200PPF'
+      end-if
+    end-repeat
+    set window off
+  end-if                                                     /* vt1 /\
+*
+  MOVE 'LI' TO #CGA-SCR-COMMAND  /* Will end up in C2460PLI
+  MOVE 'PDF' TO #CGA-SCR-SUFFIX
+  FETCH 'G1000PXX'
+END-IF
+*
+IF (#IRS-712 NE ' ') OR (#CGA-SCR-SUFFIX = 'IRS')
+  MOVE 'RE' TO #CGA-SCR-COMMAND /* Will end up in C232XSRE
+  MOVE 'PDF' TO #CGA-SCR-SUFFIX
+  FETCH 'G1000PXX'
+END-IF
+*
+IF (#NC NE ' ') OR (#CGA-SCR-SUFFIX = 'CER')
+  MOVE 'NC' TO #CGA-SCR-COMMAND  /* Will end up in C2060PNC
+  MOVE 'PDF' TO #CGA-SCR-SUFFIX
+  FETCH 'G1000PXX'
+END-IF
+*
+IF (#AT-APPL NE ' ') OR (#CGA-SCR-SUFFIX = 'APP')
+  MOVE 'AT' TO #CGA-SCR-COMMAND  /* Will end up in C2153SPO
+  MOVE 'PDF' TO #CGA-SCR-SUFFIX
+  FETCH 'G1000PXX'
+END-IF
+*
+IF (#INS-CLAIM NE ' ') OR (#CGA-SCR-SUFFIX = 'INS')
+  MOVE 'BP' TO #CGA-SCR-COMMAND  /* Will end up in C2330SCI
+  MOVE 'PDF' TO #CGA-SCR-SUFFIX
+  FETCH 'G1000PXX'   
+END-IF
+*
+IF (#CAP-OPTIONS NE ' ') OR (#CGA-SCR-SUFFIX = 'CAP')   /* DW1 PM3
+  PERFORM CAP-OPTIONS
+END-IF
+*
+MOVE 'PF' TO #CGA-SCR-COMMAND
+RESET        #CGA-SCR-SUFFIX
+FETCH 'G1000PXX'
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE CAP-OPTIONS     /* DW1
+* * * * * * * * * * * * * *
+*
+FOR #I1 1 TO 9
+  IF   (CONV-DURATION (#I1) = 999)
+      AND (X-LOAN-AMOUNT (#I1) NE 0)
+    MOVE #I1 TO #CAP-X
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF  (#I1 GT 9)
+    OR (ALOT-AMT = 0)
+    OR (NOT X-ALT-LP-IND (#CAP-X) = '2' OR = '6')
+    OR (X-ALT-LP-AMT (#CAP-X) = 0)
+  WRITE 'No elibible CAP Policy with a loan exists'
+  ESCAPE ROUTINE
+END-IF
+*
+CALLNAT 'GDUESSXX' ST-V.ID-NUMBER #CAP-X #DUES
+*
+MOVE ST-V.NAME TO #NAME
+RESET #LAST #MI #FIRST-20
+CALLNAT 'GFMLNSXX' /* split name
+  #NAME
+  #FIRST-20
+  #MI
+  #LAST
+  #ERR-MSG
+COMPRESS RANK #FIRST-20 #MI #LAST INTO #NAME
+*
+* SEPARATE CITY/STATE                                   /*TT1 BEGIN
+* MOVE 'S' TO #SPLIT
+* RESET #STREET #STREET-2 #CITY #STATE
+* CALLNAT 'GCTSTSXX'  /* SPLIT CITY/STATE
+*  #SPLIT
+*  ADDRESS-1
+*  ADDRESS-2
+*  ADDRESS-3
+*  #STREET
+*  #STREET-2
+*  #CITY
+*  #STATE
+*  #ERR-MSG
+*
+* MOVE ZIP-CODE TO #ZIP
+* COMPRESS #ZIP-CODE-5-A '-' #ZIP-CODE-4-A
+*    INTO #ZIP-A LEAVING NO                             /*TT1 END
+*
+RESET #DONE
+MOVE *DATN TO #YYYYMMDD
+MOVE X-LOAN-AMOUNT (#CAP-X) TO #REMAINDER
+REPEAT UNTIL #DONE
+  ADD +1 TO #MM
+*
+  IF #MM GT 12
+    SUBTRACT 12 FROM #MM
+    ADD 1 TO #YYYY
+  END-IF
+*
+  COMPUTE #REMAINDER = #REMAINDER - (X-ALT-LP-AMT (#CAP-X) -
+    (#REMAINDER * .00125))  /* (1.5 % / 12 = .00125)
+  IF #REMAINDER LE 0
+    MOVE TRUE TO #DONE
+  END-IF
+END-REPEAT
+MOVE #YYYYMMDD TO #CAP-PAYOFF-DT
+*
+MOVE EDITED SSN (EM=999-99-9999) TO #SSN
+MOVE *DATN TO #YYYYMMDD
+PERFORM LOAD-MONTH-LITERAL                                        /* PM3
+COMPRESS #DD-A #MONTH-LIT (#I1) #YYYY-A INTO #USER WITH '-'
+* COMPRESS #MM-A #DD-A #YYYY-A INTO #USER WITH '/'
+COMPRESS #CGA-CLERK #USER INTO #USER
+MOVE '%FDF-1.2' TO #FILL-BLNKS (1)
+MOVE '1 0 obj << /FDF << /Fields [' TO #FILL-BLNKS (2)
+COMPRESS #FILL-BLNKS (2) ' <</T(ID)/V(' #USER ')>>'
+  INTO #FILL-BLNKS (2) LEAVING NO
+*
+COMPRESS '<</T(CN)/V(' ST-V.ID-NUMBER ')>>'
+  '<</T(NAME)/V(' #NAME ')>>'
+  INTO #FILL-BLNKS (3) LEAVING NO
+*
+move #street to #pdf-chars-100                             /* DW2
+callnat 'GPDFRSXX' #pdf-chars-100
+move #pdf-chars-100 to #street
+move #street-2 to #pdf-chars-100                           /* DW2
+callnat 'GPDFRSXX' #pdf-chars-100
+move #pdf-chars-100 to #street-2
+*
+COMPRESS '<</T(STREET)/V(' #STREET ')>>'
+  '<</T(STREET-2)/V(' #STREET-2 ')>>'
+  INTO #FILL-BLNKS (4) LEAVING NO
+*
+move #city to #pdf-chars-100                             /* DW2
+callnat 'GPDFRSXX' #pdf-chars-100
+move #pdf-chars-100 to #city
+*
+COMPRESS '<</T(CITY)/V(' #CITY ')>>'
+  '<</T(STATE)/V(' #STATE ')>>'
+  '<</T(ZIP)/V(' #ZIP-A ')>>'
+  INTO #FILL-BLNKS (5) LEAVING NO
+*
+MOVE EDITED FACE-AMOUNT (#CAP-X) (EM=ZZZ,ZZZ) TO #AMT-12
+MOVE LEFT #AMT-12 TO #AMT-12
+COMPRESS '$'#AMT-12 INTO #AMT-12 LEAVING NO
+COMPRESS '<</T(FACE-AMT)/V(' #AMT-12 ')>>'
+  INTO #FILL-BLNKS (6) LEAVING NO
+*
+MOVE EDITED X-LOAN-AMOUNT (#CAP-X) (EM=ZZ,ZZZ.99) TO #AMT-12
+MOVE LEFT #AMT-12 TO #AMT-12
+COMPRESS '$'#AMT-12 INTO #AMT-12 LEAVING NO
+COMPRESS #FILL-BLNKS (6) '<</T(LOAN-AMT)/V(' #AMT-12 ')>>'
+  INTO #FILL-BLNKS (6) LEAVING NO
+*
+MOVE #CAP-PAYOFF-DT TO #YYYYMMDD
+PERFORM LOAD-MONTH-LITERAL                                        /* PM3
+COMPRESS '<</T(FIN-LN-DT)/V(01-' #MONTH-LIT (#I1) '-' #YYYY-A ')>>'
+* COMPRESS '<</T(FIN-LN-DT)/V(' #MM-A '/01/' #YYYY-A ')>>'
+  INTO #FILL-BLNKS (7) LEAVING NO
+*
+ADD 1 TO #MM
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+PERFORM LOAD-MONTH-LITERAL                                        /* PM3
+COMPRESS #FILL-BLNKS (7)
+  '<</T(FST-ADJ-DT)/V(01-' #MONTH-LIT (#I1) '-' #YYYY-A ')>>' /* PM3
+* COMPRESS #FILL-BLNKS (7)
+*       '<</T(FST-ADJ-DT)/V(' #MM-A '/01/' #YYYY-A ')>>'
+  INTO #FILL-BLNKS (7) LEAVING NO
+*
+COMPUTE #PREM-W-DUES = (ANNUAL-PREM (#CAP-X) / 12) + #DUES
+MOVE EDITED #PREM-W-DUES (EM=ZZ,ZZZ.99) TO #AMT-12
+MOVE LEFT #AMT-12 TO #AMT-12
+COMPRESS '$'#AMT-12 INTO #AMT-12 LEAVING NO
+COMPRESS '<</T(NEW-ALOT)/V(' #AMT-12 ')>>'
+  INTO #FILL-BLNKS (8) LEAVING NO
+*
+MOVE *DATN TO #YYYYMMDD                                           /* PM3
+PERFORM LOAD-MONTH-LITERAL                                        /* PM3
+COMPRESS '<</T(DATE)/V(' #DD-A '-' #MONTH-LIT (#I1) '-' #YYYY-A   /* PM3
+  ')>>' INTO #FILL-BLNKS (9) LEAVING NO                         /* PM3
+*
+MOVE '] /F (F:\CAPOPTIONS.PDF)>> >>'  TO #FILL-BLNKS (10)
+MOVE 'endobj'                         TO #FILL-BLNKS (11)
+MOVE'trailer <</Root 1 0 R >> %%EOF'  TO #FILL-BLNKS  (12)
+INPUT USING MAP 'GPDFXMXX'
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE LOAD-MONTH-LITERAL
+* * * * * * * * * * * * * * * * * * *
+*
+FOR #I1 1 TO 12
+  IF #MONTH-NUM (#I1) = #MM
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+END

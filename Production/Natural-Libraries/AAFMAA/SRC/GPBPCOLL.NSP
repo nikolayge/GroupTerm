@@ -1,0 +1,228 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+********************************************************************
+* NAME         : GPBPCOLL                                         *
+* AUTHOR       : Copyright: Metrostarsystems              *
+* DESCRIPTION  : CAP default  Processing jobs Main Menu             *
+********************************************************************
+*
+********************************************************************
+*                       MODIFICATION LOG                           *
+* USER   DATE      TAG     REASON                                  *
+* VXT   10022012  None  Program Written                            *
+********************************************************************
+*
+DEFINE DATA
+
+LOCAL USING OBJAGENT
+LOCAL USING OBJAUSER
+*
+LOCAL
+*
+1 #I                    (N2)
+1 #I1                   (I2)
+1 #I2                   (I2)
+1 #N                    (N2)
+1 #POS                  (I4)
+1 #FULL-ACCESS          (L)
+1 #ADMIN-ACCESS         (L)
+1 #COMMAND              (A78)
+1 #MESSAGE              (A60)
+1 #INIT-CMD             (A50)
+  INIT <'/usr/SAG/cronus/.scripts/COLLECT.bsh'>
+1 #TEXT                 (A78)
+1 #PROCESS-TO-RUN       (A1/2)
+1 #JOB-TYPE             (A50/2) INIT <
+  'Send notifications from IAS',
+  'Write off the Loans'>
+1 #LAST-RUN-DATE        (N8)
+1 #RUN-DATE             (N8)
+1 REDEFINE #RUN-DATE
+  2 #RUN-DATE-A         (A8)
+1 #RUN-MONTH-CV         (C)
+1 #RUN-MONTH            (A10)
+1 #CURRENT-DATE         (N8)
+*
+1 #FUNCTION-ATTRIBUTES  (A68)
+1 REDEFINE #FUNCTION-ATTRIBUTES
+  2 #PROGRAM            (A8)
+  2 #SEPARATOR          (A1)
+  2 #FUNCTION-PARM      (A7)
+  2 #HEADER-1           (A50)
+  2 #SECURITY-CODE      (N2)
+*
+1 #submit      (a1)
+END-DEFINE
+*
+DEFINE WINDOW CONFIRMATION-WINDOW
+  SIZE 9*64
+  BASE 14/9
+  TITLE 'Confirmation'
+  FRAMED ON
+DEFINE WINDOW E-MAIL-WINDOW
+  SIZE 8*53
+  BASE 5/15
+  TITLE 'E-mail Notification'
+  FRAMED ON
+*
+IF *DATA NE 0
+  INPUT #FUNCTION-ATTRIBUTES
+END-IF
+*
+RESET #ADMIN-ACCESS #FULL-ACCESS
+IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A'
+  #ADMIN-ACCESS := #FULL-ACCESS := TRUE
+ELSE
+  IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'U'
+    #FULL-ACCESS := TRUE
+  END-IF
+END-IF
+*
+IF NOT #FULL-ACCESS
+  #TEXT := 'User not authorized to perform this function. Browse access only'
+END-IF
+*
+SET KEY PF3  NAMED 'Retrn'
+SET KEY PF12 NAMED 'Quit'
+*
+#CURRENT-DATE := *DATN
+#RUN-MONTH-CV := (AD=P)
+REPEAT
+  INPUT TEXT #TEXT MARK *#PROCESS-TO-RUN (1) USING MAP 'GPBMCOLL'
+  RESET #TEXT
+*
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF3'
+      #FUNCTION-PARM := 'PROC '
+      #PROGRAM := 'G1000PUI'
+      STACK TOP DATA #FUNCTION-ATTRIBUTES
+      FETCH #PROGRAM
+    VALUE 'PF12'
+      SET KEY OFF
+      FETCH 'G1000PXX'
+    VALUE 'ENTR'
+      IF NOT #FULL-ACCESS
+        ESCAPE TOP
+      END-IF
+      EXAMINE #PROCESS-TO-RUN (*) FOR 'X' INDEX #I
+      IF #I = 0
+        #I := (*CURS-LINE - 5) / 3 + 1
+        IF #I > 2 OR #I < 1
+          #TEXT := 'Please, select the correct option'
+          ESCAPE TOP
+        END-IF
+      END-IF
+      RESET #PROCESS-TO-RUN(*)
+*      write 'before confirm-run-job subroutine' '=' #I
+      PERFORM CONFIRM-RUN-JOB
+      ESCAPE TOP
+    NONE
+      IGNORE
+  END-DECIDE
+*
+END-REPEAT
+*
+*********************************
+DEFINE SUBROUTINE CONFIRM-RUN-JOB
+*********************************
+*
+* write '=' #i
+#RUN-MONTH := FUNCTION-CALENDAR(<#CURRENT-DATE,'M'>)
+if #i = 1
+
+  fetch return 'ATHPCNOT'
+else
+*   #N := 1                                     /* check if test run was completed
+*     FUNCTION-BATCH-CAP-RUN-DATE(<#RUN-DATE,'R',#N>)
+*   IF #RUN-DATE = 0
+*     #TEXT := 'Please, send notifications first'
+*     #POS := POS(#PROCESS-TO-RUN(1))
+*     REINPUT FULL WITH TEXT #TEXT MARK #POS
+*   END-IF
+  fetch return 'ATHPCWRT'
+
+end-if
+*
+
+IF #I NE 1                    /* If non-test run requested
+  #N := 1                                     /* check if test run was completed
+    FUNCTION-BATCH-CAP-RUN-DATE(<#RUN-DATE,'R',#N>)
+  IF #RUN-DATE = 0
+    #TEXT := 'Please, send notifications first'
+    #POS := POS(#PROCESS-TO-RUN(1))
+    REINPUT FULL WITH TEXT #TEXT MARK #POS
+  END-IF
+END-IF
+
+
+SET WINDOW 'CONFIRMATION-WINDOW'
+SET KEY PF2 NAMED 'Submt'
+SET KEY PF3=OFF
+COMPRESS ' You are about to ' #JOB-TYPE(#I) INTO #MESSAGE
+INPUT WITH TEXT #MESSAGE USING MAP 'GPBMCC02'
+IF *PF-KEY = 'PF2'
+  DECIDE ON FIRST VALUE #I
+    VALUE 1
+* CC run date - the first day of the next month
+
+      #RUN-DATE-A := FUNCTION-CALENDAR(<#CURRENT-DATE,'N'>)
+        FUNCTION-BATCH-CAP-RUN-DATE(<#RUN-DATE,'W',#I>)
+    VALUE 2
+        FUNCTION-BATCH-CAP-RUN-DATE(<#LAST-RUN-DATE,'R',#I>)
+      IF #LAST-RUN-DATE = #RUN-DATE
+        #TEXT := 'You already ran a FINAL extract for this month'
+        #POS := POS(#RUN-MONTH)
+        REINPUT FULL WITH TEXT #TEXT MARK #POS
+      END-IF
+        FUNCTION-BATCH-CAP-RUN-DATE(<#RUN-DATE,'W',#I>)
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+*
+  /* to get correct ESP job name
+  #i := #i + 4
+*      #init-cmd := '/usr/SAG/cronus/.scripts/COLLECTN.bsh'
+
+*    COMPRESS #INIT-CMD #I '>/dev/null' INTO #COMMAND
+*    CALL 'SHCMD' #COMMAND
+  PERFORM E-MAIL-CONFIRMATION
+  #I := 3                                           /* Position for actual run date
+    FUNCTION-BATCH-CAP-RUN-DATE(<#CURRENT-DATE,'W',#I>)
+
+*
+  RESET #TEXT
+  SET WINDOW OFF
+  SET KEY PF2=OFF
+  SET KEY PF3 NAMED 'Retrn'
+*
+end-if
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE E-MAIL-CONFIRMATION
+*************************************
+*
+IF #I = 5
+  INPUT WINDOW='E-MAIL-WINDOW' WITH TEXT
+    'Your request is being processed'                        /
+    'You will receive an email confirmation when the job   ' /
+    'is completed. If you do not receive a message within   ' /
+    'an acceptable period of time, please contact          ' /
+    'technical support.                                    ' /
+ELSE
+  INPUT WINDOW='E-MAIL-WINDOW' WITH TEXT
+    'Your request is being processed'
+    'Write off transactions are applied to IAS.    ' /
+    'Reports will be available   ' /
+    'for viewing on the next business day. If you have     ' /
+    'any questions, please contact technical support.      ' /
+END-IF
+*
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+END

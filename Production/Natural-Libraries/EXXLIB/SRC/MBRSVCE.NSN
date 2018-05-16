@@ -1,0 +1,298 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* CRM Admin interface : Store Application Data Parse request
+************************************************************************
+* NAME         : MBRSVCE                                               *
+* AUTHOR       : Copyright: MetrostarSystems AAFMAA                    *
+* DESCRIPTION  : Return if contact is eligible for premier service     *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON
+* NGG    20120131      Initial Creation
+*********************************************************
+* <Contact>
+*  <Id>202f34ee-048e-e011-b18b-00155d321e00</Id>
+*  <ErrorCode>0</ErrorCode>
+*  <ErrorDescription></ErrorDescription>
+* </Contact>
+*
+* Status   Code                        Message
+* Applicant  A You cannot apply for Premier Services. You have an existing Premier Services application on file.
+* Owner      O Not eligible for Premier Services: You are not a member.
+* Spouse     S Not eligible for Premier Services: You are not a member.
+* Child      K Not eligible for Premier Services: You are not a member.
+* Grandchild G Not eligible for Premier Services: You are not a member.
+* Employee   E Not eligible for Premier Services: You are not a member.
+* Member     M Not eligible for Premier Services: You do not have an Active Policy.
+* Contact    C Not eligible. You don't have AAFMAA contract.
+*
+* Additional     code                   Message
+* Grandfathered    G As a grandafthered person you have the services provided in Premier Services.
+*                    You do not need to apply for Premier Services.
+* De-Grandfathered D Not eligible for Premier Services: You do not have an Active Policy.
+* Opt-Out          O Not eligible for Premier Services: You do not have an Active Policy.
+* None             N Not eligible for Premier Services: You are not a member and do not have Active Policy.
+* Insurance-Plus   I Not eligible for Premier Services: You do not have an Active Policy.
+*
+* PSM code Message
+* Premier service  A You cannot apply for Premier Services. You have an existing Premier Services.
+*
+DEFINE DATA
+PARAMETER
+1 XML_PARSER_INPUT             (A) DYNAMIC BY VALUE
+1 XML_SERIALZE_OUTPUT          (A) DYNAMIC        /* Out
+*
+LOCAL
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I4)
+LOCAL USING PARSER-X           /* parser internal data - do not change
+LOCAL USING MBRSVCAC           /* Service Eligible structure
+LOCAL USING OBJAMB01           /* SERVICE MEMBER structure
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 #MSG                         (A) DYNAMIC
+1 #ERROR-CODE                  (A2)
+1 #ERROR-DESCRIPTION           (A) DYNAMIC
+1 #NUMBER-MEMBERSHIPS (P1)
+1 #STATUS-CD          (A1)
+1 #SVC-CD             (A1)
+1 #SVC-STATUS         (A1)
+1 #len              (I4)
+1 #Timeout          (A2) CONST <'-2'>
+1 #Natural-error    (A2) CONST <'-3'>
+1 #Parse-error      (A2) CONST <'-7'>
+1 #DEL              (A1) CONST <':'>
+1 #ERROR-LOG        (I4) CONST <3>
+1 BLANK             (A1)  CONST <' '>
+1 #YOU-HAVE         (A) DYNAMIC CONST
+<'You cannot apply for Premier Services. You have an existing Premier Services application on file.'>
+1 #NOT-ELIGIBLE1    (A) DYNAMIC CONST
+  <'Not eligible for Premier Services: You are not a member.'>
+1 #NOT-ELIGIBLE2    (A) DYNAMIC CONST
+<'Not eligible for Premier Services: You do not have an Active Policy.'>
+1 #NONE             (A) DYNAMIC CONST
+<'Not eligible for Premier Services: You are not a member and do not have Active Policy.'>
+1 #Grandfathered    (A) DYNAMIC CONST
+<'As a grandfathered person you have the services provided in Premier Services. You do not need to apply for Premier Services.'>
+1 #DECEASED         (A) DYNAMIC CONST
+  <'Member is deceased'>
+*
+1 #CX               (I4)
+1 #SSN   (A11) 1 redefine #SSN
+  2 #F3     (A3)
+  2 #dash1  (a1)
+  2 #M2     (A2)
+  2 #dash2  (A1)
+  2 #L4     (A4)
+1 cnt-v view of a-contacts
+  2 contact-id
+END-DEFINE
+*
+ASSIGN #LEN := *LENGTH (XML_PARSER_INPUT)
+IF #LEN <= 0
+  #ERROR-CODE := #Parse-error
+  #ERROR-DESCRIPTION := 'Empty search data XML'
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-IF
+RESET #SVC-MEMBER
+*
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+DEFINE SUBROUTINE PARSER_ERROR
+/*                ============
+#ERROR-CODE := #Parse-error
+#ERROR-DESCRIPTION := XML_PARSER_ERROR_TEXT
+PERFORM FORMAT-ERROR
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE CALLBACK
+/*                ========
+IF XML_PARSER_CONTENT_IS_EMPTY THEN
+  IGNORE
+ELSE
+  XML_PARSER_CONTENT := *TRIM (XML_PARSER_CONTENT)
+  MOVE *TRANSLATE(XML_PARSER_CONTENT, UPPER) TO XML_PARSER_CONTENT
+  PERFORM PARSE-DOCUMENT
+END-IF
+END-SUBROUTINE
+*
+if CONTACT.ContactID = 0
+  find (1) cnt-v with ssn = CONTACT.GovtID
+    CONTACT.ContactID := cnt-v.contact-id
+  end-find
+end-if
+IF ContactID > 0
+  CALLNAT 'MEMSTUS'
+    ContactID
+    #STATUS-CD
+    #SVC-CD
+    #NUMBER-MEMBERSHIPS
+    #SVC-STATUS
+  DECIDE FOR FIRST CONDITION
+    WHEN #SVC-STATUS = '0'
+      #ERROR-CODE := '5'
+      #ERROR-DESCRIPTION := #DECEASED
+    WHEN #SVC-STATUS = 'A'
+      #ERROR-CODE := '2'
+      #ERROR-DESCRIPTION := #YOU-HAVE
+    WHEN #STATUS-CD = 'O' OR= 'S' OR= 'C' OR= 'G' OR= 'E'
+      #ERROR-CODE := '3'
+      #ERROR-DESCRIPTION := #NOT-ELIGIBLE1
+    WHEN #SVC-CD = 'G'
+      #ERROR-CODE := '7'
+      #ERROR-DESCRIPTION := #Grandfathered
+    WHEN #STATUS-CD = 'M' AND #NUMBER-MEMBERSHIPS <= 0
+      #ERROR-CODE := '4'
+      #ERROR-DESCRIPTION := #NOT-ELIGIBLE2
+*    WHEN #SVC-CD = 'D' OR= 'O' OR= 'I'
+*      #ERROR-CODE := '5'
+*      #ERROR-DESCRIPTION := #NOT-ELIGIBLE2
+*    WHEN #SVC-CD = 'N'
+*      #ERROR-CODE := '6'
+*      #ERROR-DESCRIPTION := #NONE
+    WHEN NONE
+      #ERROR-CODE := '0'
+      RESET #ERROR-DESCRIPTION
+  END-DECIDE
+ELSE
+  #ERROR-CODE := '1'
+  #ERROR-DESCRIPTION := 'Not a member'
+END-IF
+PERFORM FORMAT-ERROR
+*
+* ------------------------------------------------- CALL THE PARSER
+DEFINE PARSE-DOCUMENT
+/*     ==============
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'Contact//'
+    IGNORE
+  VALUE 'Contact'
+    RESET INITIAL Contact
+  VALUE 'Contact/Id//'
+    IGNORE
+  VALUE 'Contact/Id'
+    IGNORE
+  VALUE 'Contact/Id/$'
+    Contact.Id := XML_PARSER_CONTENT
+  VALUE 'Contact/DateOfBirth//'
+    IGNORE
+  VALUE 'Contact/DateOfBirth'
+    IGNORE
+  VALUE 'Contact/DateOfBirth/$'
+    Contact.DateOfBirth := VAL(XML_PARSER_CONTENT)
+  VALUE 'Contact/FirstName//'
+    IGNORE
+  VALUE 'Contact/FirstName'
+    IGNORE
+  VALUE 'Contact/FirstName/$'
+    Contact.FirstName := XML_PARSER_CONTENT
+  VALUE 'Contact/MiddleName//'
+    IGNORE
+  VALUE 'Contact/MiddleName'
+    IGNORE
+  VALUE 'Contact/MiddleName/$'
+    Contact.MiddleName := XML_PARSER_CONTENT
+  VALUE 'Contact/LastName//'
+    IGNORE
+  VALUE 'Contact/LastName'
+    IGNORE
+  VALUE 'Contact/LastName/$'
+    Contact.LastName := XML_PARSER_CONTENT
+  VALUE 'Contact/GovtID//'
+    IGNORE
+  VALUE 'Contact/GovtID'
+    IGNORE
+  VALUE 'Contact/GovtID/$'
+    if *length(XML_PARSER_CONTENT) > 0
+      #SSN := XML_PARSER_CONTENT
+      if #dash1 = '-'
+        compress #F3 #M2 #L4 into XML_PARSER_CONTENT leaving no
+      end-if
+      Contact.GovtID := VAL(XML_PARSER_CONTENT)
+    end-if
+  VALUE 'Contact/Gender//'
+    IGNORE
+  VALUE 'Contact/Gender'
+    IGNORE
+  VALUE 'Contact/Gender/$'
+    Contact.Gender := XML_PARSER_CONTENT
+  VALUE 'Contact/ContactType//'
+    IGNORE
+  VALUE 'Contact/ContactType'
+    IGNORE
+  VALUE 'Contact/ContactType/$'
+    Contact.ContactType := XML_PARSER_CONTENT
+  VALUE 'Contact/CN//'
+    IGNORE
+  VALUE 'Contact/CN'
+    IGNORE
+  VALUE 'Contact/CN/$'
+    IF XML_PARSER_CONTENT NE BLANK
+      EXAMINE XML_PARSER_CONTENT FOR 'P' REPLACE BLANK
+      Contact.CN := VAL(XML_PARSER_CONTENT)
+    END-IF
+  VALUE 'Contact/ContactID//'
+    IGNORE
+  VALUE 'Contact/ContactID'
+    IGNORE
+  VALUE 'Contact/ContactID/$'
+    Contact.ContactID := VAL(XML_PARSER_CONTENT)
+  NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+DEFINE FORMAT-ERROR
+/*     ============
+COMPRESS '<?xml version="1.0" encoding="' *CODEPAGE '"?>'
+  INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<Contact'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<Id'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC XML_SERIALZE_OUTPUT
+  CONTACT.Id
+  '</Id>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ErrorCode'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC XML_SERIALZE_OUTPUT
+  #ERROR-CODE
+  '</ErrorCode>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ErrorDescription'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC XML_SERIALZE_OUTPUT
+  #ERROR-DESCRIPTION
+  '</ErrorDescription>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '</Contact>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+END-SUBROUTINE
+*
+ON ERROR
+  RESET #ERROR-CODE #MSG
+  CALLNAT 'CRMLOG' #ERROR-CODE #ERROR-DESCRIPTION
+    #ERROR-LOG
+    #MSG
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

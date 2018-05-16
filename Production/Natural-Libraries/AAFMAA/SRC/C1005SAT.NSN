@@ -1,0 +1,233 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C1005SAT    NAME/DOB MATCHING
+*
+************************************************************************
+*     MODIFICATION LOG
+* USER DATE       TAG  REASON
+* RSE  10/01/2009 RE1  Change PROCESS-IND logic for Unification
+* bz   11/19/2009 bz1  Remove Re1. Unification: Identify SAS Only
+* PAM  06/06/2011 PM1  Use real names from contact file
+* PAM  08/15/2011 PM2  added checks to stop table overflow
+************************************************************************
+DEFINE DATA
+PARAMETER
+*
+1 #CGA-SCR-COMMAND  (A2)
+1 #CGA-SCR-ID       (N9)
+1 #CGA-SCR-SUFFIX   (A3)
+1 #LAST-NAME        (A25)        /* PM1
+1 #FIRST-NAME       (A25)        /* PM1
+1 #DOB       (N8)
+1 #ZIP       (N9)
+1 REDEFINE #ZIP
+ 2 #ZIP-5    (N5)
+ 2 #ZIP-4    (N4)
+1 #MEMBER-CN (A6)
+1 REDEFINE #MEMBER-CN
+ 2 #MEMBER-CN-N  (N6)
+*
+LOCAL USING OBJLCONT             /* PM1
+LOCAL USING ADDA0001             /* PM1
+LOCAL
+*
+1 #I1   (I2)
+1 #I2   (I2)
+1 #NAME (A25)
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER
+ 2 AT-STATUS
+ 2 INTRO-FLAG
+ 2 DATE-RECEIVED
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 PROCESS-IND
+ 2 INTRO-FLAG         /*   bz1
+ 2 ISSUE-DATE  (9)
+ 2 STATUS (9)
+*
+1 IM-V VIEW OF A-INTRO-MEMBER
+ 2 ID-NUMBER
+ 2 NAME
+ 2 SSN
+ 2 DATE-OF-BIRTH
+ 2 ZIP-CODE
+ 2 REDEFINE ZIP-CODE
+  3 ZIP-CODE-5   (N5)
+  3 ZIP-CODE-4   (N4)
+*
+1 #TEXT         (A78)
+1 #DOB-A     (A8)
+1 #DUP-CN    (N6/18)
+1 #DUP-NAME  (A25/18)
+1 #DUP-SSN   (N9/18)
+1 #DUP-DATE-A (A8/18)
+1 REDEFINE #DUP-DATE-A
+ 2 #DUP-DATE  (N8/18)
+1 #DUP-AT-CN (A2/18)
+1 #DUP-DOB-A (A8/18)
+1 REDEFINE #DUP-DOB-A
+ 2 #DUP-DOB   (N8/18)
+1 #DUP-ZIP   (N9/18)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY    (A4)
+ 2 #MM      (A2)
+ 2 #DD      (A2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMMDD-A  (A8)
+*
+1 #MMDDYYYY   (N8)
+1 REDEFINE #MMDDYYYY
+ 2 #MM-X    (A2)
+ 2 #DD-X    (A2)
+ 2 #YYYY-X  (A4)
+1 REDEFINE #MMDDYYYY
+ 2 #MMDDYYYY-A  (A8)
+*
+1 #APPL-FOUND   (L) INIT<TRUE>
+1 #STAT-FOUND   (L)
+*
+1 #LAST             (A25)
+1 #FIRST-MID        (A25)
+1 #FIRST            (A25)
+1 #MIDDLE           (A1)
+1 #SUFFIX1          (A25)
+1 #SUFFIX2          (A25)
+1 #SUFFIX3          (A25)
+1 #SUFFIX4          (A25)
+*
+1 #HOLD-LAST         (A25)
+1 #HOLD-FIRST-MID    (A25)
+1 REDEFINE #HOLD-FIRST-MID
+  2 #HOLD-CHARACTER  (A1/25)
+1 #HOLD-FIRST        (A25)
+1 REDEFINE #HOLD-FIRST
+  2 #HOLD-FIRST-CHARACTER (A1/25)
+*
+1 #NAME-ERROR       (L)
+1 #NAME-INDEX       (I2)
+1 #FIRST-INDEX       (I2)
+*
+END-DEFINE
+*
+************************************************************************
+*
+COMPRESS #LAST-NAME ',' INTO #NAME LEAVING NO
+COMPRESS #NAME #FIRST-NAME INTO #NAME
+*
+MOVE #DOB TO #YYYYMMDD
+COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+MOVE #MMDDYYYY-A TO #DOB-A
+*
+READ CT-V BY CT-V.CONTACT-NAME-KEY FROM #LAST-NAME
+  IF CT-V.LAST-NAME NE #LAST-NAME
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF  (CT-V.DATE-OF-BIRTH = #DOB
+   AND CT-V.DATE-OF-BIRTH NE 0)
+  OR  (CT-V.LAST-NAME = #LAST-NAME
+   AND CT-V.FIRST-NAME = #FIRST-NAME)
+    IF #I1 GE 18
+      ESCAPE BOTTOM
+    END-IF
+*
+    RESET #PDA-ADDRESS
+    MOVE CT-V.CONTACT-ID  TO #ADD-CONTACT-ID
+    MOVE 'P' TO #ADD-TYPE
+    CALLNAT 'ADDN0001' #PDA-ADDRESS
+*
+    FIND AT-V WITH AT-V.CONTACT-ID = CT-V.CONTACT-ID
+      ADD 1 TO #I1
+      IF #I1 GT 18                        /* PM2
+        ESCAPE BOTTOM                     /* PM2
+      END-IF                              /* PM2
+      MOVE 'AT'           TO #DUP-AT-CN (#I1)
+      MOVE AT-V.ID-NUMBER TO #DUP-CN (#I1)
+      #DUP-NAME (#I1)     := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME,CT-V.LAST-NAME,CT-V.SUFFIX>)
+      #DUP-SSN  (#I1)     := CT-V.SSN
+      MOVE AT-V.DATE-RECEIVED TO #YYYYMMDD
+      COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+      MOVE #MMDDYYYY-A     TO #DUP-DATE-A  (#I1)
+      MOVE CT-V.DATE-OF-BIRTH TO #YYYYMMDD
+      COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+      MOVE #MMDDYYYY-A     TO #DUP-DOB-A  (#I1)
+      MOVE #ADD-ZIP-CODE   TO #DUP-ZIP (#I1)
+    END-FIND
+*
+    IF CT-V.ID-NUMBER NE 0
+      FIND (1) ST-V WITH ST-V.ID-NUMBER = CT-V.ID-NUMBER
+        IF  ST-V.PROCESS-IND = 'C' OR = 'S'
+         OR ST-V.ID-NUMBER = #MEMBER-CN-N    /* matching cn for at for addl ins
+          ESCAPE BOTTOM
+        END-IF
+*
+        ADD 1 TO #I1
+        IF #I1 GT 18                       /* PM2
+          ESCAPE BOTTOM                    /* PM2
+        END-IF                             /* PM2
+        MOVE 'ST'           TO #DUP-AT-CN (#I1)
+        MOVE CT-V.ID-NUMBER TO #DUP-CN (#I1)
+        #DUP-NAME (#I1)     := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME,CT-V.LAST-NAME,CT-V.SUFFIX>)
+        #DUP-SSN  (#I1)     := CT-V.SSN
+        MOVE ST-V.ISSUE-DATE  (1) TO #YYYYMMDD
+        COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+        MOVE #MMDDYYYY-A    TO #DUP-DATE-A  (#I1)
+        MOVE CT-V.DATE-OF-BIRTH TO #YYYYMMDD
+        COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+        MOVE #MMDDYYYY-A    TO #DUP-DOB-A (#I1)
+        MOVE #ADD-ZIP-CODE  TO #DUP-ZIP  (#I1)
+      END-FIND
+    END-IF
+  END-IF
+END-READ
+*
+READ IM-V BY NAME FROM #LAST-NAME
+  RESET #HOLD-LAST #HOLD-FIRST-MID #SUFFIX1 #SUFFIX2 #SUFFIX3 #SUFFIX4
+        #HOLD-FIRST
+  SEPARATE IM-V.NAME LEFT INTO #HOLD-LAST #HOLD-FIRST-MID
+     #SUFFIX1 #SUFFIX2 #SUFFIX3 #SUFFIX4 WITH DELIMITER ','
+  SEPARATE #HOLD-FIRST-MID LEFT INTO #HOLD-FIRST #SUFFIX1
+     #SUFFIX2 #SUFFIX3 #SUFFIX4 WITH DELIMITER ' '
+  IF #HOLD-LAST NE #LAST
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF  (((IM-V.DATE-OF-BIRTH = #DOB)
+   AND  (IM-V.ZIP-CODE-5 = #ZIP-5)
+   AND  (IM-V.ZIP-CODE-5 NE 0)
+   AND  (IM-V.DATE-OF-BIRTH NE 0))
+  OR   ((#LAST  = #HOLD-LAST)
+   AND  (#FIRST = #HOLD-FIRST)))
+   AND (#I1 LT 18)
+    ADD 1 TO #I1
+    MOVE 'IM'           TO #DUP-AT-CN (#I1)
+    MOVE IM-V.ID-NUMBER TO #DUP-CN (#I1)
+    MOVE IM-V.NAME      TO #DUP-NAME (#I1)
+    MOVE IM-V.SSN       TO #DUP-SSN  (#I1)
+    MOVE IM-V.DATE-OF-BIRTH TO #YYYYMMDD
+    COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+    MOVE #MMDDYYYY-A TO #DUP-DOB-A  (#I1)
+    MOVE IM-V.ZIP-CODE      TO #DUP-ZIP (#I1)
+  END-IF
+END-READ
+*
+IF  (#I1 GT 1)
+ OR (#CGA-SCR-COMMAND = 'UP') AND (#I1 NE 0)
+  INPUT TEXT 'Press ENTER to complete this transaction'
+            USING MAP 'C1005MAT'
+*
+  IF NOT #CGA-SCR-COMMAND = '*' OR = 'UP'
+    END TRANSACTION
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+END

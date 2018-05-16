@@ -1,0 +1,112 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* SERVICES                                                             *
+************************************************************************
+* NAME         : SVCN0004                                              *
+* DESCRIPTION  : Premier Service payments                              *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON
+* NGG    20120215      Initial Creation
+* ************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #ID-NUMBER          (N6)
+1 #TRAN-DATE          (N6)    /* YYYYMM
+1 MODE                (A1/1:V)
+1 PAID-TO-DATE        (N8/1:V)
+1 #MATCH-ID           (P9)
+1 #PS-DUES            (N7.2)
+1 #REQUEST            (A) DYNAMIC
+PARAMETER USING OBJAMB01
+LOCAL USING SVCA0003
+LOCAL
+1 #MSG                (A) DYNAMIC
+1 #PAYMENT-PERIOD     (N2)
+1 #SVC-PAID-TO-DATE   (N8) 1 REDEFINE #SVC-PAID-TO-DATE
+  2 #SVC-PTD-YYYYMM     (N6)
+1 #SVC-BILL-TO-DATE   (N8) 1 REDEFINE #SVC-BILL-TO-DATE
+  2 #SVC-BTD-YYYYMM     (N6)
+1 #INS-PAID-TO-DATE   (N8) 1 REDEFINE #INS-PAID-TO-DATE
+  2 #INS-PTD-YYYYMM     (N6) 
+1 #NEW-BILL-TO-DATE   (N8) 1 REDEFINE #NEW-BILL-TO-DATE
+ 2 #NEW-BILL-YYYYMM   (N6)
+ 2 #NEW-BILL-DD       (N2)
+1 BLANK               (A1) CONST <' '>
+1 #SERVICE            (A) DYNAMIC CONST <'SERVICE'>
+1 #PAYMENT            (A) DYNAMIC CONST <'PAYMENT'>
+1 #GET                (A) DYNAMIC CONST <'GET'>
+1 #UPDATE             (A) DYNAMIC CONST <'UPDATE'>
+*
+END-DEFINE
+*
+DECIDE ON FIRST VALUE *TRIM(#REQUEST)
+  VALUE #SERVICE
+    PERFORM GET-SERVICE
+  VALUE #PAYMENT
+    PERFORM GET-PAYMENT
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+DEFINE GET-SERVICE
+/*     ===========
+RESET #PS-DUES #SVC-MEMBER #MATCH-ID
+#SVC-MEMBER.SVC-PLAN      := 'PSM'
+#SVC-MEMBER.SVC-ID-NUMBER := #ID-NUMBER
+#SVC-MEMBER.SVC-STATUS    := 'A'
+CALLNAT 'OBJNMB01' #GET #MSG #SVC-MEMBER   /* Get member service record
+IF #MSG = BLANK
+  #SVC-PAID-TO-DATE := #SVC-MEMBER.SVC-PAID-TO-DATE
+  #SVC-BILL-TO-DATE := #SVC-MEMBER.SVC-BILL-TO-DATE
+  IF #SVC-MEMBER.SVC-MODE = 'A' OR= 'S' OR= 'Q' OR= 'M'
+      AND #SVC-MEMBER.SVC-PAY-UP NE 'Y'
+      AND #SVC-PTD-YYYYMM LE #TRAN-DATE
+      AND #SVC-BTD-YYYYMM LT #TRAN-DATE
+    FOR #MATCH-ID 1 TO 9
+      #INS-PAID-TO-DATE   := PAID-TO-DATE (#MATCH-ID)
+      IF #SVC-MEMBER.SVC-MODE = MODE (#MATCH-ID)
+         AND #SVC-PTD-YYYYMM = #INS-PTD-YYYYMM 
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+ELSE
+  RESET #SVC-MEMBER
+END-IF
+END-SUBROUTINE
+*
+DEFINE GET-PAYMENT
+/*     ===========
+RESET PARM-SVC
+PARM-SVC.ACTION        := 'GET'
+PARM-SVC.SVC-MEMBER-ID := #SVC-MEMBER.SVC-ID-NUMBER
+PARM-SVC.SVC-PLAN      := 'PSM'
+RESET #SVC-PAID-TO-DATE
+#SVC-PTD-YYYYMM   := #TRAN-DATE
+PARM-SVC.TRANSACTION-DATN := #SVC-PAID-TO-DATE
+CALLNAT 'SVCN0003' PARM-SVC #MSG
+*
+IF #SVC-MEMBER.SVC-MODE NE MODE (#MATCH-ID)
+  #PAYMENT-PERIOD := F-PAY-MONTHS (< MODE (#MATCH-ID) >)
+ELSE
+  #PAYMENT-PERIOD := F-PAY-MONTHS (< #SVC-MEMBER.SVC-MODE >)
+END-IF
+#PS-DUES := PARM-SVC.SVC-ARREARS-FEE + #SVC-MEMBER.SVC-REACTIVATION-FEE
+  + #PAYMENT-PERIOD * #SVC-MEMBER.SVC-MONTHLY-RATE
+*
+* #SVC-MEMBER.SVC-BILL-TO-DATE := PARM-SVC.TRANSACTION-DATN
+#NEW-BILL-YYYYMM               := #TRAN-DATE
+#NEW-BILL-DD                   := 01
+#SVC-MEMBER.SVC-BILL-TO-DATE   := #NEW-BILL-TO-DATE
+CALLNAT 'OBJNMB01' #UPDATE #MSG #SVC-MEMBER   /* Update SVC-BILL-TO-DATE
+*
+END-SUBROUTINE
+*
+END

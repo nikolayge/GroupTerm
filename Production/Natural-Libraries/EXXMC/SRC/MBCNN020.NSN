@@ -1,0 +1,570 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center/Member Profile Summary/Profile Completeness Page
+* Object name - MBCNN020 (No updates, View only)
+***********************************************************************
+*        MODIFICATION LOG
+***********************************************************************
+* USER   DATE      TAG  REASON
+* YAK    10082014  Initial Creation
+* YAK    05222015  YK1 Change rules for calculation profile completeness
+* YAK    01262016  YK2 Changes for MCII FIR
+***********************************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+*
+LOCAL USING OBJAWEBU
+LOCAL USING MBCLN020
+LOCAL USING ADDA0001
+LOCAL USING OBJACONT
+LOCAL USING OBJACTRL
+LOCAL USING OBJAMINF
+LOCAL USING FASAINVN
+LOCAL USING MBCA0008
+LOCAL
+1 #EXT-LIFE-POLICIES (A) DYNAMIC CONST<'ExternalLifeInsurance'>
+1 #BENEFITS-SS       (A) DYNAMIC CONST<'BenefitsSS'>
+1 #BENEFITS-VA       (A) DYNAMIC CONST<'BenefitsVA'>
+1 #BENEFITS-MILITARY (A) DYNAMIC CONST<'BenefitsMilitary'>
+1 #BENEFITS-OTHER    (A) DYNAMIC CONST<'BenefitsOther'>
+1 #true              (A) DYNAMIC CONST<'true'>
+1 #false             (A) DYNAMIC CONST<'false'>
+1 #Primary           (A) DYNAMIC CONST<'P'>
+1 #UNDELIVERABLE     (A) DYNAMIC CONST<'(Undeliverable)'>
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 #ErrorCode   (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value       (A) DYNAMIC
+1 #XML         (A) DYNAMIC
+1 #I           (I2)
+1 #CC          (N5)
+1 #PersonalCS  (N3)
+1 #BenefitsCS  (N3)
+1 #YES         (A1) CONST <'Y'>
+1 #NO          (A1) CONST <'N'>
+1 #ACTIVE      (A1) CONST <'A'>
+1 #RETIRED     (A1) CONST <'R'>
+1 #CIVILIAN    (A1) CONST <'C'>            /* YK2
+1 #ContactId   (N8)                
+1 #SpouseContactId (N8)                    /* YK2 
+1 #GET-BY-CN   (A) DYNAMIC CONST <'GET-BY-CN'>
+1 #GET         (A) DYNAMIC CONST <'GET'>
+1 #GET-FAMILY   (A) DYNAMIC CONST <'GET-FAMILY'>
+1 #FAMILY-MEMBERS (*)
+  2 CONTACT-ID (N8)
+  2 ROLE-CODE  (A1)
+1 #GUARD-RESERVE  (A3/14) CONST <'AG','AR','FG','FR','MR','NR','CGR','FRA','AGA','FGA','ARA','NRA','MRA','CGA'>
+1 #NOT-ON-FILE (A) DYNAMIC CONST <'Not on file'>
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberProfileSummary/UserName/$'
+    MemberProfileSummary.UserName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberProfileSummary/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    if #value is (N6)
+      MemberProfileSummary.CN := val(#value)
+    end-if
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+* Business Logic
+PERFORM MEMBER-PROFILE-SUMMARY
+PERFORM EXTERNAL-POLICIES-SUMMARY
+PERFORM SS-BENEFIT-SUMMARY
+PERFORM VA-BENEFIT-SUMMARY
+PERFORM OTHER-BENEFITS-SUMMARY
+PERFORM MILITARY-BENEFITS-SUMMARY
+PERFORM FINANCIAL-PROFILE-SUMMARY
+* YK2 >
+* Logic to get Widow contact information - if possible
+IF #SpouseContactId <> 0
+  PERFORM GET-WIDOW-CONTACT-INFO
+END-IF
+* < YK2
+PERFORM CREATE-RESPONSE
+*
+****************************************
+DEFINE SUBROUTINE MEMBER-PROFILE-SUMMARY
+****************************************
+*
+PERFORM MEMBER-ACCOUNT-INFO
+* Get Profile Completeness
+PERFORM MILITARY-INFO
+PERFORM FAMILY-MEMBERS
+PERFORM MAILING-ADDRESS
+PERFORM PHONE-EMAIL-ADDRESS
+COMPRESS #PersonalCS '%' INTO MemberProfileSummary.PersonalInformationComplete LEAVING NO
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE MEMBER-ACCOUNT-INFO
+*************************************
+*
+RESET PARM-WEB-ACCOUNT-INFO #CC
+PARM-WEB-ACCOUNT-INFO.MEMBER-CN := MemberProfileSummary.CN
+PARM-WEB-ACCOUNT-INFO.#ACTION   := #GET
+CALLNAT 'OBJNWEBU' PARM-WEB-ACCOUNT-INFO
+IF PARM-WEB-ACCOUNT-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-WEB-ACCOUNT-INFO.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+*
+IF PARM-WEB-ACCOUNT-INFO.DAL-ACCESS-DATE <> 0
+  MemberProfileSummary.DALAccessDate := FUNCTION-CALENDAR(<PARM-WEB-ACCOUNT-INFO.DAL-ACCESS-DATE,'D'>)
+END-IF
+IF PARM-WEB-ACCOUNT-INFO.PROFILE-UPDATE-DATE <> 0
+  MemberProfileSummary.ProfileUpdateDate := FUNCTION-CALENDAR(<PARM-WEB-ACCOUNT-INFO.PROFILE-UPDATE-DATE,'V'>)
+END-IF
+IF PARM-WEB-ACCOUNT-INFO.WEB-USER-NAME <> ' '
+  MemberProfileSummary.UserName := PARM-WEB-ACCOUNT-INFO.WEB-USER-NAME
+END-IF
+IF PARM-WEB-ACCOUNT-INFO.NO-FAMILY-FLAG = #YES
+  MemberProfileSummary.NoFamily := #true
+ELSE
+  MemberProfileSummary.NoFamily := #false
+END-IF
+* YK1 >
+* IF PARM-WEB-ACCOUNT-INFO.VA-DIS-RATING-FLAG = #YES
+*   MemberProfileSummary.HaveVADisabilityRating := #true
+* ELSE
+*   MemberProfileSummary.HaveVADisabilityRating := #false
+* END-IF
+* IF PARM-WEB-ACCOUNT-INFO.SS-BEN-START-FLAG = #YES
+*   MemberProfileSummary.StartedSSBenefits := #true
+* ELSE
+*   MemberProfileSummary.StartedSSBenefits := #false
+* END-IF
+* > YK1
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE MILITARY-INFO
+*******************************
+* Check Military Information
+* From Contacts file
+RESET PARM-CONTACT #CC
+PARM-CONTACT.ID-NUMBER := MemberProfileSummary.CN
+PARM-CONTACT.#ACTION := #GET-BY-CN
+CALLNAT 'OBJNCONT' PARM-CONTACT
+IF PARM-CONTACT.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+#ContactId := PARM-CONTACT.CONTACT-ID
+* From Status file
+PARM-MEMBER-INFO.ID-NUMBER := MemberProfileSummary.CN
+PARM-MEMBER-INFO.#ACTION   := #GET
+CALLNAT 'OBJNMINF' PARM-MEMBER-INFO
+IF PARM-MEMBER-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-MEMBER-INFO.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+*
+IF PARM-MEMBER-INFO.MILITARY-SERVICE <> ' ' #CC := #CC + 4 END-IF
+IF PARM-CONTACT.RANK-ID              <> 0   #CC := #CC + 5 END-IF
+IF PARM-CONTACT.MILITARY-STATUS      <> ' ' #CC := #CC + 4 END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN PARM-CONTACT.MILITARY-STATUS = #ACTIVE
+    IF PARM-MEMBER-INFO.DATE-INIT-ENTRY-MIL-SVC <> 0   #CC := #CC + 4 END-IF   /* DIEMS
+    IF PARM-MEMBER-INFO.BASE-PAY-EF-DATE        <> 0   #CC := #CC + 4 END-IF   /* PEBD
+    IF PARM-MEMBER-INFO.ACTIVE-DUTY-BASE-DATE   <> 0   #CC := #CC + 4 END-IF   /* BASD
+  WHEN PARM-CONTACT.MILITARY-STATUS = #RETIRED 
+    IF PARM-MEMBER-INFO.DATE-RETIRED            <> 0   #CC := #CC + 2 END-IF
+    IF PARM-MEMBER-INFO.DATE-INIT-ENTRY-MIL-SVC <> 0   #CC := #CC + 2 END-IF   /* DIEMS
+    IF PARM-MEMBER-INFO.BASE-PAY-EF-DATE        <> 0   #CC := #CC + 2 END-IF   /* PEBD
+    IF PARM-MEMBER-INFO.ACTIVE-DUTY-BASE-DATE   <> 0   #CC := #CC + 2 END-IF   /* BASD
+    IF PARM-MEMBER-INFO.MILITARY-SERVICE = #GUARD-RESERVE(*)
+      MemberBenefits.GuardOrReserve := #TRUE                                       /* YK2
+      IF PARM-MEMBER-INFO.RSV-NG-RETIRE-PTS          <> 0 #CC := #CC + 2 END-IF
+      IF PARM-MEMBER-INFO.RSV-NG-20-YR-CERT-LTR-DATE <> 0 #CC := #CC + 1 END-IF
+      IF PARM-MEMBER-INFO.RET-RSV-DATE               <> 0 #CC := #CC + 1 
+        IF PARM-MEMBER-INFO.DATE-RETIRED = 0 #CC := #CC + 2 END-IF                 /* YK2
+      END-IF                                                                       /* YK2
+    ELSE
+      #CC := #CC + 4
+    END-IF
+  WHEN PARM-CONTACT.MILITARY-STATUS = #CIVILIAN                                    /* YK2 
+    #CC := 25                                                                      /* YK2
+  WHEN NONE
+    IGNORE
+END-DECIDE
+* YK2 >
+IF PARM-MEMBER-INFO.WIDOW-FLAG = #YES AND PARM-MEMBER-INFO.SPOUSE-CONTACT-ID > 0
+  #SpouseContactID := PARM-MEMBER-INFO.SPOUSE-CONTACT-ID
+END-IF
+* > YK2
+#PersonalCS := #PersonalCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.MilitaryInformationComplete LEAVING NO
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE MAILING-ADDRESS
+*********************************
+* Check if primary Address exist
+RESET #CC
+* IF PRIMARY-ADDR-EXIST(<#ContactID>)
+* #CC := 25
+RESET #PDA-ADDRESS
+#ADD-CONTACT-ID := #ContactID
+#ADD-TYPE       := #Primary
+CALLNAT 'ADDN001M' #PDA-ADDRESS
+IF #ADD-LINE-1 <> ' '
+  #CC := 25
+  MemberProfileSummary.AddressLine1 := #ADD-LINE-1
+  MemberProfileSummary.AddressLine2 := #ADD-LINE-2
+  MemberProfileSummary.AddressLine3 := #ADD-LINE-3
+  IF #ADD-RETURNED-MAIL = #YES
+    COMPRESS MemberProfileSummary.AddressLine3 #UNDELIVERABLE INTO MemberProfileSummary.AddressLine3
+  END-IF
+ELSE
+  MemberProfileSummary.AddressLine1 := #NOT-ON-FILE
+END-IF
+#PersonalCS := #PersonalCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.MailingAddressComplete LEAVING NO
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE PHONE-EMAIL-ADDRESS
+*************************************
+* Check if Phone/Email Address exist
+RESET #CC
+#value := GET-EML(<#ContactId>)
+IF #value <> ' '
+  #CC := #CC + 10
+  MemberProfileSummary.PreferredEmail := #value
+ELSE
+  MemberProfileSummary.PreferredEmail := #NOT-ON-FILE
+END-IF
+#value := F-PREF-PHONE(<#ContactId>)
+IF #value <> ' '
+  #CC := #CC + 15
+  MemberProfileSummary.PreferredPhone := #value
+ELSE
+  MemberProfileSummary.PreferredPhone := #NOT-ON-FILE
+END-IF
+#PersonalCS := #PersonalCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.PhoneEmailComplete LEAVING NO
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE FAMILY-MEMBERS
+********************************
+* Check if Family Information exists
+IF MemberProfileSummary.NoFamily = #true
+  #CC := 25
+ELSE
+  MemberProfileSummary.NoFamily := #false
+  RESET PARM-CONTACT-REL #CC
+  PARM-CONTACT-REL.CONTACT-1-ID := #ContactId
+  PARM-CONTACT-REL.#ACTION := #GET-FAMILY
+  EXPAND ARRAY #FAMILY-MEMBERS TO (*:1)
+  CALLNAT 'OBJNCTRL' PARM-CONTACT-REL #FAMILY-MEMBERS(*)
+  IF PARM-CONTACT-REL.#RETURN-CODE NE ' '
+    #ErrorCode := PARM-CONTACT-REL.#RETURN-CODE
+    ESCAPE ROUTINE
+  END-IF
+  IF PARM-CONTACT-REL.#NUMBER-OF-RECORDS <> 0
+    FOR #I = 1 TO PARM-CONTACT-REL.#NUMBER-OF-RECORDS
+      RESET PARM-CONTACT
+      PARM-CONTACT.CONTACT-ID := #FAMILY-MEMBERS.CONTACT-ID(#I)
+      PARM-CONTACT.#ACTION := #GET
+      CALLNAT 'OBJNCONT' PARM-CONTACT
+      IF PARM-CONTACT.#RETURN-CODE NE ' '
+        #ErrorCode := PARM-CONTACT.#RETURN-CODE
+        ESCAPE ROUTINE
+      END-IF
+      #CC := #CC + 5                       /* SSN not required
+      IF PARM-CONTACT.FIRST-NAME    <> ' ' #CC := #CC + 5 END-IF
+      IF PARM-CONTACT.LAST-NAME     <> ' ' #CC := #CC + 5 END-IF
+      IF PARM-CONTACT.GENDER-CD     <> ' ' #CC := #CC + 5 END-IF
+      IF PARM-CONTACT.DATE-OF-BIRTH <> 0   #CC := #CC + 5 END-IF
+    END-FOR
+    #CC := #CC / PARM-CONTACT-REL.#NUMBER-OF-RECORDS
+  END-IF
+END-IF
+#PersonalCS := #PersonalCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.FamilyInformationComplete LEAVING NO
+END-SUBROUTINE
+*
+*******************************************
+DEFINE SUBROUTINE EXTERNAL-POLICIES-SUMMARY
+*******************************************
+*
+RESET #CC
+MemberBenefits.CN := MemberProfileSummary.CN
+MemberBenefits.BenefitType := #EXT-LIFE-POLICIES
+CALLNAT 'MBCN0081' MemberBenefits #ErrorCode
+MemberProfileSummary.C@ExternalPolicy := MemberBenefits.C@ExternalLifeInsurance
+FOR #I = 1 TO MemberProfileSummary.C@ExternalPolicy
+  IF MemberBenefits.Company(#I)       <> ' ' #CC := #CC + 20 END-IF
+  IF MemberBenefits.PolicyNumber(#I)  <> ' ' #CC := #CC + 20 END-IF
+  IF MemberBenefits.DeathBenefits(#I) <> 0   #CC := #CC + 20 END-IF
+  IF MemberBenefits.Type(#I)          <> ' ' #CC := #CC + 20 END-IF
+  IF MemberBenefits.IssueDate(#I)     <> 0   #CC := #CC + 20 END-IF
+END-FOR
+IF C@ExternalPolicy <> 0
+  #CC := #CC / C@ExternalPolicy
+  MemberProfileSummary.ExternalPoliciesExist := #true
+ELSE
+  #CC := 100                                                /* YK2
+  MemberProfileSummary.ExternalPoliciesExist := #false
+END-IF
+COMPRESS #CC '%' INTO MemberProfileSummary.ExternalPoliciesComplete LEAVING NO
+END-SUBROUTINE
+*
+* Military Benefits/Pension Benefits/SS Benefits/VA Benefits
+************************************
+DEFINE SUBROUTINE SS-BENEFIT-SUMMARY
+************************************
+*
+RESET #CC
+MemberBenefits.BenefitType := #BENEFITS-SS
+CALLNAT 'MBCN0081' MemberBenefits #ErrorCode
+* YK1 >
+* IF MemberBenefits.MemberReceivingSSDate = 0 AND MemberBenefits.SpouseReceivingSSDate = 0 AND
+*     MemberBenefits.MemberGrossSSBenefit = 0 AND MemberBenefits.SpouseGrossSSBenefit = 0
+*   #CC := 25
+* ELSE
+*   IF MemberBenefits.MemberReceivingSSDate <> 0 OR MemberBenefits.MemberGrossSSBenefit  <> 0
+*     #CC := #CC + 10
+*     IF MemberBenefits.MemberReceivingSSDate <> 0 #CC := #CC + 5 END-IF
+*     IF MemberBenefits.MemberGrossSSBenefit  <> 0 #CC := #CC + 5 END-IF
+*   ELSE
+*     #CC := 20
+*   END-IF
+*   IF MemberBenefits.SpouseReceivingSSDate <> 0 OR MemberBenefits.SpouseGrossSSBenefit  <> 0
+*     #CC := #CC + 5
+*   END-IF
+* END-IF
+* > YK1
+#CC := 25
+#BenefitsCS := #BenefitsCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.SSBenefitsComplete LEAVING NO
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE VA-BENEFIT-SUMMARY
+************************************
+*
+RESET #CC
+MemberBenefits.BenefitType := #BENEFITS-VA
+CALLNAT 'MBCN0081' MemberBenefits #ErrorCode
+IF MemberBenefits.VAClaimNumber = ' ' AND
+    MemberBenefits.VADisabilityDate = 0 AND
+    MemberBenefits.VADisabilityPercent = 0 AND
+*   MemberBenefits.VACompensationCalculated = ' '
+    MemberBenefits.VASpecialMonthlyCompensation = ' '
+  #CC := 25
+ELSE
+  #CC := #CC + 5
+  IF MemberBenefits.VAClaimNumber            <> ' ' #CC := #CC + 5 END-IF
+  IF MemberBenefits.VADisabilityDate         <> 0   #CC := #CC + 5 END-IF
+  IF MemberBenefits.VADisabilityPercent      <> 0   #CC := #CC + 5 END-IF
+* IF MemberBenefits.VACompensationCalculated <> ' ' #CC := #CC + 5 END-IF
+  IF MemberBenefits.VASpecialMonthlyCompensation <> ' ' #CC := #CC + 5 END-IF
+END-IF
+#BenefitsCS := #BenefitsCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.VABenefitsComplete LEAVING NO
+END-SUBROUTINE
+*
+*******************************************
+DEFINE SUBROUTINE MILITARY-BENEFITS-SUMMARY
+*******************************************
+*
+RESET #CC
+IF PARM-MEMBER-INFO.MILITARY-STATUS = #RETIRED                          /* YK2
+  MemberBenefits.BenefitType := #BENEFITS-MILITARY
+  CALLNAT 'MBCN0081' MemberBenefits #ErrorCode
+  IF MemberBenefits.GrossMilitaryRetirementPay <> 0 #CC := #CC + 15 END-IF
+  IF MemberBenefits.GuardOrReserve = #TRUE
+    IF MemberBenefits.GuardReserveSBPAnnuity    <> ' ' #CC := #CC + 5 END-IF
+    IF MemberBenefits.GuardReserveSBPBaseAmount <> 0   #CC := #CC + 5 END-IF
+  ELSE
+    IF MemberBenefits.SBPOption        <> ' ' #CC := #CC + 5 END-IF
+    IF MemberBenefits.SBPAnnuityAmount <> 0   #CC := #CC + 5 END-IF
+  END-IF
+ELSE
+  #CC :=25
+END-IF
+#BenefitsCS := #BenefitsCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.MilitaryRetirementComplete LEAVING NO
+COMPRESS #BenefitsCS '%' INTO MemberProfileSummary.BenefitInformationComplete LEAVING NO
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE OTHER-BENEFITS-SUMMARY
+****************************************
+*
+RESET #CC
+MemberBenefits.BenefitType := #BENEFITS-OTHER
+CALLNAT 'MBCN0081' MemberBenefits #ErrorCode
+* YK1 >
+* IF MemberBenefits.GovPensionAmount = 0 AND MemberBenefits.GovPensionSurvivorAnnuityAmount = 0
+*   #CC := 8
+* ELSE
+*   IF MemberBenefits.GovPensionAmount                 <> 0   #CC := #CC + 4 END-IF
+*   IF MemberBenefits.GovPensionSurvivorAnnuityAmount  <> 0   #CC := #CC + 4 END-IF
+* END-IF
+* IF MemberBenefits.PrivatePensionAmount = 0 AND MemberBenefits.PrivatePensionSuvivorAnnuityAmount = 0
+*   #CC := 8
+* ELSE
+*   IF MemberBenefits.PrivatePensionAmount               <> 0   #CC := #CC + 4 END-IF
+*   IF MemberBenefits.PrivatePensionSuvivorAnnuityAmount <> 0   #CC := #CC + 4 END-IF
+* END-IF
+* IF MemberBenefits.SpousePensionAmount = 0 AND MemberBenefits.SpousePensionType = ' '
+*   #CC := 9
+* ELSE
+*   IF MemberBenefits.SpousePensionAmount                <> 0   #CC := #CC + 4 END-IF
+*   IF MemberBenefits.SpousePensionType                  <> ' ' #CC := #CC + 5 END-IF
+* END-IF
+* > YK1
+#CC := 25
+#BenefitsCS := #BenefitsCS + #CC
+COMPRESS #CC '%' INTO MemberProfileSummary.OtherPensionComplete LEAVING NO
+END-SUBROUTINE
+*******************************************
+DEFINE SUBROUTINE FINANCIAL-PROFILE-SUMMARY
+*******************************************
+*
+MemberProfileSummary.FinancialProfileExist := #false
+FIND(1) FI-V WITH ID-NUMBER = MemberProfileSummary.CN
+  IF NO RECORD FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  MemberProfileSummary.FinancialProfileExist := #true
+* YK2 >  
+  IF FI-V.LAST-DATE-UPD <> 0
+    MemberProfileSummary.FinancialProfileLastUpdateDate := FUNCTION-CALENDAR(<FI-V.LAST-DATE-UPD,'W'>)
+  END-IF  
+* < YK2  
+END-FIND
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE GET-WIDOW-CONTACT-INFO   /* YK2
+****************************************
+*
+RESET #PDA-ADDRESS
+#ADD-CONTACT-ID := #SpouseContactID
+#ADD-TYPE       := #Primary
+CALLNAT 'ADDN001M' #PDA-ADDRESS
+IF #ADD-LINE-1 <> ' '
+  MemberProfileSummary.AddressLine1 := #ADD-LINE-1
+  MemberProfileSummary.AddressLine2 := #ADD-LINE-2
+  MemberProfileSummary.AddressLine3 := #ADD-LINE-3
+  IF #ADD-RETURNED-MAIL = #YES
+    COMPRESS MemberProfileSummary.AddressLine3 #UNDELIVERABLE INTO MemberProfileSummary.AddressLine3
+  END-IF
+END-IF
+* Check if Phone/Email Address for widow exist
+RESET #value
+#value := GET-EML(<#SpouseContactId>)
+IF #value <> ' '
+  MemberProfileSummary.PreferredEmail := #value
+END-IF
+#value := F-PREF-PHONE(<#SpouseContactId>)
+IF #value <> ' '
+  MemberProfileSummary.PreferredPhone := #value
+END-IF
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE CREATE-RESPONSE
+*********************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS '<MemberProfileSummary>'
+  '<CN>' MemberProfileSummary.CN '</CN>'
+  '<UserName>' MemberProfileSummary.UserName '</UserName>'
+  '<DALAccessDate>' MemberProfileSummary.DALAccessDate '</DALAccessDate>'
+  '<ProfileUpdateDate>' MemberProfileSummary.ProfileUpdateDate '</ProfileUpdateDate>'
+  '<PersonalInformation>'
+  '<PersonalInformationComplete>' MemberProfileSummary.PersonalInformationComplete '</PersonalInformationComplete>'
+  '<MilitaryInformationComplete>' MemberProfileSummary.MilitaryInformationComplete '</MilitaryInformationComplete>'
+  '<MailingAddressComplete>' MemberProfileSummary.MailingAddressComplete '</MailingAddressComplete>'
+  '<PhoneEmailComplete>' MemberProfileSummary.PhoneEmailComplete '</PhoneEmailComplete>'
+  '<FamilyInformationComplete>' MemberProfileSummary.FamilyInformationComplete '</FamilyInformationComplete>'
+  '</PersonalInformation>'
+  '<ExternalPolicies>'
+  '<ExternalPoliciesComplete>' MemberProfileSummary.ExternalPoliciesComplete '</ExternalPoliciesComplete>'
+  '<ExternalPoliciesExist>' MemberProfileSummary.ExternalPoliciesExist '</ExternalPoliciesExist>'
+  INTO #XML LEAVING NO
+FOR #I = 1 TO C@ExternalPolicy
+  COMPRESS #XML
+    '<ExternalPolicy><![CDATA[' MemberBenefits.Company(#I) ']]></ExternalPolicy>' INTO #XML LEAVING NO
+END-FOR
+COMPRESS #XML '</ExternalPolicies>' INTO #XML LEAVING NO
+COMPRESS #XML
+  '<BenefitInformation>'
+  '<BenefitInformationComplete>' MemberProfileSummary.BenefitInformationComplete '</BenefitInformationComplete>'
+  '<MilitaryRetirementComplete>' MemberProfileSummary.MilitaryRetirementComplete '</MilitaryRetirementComplete>'
+  '<VABenefitsComplete>' MemberProfileSummary.VABenefitsComplete '</VABenefitsComplete>'
+  '<SSBenefitsComplete>' MemberProfileSummary.SSBenefitsComplete '</SSBenefitsComplete>'
+  '<OtherPensionComplete>' MemberProfileSummary.OtherPensionComplete '</OtherPensionComplete>'
+  '</BenefitInformation>'
+  '<FinancialProfile>'
+  '<FinancialProfileExist>' MemberProfileSummary.FinancialProfileExist '</FinancialProfileExist>'
+  '<FinancialProfileFinancialProfileLastUpdateDate>' MemberProfileSummary.FinancialProfileLastUpdateDate 
+                                                       '</FinancialProfileFinancialProfileLastUpdateDate>'  /* YK2
+  '</FinancialProfile>' INTO #XML LEAVING NO
+COMPRESS #XML '<ContactInformation>'
+  '<PrimaryAddress>'
+  '<AddressLine1><![CDATA[' MemberProfileSummary.AddressLine1 ']]></AddressLine1>'
+  '<AddressLine2><![CDATA[' MemberProfileSummary.AddressLine2 ']]></AddressLine2>'
+  '<AddressLine3><![CDATA[' MemberProfileSummary.AddressLine3 ']]></AddressLine3>'
+  '</PrimaryAddress>'
+  '<PreferredPhone>' MemberProfileSummary.PreferredPhone '</PreferredPhone>'
+  '<PreferredEmail>' MemberProfileSummary.PreferredEmail '</PreferredEmail>'
+  '</ContactInformation>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</MemberProfileSummary>'
+  INTO #XML LEAVING NO
+RESPONSE-DATA := #XML
+END-SUBROUTINE
+END

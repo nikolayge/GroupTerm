@@ -1,0 +1,312 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online/AUC
+* Personal/Military Information
+* Main program
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09012010       Initial Creation
+* YAK    04122012       Restructured to be used for AUC
+* YAK    06282012  YK1  Sync with CRM using ContactID
+* YAK    05012015  YK2  MC-II - Check Pending request
+* YAK    05012015  YK3  Add check for RSV points format
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING MBCA0002
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL
+*
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #MC               (A) DYNAMIC INIT <'MC'>
+1 #AUC              (A) DYNAMIC INIT <'AUC'>
+1 #USER             (A) DYNAMIC INIT <'MEMBER'>
+1 #CLERK            (A) DYNAMIC INIT <'MBR'>
+1 #TRUE             (A) DYNAMIC CONST <'true'>
+1 #FALSE            (A) DYNAMIC CONST <'false'>
+1 FUNCTION_CODE     (A) DYNAMIC CONST <'MILITARY'>
+1 #GET              (A) DYNAMIC CONST <'0'>
+1 #TAB              (A1) CONST <H'09'>
+1 #DEL              (A1) CONST <';'>
+1 #YES              (A1) CONST <'Y'>
+1 #NO               (A1) CONST <'N'>
+1 #ProcessName      (A) DYNAMIC CONST <'ManageMilitaryInfo'>    /* YK2
+1 #INVALID-FIELD-FORMAT (A) DYNAMIC CONST <'147'>               /* YK3
+1 #FIR-REQUEST      (A50)
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #I                (I2)
+1 #BRANCH  (A) DYNAMIC
+1 #RANK    (N6)
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+DECIDE FOR EVERY CONDITION
+  WHEN MilitaryInfo.SystemSource = ' '
+    MilitaryInfo.SystemSource := #MC
+  WHEN MilitaryInfo.SystemSource = #AUC
+    IGNORE
+  WHEN MilitaryInfo.ActionType = '0'
+    PERFORM PROCESS-GET-REQUEST
+  WHEN MilitaryInfo.ActionType <> '0'
+    IF MilitaryInfo.ActionType = '6' /* Online App request for update
+      #BRANCH := MilitaryInfo.MilitaryBranch
+      #RANK := MilitaryInfo.MilitaryRankID
+      PERFORM PROCESS-GET-REQUEST
+      MilitaryInfo.MilitaryBranch := #BRANCH
+      MilitaryInfo.MilitaryRankID := #RANK
+      MilitaryInfo.ActionType := '2' 
+    END-IF
+    PERFORM PROCESS-UPDATE-REQUEST
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+PERFORM COMPOSE-XML
+*
+**************************
+DEFINE PROCESS-GET-REQUEST
+**************************
+*
+MilitaryInfo.ErrorCode := '0'
+CALLNAT 'MBCN0021' MilitaryInfo
+IF MilitaryInfo.ErrorCode = '0'
+  PERFORM COMPOSE-GET-XML
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE PROCESS-UPDATE-REQUEST
+*****************************
+* YK2 <
+IF F-PENDING-REQUEST(<MilitaryInfo.CN,#ProcessName>)
+  MilitaryInfo.ErrorCode := #PENDING-REQUEST
+  PERFORM COMPOSE-XML
+  ESCAPE MODULE
+END-IF
+* > YK2
+MilitaryInfo.ErrorCode := '0'
+CALLNAT 'MBCN0022' MilitaryInfo
+IF MilitaryInfo.ErrorCode = '0'
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+END-SUBROUTINE
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MilitaryInfo/CN/$'
+    MilitaryInfo.CN := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/ContactID/$'
+    MilitaryInfo.ContactID := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/UserID/$'
+    MilitaryInfo.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/User/$'
+    MilitaryInfo.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/MilitaryStatus/$'
+    MilitaryInfo.MilitaryStatus := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/DateOfRetirement/$'
+    MilitaryInfo.DateOfRetirement := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/DateInitEntryMilService/$'
+    MilitaryInfo.DateInitEntryMilService := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/MilitaryBranch/$'
+    MilitaryInfo.MilitaryBranch := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/MilitaryRankID/$'
+    MilitaryInfo.MilitaryRankID := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/PreviousMilitaryRankID/$'
+    MilitaryInfo.PreviousMilitaryRankID := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/CurrentPromotionDate/$'
+    MilitaryInfo.CurrentPromotionDate := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/PreviousPromotionDate/$'
+    MilitaryInfo.PreviousPromotionDate := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/PEBDate/$'
+    MilitaryInfo.PEBDate := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/RES1405Date/$'
+    MilitaryInfo.RES1405Date := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/BASDDate/$'
+    MilitaryInfo.BASDDate := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/RNGDate20YearLetter/$'
+    MilitaryInfo.RNGDate20YearLetter := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/RSVRetDate/$'
+    MilitaryInfo.RSVRetDate := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/RSVRetPoints/$'
+    IF XML_PARSER_CONTENT IS (N5)                         /* YK3
+      MilitaryInfo.RSVRetPoints := VAL(XML_PARSER_CONTENT)
+    ELSE                                                   
+      MilitaryInfo.ErrorCode := #INVALID-FIELD-FORMAT     /* YK3
+      PERFORM COMPOSE-XML                                 /* YK3
+      ESCAPE MODULE
+    END-IF  
+  VALUE 'MilitaryInfo/ActionType/$'
+    MilitaryInfo.ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/LastUpdatedDate/$'
+    MilitaryInfo.LastUpdatedDate := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/LastUpdatedTime/$'
+    MilitaryInfo.LastUpdatedTime := VAL(XML_PARSER_CONTENT)
+  VALUE 'MilitaryInfo/SystemSource/$'
+    MilitaryInfo.SystemSource := XML_PARSER_CONTENT
+  VALUE 'MilitaryInfo/RecalledToActiveDuty/$'
+    MilitaryInfo.RecalledToActiveDuty := XML_PARSER_CONTENT
+  VALUE 'MilitaryInfo/PayGrade/$'
+    MilitaryInfo.PayGrade := XML_PARSER_CONTENT
+  VALUE 'MilitaryInfo/SpecialPay/$'
+    MilitaryInfo.SpecialPay := *TRIM(XML_PARSER_CONTENT)
+    IF MilitaryInfo.SpecialPay = #TRUE
+      MilitaryInfo.SpecialPay := #YES
+    ELSE
+      MilitaryInfo.SpecialPay := #NO
+    END-IF
+  VALUE 'MilitaryInfo/RankProtection/$'
+    MilitaryInfo.RankProtection := *TRIM(XML_PARSER_CONTENT)
+    IF MilitaryInfo.RankProtection = #TRUE
+      MilitaryInfo.RankProtection := #YES
+    ELSE
+      MilitaryInfo.RankProtection := #NO
+    END-IF
+  VALUE 'MilitaryInfo/RankProtectionDate/$'
+    MilitaryInfo.RankProtectionDate := VAL(XML_PARSER_CONTENT)
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-GET-XML
+*********************************
+*
+COMPRESS
+  '<SystemSource>' MilitaryInfo.SystemSource '</SystemSource>'
+  '<ActionType>' MilitaryInfo.ActionType '</ActionType>'
+  '<User>' MilitaryInfo.UserID '</User>'
+  '<MilitaryStatus>' MilitaryInfo.MilitaryStatus '</MilitaryStatus>'
+'<DateOfRetirement>' MilitaryInfo.DateOfRetirement '</DateOfRetirement>'
+'<DateInitEntryMilService>' MilitaryInfo.DateInitEntryMilService '</DateInitEntryMilService>'
+  '<MilitaryBranch>' MilitaryInfo.MilitaryBranch '</MilitaryBranch>'
+  '<MilitaryRankID>' MilitaryInfo.MilitaryRankID '</MilitaryRankID>'
+'<CurrentPromotionDate>' MilitaryInfo.CurrentPromotionDate '</CurrentPromotionDate>'
+'<PreviousMilitaryRankID>' MilitaryInfo.PreviousMilitaryRankID '</PreviousMilitaryRankID>'
+'<PreviousPromotionDate>' MilitaryInfo.PreviousPromotionDate '</PreviousPromotionDate>'
+  '<PEBDate>' MilitaryInfo.PEBDate '</PEBDate>'
+  '<RES1405Date>' MilitaryInfo.RES1405Date '</RES1405Date>'
+  '<BASDDate>' MilitaryInfo.BASDDate '</BASDDate>'
+'<RNGDate20YearLetter>' MilitaryInfo.RNGDate20YearLetter '</RNGDate20YearLetter>'
+  '<RSVRetDate>' MilitaryInfo.RSVRetDate '</RSVRetDate>'
+  '<RSVRetPoints>' MilitaryInfo.RSVRetPoints '</RSVRetPoints>'
+  '<LastUpdatedDate>' MilitaryInfo.LastUpdatedDate '</LastUpdatedDate>'
+  '<LastUpdatedTime>' MilitaryInfo.LastUpdatedTime '</LastUpdatedTime>'
+  '<LastUpdatedUser>' MilitaryInfo.LastUpdatedUser '</LastUpdatedUser>'
+'<RecalledToActiveDuty>' MilitaryInfo.RecalledToActiveDuty '</RecalledToActiveDuty>'
+  '<PayGrade>' MilitaryInfo.PayGrade '</PayGrade>'
+'<PreviousPayGrade>' MilitaryInfo.PreviousPayGrade '</PreviousPayGrade>'
+  '<SpecialPay>'
+  INTO XML LEAVING NO
+IF MilitaryInfo.SpecialPay = 'Y'
+  COMPRESS  XML #TRUE
+    '</SpecialPay>' INTO XML LEAVING NO
+ELSE
+  COMPRESS  XML #FALSE
+    '</SpecialPay>' INTO XML LEAVING NO
+END-IF
+COMPRESS XML
+'<RankProtectionDate>' MilitaryInfo.RankProtectionDate '</RankProtectionDate>'
+  '<RankProtection>'
+  INTO XML LEAVING NO
+IF MilitaryInfo.RankProtection = 'Y'
+  COMPRESS  XML #TRUE
+    '</RankProtection>' INTO XML LEAVING NO
+ELSE
+  COMPRESS  XML #FALSE
+    '</RankProtection>' INTO XML LEAVING NO
+END-IF
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+* All actions except Get
+DECIDE FOR FIRST CONDITION
+WHEN MilitaryInfo.ErrorCode = '1'   /* Validation error - description already handled
+    IGNORE
+  WHEN MilitaryInfo.ErrorCode <> '0'
+MilitaryInfo.ErrorDescription := F-ERROR-DESCRIPTION(<MilitaryInfo.ErrorCode>)
+  WHEN MilitaryInfo.ActionType <> #GET
+    PERFORM LOG-REQUESTS
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+COMPRESS '<MilitaryInfo>'
+  '<CN>' MilitaryInfo.CN '</CN>'
+  '<ContactID>' MilitaryInfo.ContactID '</ContactID>'
+  '<ErrorCode>' MilitaryInfo.ErrorCode '</ErrorCode>'
+'<ErrorDescription>' MilitaryInfo.ErrorDescription '</ErrorDescription>'
+  XML
+  '</MilitaryInfo>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE LOG-REQUESTS
+******************************
+* save FIR request
+IF MilitaryInfo.SystemSource = #MC
+  WRITE WORK FILE 2 MilitaryInfo.CN
+  CLOSE WORK FILE 2
+END-IF
+* Update "Profile Update Date" on Web User File
+IF MilitaryInfo.SystemSource = #MC
+    F-PROFILE-UPDATE-DATE(<MilitaryInfo.CN>)
+END-IF
+* Log CRM request
+CALLNAT 'MBRCRC' MilitaryInfo.ContactID FUNCTION_CODE       /* YK1
+IF MilitaryInfo.SystemSource = #AUC
+  MilitaryInfo.ActionType := '0'
+  PERFORM PROCESS-GET-REQUEST
+END-IF
+END-SUBROUTINE
+*
+END

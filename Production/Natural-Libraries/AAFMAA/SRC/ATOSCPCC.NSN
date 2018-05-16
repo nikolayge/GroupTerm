@@ -1,0 +1,197 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : ATOSCPCC                                              *
+* AUTHOR       : Copyright: Electronic Data Systems - An HP company    *
+* DESCRIPTION  : Input Credit Card Information for CAP credit card     *
+************************************************************************
+*                                                                      *
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    02/26/2009  None    Program Written                           *
+************************************************************************
+*
+DEFINE DATA
+*
+PARAMETER
+1 #ID-NUMBER                  (N6)
+1 #NAME                       (A25)
+1 #CLERK-ID                   (A3)
+1 #CC-NUMBER                  (A16)
+1 #CC-EXP-DATE                (N8)
+1 REDEFINE #CC-EXP-DATE
+ 2 #CC-EXP-YYYY               (A4)
+ 2 #CC-EXP-MM                 (A2)
+ 2 #CC-EXP-DD                 (A2)
+*
+LOCAL
+*
+1 TRLOG VIEW OF A-TRANSACTION-REGISTER
+ 2 ID-NUMBER                  (N6)
+ 2 PROCESS-IND                (A1)
+ 2 NAME                       (A25)
+ 2 DATE-LAST-UPDATE           (N8)
+ 2 TERMINAL-ID                (A8)
+ 2 CLERK-ID                   (A3)
+ 2 TRANSACTION-DATN           (P9)
+ 2 TRANSACTION-TIMN           (P7)
+ 2 OLD-DATA                   (A125/32)
+ 2 NEW-DATA                   (A125/32)
+ 2 REDEFINE NEW-DATA
+  3 NEW-DATA-OCC              (32)
+   4 NEW-DATA-AI              (A3)
+   4 NEW-DATA-REST            (A22)
+ 2 SYNC-FLD-NUM               (60)
+ 2 SYNC-FLD-OLD-DATA          (60)
+ 2 SYNC-FLD-NEW-DATA          (60)
+*
+1 #W-OLD-NEW-DATA             (A125)
+1 REDEFINE #W-OLD-NEW-DATA
+ 2 #W-DESCRIPTION             (A12)
+ 2 #W-SPACER                  (A3)
+ 2 #W-DESCRIPTION-1           (A12)
+ 2 #W-DATA-1                  (A16)
+ 2 #W-SPACER-1                (A3)
+ 2 #W-DESCRIPTION-2           (A12)
+ 2 #W-DATA-2                  (A28)
+ 2 #W-DATA-REST               (A39)
+*
+1 #WORK-FIELDS
+ 2 #CC-20                     (A20)
+ 2 #ERR-MSG                   (A60)
+ 2 #CHK-DIGIT                 (P1)
+ 2 #DIGIT-SUM                 (N3)
+ 2 REDEFINE #DIGIT-SUM
+  3 #DIG-SUM-2                (N2)
+  3 #DIG-SUM-1                (N1)
+ 2 #DISPLAY-FIELD             (A) DYNAMIC
+ 2 #DISPLAY-CC-NUM            (A16)
+ 2 #DISPLAY-CC-EXP            (A6)
+ 2 REDEFINE #DISPLAY-CC-EXP
+  3 #DISP-CC-MM               (A2)
+  3 #DISP-CC-YYYY             (A4)
+ 2 #HOLD-CC-NUM               (A16)
+ 2 #HOLD-EXP-DT               (A6)
+ 2 #DATN                      (N8)
+ 2 REDEFINE #DATN
+  3 #DATN-YYYY                (A4)
+  3 #DATN-MM                  (A2)
+  3 #DATN-DD                  (N2)
+*
+END-DEFINE
+************************************************************************
+*
+DEFINE WINDOW CREDIT-CARD-BOX
+  SIZE 22 * 65
+  BASE TOP LEFT
+  FRAMED ON POSITION SYMBOL AUTO
+*
+#DATN           := *DATN
+#DISPLAY-CC-NUM := #CC-NUMBER
+#DISP-CC-MM     := #CC-EXP-MM
+#DISP-CC-YYYY   := #CC-EXP-YYYY
+#HOLD-CC-NUM    := #DISPLAY-CC-NUM
+#HOLD-EXP-DT    := #DISPLAY-CC-EXP
+*
+SET WINDOW 'CREDIT-CARD-BOX'
+  SET KEY PF5  NAMED 'Accpt'
+  SET KEY PF3  NAMED 'Quit'
+*
+  REPEAT
+    INPUT MARK *#CC-NUMBER USING MAP 'ATOMCPCC'
+*
+    PERFORM ACCOUNT-EDITS
+*
+    DECIDE ON FIRST VALUE *PF-KEY
+      VALUE 'PF3'
+        ESCAPE BOTTOM
+      VALUE 'PF5'
+        IF #HOLD-CC-NUM  NE #DISPLAY-CC-NUM
+         OR #HOLD-EXP-DT NE #DISPLAY-CC-EXP
+
+          PERFORM UPDATE-ACCOUNT-DETAILS
+          PERFORM CREATE-TRANSACTION-LOG
+        END-IF
+        ESCAPE BOTTOM
+      NONE
+        IGNORE
+    END-DECIDE
+  END-REPEAT
+SET WINDOW OFF
+*
+************************************************************************
+DEFINE SUBROUTINE ACCOUNT-EDITS
+************************************************************************
+*
+IF *PF-KEY = 'PF3'
+  ESCAPE ROUTINE
+END-IF
+*
+IF #DISPLAY-CC-NUM = ' ' OR (#DISPLAY-CC-EXP = ' ' OR = '000000')
+  REINPUT 'CC Info is required'
+  MARK *#DISPLAY-CC-NUM
+END-IF
+*
+MOVE #DISPLAY-CC-NUM TO #CC-20
+CALLNAT 'GCKDGSXX' #CC-20 #ERR-MSG
+*
+IF #ERR-MSG NE ' '
+  REINPUT #ERR-MSG
+  MARK *#DISPLAY-CC-NUM
+END-IF
+*
+IF  (#DISPLAY-CC-EXP NE MASK(MMYYYY))
+ OR (#DISP-CC-YYYY LT #DATN-YYYY)
+ OR (#DISP-CC-YYYY GT '2099')
+ OR (#DISP-CC-MM LT #DATN-MM AND #DISP-CC-YYYY = #DATN-YYYY)
+  REINPUT  'Format is "MMYYYY"-Expiration must be current month or greater.'
+  MARK *#DISPLAY-CC-EXP
+END-IF
+*
+END-SUBROUTINE
+************************************************************************
+DEFINE SUBROUTINE UPDATE-ACCOUNT-DETAILS
+************************************************************************
+*
+#CC-EXP-YYYY := #DISP-CC-YYYY
+#CC-EXP-MM   := #DISP-CC-MM
+#CC-EXP-DD   := '01'
+#CC-NUMBER   := #DISPLAY-CC-NUM
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-TRANSACTION-LOG
+************************************************************************
+*
+TRLOG.ID-NUMBER            := #ID-NUMBER
+TRLOG.PROCESS-IND          := 'I'
+TRLOG.NAME                 := #NAME
+TRLOG.DATE-LAST-UPDATE     := *DATN
+TRLOG.CLERK-ID             := #CLERK-ID
+TRLOG.TERMINAL-ID          := *INIT-ID
+TRLOG.TRANSACTION-DATN     := *DATN
+TRLOG.TRANSACTION-TIMN     := *TIMN
+*
+#W-DESCRIPTION             := 'AT-CC-INFO'
+#W-DESCRIPTION-1           := 'CC-NUMBER:'
+#W-DESCRIPTION-2           := 'EXP-DATE:'
+#DISPLAY-FIELD             := #HOLD-CC-NUM
+#W-DATA-1                  := FUNCTION-MASK(<#DISPLAY-FIELD,'*'>)
+#W-DATA-2                  := #HOLD-EXP-DT
+TRLOG.OLD-DATA (1)         := #W-OLD-NEW-DATA
+*
+#DISPLAY-FIELD             := #DISPLAY-CC-NUM
+#W-DATA-1                  := FUNCTION-MASK(<#DISPLAY-FIELD,'*'>)
+#W-DATA-2                  := #DISPLAY-CC-EXP
+TRLOG.NEW-DATA (1)         := #W-OLD-NEW-DATA
+*
+STORE TRLOG
+*
+END-SUBROUTINE
+*
+END

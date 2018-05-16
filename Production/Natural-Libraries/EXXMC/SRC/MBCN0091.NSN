@@ -1,0 +1,404 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Benefits/Financial Information
+* Business Logic
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    03152012       Initial Creation
+* YAK    08012012  YK1  Check error code on return from
+*                       MBCNFIN1
+* YAK    05212015  YK2  Add balance / Unit price for MSB type
+* YAK    12012015  YK3  Get E-Bond value (MC FIR project)
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0009
+PARAMETER 1 #ErrorCode (A3)
+*
+LOCAL USING MBCAFIN1
+LOCAL USING MBCAFIN2
+LOCAL USING ERROR_L
+LOCAL
+*
+1 #DATN                (N8)
+1 #TIMN                (N7)
+1 #I                   (I2)
+1 #II                  (I2)
+1 #WORK-FIELD          (N6.3)
+1 #BALANCE             (N8)                           /* YK2
+1 #GEN                 (A) DYNAMIC CONST <'GEN'>
+1 #E-BONDS             (A) DYNAMIC CONST <'E-BONDS'>
+1 #MSB                 (A) DYNAMIC CONST <'MSB'>
+1 #GET                 (A) DYNAMIC CONST <'GET'>
+1 #ADD                 (A) DYNAMIC CONST <'ADD'>
+1 #UPDATE              (A) DYNAMIC CONST <'UPDATE'>
+1 #DELETE              (A) DYNAMIC CONST <'DELETE'>
+1 #NUM-RESET           (A) DYNAMIC CONST <'0'>
+1 #AUTO                (A) DYNAMIC CONST <'LA'>
+1 #MEMBER              (A) DYNAMIC INIT  <'MEMBER'>
+1 #MEMBER-CENTER-CLERK (A) DYNAMIC INIT  <'MBR'>
+1 #INV-TYPE            (A) DYNAMIC CONST <'INV-TYPE'>
+1 #INV-KEY             (A) DYNAMIC CONST <'INV-KEY'>
+1 #DATE                (N8)
+1 REDEFINE #DATE
+  2 #DATE-YYYYMM       (N6)
+  2 #DATE-DD           (N2)
+1 #LOOK-UP-KEY    (A7)
+1 #CATEGORY-KEY   (A3)
+1 #LOOK-UP-VALUE  (A) DYNAMIC
+* Communication area for E-Bonds value/Cost
+1 #EBondTotalValue(N7.2)
+1 #IBondTotalValue(N7.2)
+1 #EEBondTotalValue(N7.2)
+1 #EValue         (N7)
+1 #E-RED-VAL      (P7)
+1 #E-UNIT-RED-VAL (P3.2)
+1 #E-TBL-LST-DT-UPDT (A11)
+1 #NUM-BONDS      (P2)
+1 #PUR-DT         (N8)
+1 REDEFINE #PUR-DT
+  2 #PUR-YYYY     (N4)
+  2 #PUR-MM       (N2)
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+IF FinancialProfile.UserID <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<FinancialProfile.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<FinancialProfile.UserID>)(2)
+END-IF
+*
+#CATEGORY-KEY := F-GET-INV-TYPE(<FinancialProfile.InvestmentCategoryType,#INV-KEY>)
+COMPRESS 'CODE' #CATEGORY-KEY INTO #LOOK-UP-KEY LEAVING NO
+*
+FIN-REQUEST.PARM-CN             := FinancialProfile.CN
+FIN-REQUEST.INVESTMENT-CATEGORY := F-GET-INV-TYPE(<FinancialProfile.InvestmentCategoryType,#INV-TYPE>)
+FIN-REQUEST.ACTION-TYPE         := FinancialProfile.ActionType
+FIN-REQUEST.USER-ID             := #MEMBER-CENTER-CLERK
+*
+DECIDE ON FIRST VALUE FinancialProfile.InvestmentCategoryType
+  VALUE '1', '3', '5', '7', '8'
+    FIN-REQUEST.INVESTMENT-GROUP := #GEN
+  VALUE '2'
+    FIN-REQUEST.INVESTMENT-GROUP := #E-BONDS
+  VALUE '4', '6', '7A'
+    FIN-REQUEST.INVESTMENT-GROUP := #MSB
+  NONE
+    IGNORE
+END-DECIDE
+PERFORM PROCESS-REQUEST
+*
+*********************************
+DEFINE SUBROUTINE PROCESS-REQUEST
+*********************************
+*
+IF FinancialProfile.InvestmentCategoryType = 'SM'
+  PERFORM GET-SUMMARY
+ELSE
+  IF FIN-REQUEST.ACTION-TYPE = #GET
+    PERFORM GET-INVESTMENTS
+  ELSE
+    PERFORM UPDATE-INVESTMENTS
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE GET-SUMMARY
+*****************************
+*
+*       'Cash and liquid investments',                   /* 1-1
+*       'Term investments',                              /* 2-2
+*       'Bonds & bond mutual funds',                     /* 3-5
+*       'Equity mutual funds',                           /* 4-3
+*       'Stocks',                                        /* 5-4
+*       'Aggressive investments',                        /* 6-6
+*       'Precious metals',                               /* 7-7
+*       'Total managed assets',                          /* 8-8
+*       'Retirement accounts for Member and Spouse',     /* 9-9
+*       'Total savings and investments',                 /* 10-10
+*       'Lifestyle assets and liabilities',              /* 11-11
+*       'Net worth'>                                     /* 12-12
+*
+P_CN := FIN-REQUEST.PARM-CN
+EXPAND ARRAY P_DATA TO (*:1)
+CALLNAT 'MBCNFIN2' FIN-SUMMARY
+*
+C@Investment := 1
+FOR #I = 1 TO 12
+  MOVE EDITED P_VAL(#I) (EM=ZZZZZZZZ9) TO FinancialProfile.SummaryLineAmount(#I)
+  FinancialProfile.SummaryLineAmount(#I) := *TRIM(FinancialProfile.SummaryLineAmount(#I))
+  MOVE EDITED P_PCT(#I) (EM=Z9.99) TO FinancialProfile.SummaryLinePercent(#I)
+  FinancialProfile.SummaryLinePercent(#I) := *TRIM(FinancialProfile.SummaryLinePercent(#I))
+END-FOR
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-INVESTMENTS
+*********************************
+*
+EXPAND ARRAY INV-GROUP TO (*:1)
+CALLNAT 'MBCNFIN1' FIN-REQUEST
+C@Investment := *OCCURRENCE(FIN-REQUEST.INV-ID)
+IF C@Investment = 1 AND FIN-REQUEST.INV-ID(1) = 0
+  #ErrorCode := #NO-INV-TYPE
+  ESCAPE MODULE
+END-IF
+*
+EXPAND ARRAY FinancialProfile.Investment TO (*:C@Investment)
+FOR #I = 1 TO C@Investment
+* Convert date (n6) to (n8)
+  IF FIN-REQUEST.INV-E-PUR-DT(#I) <> 0
+    #DATE := FIN-REQUEST.INV-E-PUR-DT(#I)
+    IF #DATE-DD = 0 THEN #DATE-DD := 01 END-IF
+    FIN-REQUEST.INV-E-PUR-DT(#I) := #DATE
+  END-IF
+  IF FIN-REQUEST.INV-E-END-DT(#I) <> 0
+    #DATE := FIN-REQUEST.INV-E-END-DT(#I)
+    IF #DATE-DD = 0 THEN #DATE-DD := 01 END-IF
+    FIN-REQUEST.INV-E-END-DT(#I) := #DATE
+  END-IF
+  IF FIN-REQUEST.INV-MAT-DT(#I) <> 0
+    #DATE := FIN-REQUEST.INV-MAT-DT(#I)
+    IF #DATE-DD = 0 THEN #DATE-DD := 01 END-IF
+    FIN-REQUEST.INV-MAT-DT(#I) := #DATE
+  END-IF
+*
+  FinancialProfile.InvestmentID(#I)              := FIN-REQUEST.INV-ID(#I)
+  FinancialProfile.InvestmentTypeCode(#I)        := FIN-REQUEST.INV-TYPE(#I)
+  #LOOK-UP-VALUE := FIN-REQUEST.INV-TYPE(#I)
+  FinancialProfile.InvestmentType(#I)            := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)
+* Use of Investment Name field
+  IF FinancialProfile.InvestmentCategoryType = '5' OR = '8'
+    FinancialProfile.Description(#I)             := FIN-REQUEST.INV-NAME(#I)
+    FinancialProfile.FMV(#I)                     := FIN-REQUEST.INV-BALANCE(#I)
+  ELSE
+    FinancialProfile.BankCreditUnionName(#I)     := FIN-REQUEST.INV-NAME(#I)
+    FinancialProfile.Balance(#I)                 := FIN-REQUEST.INV-BALANCE(#I)
+  END-IF
+* Use of Rate field
+  #WORK-FIELD                                  := FIN-REQUEST.INV-RATE(#I)
+  IF FinancialProfile.InvestmentCategoryType = '5'
+    MOVE EDITED #WORK-FIELD (EM=Z9.999) TO FinancialProfile.TransCost(#I)
+    FinancialProfile.TransCost(#I)               := *TRIM(FinancialProfile.TransCost(#I))
+    FinancialProfile.Rate(#I)                    := #NUM-RESET
+  ELSE
+    MOVE EDITED #WORK-FIELD (EM=Z9.999) TO FinancialProfile.Rate(#I)
+    FinancialProfile.Rate(#I)                    := *TRIM(FinancialProfile.Rate(#I))
+    FinancialProfile.TransCost(#I)               := #NUM-RESET
+  END-IF
+*
+  FinancialProfile.MaturityDate(#I)              := FIN-REQUEST.INV-MAT-DT(#I)
+  FinancialProfile.Debt(#I)                      := FIN-REQUEST.INV-DEBT(#I)
+  FinancialProfile.FaceAmount(#I)                := FIN-REQUEST.INV-E-FACE(#I)
+  FinancialProfile.PurchaseDate(#I)              := FIN-REQUEST.INV-E-PUR-DT(#I)
+  FinancialProfile.EndingDate(#I)                := FIN-REQUEST.INV-E-END-DT(#I)
+  FinancialProfile.Quantity(#I)                  := FIN-REQUEST.INV-E-QUANTITY(#I)
+*
+* YK3
+  IF FinancialProfile.InvestmentCategoryType = '2'
+    PERFORM get_EValue
+    DEFINE get_EValue
+    #PUR-DT := FIN-REQUEST.INV-E-PUR-DT(#I)
+    REPEAT
+      RESET #E-RED-VAL #E-UNIT-RED-VAL #E-TBL-LST-DT-UPDT
+      #NUM-BONDS := FIN-REQUEST.INV-E-QUANTITY(#I)
+      CALLNAT 'D3255SXX' FIN-REQUEST.INV-TYPE(#I)
+        #PUR-DT
+        FIN-REQUEST.INV-E-FACE(#I)
+        #E-RED-VAL
+        #E-UNIT-RED-VAL
+        #E-TBL-LST-DT-UPDT
+        #NUM-BONDS
+*
+      COMPUTE ROUNDED #EValue := #E-RED-VAL
+      FinancialProfile.EValue(#I) := #EValue
+      DECIDE ON FIRST VALUE FinancialProfile.InvestmentTypeCode(#I)
+        VALUE 'T2'
+          #EEBondTotalValue := #EEBondTotalValue + #EValue
+        VALUE 'I2'
+          #IBondTotalValue := #IBondTotalValue + #EValue
+        NONE VALUE
+          #EBondTotalValue := #EBondTotalValue + #EValue
+      END-DECIDE
+      #PUR-MM := #PUR-MM + 1
+      IF #PUR-MM = 13
+        #PUR-MM := 1
+        #PUR-YYYY := #PUR-YYYY + 1
+      END-IF
+      IF #PUR-DT > FIN-REQUEST.INV-E-END-DT(#I)
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT
+    END-SUBROUTINE
+  END-IF
+* YK3
+  FinancialProfile.InvestmentMsbTickerSymbol(#I) := FIN-REQUEST.INV-MSB-TICK-SYM (#I)
+  FinancialProfile.InvestmentMsbTickerName(#I)   := FIN-REQUEST.INV-MSB-TICK-NAME (#I)
+* Use of Investment Units field
+  #WORK-FIELD                                    := FIN-REQUEST.INV-MSB-UNITS(#I)
+  IF FinancialProfile.InvestmentCategoryType = '6'
+*    #WORK-FIELD                                 := FIN-REQUEST.INV-MSB-UNITS(#I)
+    MOVE EDITED #WORK-FIELD (EM=ZZZZZ9.999) TO FinancialProfile.NumOunces(#I)
+    FinancialProfile.NumOunces(#I)               := *TRIM(FinancialProfile.NumOunces(#I))
+    FinancialProfile.NumShares(#I)               := #NUM-RESET
+  ELSE
+*   FinancialProfile.NumShares(#I)               := FIN-REQUEST.INV-MSB-UNITS(#I)
+    MOVE EDITED #WORK-FIELD (EM=ZZZZZ9.999) TO FinancialProfile.NumShares(#I)
+    FinancialProfile.NumShares(#I)               := *TRIM(FinancialProfile.NumShares(#I))
+    FinancialProfile.NumOunces(#I)               := #NUM-RESET
+  END-IF
+* YK2 >
+  IF FIN-REQUEST.INVESTMENT-GROUP = #MSB
+    MOVE EDITED FIN-REQUEST.INV-MSB-TICK-UNIT-PRICE(#I) (EM=ZZZZ9.99) TO FinancialProfile.UnitPrice(#I)
+    FinancialProfile.UnitPrice(#I) := *TRIM(FinancialProfile.UnitPrice(#I))
+    COMPUTE ROUNDED #BALANCE := FIN-REQUEST.INV-MSB-TICK-UNIT-PRICE(#I) * FIN-REQUEST.INV-MSB-UNITS(#I)
+    FinancialProfile.Balance(#I) := #BALANCE
+  END-IF
+* < YK2
+  IF FinancialProfile.InvestmentCategoryType = '7' OR = '7A'
+    IF SUBSTR(FinancialProfile.InvestmentTypeCode(#I),1,1) = 'W'
+      FinancialProfile.InvestmentOwnerCode(#I) := 'S'
+      FinancialProfile.InvestmentOwner(#I) := 'Spouse'
+      EXAMINE FinancialProfile.InvestmentTypeCode(#I) FOR 'W' REPLACE 'R'
+      #LOOK-UP-VALUE := FinancialProfile.InvestmentTypeCode(#I)
+      FinancialProfile.InvestmentType(#I) := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)
+    ELSE
+      FinancialProfile.InvestmentOwnerCode(#I) := 'M'
+      FinancialProfile.InvestmentOwner(#I)     := 'Member'
+    END-IF
+  END-IF
+* Auto information reformat
+*   IF FinancialProfile.InvestmentTypeCode(#I) = #AUTO
+*     FinancialProfile.Year(#I) := substr(FinancialProfile.Description(#I),1,4)
+*     IF FinancialProfile.Year(#I) = '0000'
+*       RESET FinancialProfile.Year(#I)
+*     END-IF
+*     FinancialProfile.Make(#I) := substr(FinancialProfile.Description(#I),6)
+*     RESET FinancialProfile.Description(#I)
+*   END-IF
+*
+END-FOR
+MOVE EDITED #EBondTotalValue (EM=ZZZZZZ9.99) TO FinancialProfile.EBondTotalValue
+FinancialProfile.EBondTotalValue := *TRIM(FinancialProfile.EBondTotalValue)
+MOVE EDITED #EEBondTotalValue (EM=ZZZZZZ9.99) TO FinancialProfile.EEBondTotalValue
+FinancialProfile.EEBondTotalValue := *TRIM(FinancialProfile.EEBondTotalValue)
+MOVE EDITED #IBondTotalValue (EM=ZZZZZZ9.99) TO FinancialProfile.IBondTotalValue
+FinancialProfile.IBondTotalValue := *TRIM(FinancialProfile.IBondTotalValue)
+*
+END-SUBROUTINE
+************************************
+DEFINE SUBROUTINE UPDATE-INVESTMENTS
+************************************
+*
+EXPAND ARRAY INV-GROUP TO (*:C@Investment)
+FOR #I = 1 TO C@Investment
+  FIN-REQUEST.INV-ID(#I)      := VAL(FinancialProfile.InvestmentID(#I))
+  FIN-REQUEST.INV-TYPE(#I)    := FinancialProfile.InvestmentTypeCode(#I)
+  IF FinancialProfile.InvestmentCategoryType = '7' OR = '7A'
+    IF FinancialProfile.InvestmentOwnerCode(#I) = 'S'
+      EXAMINE FIN-REQUEST.INV-TYPE(#I) FOR 'R' REPLACE 'W'
+      FinancialProfile.InvestmentOwner(#I) := 'Spouse'
+    ELSE
+      FinancialProfile.InvestmentOwnerCode(#I) := 'M'
+      FinancialProfile.InvestmentOwner(#I)     := 'Member'
+    END-IF
+  END-IF
+  DECIDE ON FIRST VALUE FIN-REQUEST.INVESTMENT-GROUP
+    VALUE #GEN
+      IF FinancialProfile.InvestmentCategoryType = '5' OR = '8'
+*         IF FIN-REQUEST.INV-TYPE(#I) = #AUTO
+*           COMPRESS FULL FinancialProfile.Year(#I) FinancialProfile.Make(#I)
+*             INTO FIN-REQUEST.INV-NAME(#I)
+*         ELSE
+*           FIN-REQUEST.INV-NAME(#I)    := FinancialProfile.Description(#I)
+*         END-IF
+        FIN-REQUEST.INV-NAME(#I)    := FinancialProfile.Description(#I)
+        FIN-REQUEST.INV-BALANCE(#I) := FinancialProfile.FMV(#I)
+      ELSE
+        FIN-REQUEST.INV-NAME(#I)    := FinancialProfile.BankCreditUnionName(#I)
+        FIN-REQUEST.INV-BALANCE(#I) := FinancialProfile.Balance(#I)
+      END-IF
+      IF FinancialProfile.Rate(#I) <> ' '
+        FIN-REQUEST.INV-RATE(#I)    := VAL(FinancialProfile.Rate(#I))
+      END-IF
+      IF FinancialProfile.TransCost(#I) <> ' '
+        FIN-REQUEST.INV-RATE(#I)    := VAL(FinancialProfile.TransCost(#I))
+      END-IF
+      FIN-REQUEST.INV-MAT-DT(#I)    := FinancialProfile.MaturityDate(#I)
+* Convert date (n6) to (n8)
+*       IF FIN-REQUEST.INV-MAT-DT(#I) <> 0
+*         #DATE := FIN-REQUEST.INV-MAT-DT(#I)
+*         IF #DATE-DD = 0 THEN #DATE-DD := 01 END-IF
+*         FIN-REQUEST.INV-MAT-DT(#I) := #DATE
+*       END-IF
+      FIN-REQUEST.INV-DEBT(#I)      := FinancialProfile.Debt(#I)
+    VALUE #E-BONDS
+      FIN-REQUEST.INV-E-FACE(#I)    := FinancialProfile.FaceAmount(#I)
+      FIN-REQUEST.INV-E-PUR-DT(#I)  := FinancialProfile.PurchaseDate(#I)
+      FIN-REQUEST.INV-E-END-DT(#I)  := FinancialProfile.EndingDate(#I)
+      FIN-REQUEST.INV-E-QUANTITY(#I):= FinancialProfile.Quantity(#I)
+* Convert date (n6) to (n8)
+*      IF FIN-REQUEST.INV-E-PUR-DT(#I) <> 0
+      #DATE := FIN-REQUEST.INV-E-PUR-DT(#I)
+      #DATE-DD := 0
+      FIN-REQUEST.INV-E-PUR-DT(#I) := #DATE
+*      END-IF
+*      IF FIN-REQUEST.INV-E-END-DT(#I) <> 0
+      #DATE := FIN-REQUEST.INV-E-END-DT(#I)
+      #DATE-DD := 0
+      FIN-REQUEST.INV-E-END-DT(#I) := #DATE
+*      END-IF
+    VALUE #MSB
+      IF FinancialProfile.InvestmentCategoryType = '6' AND FinancialProfile.ActionType = #ADD
+        DECIDE ON FIRST VALUE FinancialProfile.InvestmentTypeCode(#I)
+          VALUE 'PG'
+            FinancialProfile.InvestmentMsbTickerSymbol(#I) := '**GOLD'
+            FinancialProfile.InvestmentMsbTickerName(#I)   := 'GOLD'
+          VALUE 'PP'
+            FinancialProfile.InvestmentMsbTickerSymbol(#I) := '**PLAT'
+            FinancialProfile.InvestmentMsbTickerName(#I)   := 'PLATINUM'
+          VALUE 'PS'
+            FinancialProfile.InvestmentMsbTickerSymbol(#I) := '**SILV'
+            FinancialProfile.InvestmentMsbTickerName(#I)   := 'SILVER'
+          NONE
+            IGNORE
+        END-DECIDE
+      END-IF
+      FIN-REQUEST.INV-MSB-TICK-SYM(#I) := FinancialProfile.InvestmentMsbTickerSymbol(#I)
+      FIN-REQUEST.INV-MSB-TICK-NAME(#I):= FinancialProfile.InvestmentMsbTickerName(#I)
+      IF FinancialProfile.InvestmentCategoryType = '4' OR = '7A'
+        IF FinancialProfile.NumShares(#I) <> ' '
+          FIN-REQUEST.INV-MSB-UNITS(#I) := VAL(FinancialProfile.NumShares(#I))
+        END-IF
+      ELSE
+        IF FinancialProfile.NumOunces(#I) <> ' '
+          FIN-REQUEST.INV-MSB-UNITS(#I) := VAL(FinancialProfile.NumOunces(#I))
+        END-IF
+      END-IF
+    NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+*
+CALLNAT 'MBCNFIN1' FIN-REQUEST
+IF RESPONSE-CODE <> ' '                        /* YK1
+  #ErrorCode := FIN-REQUEST.RESPONSE-CODE      /* YK1
+  ESCAPE MODULE                                /* YK1
+END-IF                                         /* YK1
+*
+END-SUBROUTINE
+*
+
+END

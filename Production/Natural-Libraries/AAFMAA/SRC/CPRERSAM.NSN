@@ -1,0 +1,470 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID : CPRERSAM
+*
+* UPDATER FOR AM PRER TRAN (PREMIUM PAYMENT REVERS-  OLD TRAN CODE 401)
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    09162004  PM1     Added EZ-Pay to premium reversal process.   *
+*                          Allow a reversal on all non-paid up         *
+*                          government allotment policies as per KHB.   *
+* PAM    09242004  PM2     Use issue date day instead of paid thru day *
+*                          to determine time period for Sungard.       *
+* PAM    09272004  PM3     Error EZ-Pay reversal if paid-thru date is  *
+*                          moved to prior of current date. - rem'vd    *
+*                          on 09282004 per KHB.                        *
+* DRW    09292004  DW4     Add Credit Card Processing                  *
+* DRW    03062005  DW5     Add AL (Annuity Life Processing)            *
+* DRW    08282008  DW6     Gen Plus Processing                         *
+* YAK    03182010  YK1     Allow only full amount (change 75% rule)    *
+* PAM    03202012  PM4     Use sungard category for ACH reversals      *
+* YAK    10152012  YK3     Use function to identify Level Term II plans*
+* YAK    11082012  YK4     Add No Medical Term plan (EZ)               *
+* YAK    10152014  YK5     Replace 'AL' with function 
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #ST-V-STATUS            (A1)
+1 #ST-V-PAY-STATUS        (A2)
+1 #ST-V-MODE              (A1)
+1 #ST-V-PLAN              (A3)
+1 REDEFINE #ST-V-PLAN
+ 2 #ST-V-PLAN-A2   (A2)
+ 2 REDEFINE #ST-V-PLAN-A2
+  3 #ST-V-PLAN-A1  (A1)
+ 2 REDEFINE #ST-V-PLAN-A2
+  3 #ST-V-PLAN-N2  (N2)
+ 2 REDEFINE #ST-V-PLAN-A2
+  3 #ST-V-PLAN-N1  (N1)
+ 2 #ST-V-PLAN-SUFF (A1)
+*
+1 #ST-V-ISSUE-DATE        (N8)
+1 REDEFINE #ST-V-ISSUE-DATE                                       /* PM2
+ 2 #ST-V-ISS-DT-YYYY       (N4)                                   /* PM2
+ 2 #ST-V-ISS-DT-MM         (N2)                                   /* PM2
+ 2 #ST-V-ISS-DT-DD         (N2)                                   /* PM2
+*
+1 #ST-V-PAID-TO-DATE      (N8)
+1 REDEFINE #ST-V-PAID-TO-DATE
+ 2 #ST-V-PAID-TO-DATE-YYYY (N4)
+ 2 #ST-V-PAID-TO-DATE-MM   (N2)
+ 2 #ST-V-PAID-TO-DATE-DD   (N2)
+*
+1 #ST-V-PAID-UP-DATE      (N8)
+1 REDEFINE #ST-V-PAID-UP-DATE
+ 2 #ST-V-PAID-UP-DATE-YYYY (N4)
+ 2 #ST-V-PAID-UP-DATE-MM   (N2)
+ 2 #ST-V-PAID-UP-DATE-DD   (N2)
+*
+1 #ST-V-ANNUAL-PREM       (P5.2)
+1 #ST-V-MTD-ACV-PREM-ADJ  (P7.2/9)
+1 #ST-V-MONTH-ALLOC-AMT   (P7.2)            /*TT1
+1 #ST-V-BILL-ADJUST       (P5.2)
+1 #ST-V-BILL-DOLLAR       (P5.2)
+1 #ST-V-OWNERSHIP-FLAG    (A1)
+1 #ST-V-DUES-ALL-PAID-IND (A1)
+1 #ST-V-DUES-BALANCE      (P5.2)
+1 #ST-V-DUES-FPF          (P3.2)
+1 #ST-V-DUES-TOT-PAID     (P5.2)
+1 #ST-V-INTRO-FLAG        (A1)
+1 #ST-V-PAD-CODE          (A1)                                    /* PM3
+1 #ST-V-RID-PLAN          (A2)
+1 #ST-V-RID-EFF-DT        (N8)
+1 #ST-V-RID-PT-TO         (N8)
+*
+1 #ILN1       (I2)
+1 #ILN2       (I2)
+1 #UPDATE-MODE (L)
+1 #SG-TBL (15)
+ 2 #SG-CAT1 (A2)
+ 2 #SG-CAT2 (A2)
+ 2 #SG-AMT  (N6.2)
+1 #LX       (I2)
+1 #MODE     (A1)                   /* YK1
+*
+LOCAL
+*
+1 #SVC-FEE-MODAL    (P3.2)
+1 #SVC-FEE    (P3.2)
+1 #SVC-FEE-SP (N3.2) INIT <450.00>
+1 #SVC-FEE-2P (N2.2) INIT <18.50>
+1 #SVC-FEE-3P (N2.2) INIT <12.50>
+1 #SVC-FEE-4P (N1.2) INIT <9.50>
+1 #SVC-FEE-5P (N1.2) INIT <7.50>
+1 #SVC-FEE-6P (N1.2) INIT <6.50>
+1 #SVC-FEE-7P (N1.2) INIT <6.00>
+1 #SVC-FEE-10 (N1.2) INIT <4.50>
+1 #SVC-FEE-20 (N1.2) INIT <3.00>
+1 #SVC-FEE-30 (N1.2) INIT <2.50>
+1 #SVC-FEE-OL (N1.2) INIT <2.00>
+1 #SVC-FEE-TM (N1.2) INIT <2.00>
+*
+1 #TODAY-YYYYMMDD
+ 2 #TODAY-YYYY           (N4)
+ 2 #TODAY-MM             (N2)
+ 2 #TODAY-DD             (N2)
+1 REDEFINE #TODAY-YYYYMMDD
+ 2 #TODAY-YYYYMMDD-N     (N8)
+*
+1 #SG-ISS-DT-1-YR  (N8)
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY  (N4)
+ 2 #MM    (N2)
+ 2 #DD    (N2)
+*
+1 #SG-PLAN   (A2)
+1 #SG-YEAR   (A2)
+1 #ACH-SG    (A2)                /* PM4
+1 #MON-PREM  (N5.2)
+1 #I1           (I2)
+1 #I2           (I2)
+1 #I3           (I2)
+1 #AMT-DUE             (P5.2)
+1 #PAID-UP-402  (L)    /* TO INDICATE IF 1 PAID-UP ON A 402
+1 #DISP-MSG            (A75)    /* ERROR LINE MESSAGES
+1 #ID-N6               (N6)
+1 REDEFINE #ID-N6
+ 2 #ID-A6              (A6)
+1 #DAILY-INT-AMT       (P3.5)    /* CALCULATED DAILY INTEREST AMT
+1 #TOTAL-AMT           (P8.2)
+1 #TOTAL-AMT-DISP      (A11)
+1 #SUB-TOTAL-AMT       (P8.2)
+1 #TMP-TOTAL-AMT       (P8.2)
+1 #TOTAL-MODAL-PREMIUM (P5.2)
+1 #TOTAL-MODAL-PREM-CLC (P5.2)
+1 #TOT-MOD-PRM-CLC      (P5.2)
+1 #ACCUM-TOT-MODE       (P5.2)
+1 #REMAINING-TRAN-AMT  (P5.2)
+1 #START-PROT-LINE     (P2)
+1 #LAST-ID-READ        (P6)
+1 #ISN                 (P8)
+1 #OLD-BILL-ADJ        (P5.2)  /* TO SAVE INFO PRIOR TO UPDATE
+1 #OLD-ALP-FLG         (A1)    /* *
+1 #OLD-ALP-AMT         (P3.2)  /* *
+1 #HOLD-TIME           (P7)    /* SAME TIME FOR FILE AND TRLOG UPDATE
+1 #WORK-FREQ           (P2)
+1 #WORK-MM             (P2)
+*
+1 #WORK-AMT     (P5.4)
+1 #ACV-ADJ-AMT  (P5.2)
+1 #NUM-PRORATE  (P2)
+1 #TOT-PRORATE  (P5.2)
+1 #TOT-TRANS-TO-PRORATE (P5.2)
+END-DEFINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+MOVE *DATN TO #TODAY-YYYYMMDD-N
+*
+IF #SG-CAT1 (1) NE ' '        /* PM4
+  #ACH-SG := #SG-CAT1 (1)     /* PM4
+  RESET #SG-CAT1 (1)          /* PM4
+END-IF                        /* PM4
+*
+IF   (#ST-V-STATUS  = 'D')
+ AND (#ST-V-MODE    = 'A' OR = 'S' OR = 'Q' OR = 'M' OR = 'E'     /* PM1
+                 OR = '0' OR = '1' OR = '2' OR = '4')             /* DW4
+ AND ((#ST-V-PAY-STATUS LT '40')
+              AND (#ST-V-PAY-STATUS NE '12'))
+  IF ((#ST-V-PAID-TO-DATE-YYYY LT
+                           #ST-V-PAID-UP-DATE-YYYY)
+   OR ((#ST-V-PAID-TO-DATE-YYYY =
+                           #ST-V-PAID-UP-DATE-YYYY)
+    AND (#ST-V-PAID-TO-DATE-MM LT
+                            #ST-V-PAID-UP-DATE-MM)))
+*  YK2 START
+*     IF #ST-V-MODE = 'A' OR = '1'   /* DW4
+*       MOVE  1 TO #WORK-FREQ
+*       MOVE 12 TO #WORK-MM
+*     ELSE
+*       IF #ST-V-MODE = 'S' OR = '2'   /* DW4
+*         MOVE 2 TO #WORK-FREQ
+*         MOVE 6 TO #WORK-MM
+*       ELSE
+*         IF #ST-V-MODE = 'Q' OR = '4'   /* DW4
+*           MOVE 4 TO #WORK-FREQ
+*           MOVE 3 TO #WORK-MM
+*         ELSE
+*           MOVE 12 TO #WORK-FREQ
+*           MOVE 1  TO #WORK-MM
+*         END-IF
+*       END-IF
+*     END-IF
+*  YK2 END
+    #WORK-FREQ := 12            /* YK2
+    #WORK-MM   := 1             /* YK2
+    COMPUTE ROUNDED #TOTAL-MODAL-PREM-CLC =
+                     (#ST-V-ANNUAL-PREM / #WORK-FREQ)
+    MOVE ROUNDED #TOTAL-MODAL-PREM-CLC TO #TOT-MOD-PRM-CLC
+    ADD #TOTAL-MODAL-PREM-CLC TO #TOTAL-MODAL-PREMIUM
+  END-IF
+END-IF
+*
+MOVE #SCR-TRAN-AMT (#ILN1) TO #REMAINING-TRAN-AMT
+COMPUTE #AMT-DUE = #TOTAL-MODAL-PREMIUM - #ST-V-BILL-ADJUST
+*
+REPEAT
+*
+*  IF #REMAINING-TRAN-AMT LT (#AMT-DUE * .75) /* MUST BE AT LEAST 75 PCT   YK1
+  IF #REMAINING-TRAN-AMT LT #AMT-DUE          /* MUST BE Full Amount       YK1
+   OR (#TOTAL-MODAL-PREMIUM = 0)
+   OR (#AMT-DUE = 0)
+    ESCAPE BOTTOM /*(0216)
+  END-IF
+*
+  RESET #PAID-UP-402
+*
+  IF   (#ST-V-STATUS = 'D')
+   AND ((#ST-V-PAY-STATUS LE '40')
+              AND (#ST-V-PAY-STATUS NE '12'))
+   AND (#ST-V-MODE = 'A' OR = 'S' OR = 'Q' OR = 'M' OR = 'E'      /* PM1
+                OR = '0' OR = '1' OR = '2' OR = '4')             /* DW4
+   AND ((#ST-V-PAID-TO-DATE-YYYY LT
+                               #ST-V-PAID-UP-DATE-YYYY)
+     OR ((#ST-V-PAID-TO-DATE-YYYY  =
+                               #ST-V-PAID-UP-DATE-YYYY)
+      AND (#ST-V-PAID-TO-DATE-MM LT
+                                #ST-V-PAID-UP-DATE-MM)))
+    IGNORE
+  ELSE
+    ESCAPE TOP
+  END-IF
+*  YK2 START
+*   IF #ST-V-MODE = 'A' OR = '1'   /* DW4
+*     MOVE  1 TO #WORK-FREQ
+*     MOVE 12 TO #WORK-MM
+*   ELSE
+*     IF #ST-V-MODE = 'S' OR = '2'   /* DW4
+*       MOVE 2 TO #WORK-FREQ
+*       MOVE 6 TO #WORK-MM
+*     ELSE
+*       IF #ST-V-MODE = 'Q' OR = '4'   /* DW4
+*         MOVE 4 TO #WORK-FREQ
+*         MOVE 3 TO #WORK-MM
+*       ELSE
+*         MOVE 12 TO #WORK-FREQ
+*         MOVE 1  TO #WORK-MM
+*       END-IF
+*     END-IF
+*   END-IF
+*  YK2 END
+  PERFORM SUNGARD-INFO
+  SUBTRACT #WORK-MM FROM #ST-V-PAID-TO-DATE-MM
+*
+  IF #ST-V-PAID-TO-DATE-MM LT 1
+    ADD 12 TO #ST-V-PAID-TO-DATE-MM
+    SUBTRACT 1 FROM #ST-V-PAID-TO-DATE-YYYY
+  END-IF
+*
+* IF (#ST-V-PAID-TO-DATE-YYYY LT #TODAY-YYYY                      /* PM3
+*  OR (#ST-V-PAID-TO-DATE-YYYY EQ #TODAY-YYYY                     /* PM3
+*  AND #ST-V-PAID-TO-DATE-MM LT #TODAY-MM))                       /* PM3
+*  AND #ST-V-MODE = 'E'                                           /* PM3
+*  AND #ST-V-PAD-CODE = 'E'                                       /* PM3
+*   REINPUT 'EZpay must be removed from Pad Code prior to prem reversal'
+*   MARK *#SCR-TRAN-CODE (#ILN1)                                  /* PM3
+* END-IF                                                          /* PM3
+*
+  ADD #TOT-MOD-PRM-CLC TO #ACV-ADJ-AMT
+  MOVE 15 TO #ST-V-PAID-TO-DATE-DD
+*
+  SUBTRACT #AMT-DUE FROM #REMAINING-TRAN-AMT
+  MOVE #TOTAL-MODAL-PREMIUM TO #AMT-DUE
+*
+  IF #ST-V-BILL-ADJUST NE 0
+    FOR #I3 1 TO 15
+      IF #SG-CAT1 (#I3) = 'UN' OR = ' '
+        MOVE 'UN'   TO #SG-CAT1 (#I3)
+        RESET #SG-CAT2 (#I3)
+        SUBTRACT #ST-V-BILL-ADJUST FROM #SG-AMT (#I3)
+*       WRITE 'UNALLOCATED - PRIOR BILL ADJUST' #ST-V-BILL-ADJUST
+*          #I3 #SG-CAT1 (#I3) #SG-AMT (#I3)
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+*
+  RESET #ST-V-BILL-ADJUST
+*
+END-REPEAT /*(0216)
+*
+* * * * * NOW TRY GAWTS * * * * * * * * * * * * * * * * *
+*
+RESET #TOTAL-MODAL-PREMIUM
+IF   (#ST-V-STATUS         = 'D')
+ AND (#ST-V-MODE           = 'G')
+ AND (#ST-V-PAY-STATUS     = '12' OR = '21')  /* GAWT OR UNPD
+  IF ((#ST-V-PAID-TO-DATE-YYYY LT
+                           #ST-V-PAID-UP-DATE-YYYY)
+   OR ((#ST-V-PAID-TO-DATE-YYYY =
+                           #ST-V-PAID-UP-DATE-YYYY)
+    AND (#ST-V-PAID-TO-DATE-MM LT
+                            #ST-V-PAID-UP-DATE-MM)))
+*
+    COMPUTE ROUNDED #TOTAL-MODAL-PREM-CLC
+           = (#ST-V-ANNUAL-PREM / 12)
+    MOVE ROUNDED #TOTAL-MODAL-PREM-CLC TO #TOT-MOD-PRM-CLC
+    ADD #TOTAL-MODAL-PREM-CLC TO #TOTAL-MODAL-PREMIUM
+  END-IF
+END-IF
+*
+COMPUTE #AMT-DUE = #TOTAL-MODAL-PREMIUM - #ST-V-BILL-ADJUST
+*
+REPEAT
+*  IF  (#REMAINING-TRAN-AMT LT (#AMT-DUE * .75))
+  IF #REMAINING-TRAN-AMT LT #AMT-DUE          /* Must be Full Amount       YK1
+   OR (#TOTAL-MODAL-PREMIUM = 0)
+   OR (#AMT-DUE = 0)
+    ADD #REMAINING-TRAN-AMT TO #ST-V-BILL-ADJUST
+*
+    IF #REMAINING-TRAN-AMT NE 0
+      FOR #I3 1 TO 15
+        IF  (#SG-CAT1 (#I3) = 'UN' OR = ' ')
+          MOVE 'UN'   TO #SG-CAT1 (#I3)
+          RESET #SG-CAT2 (#I3)
+          ADD #REMAINING-TRAN-AMT TO #SG-AMT (#I3)
+*     WRITE 'UNALLOCATED - REMAINING' #REMAINING-TRAN-AMT
+*                    #I3 #SG-CAT1 (#I3) #SG-AMT (#I3)
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-IF
+*
+    ESCAPE BOTTOM /*(0323)
+  END-IF
+*
+  RESET #PAID-UP-402
+*
+  IF   (#ST-V-STATUS = 'D')
+   AND (#ST-V-PAY-STATUS = '12' OR = '21') /* GAWT OR UNPD
+   AND (#ST-V-MODE = 'G')
+   AND ((#ST-V-PAID-TO-DATE-YYYY LT
+                               #ST-V-PAID-UP-DATE-YYYY)
+     OR ((#ST-V-PAID-TO-DATE-YYYY =
+                               #ST-V-PAID-UP-DATE-YYYY)
+      AND (#ST-V-PAID-TO-DATE-MM LT
+                                #ST-V-PAID-UP-DATE-MM)))
+    IGNORE
+  ELSE
+    ESCAPE TOP
+  END-IF
+*
+  MOVE 1 TO #WORK-MM
+  PERFORM SUNGARD-INFO
+  SUBTRACT 1 FROM #ST-V-PAID-TO-DATE-MM
+*
+  IF #ST-V-PAID-TO-DATE-MM LT 1
+    ADD 12 TO #ST-V-PAID-TO-DATE-MM
+    SUBTRACT 1 FROM #ST-V-PAID-TO-DATE-YYYY
+  END-IF
+*
+  ADD #TOT-MOD-PRM-CLC TO #ACV-ADJ-AMT
+  MOVE 15 TO #ST-V-PAID-TO-DATE-DD
+*
+  SUBTRACT #AMT-DUE FROM #REMAINING-TRAN-AMT
+  MOVE #TOTAL-MODAL-PREMIUM TO #AMT-DUE
+  RESET #ST-V-BILL-ADJUST
+END-REPEAT /* 2930)
+*
+IF   (#ACV-ADJ-AMT NE 0)
+* AND (NOT #ST-V-PLAN = 'LT' OR = 'RT')                         /* YK3
+* AND ((#ST-V-PLAN-A1 LT 'U') OR (#ST-V-PLAN-A1 GT 'Z'))        /* YK3
+  AND (NOT FUNCTION-TERM-POLICY(<#ST-V-PLAN>))                  /* YK3
+  IF #LX NE 1            /* FILLUP PRECEEDING MULTIPLE FIELDS
+    COMPUTE #I3 = #LX - 1
+    FOR #I2 1 TO #I3
+      IF #ST-V-MTD-ACV-PREM-ADJ (#I2) = 0
+        MOVE 9999999.99 TO #ST-V-MTD-ACV-PREM-ADJ (#I2)
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF #ST-V-MTD-ACV-PREM-ADJ (#LX) = 9999999.99
+    RESET #ST-V-MTD-ACV-PREM-ADJ (#LX)
+  END-IF
+*
+  SUBTRACT #ACV-ADJ-AMT  FROM #ST-V-MTD-ACV-PREM-ADJ (#LX)
+  IF #ST-V-MTD-ACV-PREM-ADJ (#LX) = 0
+    MOVE 9999999.99 TO #ST-V-MTD-ACV-PREM-ADJ (#LX)
+  END-IF
+END-IF
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SUNGARD-INFO
+* * * * * * * * * * * * * * * *
+*
+MOVE #ST-V-ISSUE-DATE TO #YYYYMMDD
+ADD 1 TO #YYYY
+MOVE #YYYYMMDD TO #SG-ISS-DT-1-YR
+MOVE #ST-V-PAID-TO-DATE TO #YYYYMMDD
+MOVE #ST-V-ISS-DT-DD TO #DD                                       /* PM2
+*
+IF #ST-V-PLAN = 'OL' OR = '20P' OR = '30P' OR = '7P' OR = 'SPF'
+    OR = 'GPL' OR = 'EZ'                                 /* DW6  /* YK4
+*   OR = 'RT' OR = 'LT' OR = 'SO' OR = 'FSO' OR = 'AL'   /* DW5
+    OR = 'RT' OR = 'LT' OR = 'SO' OR = 'FSO' OR IS-ANNUITY-LIFE(<#ST-V-PLAN>)  /* YK5
+  MOVE #ST-V-PLAN TO #SG-PLAN
+ELSE
+* IF (#ST-V-PLAN-A1 GE 'U') AND (#ST-V-PLAN-A1 LE 'Z')            /* YK3
+  IF F-LT2-TRUE(<#ST-V-PLAN>)                                     /* YK3  
+    MOVE 'VT' TO #SG-PLAN
+  ELSE
+    MOVE 'FL' TO #SG-PLAN
+  END-IF
+END-IF
+*
+RESET #ACCUM-TOT-MODE
+FOR #I2 1 TO #WORK-MM
+* IF #YYYYMMDD LT #SG-ISS-DT-1-YR                                 /* PM2
+  IF #YYYYMMDD LE #SG-ISS-DT-1-YR                                 /* PM2
+    MOVE '1Y' TO #SG-YEAR
+  ELSE
+    MOVE 'RN' TO #SG-YEAR
+  END-IF
+*
+  IF #ACH-SG NE ' '        /* use original code for ACH reversals /* PM4
+    #SG-YEAR := #ACH-SG                                           /* PM4
+  END-IF                                                          /* PM4
+*
+  IF #ST-V-PLAN = 'SO'  /* SO IS REALLY DUES SO NO BREAKDOWN
+    MOVE '**' TO #SG-YEAR #SG-PLAN
+  END-IF
+*
+  FOR #I3 1 TO 15
+    IF ((#SG-CAT1 (#I3) = #SG-YEAR) AND (#SG-CAT2 (#I3) = #SG-PLAN))
+     OR (#SG-CAT1 (#I3) = ' ')
+      MOVE #SG-YEAR TO #SG-CAT1 (#I3)
+      MOVE #SG-PLAN TO #SG-CAT2 (#I3)
+      COMPUTE ROUNDED #MON-PREM =  #TOT-MOD-PRM-CLC / #WORK-MM
+      ADD #MON-PREM TO #SG-AMT (#I3)
+      ADD #MON-PREM TO #ACCUM-TOT-MODE   /* BELOW TO HANDLE ANN-PREMS
+*                                        NOT MULTIPLES OF 12
+      IF (#I2 = #WORK-MM) AND (#ACCUM-TOT-MODE NE #TOT-MOD-PRM-CLC)
+         COMPUTE #SG-AMT (#I3) = #SG-AMT (#I3)
+           + (#TOT-MOD-PRM-CLC - #ACCUM-TOT-MODE)
+      END-IF
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  SUBTRACT 1 FROM #MM
+  IF #MM LT 1
+    MOVE 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+*
+END-FOR
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,118 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************
+* SUBPROGRAM-ID: MBCNFIR1 - GET BA screen lines
+**************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG  REASON
+* YAK    10282015       Initial Creation
+**************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.BENEFIT-ANALYSIS-BLOCK
+PARAMETER USING MBCAFIR0
+PARAMETER 1 #ErrorCode (A3)
+LOCAL USING MBCAFIR1
+LOCAL USING ERROR_L
+*
+LOCAL
+1 #J              (I2)
+1 #I              (I2)
+1 #I1             (I2)
+1 #N              (I2)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 WIDOW-FLAG
+  2 STATUS-CODE-SP
+  2 MEMBER-FLAG
+1 #BA_Line (A150)
+1 REDEFINE #BA_Line
+  2 #TYPE (A1)
+  2 #LINE (A100)
+1 #H  (A1) INIT <'H'>       /* Header
+1 #B  (A1) INIT <'B'>       /* Body
+1 #F  (A1) INIT <'F'>       /* Footer
+1 #Start  (L)
+1 #NO-SPACE (L)
+1 #LineBreak (A) DYNAMIC INIT <'LineBreak'>
+1 #HTML (A) DYNAMIC CONST <'<![CDATA[<br><br>]]>'>
+1 #HTML_1 (A) DYNAMIC CONST <'<![CDATA[<br>]]>'>
+*
+END-DEFINE
+*
+FORMAT LS = 90
+FIND(1) ST-V WITH ID-NUMBER = FirPages.CN
+  #CGA-ISN := *ISN
+END-FIND
+*
+IF WIDOW-FLAG = 'Y'
+*   IF STATUS-CODE-SP = 'S'
+    #CGA-SCR-COMMAND := #CGA-ORIG-COMMAND := 'WB'
+*   ELSE
+*     #ErrorCode := #NOT-FIR-ELIGIBLE
+*     ESCAPE ROUTINE
+*   END-IF
+ELSE
+  #CGA-SCR-COMMAND := #CGA-ORIG-COMMAND := 'BA'
+END-IF
+#CGA-SCR-ID := #CGA-ORIG-ID := #CGA-ID := FirPages.CN
+#CGA-CLERK := 'WEB'
+#CGA-SECURITY-CODE := 0
+*
+FETCH RETURN 'D3000PXX'
+*
+IF *DATA NE 0
+  INPUT #Pages #Lines MC_Lines(*)
+  RELEASE STACK
+END-IF
+PERFORM POPULATE-PARAMETER-DATA
+*
+DEFINE SUBROUTINE POPULATE-PARAMETER-DATA
+C@Pages := #Pages
+#Start := true
+WRITE WORK FILE 5 C@Pages
+EXPAND ARRAY Pages_group TO (*:C@Pages)
+FOR #J = 1 TO #Lines
+  #BA_Line := MC_Lines(#J)
+  DECIDE FOR FIRST CONDITION
+    WHEN #TYPE = #H
+      IF #Start
+        #I  := #I + 1                                /* C@Pages
+        RESET #Start #I1
+      END-IF
+      EXAMINE #LINE FOR #LineBreak REPLACE #HTML
+      EXAMINE #LINE FOR '(Non-Svc-Conn)' REPLACE '(Non Service Connected)'
+      EXAMINE #LINE FOR '(Svc-Conn)' REPLACE '(Service Connected)'
+      EXAMINE #LINE FOR '&' REPLACE 'and'
+      EXAMINE #LINE FOR '-  ' DELETE NUMBER #N
+      IF #NO-SPACE
+        COMPRESS Header(#I) #LINE INTO Header(#I) LEAVING NO
+        RESET #NO-SPACE
+      ELSE
+        COMPRESS Header(#I) #LINE INTO Header(#I)
+      END-IF
+      IF #N <> 0
+        #NO-SPACE := TRUE
+      END-IF
+    WHEN #TYPE = #B
+      #Start := true
+      #I1 := #I1 + 1                                /* C@Lines
+      C@Lines(#I) := #I1
+      EXPAND ARRAY Lines TO (*:*,1:#I1)
+      EXAMINE #LINE FOR '&' REPLACE 'and'
+      Lines(#I,#I1) := #LINE
+    WHEN #TYPE = #F
+      #Start := true
+      EXAMINE #LINE FOR '&' REPLACE 'and'
+      EXAMINE #LINE FOR #LineBreak REPLACE #HTML_1
+      COMPRESS Footer(#I) #LINE INTO Footer(#I)
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+*
+END-SUBROUTINE
+*
+END

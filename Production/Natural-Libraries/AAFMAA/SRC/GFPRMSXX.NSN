@@ -1,0 +1,177 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GFPRMSXX    ** Calculate Flexible Premiums
+*   CALLNAT'D FROM C1600PCO/C2302PCI
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* NGG    20131202  NG1  1M$ project changes                            *
+* NGG    20160113  NG2  VAWL                                           *
+*                                                                      *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-COMMAND    (A2)
+1 #CGA-SCR-ID         (N9)
+1 #as-of-date         (n8)
+1 #PREM-AGE           (N2)
+1 #ISS-DATE           (N8)
+1 #PREM-RATING        (A1)
+1 #DOB                (N8)
+1 #SEX                (a1)
+1 #DESIRED-YEARS      (N3) BY VALUE /* 0=OL,7,20,30 = NNP, NN = flex
+1 REDEFINE #DESIRED-YEARS
+  2 #DESIRED-YEARS-FILL (A1)
+  2 #DESIRED-YEARS-2A   (A2)
+1 #SMOKER-FLAG        (A1)
+1 #DESIRED-FACE       (N7.2)
+1 #ANN-PREM           (N7.2)
+1 #SEGMENT            (I2)     /* NG2
+1 #VERSION            (A1)     /* NG2
+LOCAL
+1 #incr       (n1.3)
+1 #PV         (P9.7)
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM    (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY      (N4)
+    3 #MM        (N2)
+  2 #DD        (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A    (A4)
+  2 #MMDD-A    (A4)
+  2 REDEFINE #MMDD-A
+    3 #MM-A     (A2)
+    3 #DD-A     (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A  (A8)
+*
+1 #FAC-AMT  (N7.2)
+1 REDEFINE #FAC-AMT
+  2 #FAC-AMT-7  (N7)
+  2 #FAC-AMT-2  (N2)
+1 #PLAN     (A3)
+1 #SUFFIX   (A3)
+1 #1ST-10K   (N5.2)
+*
+1 #BASIC-PRM (N5.2)
+1 REDEFINE #BASIC-PRM
+  2 #BASIC-PRM-6 (N6)
+  2 #BASIC-PRM-C (N1) /* cents
+1 #POL-FEE  (N5.2)
+1 REDEFINE #POL-FEE
+  2 #POL-FEE-5 (N6)
+  2 #POL-FEE-C (N1)   /* cents
+*
+1 #PREM-6-6 (N6.6)
+1 #MON-X-12      (P7.2)
+1 #MON-PREM (N7.2)        /*tt1
+1 REDEFINE #MON-PREM
+  2 #MON-PREM-5 (N7)
+  2 #MON-PREM-C (N1)   /* cents
+*
+END-DEFINE
+*
+MOVE 1 TO #INCR
+IF #PREM-RATING = '1' MOVE 1.125 TO #INCR END-IF
+IF #PREM-RATING = '2' MOVE 1.250 TO #INCR END-IF
+IF #PREM-RATING = '3' MOVE 1.375 TO #INCR END-IF
+IF #DESIRED-YEARS EQ 0
+  MOVE #AS-OF-DATE TO #YYYYMMDD
+  SUBTRACT #DOB FROM #YYYYMMDD
+  IF #VERSION = '4'
+    #DESIRED-YEARS := 120 - #YYYY
+  ELSE
+    #DESIRED-YEARS := 100 - #YYYY
+  END-IF
+  #PLAN := 'OL'
+END-IF
+*
+IF #DESIRED-YEARS NE 0
+  CALLNAT 'RTEN0007'
+    #CGA-SCR-ID
+    #PREM-AGE
+    #SEX
+    #DESIRED-YEARS
+    #SMOKER-FLAG
+    #SEGMENT
+    #ISS-DATE
+    #PV          /* OUT
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #PLAN = 'OL' IGNORE
+  WHEN #DESIRED-YEARS = 7
+    MOVE '7P' TO #PLAN
+  WHEN #DESIRED-YEARS = 20 OR= 30
+    COMPRESS #DESIRED-YEARS-2A 'P' INTO #PLAN LEAVING NO
+  WHEN NONE
+    MOVE 'SI' TO #PLAN
+END-DECIDE
+/*     Non Flex Policy - Table rates
+IF #PLAN NE 'SI'
+  IF #PREM-RATING NE ' '
+    COMPRESS 'SB' #PREM-RATING INTO #SUFFIX LEAVING NO
+  END-IF
+  CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+    #SUFFIX
+    #PLAN
+    #PREM-AGE
+    #ANN-PREM
+    #ISS-DATE
+    #SMOKER-FLAG
+    #FAC-AMT
+    #SEX
+ELSE   /* Flex Policy - premium based on PV
+  IF #VERSION = '4'
+    CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+      #SUFFIX
+      #PLAN
+      #PREM-AGE
+      #ANN-PREM
+      #ISS-DATE
+      #SMOKER-FLAG
+      #FAC-AMT
+      #SEX
+    IF #PV > 0 AND #PLAN EQ 'SI'
+      COMPUTE ROUNDED #ANN-PREM := #ANN-PREM / #PV
+    END-IF
+  ELSE
+    MOVE 'A10' TO #SUFFIX
+    MOVE #DESIRED-FACE TO #FAC-AMT
+    CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID #SUFFIX
+      #PLAN #PREM-AGE #ANN-PREM #ISS-DATE #SMOKER-FLAG #FAC-AMT #SEX
+    MOVE #ANN-PREM TO #BASIC-PRM
+*
+    MOVE 'PFE' TO #SUFFIX
+    CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID #SUFFIX
+      #PLAN #PREM-AGE #ANN-PREM #ISS-DATE #SMOKER-FLAG #FAC-AMT #SEX
+    MOVE #ANN-PREM TO #POL-FEE
+*
+    COMPUTE #POL-FEE  = #POL-FEE / (#PV * 12)
+    IF #POL-FEE-C NE 0  /* ROUND UP TO NEAREST DIME
+      ADD .10 TO #POL-FEE
+    END-IF
+    RESET #POL-FEE-C
+    COMPUTE #BASIC-PRM = #BASIC-PRM / (#PV * 12)
+    IF #BASIC-PRM-C NE 0
+      ADD .10 TO #BASIC-PRM
+    END-IF
+    RESET #BASIC-PRM-C
+    COMPUTE #PREM-6-6 = ((#DESIRED-FACE / 10000) * #BASIC-PRM)
+      + #POL-FEE
+    MOVE ROUNDED #PREM-6-6 TO #MON-PREM
+    COMPUTE ROUNDED #MON-PREM = #MON-PREM * #INCR  /* << rating INCR
+    COMPUTE ROUNDED #MON-X-12 = #MON-PREM * 12
+    COMPUTE ROUNDED #MON-PREM = #MON-X-12 / 12
+    COMPUTE #ANN-PREM = #MON-PREM * 12
+  END-IF  
+END-IF
+END

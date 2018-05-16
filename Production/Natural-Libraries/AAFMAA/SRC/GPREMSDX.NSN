@@ -1,0 +1,219 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM ID: GPREMSDX
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    05182006  None    Program Written.                            *
+* PAM    01162008  PM1     Changed processing for AT premium rating    *
+* DRW    08262008  DW2     Gen Plus Processing                         *
+* YAK    09262012  YK1     Use function to identify Level Term II plans*
+* YAK    11062012  YK2     Add No Medical Term plan (EZ)               *
+* NGG    20130419  NG1     Stability Project for $1M Policy            *
+* JNT    20131029  JT1     1M Policy Support                           *
+* NGG    20141016  NG2     Annuity Life 2 addition                     *
+************************************************************************
+DEFINE DATA
+PARAMETER
+1 #ID-NUMBER                 (N9)
+1 #ANN-PREM                  (N7.2)               /*JT1
+1 #MON-PREM                  (N7.2)
+1 #ORIG-COMMAND              (A2)
+1 #CLERK                     (A3)
+*
+LOCAL
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER
+ 2 FACE-AMT-UNITS
+ 2 FACE-AMT-DOLS
+ 2 EXCH-1035
+ 2 LUMP-SUM
+ 2 SMOKER-FLAG
+ 2 MEMBER-CN
+ 2 INTRO-FLAG
+ 2 AT-STATUS
+ 2 NAME
+ 2 DATE-OF-BIRTH
+ 2 SEX
+ 2 RATING-CODE                                                    /* PM1
+ 2 PLAN
+ 2 REDEFINE PLAN
+  3 PLAN-A1                  (A1)
+  3 PLAN-A2                  (A2)
+  3 REDEFINE PLAN-A2
+   4 PLAN-N1                 (N1)
+   4 PLAN-N2                 (N1)
+*
+1 #WORK-AGE                  (N8)
+1 REDEFINE #WORK-AGE
+ 2 #AGE-YYYY                 (N4)
+ 2 REDEFINE #AGE-YYYY
+  3 #AGE-CC                  (N2)
+  3 #AGE-YY                  (N2)
+ 2 #AGE-MM                   (N2)
+ 2 #AGE-DD                   (N2)
+1 #AGE                       (N2)
+*
+1 #FLEX-POLICY               (L)
+1 #PAYS-DUES                 (L)
+1 #PREM-RATING               (A1)
+1 #SCR-COMMAND               (A2)
+1 #SCR-SUFFIX                (A3)
+1 #FACE-AMT                  (N7.2)                /* NG1
+1 #EXCH-1035                 (N7.2)                /* JT1
+1 #DIVIDEND                  (N5.4)
+1 REDEFINE #DIVIDEND
+ 2 #DIV-5                    (N5)
+ 2 #REM                      (N4)
+1 #FACE-9                    (N7.2)
+1 #FLEX-NUM-YEARS            (N3)
+1 #FLEX-DUES-PMT             (N3.2)
+1 #FLEX-DOB                  (N8)
+1 #SMOKER-FLAG               (A1)
+1 #HOLD-SUFFIX               (A3)
+1 #YYYYMMDD                  (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY                     (N4)
+ 2 #MM                       (N2)
+ 2 #DD                       (N2)
+1 #CLASS-1                   (A1) INIT <'1'>   /* PM1
+1 #CLASS-2                   (A1) INIT <'2'>   /* PM1
+1 #CLASS-3                   (A1) INIT <'3'>   /* PM1
+*
+END-DEFINE
+************************************************************************
+*
+RESET #WORK-AGE #AGE #FACE-AMT #DIVIDEND #PREM-RATING #SMOKER-FLAG
+      #PAYS-DUES #ANN-PREM #MON-PREM #FLEX-NUM-YEARS #EXCH-1035
+      #FACE-9 #SCR-SUFFIX #SCR-COMMAND #YYYYMMDD
+*
+FIND (1) AT-V WITH ID-NUMBER = #ID-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+*
+  COMPUTE #WORK-AGE = *DATN - AT-V.DATE-OF-BIRTH
+  IF #AGE-YYYY GT 100
+    MOVE 99 TO #AGE
+  ELSE
+    MOVE #AGE-YY TO #AGE
+  END-IF
+*
+  COMPUTE #FACE-AMT = (AT-V.FACE-AMT-UNITS * 1000) + AT-V.FACE-AMT-DOLS
+  COMPUTE #DIVIDEND = #FACE-AMT / 5000
+*
+  #PREM-RATING := AT-V.RATING-CODE                                /* PM1
+* DECIDE FOR FIRST CONDITION                                      /* PM1
+*   WHEN AT-V.AT-STATUS = 'UA'                                    /* PM1
+*     MOVE '1' TO #PREM-RATING                                    /* PM1
+*   WHEN AT-V.AT-STATUS = 'UB'                                    /* PM1
+*     MOVE '2' TO #PREM-RATING                                    /* PM1
+*   WHEN AT-V.AT-STATUS = 'UC'                                    /* PM1
+*     MOVE '3' TO #PREM-RATING                                    /* PM1
+*   WHEN NONE                                                     /* PM1
+*     IGNORE                                                      /* PM1
+* END-DECIDE                                                      /* PM1
+*
+  IF AT-V.SMOKER-FLAG = 'N' OR = ' '
+    MOVE 'N' TO #SMOKER-FLAG
+  ELSE
+    MOVE 'S' TO #SMOKER-FLAG
+  END-IF
+*
+  IF   (AT-V.MEMBER-CN = ' ')
+   AND (NOT AT-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+    MOVE TRUE TO #PAYS-DUES
+  END-IF
+*
+  IF ((AT-V.EXCH-1035 NE 0) OR (AT-V.LUMP-SUM NE 0)
+   OR (NOT AT-V.PLAN = ' ' OR = '7P' OR = '20' OR = '30' OR = 'OL'
+                  OR = 'GPL'                             /* DW2
+                  OR = 'EZ'                              /* YK2                  
+                  OR = 'SP' OR = 'RT' OR = 'LT')
+   OR (#REM NE 0))
+*  AND ((AT-V.PLAN-A1 LT 'U') OR (AT-V.PLAN-A1 GT 'Z'))  /* YK1
+   AND (NOT F-LT2-TRUE(<AT-V.PLAN>))                     /* YK1
+    PERFORM CALC-FLEX-PREM
+  ELSE
+    PERFORM CALC-PREMIUM
+  END-IF
+*
+  IF NOT (AT-V.PLAN = 'SP' OR IS-ANNUITY-LIFE(<AT-V.PLAN>))  /* NG2                   
+    COMPUTE #MON-PREM = #ANN-PREM / 12
+  END-IF
+END-FIND
+*
+************************************************************************
+DEFINE SUBROUTINE CALC-FLEX-PREM
+************************************************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN AT-V.PLAN = 'OL' or = 'GPL'           /* DW2
+    MOVE 99 TO #FLEX-NUM-YEARS
+  WHEN IS-ANNUITY-LIFE(< AT-V.PLAN >)
+    MOVE 999 TO #FLEX-NUM-YEARS
+  WHEN (AT-V.PLAN NE ' ') AND (AT-V.PLAN NE 'SP')
+    IF AT-V.PLAN-A2 = 'P'
+      MOVE AT-V.PLAN-N1 TO #FLEX-NUM-YEARS
+    ELSE
+      MOVE AT-V.PLAN-N2 TO #FLEX-NUM-YEARS
+    END-IF
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+MOVE AT-V.EXCH-1035 TO #EXCH-1035
+CALLNAT 'C1602SCO'
+  #SCR-COMMAND #ID-NUMBER  #SCR-SUFFIX
+  #ORIG-COMMAND #CLERK
+  #PAYS-DUES AT-V.NAME AT-V.DATE-OF-BIRTH #SMOKER-FLAG
+  AT-V.SEX 
+  AT-V.LUMP-SUM 
+  #EXCH-1035 
+  #FACE-AMT                                        /* CHANGED TO P7.2
+  #FLEX-NUM-YEARS #ANN-PREM #FLEX-DUES-PMT #AGE
+  #FLEX-POLICY #PREM-RATING
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALC-PREMIUM
+************************************************************************
+*
+MOVE #FACE-AMT TO #FACE-9
+MOVE *DATN TO #YYYYMMDD       /* calc premium based on 1st of next month
+RESET #DD                     /* since CAP eff date will be then
+ADD 1 TO #MM
+*
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+*
+* WRITE (1) '#SCR-COMMAND = ' #SCR-COMMAND
+* WRITE (1) '#ID-NUMBER   = ' #ID-NUMBER
+* WRITE (1) '#SCR-SUFFIX  = ' #SCR-SUFFIX
+* WRITE (1) 'AT-V.PLAN    = ' AT-V.PLAN
+* WRITE (1) '#AGE         = ' #AGE
+* WRITE (1) '#ANN-PREM    = ' #ANN-PREM
+* WRITE (1) '#YYYYMMDD    = ' #YYYYMMDD
+* WRITE (1) '#SMOKER-FLAG = ' #SMOKER-FLAG
+* WRITE (1) '#FACE-9      = ' #FACE-9
+* WRITE (1) 'AT-V.SEX     = ' AT-V.SEX
+*
+IF #PREM-RATING = #CLASS-1 MOVE 'SB1' TO #SCR-SUFFIX END-IF /* PM1
+IF #PREM-RATING = #CLASS-2 MOVE 'SB2' TO #SCR-SUFFIX END-IF /* PM1
+IF #PREM-RATING = #CLASS-3 MOVE 'SB3' TO #SCR-SUFFIX END-IF /* PM1
+*
+CALLNAT 'GPREMSXX' #SCR-COMMAND #ID-NUMBER #SCR-SUFFIX
+  AT-V.PLAN #AGE #ANN-PREM #YYYYMMDD #SMOKER-FLAG #FACE-9
+  AT-V.SEX
+*
+END-SUBROUTINE
+*
+END

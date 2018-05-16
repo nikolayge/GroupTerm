@@ -1,0 +1,157 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* MBCNR001
+*  bz 02/20/2012 - - - - - - -
+* PremServices - Admin interface : Request RET Series
+* Create Request file / Return content of RET report file      
+* 
+* Request structure
+* <RETInfo>
+*   <ActionType>0</ActionType>
+*   <ErrorCode>0</ErrorCode>
+*   <ErrorDescription>N/A</ErrorDescription>
+*   <UserID>aafmaa\bingebrigtsen</UserID>
+*   <CN>171303</CN>
+*   <AssumedRetirementDate1>20120525</AssumedRetirementDate1>
+*   <AssumedRetirementDate2>20130525</AssumedRetirementDate2>
+*   <AssumedRetirementDate3>20140525</AssumedRetirementDate3>
+*   <FileData> <![CDATA[]]> </FileData>
+* </RETInfo>
+*
+
+DEFINE DATA PARAMETER
+1 XML_PARSER_INPUT   (A) DYNAMIC        /* In
+1 RESPONSE-DATA      (A) DYNAMIC        /* Out
+LOCAL USING PARSER-X                /* parser internal data
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I4)
+*
+1 p_RETS00MC
+  2 p_CN         (N6)
+  2 p_D1         (N8)
+  2 p_D2         (N8)
+  2 p_D3         (N8)
+  2 p_Mode       (A2)
+  2 REDEFINE p_Mode
+    3 p_Mode_1   (A1)
+    3 p_Mode_2   (A1)
+  2 p_Err        (N4)
+  2 p_ErrDscr   (A)  DYNAMIC
+  2 p_FileData  (A)  DYNAMIC
+*
+  1 v_XML
+    2 v_XML_Start    (A) DYNAMIC INIT <'<RETInfo>'>
+    2 v_XML_ErrCode  (A) DYNAMIC INIT <'<ErrorCode>@ERR_CD</ErrorCode>'>          
+    2 v_XML_ErrDscr  (A) DYNAMIC INIT <'<ErrorDescription>@ERR_MSG</ErrorDescription>'>
+    2 v_XML_FileData (A) DYNAMIC INIT <'<FileData><![CDATA[@DATA]]></FileData>'>
+    2 v_XML_End      (A) DYNAMIC INIT <'</RETInfo>'>  
+1 v_Err               (A4)
+1 v_A                 (A) DYNAMIC
+1 v_User              (A) DYNAMIC
+1 f_Batch             (A) DYNAMIC 
+  INIT <"/usr/SAG/MC/RET_REQUEST.TXT">
+END-DEFINE
+
+* PERFORM sbr-TEST-C
+IF *LENGTH (XML_PARSER_INPUT) = 0
+   RESPONSE-DATA :=  '<ErrorCode>9999</ErrorCode>'          
+   COMPRESS          '<ErrorDescription>Empty Request</ErrorDescription>' INTO RESPONSE-DATA
+   ESCAPE ROUTINE
+END-IF
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+
+*  PERFORM sbr-TEST-P
+  PERFORM sbr_BUSINESS
+  PERFORM sbr-RETURN
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE SUBROUTINE CALLBACK
+XML_PARSER_CONTENT := *TRIM (XML_PARSER_CONTENT)
+IF XML_PARSER_CONTENT_IS_EMPTY  ESCAPE ROUTINE END-IF
+* MOVE *TRANSLATE(XML_PARSER_CONTENT, UPPER) TO XML_PARSER_CONTENT
+ DECIDE ON FIRST VALUE OF XML_PARSER_XPATH
+   VALUE 'RETInfo/CN/$'
+      v_A := *TRIM(XML_PARSER_CONTENT)
+      IF v_A IS (N6) p_CN := VAL(v_A) END-IF
+   VALUE 'RETInfo/AssumedRetirementDate1/$'
+      v_A := *TRIM(XML_PARSER_CONTENT)
+      IF v_A IS (N8) p_D1 := VAL(v_A)  END-IF
+   VALUE 'RETInfo/AssumedRetirementDate2/$'
+      v_A := *TRIM(XML_PARSER_CONTENT)
+      IF v_A IS (N8) p_D2 := VAL(v_A)   END-IF
+   VALUE 'RETInfo/AssumedRetirementDate3/$'
+      v_A := *TRIM(XML_PARSER_CONTENT)
+      IF v_A IS (N8) p_D3 := VAL(v_A)   END-IF
+   VALUE 'RETInfo/UserID/$'
+      v_User := *TRIM(XML_PARSER_CONTENT)
+   VALUE 'RETInfo/Mode/$'
+      p_Mode := *TRIM(XML_PARSER_CONTENT)   
+    NONE IGNORE 
+  END-DECIDE
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE SUBROUTINE PARSER_ERROR
+   RESPONSE-DATA := XML_PARSER_ERROR_TEXT
+   ESCAPE MODULE
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE sbr_RETURN
+   MOVE p_Err TO v_Err
+   EXAMINE v_XML_ErrCode   FOR  '@ERR_CD'    REPLACE   v_Err
+   EXAMINE v_XML_ErrDscr   FOR  '@ERR_MSG'   REPLACE   p_ErrDscr
+   EXAMINE v_XML_FileData  FOR  '@DATA'      REPLACE   p_FileData
+   COMPRESS v_XML INTO RESPONSE-DATA LEAVING NO SPACE
+*       NEWPAGE (2)
+*       PRINT (2) *PROGRAM 'End' p_CN p_D1 p_D2 p_D3 '-'(20) //
+*       XML_PARSER_INPUT // 
+*       RESPONSE-DATA / '-'(20)
+      CLOSE PRINTER (2)
+
+   ESCAPE MODULE    
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE sbr-TEST-C
+ RESPONSE-DATA :='<RETInfo>'-
+                 '<ErrorCode>99</ErrorCode>'-
+                 '<ErrorDescription>Connection Test</ErrorDescription>'-
+                 '</RETInfo>'
+   ESCAPE MODULE
+ END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE sbr-TEST-P
+COMPRESS p_RETS00MC INTO p_ErrDscr WITH DELIMITER ':'
+PERFORM sbr_RETURN
+ END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE sbr_BUSINESS
+   IF p_Mode = 'V'
+    p_Err := 0 
+    p_ErrDscr := ' '
+     CALLNAT 'RETS00MC'  p_RETS00MC 
+*      IF p_Err = 0 
+*        DEFINE WORK FILE 1 f_Batch TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND,KEEP'
+*        WRITE WORK FILE 1   p_CN  p_D1  p_D2 p_D3 
+*        CLOSE WORK FILE 1
+*      END-IF
+     PERFORM sbr_RETURN  
+   ELSE
+*      PERFORM sbr_RETURN
+      p_Mode_2 := ' '  
+      CALLNAT 'RETS01MC'  p_RETS00MC
+      PERFORM sbr_RETURN
+   END-IF
+END-SUBROUTINE
+END

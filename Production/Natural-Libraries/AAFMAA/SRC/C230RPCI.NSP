@@ -1,0 +1,543 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C230RPCI
+*
+*    CI SCREEN 'REIN' PROCESSING   OLD TRAN 119
+*
+************************************************************************
+*                       MODIFICATION LOG
+* USER DATE      TAG   REASON
+*
+* PAM  09292004  PM1   Require Paid Up Date when reinstating
+*                        policies.
+* PAM  10042005  PM2   Adjusted Paid Up Date calculation
+* PAM  10142005  PM3   Fixed termination date logic
+* SAG  10282005  RH1 AB - Changed CALL to Cobol to CALLNAT to Natural
+* DRW  06222007  DW4   Fixed REIN in place when status is 'F' (added F)
+* DRW 06/11/2008 DW5 Fix Duration and Month-Ind Calcs
+* DRW 08/28/2008 DW6 Gen Plus Processing
+* BZ  10/20/2010 bz1   Exclude Reinput
+* YAK 10/03/2012 YK1   Use function to identify Level Term II plans
+* YAK 11/15/2012 YK2   Add No Medical Term plan (EZ)
+* NG  20130726   NG2  Address normalization
+* TMT 01/16/2014 TT1  GP2 POLICY SUPPORT
+* TMT 06/12/2014 TT2  Contact Normalization - DOB and Sex
+* vxt 06/02/2017 vt1  Group Term Project
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.CI-BLOCK
+LOCAL USING C230RLCI
+LOCAL USING GC2V5LXX
+LOCAL
+* 1 #CUR-LOAN-AMT         (P5.2)
+* 1 #CUR-LOAN-AMT-2       (P5.2)
+* 1 #CUR-LOAN-INT-RT      (P2.3)
+*
+1 #TR-REG-REIN-GR
+  2 #TR-REG-REIN-LBL-1         (A09) INIT <'CI-REIN  '>
+  2 #TR-REG-REIN-LBL-2         (A11) INIT <'ISSUE-DATE '>
+  2 #TR-REG-REIN-ISSUE-DATE    (N08)
+  2 #TR-REG-REIN-LBL-3         (A07) INIT <'  PLAN '>
+  2 #TR-REG-REIN-PLAN          (A03)                              /* vt1 was a02
+  2 #TR-REG-REIN-LBL-4         (A11) INIT <'  FACE-AMT '>
+  2 #TR-REG-REIN-FAC-AMT       (A09)
+  2 #TR-REG-REIN-LBL-5         (A10) INIT <'  NEW-ACV '>
+  2 #TR-REG-REIN-ACV           (A09)
+  2 #TR-REG-REIN-LBL-6         (A09) INIT <'  NEW-DB '>
+  2 #TR-REG-REIN-DB            (A09)
+1 REDEFINE #TR-REG-REIN-GR
+  2 #TR-REG-REIN              (A95)                               /* vt1 was a94
+*
+1 #WYYYYMMDD
+  2 #WCENT    (N2)
+  2 #WYY      (N2)
+  2 #WMM      (N2)
+  2 #WDD      (N2)
+1 REDEFINE #WYYYYMMDD
+  2 #WYYYYMMDD-N (N8)
+1 REDEFINE #WYYYYMMDD
+  2 #WYYYY-A  (A4)
+  2 #WMM-A    (A2)
+  2 #WDD-A    (A2)
+1 REDEFINE #WYYYYMMDD
+  2 #WYYYY-N  (N4)                                                 /* PM2
+  2 #WMM-N    (N2)                                                 /* PM2
+  2 #WDD-N    (N2)                                                 /* PM2
+*
+1 #WMMDDYY
+  2 #WMM      (N2)
+  2 #WDD      (N2)
+  2 #WYY      (N2)
+1 REDEFINE #WMMDDYY
+  2 #WMMDDYY-A (A6)
+*
+1 #WMMYYYY                                                        /* PM1
+  2 #WMM      (N2)                                                 /* PM1
+  2 #WCENT    (N2)                                                 /* PM1
+  2 #WYY      (N2)                                                 /* PM1
+1 REDEFINE #WMMYYYY                                               /* PM1
+  2 #WMMYYYY-A (A6)                                                /* PM1
+*
+1 #WMMYY
+  2 #WMM      (N2)
+  2 #WYY      (N2)
+1 REDEFINE #WMMYY
+  2 #WMMYY-A (A4)
+*
+1 #INVALID           (L)
+1 #ERR-MSG           (A60)
+*
+1 #STILL-HAS-OA      (L)
+1 #BEGIN-CASH-VALUE  (P7.2)
+1 #AMT-OWED          (P7.2)
+1 #BEGIN-REIN-YYYYMM (P6)
+1 #FOUND-HIST        (L)
+1 #START-KEY            (N15) INIT <000000000000000>
+1 REDEFINE #START-KEY
+  2 #START-KEY-ID        (N6)
+  2 #START-KEY-ISSUE-DT  (N8)
+  2 #START-KEY-SPLIT-IND (N1)
+*
+1 #END-KEY            (N15) INIT <999999999999999>
+1 REDEFINE #END-KEY
+  2 #END-KEY-ID        (N6)
+  2 #END-KEY-ISSUE-DT  (N8)
+  2 #END-KEY-SPLIT-IND (N1)
+*
+1 #WORK-YYYYMM-G
+  2 #FILL1         (A1)
+  2 #WORK-YYYY     (N4)
+  2 #WORK-MM       (N2)
+1 REDEFINE #WORK-YYYYMM-G
+  2 #WORK-YYYYMM   (N7)
+*
+1 #WORK-A-YYYYMM-G
+  2 #FILL2         (A1)
+  2 #WORK-A-YYYY   (N4)
+  2 #WORK-A-MM     (N2)
+1 REDEFINE #WORK-A-YYYYMM-G
+  2 #WORK-A-YYYYMM (N7)
+*
+1 #WORK-ISSUE-DT-G
+  2 #WORK-ISSUE-DT-YYYY (N4)
+  2 #WORK-ISSUE-DT-MM   (N2)
+  2 #WORK-ISSUE-DT-DD   (N2)
+1 REDEFINE #WORK-ISSUE-DT-G
+  2 #WORK-ISSUE-DT      (N8)
+*
+1 #REIN-MSG-LINE-G
+  2 #REIN-MSG-LABEL   (A12)
+  2 #REIN-MSG-AMT     (A10)
+1 REDEFINE #REIN-MSG-LINE-G
+  2 #REIN-MSG-LINE    (A22)
+*
+1 #rein-yyyymmdd      (n8)   /* DW5
+1 redefine #rein-yyyymmdd
+  2 #rein-yyyymm  (n6)
+  2 redefine #rein-yyyymm
+    3 #rein-yyyy    (n4)
+    3 #rein-mm      (n2)
+  2 #rein-dd      (n2)
+*
+1 #iss-dt-yyyymmdd      (n8)   /* DW5
+1 redefine #iss-dt-yyyymmdd
+  2 #iss-dt-yyyymm  (n6)
+  2 redefine #iss-dt-yyyymm
+    3 #iss-dt-yyyy    (n4)
+    3 #iss-dt-mm      (n2)
+  2 #iss-dt-dd      (n2)
+*
+1 #DATE-OF-BIRTH   (N8.0)       /* TT2
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+MOVE TRUE TO #REC-CHGD              /* INDICATE RECORD CHANGED
+*
+* WRITE 'c230rpci IFL=' #IFL 'STATUS=' CI-V.STATUS (#IFL)
+*                'PU='  CI-V.PAID-UP-DATE (#IFL)
+IF CI-V.STATUS (#IFL) = 'E' or = 'F' /* rein a Terminated Pol  /* DW4
+  RESET CI-V.ONLINE-ACTION (#IFL)
+*
+  RESET #STILL-HAS-OA
+  FOR #I1 1 TO 9
+    IF CI-V.ONLINE-ACTION (#I1) NE ' '
+      MOVE TRUE TO #STILL-HAS-OA
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF (CI-V.ONLINE-ACTION-GN = '1' OR = '2' OR = '3')
+      OR (#STILL-HAS-OA)
+    IGNORE
+  ELSE
+    RESET CI-V.ONLINE-ACTION-GN
+  END-IF
+*
+  MOVE 1     TO CI-V.NUMBER-MEMBERSHIPS
+  MOVE 'D'   TO CI-V.STATUS (#IFL)
+* WRITE 'c230rpci  reset status'  #IFL
+  RESET         CI-V.HANDLE-FLAG
+  RESET         CI-V.S-ADDRESS-CODE          /* maybe obsolete ng1
+  MOVE *DATN TO CI-V.ONLINE-DATE (#IFL)
+  perform reset-rein-data    /* Recalculate Durations etc        /* DW5
+*                  WRITE TRANS REGISTER <<<<<<<<<<<<<<<<<<<<<<
+  MOVE CI-V.ISSUE-DATE   (#IFL) TO #TR-REG-REIN-ISSUE-DATE  /* TRANS REG
+  MOVE CI-V.PLAN         (#IFL) TO #TR-REG-REIN-PLAN
+  MOVE EDITED CI-V.FACE-AMOUNT(#IFL)(EM=ZZZZZZ.99)
+    TO #TR-REG-REIN-FAC-AMT
+  MOVE EDITED CI-V.ACC-CASH-VALUE(#IFL) (EM=ZZZZZZ.99)
+    TO #TR-REG-REIN-ACV
+  MOVE EDITED CI-V.DEATH-BENEFIT(#IFL) (EM=ZZZZZZ.99) TO #TR-REG-REIN-DB
+  MOVE #TR-REG-REIN        TO TR-REG-V.OLD-DATA (#ITR1)
+  ADD 1 TO #ITR1
+  ESCAPE ROUTINE
+END-IF
+*
+IF CI-V.ONLINE-ACTION-GN = '2' OR = '3'  /* ALREADY FLAGGED (1 IS RESET)
+  IGNORE
+ELSE
+  MOVE  '4' TO CI-V.ONLINE-ACTION-GN     /* INDICATE ACTION THIS MONTH
+END-IF
+*
+MOVE '0' TO CI-V.SUSPEND-CODE
+RESET CI-V.DATE-OF-DEATH
+RESET CI-V.HANDLE-FLAG CI-V.S-ADDRESS-CODE   /* mayebe obsolete NG1
+*
+*   FILE UPDATES WHICH APPLY FOR BOTH KINDS OF REINSTATEMENTS FOLLOW
+*
+MOVE #SCR-PAID-THRU-YYYYMMDD (#ISC) TO CI-V.PAID-TO-DATE (#IFL)
+*
+IF #SCR-BILL-TO-YYYYMMDD (#ISC) = MASK (MMDDYYYY)
+  MOVE #SCR-BILL-TO-YYYYMMDD   (#ISC) TO CI-V.BILL-TO-DATE (#IFL)
+ELSE
+  RESET CI-V.BILL-TO-DATE (#IFL)
+END-IF
+*
+RESET CI-V.PAY-STATUS (#IFL)     /* TO TELL GPYSTSXX TO FIGURE OUT
+CALLNAT 'GPYSTSXX' CI-V.PAY-STATUS (#IFL) #SCR-STATUS (#ISC)
+  #INVALID #ERR-MSG
+*
+IF #SCR-PLN (#ISC) = '20'
+  MOVE '20P' TO CI-V.PLAN (#IFL)
+ELSE
+  IF #SCR-PLN (#ISC) = '30'
+    MOVE '30P' TO CI-V.PLAN (#IFL)
+  ELSE
+    MOVE #SCR-PLN (#ISC) TO CI-V.PLAN (#IFL)
+  END-IF
+END-IF
+*
+MOVE #SCR-AGE (#ISC) TO CI-V.ISSUE-AGE (#IFL)
+MOVE #SCR-EFF-DTE-YYYYMMDD (#ISC) TO CI-V.ISSUE-DATE (#IFL)
+MOVE 0                            TO CI-V.SPLIT-IND (#IFL)
+*
+RESET #DATE-OF-BIRTH
+#DATE-OF-BIRTH      := GET-DATE-OF-BIRTH(<CI-V.MEMBER-CONTACT-ID>)
+IF #SCR-PLN (#ISC) = 'OL' or = 'GPL' OR = 'GP2' /* TT1   /* DW6
+  IGNORE /* 1/2003 ELB - user will entey paid-up-date
+* COMPUTE CI-V.PAID-UP-DATE (#IFL) = CI-V.DATE-OF-BIRTH + 960000
+ELSE
+  IF #SCR-PLN (#ISC) = '20P'
+    COMPUTE CI-V.PAID-UP-DATE (#IFL) = CI-V.ISSUE-DATE(#IFL) + 200000
+  ELSE
+    IF #SCR-PLN (#ISC) = '30P'
+      COMPUTE CI-V.PAID-UP-DATE (#IFL) = CI-V.ISSUE-DATE(#IFL) + 300000
+    ELSE
+      IF #SCR-PLN (#ISC) = 'LT'
+        IF #SCR-SMK (#ISC) = 'S'
+          COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+            #DATE-OF-BIRTH + 500000               /* TT2
+        ELSE
+          COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+            #DATE-OF-BIRTH + 600000               /* TT2
+        END-IF
+      ELSE
+        IF #SCR-PLN (#ISC) = 'RT'
+          IGNORE  /* removed 1/2003 ELB since wrong if after 5 yrs after
+*         COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+*             CI-V.ISSUE-DATE (#IFL) + 50000
+        ELSE     /* assume 7P
+          IF #SCR-PLN (#ISC) = '7P'
+            COMPUTE CI-V.PAID-UP-DATE (#IFL) =
+              CI-V.ISSUE-DATE(#IFL) + 70000
+          ELSE
+            IF #SCR-PLN (#ISC) = 'EZ'                  /* YK2
+              COMPUTE CI-V.PAID-UP-DATE (#IFL) =       /* YK2
+                #DATE-OF-BIRTH + 800000                 /* YK2        /* TT2
+            END-IF                                     /* YK2
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+MOVE 1 TO CI-V.NUMBER-MEMBERSHIPS  /* to indicate at least 1 policy
+MOVE #SCR-FACE-AMT (#ISC) TO CI-V.FACE-AMOUNT (#IFL)
+MOVE #SCR-MODE     (#ISC) TO CI-V.MODE        (#IFL)
+MOVE #SCR-ANN-PRM  (#ISC) TO CI-V.ANNUAL-PREM (#IFL)
+MOVE #SCR-SMK      (#ISC) TO CI-V.SMOKER-FLAG (#IFL)
+*
+IF CI-V.ISSUE-DATE (#IFL) GT 19860630
+  MOVE 'N' TO CI-V.CONVERSION-FLAG (#IFL)
+ELSE
+  MOVE 'C' TO CI-V.CONVERSION-FLAG (#IFL)
+END-IF
+*
+MOVE CI-V.ID-NUMBER TO #START-KEY-ID
+  #END-KEY-ID
+*
+READ VA-HIST-V WITH RECORD-KEY FROM #START-KEY THRU #END-KEY
+  IF #SCR-EFF-DTE-YYYYMMDD (#ISC) = VA-HIST-V.REC-KEY-ISSUE-DT
+      AND (CI-V.ISSUE-DATE (#IFL) = VA-HIST-V.REC-KEY-ISSUE-DT)
+    MOVE VA-HIST-V.REC-KEY-SPLIT-IND TO CI-V.SPLIT-IND (#IFL) /* 05/89
+    ESCAPE BOTTOM
+  END-IF
+END-READ
+*
+IF  CI-V.ISSUE-DATE (#IFL) GE 19941201  /* LOAD POL SEQ # OR UNITS
+* MOVE VA-HIST-V.MONTHLY-ALLOC-AMT TO CI-V.NUM-MBRSHIPS (#IFL)
+* RESET VA-HIST-V.MONTHLY-ALLOC-AMT /* BELOW REPL BY ABOVE 5/2000
+  MOVE VA-HIST-V.POLICY-NUMBER TO CI-V.NUM-MBRSHIPS (#IFL)
+ELSE
+  COMPUTE CI-V.NUM-MBRSHIPS (#IFL) = CI-V.FACE-AMOUNT (#IFL) / 5000
+END-IF
+*
+* IF  (#SCR-PLN (#ISC) = 'RT' OR = 'LT')                            /* YK1
+*  OR ((#SCR-PLN-A1 (#ISC) GE 'U') AND (#SCR-PLN-A1 (#ISC) LE 'Z')) /* YK1
+IF FUNCTION-TERM-POLICY(<#SCR-PLN(#ISC)>)                           /* YK1
+  IF #SCR-PLN (#ISC) = 'LT'
+    MOVE 5 TO CI-V.SPLIT-IND (#IFL)
+  ELSE
+    IF #SCR-PLN (#ISC) = 'RT'
+      MOVE 6 TO CI-V.SPLIT-IND (#IFL)
+    ELSE
+      IF #SCR-PLN (#ISC) = 'EZ'                                     /* YK2
+        MOVE 8 TO CI-V.SPLIT-IND(#IFL)                              /* YK2
+      ELSE                                                          /* YK2
+        MOVE 7 TO CI-V.SPLIT-IND (#IFL)    /* for ltII
+      END-IF
+    END-IF
+  END-IF
+*
+  MOVE #SCR-FACE-AMT (#ISC) TO CI-V.DEATH-BENEFIT (#IFL)
+  MOVE #SCR-FACE-AMT (#ISC) TO CI-V.NXT-MON-DEATH-BENEFIT (#IFL)
+ELSE
+  PERFORM LOAD-VA-HIST-INFO
+END-IF
+*
+IF CI-V.PAID-UP-DATE (#IFL) = 0                                   /* PM1
+  IF #SCR-PAID-UP (#ISC) NE ' '                                   /* PM1
+    MOVE #SCR-PAID-UP (#ISC) TO #WMMYYYY-A                        /* PM1
+    MOVE BY NAME #WMMYYYY TO #WYYYYMMDD                           /* PM1
+    MOVE 15 TO #WYYYYMMDD.#WDD                                    /* PM1
+    MOVE #WYYYYMMDD-N TO CI-V.PAID-UP-DATE (#IFL)                 /* PM1
+  ELSE                                                            /* PM1
+*    REINPUT 'Paid Up Date not calculated - please enter it manually'             /* bz1
+*    MARK *#SCR-PAID-UP (#ISC)                                     /* PM1         /* bz1
+    #SCR-MSG-LINE-1 := 'Paid Up Date not calculated - please enter it manually'   /* bz1
+    ESCAPE ROUTINE                                                                /* bz1
+  END-IF                                                          /* PM1
+END-IF                                                            /* PM1
+*
+MOVE CI-V.PAID-UP-DATE (#IFL) TO #WYYYYMMDD-N                     /* PM2
+* IF CI-V.PAID-UP-DATE (#IFL) LT CI-V.PAID-TO-DATE (#IFL)         /* PM1
+IF ((#WYYYY-N LT CI-V.PAID-TO-DATE-YYYY (#IFL))                   /* PM2
+    OR (#WYYYY-N = CI-V.PAID-TO-DATE-YYYY (#IFL)                     /* PM2
+    AND #WMM-N LT CI-V.PAID-TO-DATE-MM (#IFL)))                      /* PM2
+  RESET CI-V.PAID-UP-DATE (#IFL)                                  /* PM1
+*  REINPUT 'Paid To Date greater than Paid Up Date'                /* PM1   bz1
+*  MARK *#SCR-PAID-THRU (#ISC)                                     /* PM1   bz1
+  #SCR-MSG-LINE-1 := 'Paid To Date greater than Paid Up Date'        /* bz1
+  ESCAPE ROUTINE                                                     /* bz1
+END-IF                                                            /* PM1
+*
+MOVE 'D' TO CI-V.STATUS        (#IFL) /* INDICATE ACTIVE SEGMENT NOW
+MOVE 'B' TO CI-V.ONLINE-ACTION (#IFL) /* REIN FROM SCRATCH (TERMINATED
+MOVE *DATN TO CI-V.ONLINE-DATE (#IFL)       /* ONLINE ACTION DATE
+*
+*                  RESET SCREEN <<<<<<<<<<<<<<<<<<<<<<<<<<<
+MOVE CI-V.PAID-UP-DATE (#IFL) TO #WYYYYMMDD-N
+* MOVE BY NAME #WYYYYMMDD TO #WMMYY
+* MOVE #WMMYY-A                   TO #SCR-PAID-UP (#ISC)
+MOVE BY NAME #WYYYYMMDD TO #WMMYYYY
+MOVE #WMMYYYY-A                   TO #SCR-PAID-UP (#ISC)
+MOVE CI-V.FACE-AMOUNT    (#IFL) TO #SCR-FACE-AMT (#ISC)
+MOVE CI-V.DEATH-BENEFIT  (#IFL) TO #SCR-DB       (#ISC)
+MOVE CI-V.MIN-CASH-VALUE (#IFL) TO #SCR-MIN-CV   (#ISC)
+MOVE CI-V.ACC-CASH-VALUE (#IFL) TO #SCR-ACV      (#ISC)
+MOVE CI-V.CASH-VALUE     (#IFL) TO #SCR-CSH-VL   (#ISC)
+*                  WRITE TRANS REGISTER <<<<<<<<<<<<<<<<<<<<<<
+MOVE CI-V.ISSUE-DATE   (#IFL) TO #TR-REG-REIN-ISSUE-DATE  /* TRANS REG
+MOVE CI-V.PLAN         (#IFL) TO #TR-REG-REIN-PLAN
+MOVE EDITED CI-V.FACE-AMOUNT(#IFL)(EM=ZZZZZZ.99) TO #TR-REG-REIN-FAC-AMT
+MOVE EDITED CI-V.ACC-CASH-VALUE(#IFL) (EM=ZZZZZZ.99) TO #TR-REG-REIN-ACV
+MOVE EDITED CI-V.DEATH-BENEFIT(#IFL) (EM=ZZZZZZ.99) TO #TR-REG-REIN-DB
+MOVE #TR-REG-REIN        TO TR-REG-V.OLD-DATA (#ITR1)
+ADD 1 TO #ITR1
+*
+* * * * * * * * * * * * * * * * *
+define subroutine reset-rein-data                     /* DW5
+* * * * * * * * * * * * * * * * *
+*
+move ci-v.issue-date (#ifl) to #iss-dt-yyyymmdd
+move *datn            to #rein-yyyymmdd
+*
+if #iss-dt-mm gt #rein-mm
+  subtract 1 from #rein-yyyy /* to Get correct Last-Duration
+  add 12 to #rein-mm
+end-if
+*
+subtract #iss-dt-yyyymm from #rein-yyyymm
+move #rein-yyyy to ci-v.last-duration (#ifl)
+*
+add 1 to #rein-yyyy  /* Duration is always 1 more than Last Duration
+move #rein-yyyy to ci-v.duration  (#ifl)
+move #rein-mm   to ci-v.month-ind (#ifl)
+* write 'after update' ci-v.last-duration (#ifl) ci-v.duration (#ifl)
+*      ci-v.month-ind (#ifl)
+*
+end-subroutine
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-LAST-DURATION
+*
+IF #WORK-ISSUE-DT-DD NE 1
+  ADD 1 TO #WORK-ISSUE-DT-MM
+*
+  IF #WORK-ISSUE-DT-MM GT 12
+    MOVE 01 TO #WORK-ISSUE-DT-MM
+    ADD 1 TO #WORK-ISSUE-DT-YYYY
+  END-IF
+END-IF
+*
+SUBTRACT #WORK-ISSUE-DT-YYYY FROM #WORK-YYYY
+ADD 1 TO #WORK-MM
+*
+IF #WORK-MM GT 12
+  MOVE 01 TO #WORK-MM
+  ADD 1 TO #WORK-YYYY
+END-IF
+*
+IF #WORK-MM LT #WORK-ISSUE-DT-MM
+  SUBTRACT 01 FROM #WORK-YYYY
+END-IF
+*
+END-SUBROUTINE /* (0407)
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE LOAD-VA-HIST-INFO
+* * * * * * * * * * * * * * * * * * *
+*
+MOVE VA-HIST-V.CUR-CONV-DURATION  TO CI-V.CONV-DURATION       (#IFL)
+MOVE VA-HIST-V.PREMIUM-DEFIC      TO CI-V.PREM-DEFICIENCY     (#IFL)
+MOVE VA-HIST-V.MONTHLY-ALLOC-AMT  TO CI-V.MONTH-ALLOC-AMT     (#IFL)
+MOVE VA-HIST-V.NET-PREM-RATIO     TO CI-V.NET-PR-RATIO        (#IFL)
+MOVE VA-HIST-V.CASH-VALUE-M      (13) TO CI-V.CASH-VALUE      (#IFL)
+MOVE VA-HIST-V.DEATH-BENEFIT-M   (13) TO CI-V.DEATH-BENEFIT   (#IFL)
+MOVE VA-HIST-V.ACCUM-CASH-VALUE-M(13) TO CI-V.ACC-CASH-VALUE  (#IFL)
+MOVE VA-HIST-V.MONTH-IND-M     (13) TO CI-V.MONTH-IND         (#IFL)
+RESET #BEGIN-CASH-VALUE               /* NO CASH VALUE TO START WITH
+*
+IF   (CI-V.ISSUE-DATE (#IFL) GE 19970101)
+    AND (CI-V.MONTH-ALLOC-AMT (#IFL) NE 999.99)    /* CONT-FUND
+  MOVE VA-HIST-V.CONT-FUND TO CI-V.BEG-CASH-VALUE (#IFL)
+ELSE
+  RESET CI-V.BEG-CASH-VALUE (#IFL)
+END-IF
+*
+MOVE VA-HIST-V.YEAR-MONTH-M    (13) TO #BEGIN-REIN-YYYYMM
+MOVE VA-HIST-V.YEAR-MONTH-M    (13) TO #WORK-YYYYMM
+MOVE CI-V.ISSUE-DATE (#IFL)         TO #WORK-ISSUE-DT
+*
+perform reset-rein-data    /* Recalculate Durations etc        /* DW5
+* Above replaced below on 6/13/2008                            /* DW5
+* PEERFORM CALC-LAST-DURATION /*CALC DUR BASED ON TERM NON removed 6/13/2008
+* MOVE #WORK-YYYY                     TO CI-V.LAST-DURATION (#IFL)
+*
+* IF CI-V.MONTH-IND (#IFL) = 12
+*   MOVE 0 TO CI-V.MONTH-IND (#IFL)
+* END-IF
+*
+* * * * * * * * * * SETUP LINKAGE TO AOCX2V5A * * * * * * * *
+*
+MOVE #CURR-NUM-SEGS    TO #L-ACTIVE-SEG
+MOVE *DATN TO #WYYYYMMDD-N
+COMPRESS #WMM-A #WDD-A #WYYYY-A INTO #PARM-DATE WITH '/'
+MOVE #IFL              TO #L-SEGNO
+MOVE CI-V.PAID-TO-DATE (#IFL) TO #L-PAID-THRU
+*
+FOR #I1 1 TO 9
+  IF CI-V.STATUS (#IFL) = 'D'
+    MOVE CI-V.ISSUE-DATE(#IFL) TO #L-ISS-DT (#I1)
+  END-IF
+END-FOR
+*
+MOVE 08250              TO #L-GROWTH-RATE
+RESET                      #L-MONTHLY-SW
+MOVE 1986               TO #L-MNTHLY-START-YR
+MOVE 'REIN'             TO #L-REIN-CODE
+MOVE 'N'                TO #L-REIN-CONV
+MOVE #BEGIN-REIN-YYYYMM TO #L-REIN-BEGIN-YYYYMM
+MOVE 99                 TO #L-NUM-PROJ-YRS
+MOVE 'N'                TO #L-DISPLAY-CALCS
+MOVE 'N'                TO #L-SHOW-LOAN-REPAID
+*
+MOVE BY NAME CI-V TO #PROJECTION-VIEW  /* GIVE ACCESS OF VIEW TO 2V5
+* DISPLAY #IFL
+*  'APREM' CI-V.ANNUAL-PREM(#IFL)
+*  'CSV' CI-V.CASH-VALUE(#IFL)
+*  'ACV' CI-V.ACC-CASH-VALUE(#IFL)
+*  'LAST/ANN/CASH/VALUE' CI-V.LAST-ANN-CASH-VALUE (#IFL)
+*  CI-V.PLAN(#IFL) 'ISS/AGE' CI-V.ISSUE-AGE(#IFL)
+*  'CONT/FUND' CI-V.BEG-CASH-VALUE (#IFL)
+*  'PREM/DEFIC' CI-V.PREM-DEFICIENCY (#IFL)
+*  'MON/ALLOC/AMT' CI-V.MONTH-ALLOC-AMT (#IFL)
+* 'DB' CI-V.DEATH-BENEFIT(#IFL)
+*     'ISS/AGE' CI-V.ISSUE-AGE (#IFL) 'DB' CI-V.DEATH-BENEFIT (#IFL)
+*      'FIXED/LOAN' CI-V.LOAN-AMOUNT 'VAR/LOAN ' CI-V.LOAN-AMOUNT-2
+*     'TOT-PR/PAID' CI-V.TOT-PREMIUMS-PAID (#IFL)
+*     'PAY/STATUS' CI-V.PAY-STATUS (#IFL)
+*      #PARM-DATE #L-PAID-THRU #L-ISS-DT (*)
+*      'begin' #L-REIN-BEGIN-YYYYMM
+*
+** SAG RH1 10282005 AB START
+**      CALL 'AOCX2V5A' #PROJECTION-VIEW.ID-NUMBER
+**                      #L-ACTIVE-SEG
+**                      #L-NUM-DTLS
+CALLNAT 'AOCX2V5A'  #PROJECTION-VIEW  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+*
+MOVE BY NAME #PROJECTION-VIEW TO CI-V  /* GET 2V5 CHANGES
+*
+* WRITE 'NEW AMONTS'
+*       'ACV'                CI-V.ACC-CASH-VALUE (#IFL)
+*       'LAST-AN-CASH-VALUE' CI-V.LAST-ANN-CASH-VALUE (#IFL)
+*       'CONT/FUND'     CI-V.BEG-CASH-VALUE (#IFL)
+*       'PREM-DEFIC'    CI-V.PREM-DEFICIENCY (#IFL)
+*       'MON/ALLOC/AMT' CI-V.MONTH-ALLOC-AMT (#IFL)
+*
+COMPUTE #AMT-OWED = CI-V.CASH-VALUE (#IFL) - #BEGIN-CASH-VALUE
+MOVE 'MEMBER OWES' TO #REIN-MSG-LABEL
+MOVE EDITED #AMT-OWED (EM=ZZZ,ZZZ.99) TO #REIN-MSG-AMT
+MOVE #REIN-MSG-LINE TO #SCR-MSG-LINE-2
+*
+IF   (TERMINATION-DATE NE 0)
+    AND (TERMINATION-DATE LT 200005)                                /* PM3
+* AND (TERMINATION-DATE LT 20000501)                              /* PM3
+  WRITE /// 'If this Reinstatement is to a policy terminated prior'
+  WRITE     'to 05/01/2000, the following data fields should be'
+  WRITE     'checked with EDS:'
+  WRITE     '   Policy # used on "NC"'
+  WRITE     '   Contingency Fund'
+  WRITE     '   Current Acquisition Balance'
+  WRITE //  'Press ENTER to proceed'
+END-IF
+*
+END-SUBROUTINE
+*
+END

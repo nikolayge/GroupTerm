@@ -1,0 +1,988 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHS07P6    - process NON-CERTIFIED Notices in 2006 format
+***********************************************************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  05142006 DW1  Create
+* SAG  11292005 RH1  SS - Modified the custom coded ON ERROR stmt &    *
+*                    replaced it with copycode GABNDCX3                *
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII
+* DRW  06152007 DW2 Chg Layout to Keith's new way
+* DRW  06272007 DW3 Combine Prem MIP BILLPRIN & BILLINTR
+* DRW  06282007 DW4 Do Certifieds as well as regular
+* DRW  07112007 DW5 Create XML formated file
+* DRW  07132005 DW6 Replace '&' with XML OK char '&amp'
+* DRW  08032007 DW7 Changes to XML Layout
+* DRW  08062007 DW8 Fix Prior Bill and Balance Problem
+* DRW  08212007 DW9 Remove Freq (MODE) from 'AD' Notices
+* DRW  08292007 DW10 chg XML file - bypass iss-dt/plan if non-existent
+* DRW  08292007 DW11 Fix Balance Due problem on XML File based on DW8
+* DRW  09072007 DW12 Change labels on 3 fields on the ASAP file
+* DRW  09122007 DW13 Add Parm processing to only create XML file
+* DRW  09182007 DW14 Chg Transfer Date on XMl file
+* DRW  10012007 DW15 Add 'Leaving no' to compress for DW12
+* DRW  10192007 DW16 Add CAP MIP Alone processing
+* DRW 01/04/2007 DW17 Separate AS notices apart (File & XML) File 10 & 11
+* DRW 02/04/2008 DW18 Add Header Line To AS Notices
+* DRW 08/28/2007 DW19 Gen Plus Processing
+* vxt 10/18/2010 vt1 increase size of the street, street-2 and city fields
+*                    and the way they are populated from the new address pool file.
+* PAM 12/28/2010 PM20 Added new check scanning solution
+* PAM 01/04/2010 PM21 Fixed heading error
+* PAM 01/06/2011 PM22 Fixed XML error for DAL
+* vxt 02/08/2011 vt2  Fix XML Directive for Unicode Files from IAS
+* vxt 07/25/2011 vt3  fix city and state
+* YAK 10/10/2012 YK1  Use function to identify Level Term II plans
+* YAK 11/15/2012 YK2  Add No Medical Term plan (EZ)
+* vxt 01/22/2013 vt4  extend the field size  / ticket 1736 /
+* YAK 11/15/2012 YK3  Add GP2 - GENERATION PLUS 2
+* bz1 12/26/2013 eliminate paper billing (OI-2404)
+* TMT 10/14/2014 TT1  ANNUITY LIFE HARMONIZATION
+***********************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #FUNCTION           (A1)   /* "F" = Final Processing
+1 #NOTC-REG-CNT       (P5)
+1 #NOTC-CERT-CNT      (P5)   /* DW4
+1 #PAYOR-CN           (A6)
+1 REDEFINE #PAYOR-CN
+  2 #PAYOR-CN-N        (N6)
+1 #PAYOR-NAME         (A70)                                  /* vt1  was 35
+1 #INSURED-CN         (A6)
+1 REDEFINE #INSURED-CN
+  2 #INSURED-CN-N      (N6)
+1 #INSURED-NAME       (A70)                                  /* vt1 was 35
+1 #MODE               (A1)
+1 #RUN-DT-MM-DD-YYYY  (A10)
+1 #AAFM-BAR-CODE-1    (A32)
+1 #AAFM-BAR-CODE-2    (A32)
+1 #SCR-BAR-CD-SUPPRESSED (A70)    /* DW2
+1 #SCR-TYPE-IND      (A14)
+1 REDEFINE #SCR-TYPE-IND
+  2 #SCR-TYPE-IND-3   (A3)
+  2 REDEFINE #SCR-TYPE-IND-3
+    3 #SCR-TYPE-IND-3-X   (A1/3)
+*
+1 #ADDR-1        (A70)                                   /* vt1 was 25 \/ but not used
+1 #ADDR-2        (A70)
+1 #ADDR-3        (A70)                                   /* vt1 was 25 /\
+1 #CITY          (A50)                                   /* VT1
+1 #STATE         (A2)                                    /* VT1
+1 #ZIP-5         (A5)
+1 #ZIP-4         (A4)
+1 #SEG           (I2)
+1 #POL-NUM       (A16)
+*
+1 #NOTICE-INFO
+  2 #V-BILLTYPE    (A2)     /* 1
+  2 #V-PMT-DUE-DT  (A10)    /* 2  var2
+  2 #V-ISS-DT      (A10)    /* 3  var3
+  2 #V-UNPD-BAL    (A10)    /* 4  var4
+  2 #V-AMT-DUE     (A12)    /* 5  var8          /* vt4 was a10
+  2 #V-LAPSE-DT    (A10)    /* 6  var9
+  2 #V-LOAN-RATE   (A7)     /* 7  var10
+  2 #V-LOAN-CAP-DT (A10)    /* 8  var11
+  2 #V-LOAN-BAL    (A12)    /* 9  var16          /* vt4 was a10
+  2 #V-PREM-DUE    (A10)    /* 10 var17
+  2 #V-DUES-PMT    (A10)    /* 11 var18
+  2 #V-RIDER-PMT   (A10)    /* 12 var19
+  2 #V-LOAN-PMT    (A10)    /* 13 var20
+  2 #V-INT-PMT     (A12)    /* 14 var21          /* vt4 was a10
+  2 #V-BADJ-PMT    (A10)    /* 15 var22
+  2 #V-PLAN        (A3)     /* 16 var30
+  2 #V-LOAN-TYPE   (A8)     /* 17 var35
+  2 #V-LOAN-DATE   (A10)    /* 18 var36
+  2 #V-COLLECT-DT  (A10)                        /* DW16
+*
+1 #SEND-CERTIFIED (L)    /* DW4
+1 #NUM-CERTS    (N5)
+1 #NUM-REGS     (N5)
+1 #NUM-AS       (N5)    /* DW17
+1 #CONTACT-ID   (N8)                        /* vt1
+*
+1 #TRANSACTIONS   (A150)   /* PM20
+1 #BYP-BILL-PAYER (L)      /* PM20
+*
+LOCAL USING GONERLXX                        /* SAG RH1 11282005 SS
+*
+LOCAL USING ADDA0001                             /* vt1     LDA for new address program
+LOCAL USING SCNL0001       /* PM20
+LOCAL USING INVL0001       /* PM20
+LOCAL
+*
+1 #NOTICE-XML-LBLS       /* DW5                                     Use on ASAP file
+  2 #BILLTYPE-LBL        (A15) INIT <'BillType'>        /* 1
+  2 #INSUREDCN-LBL       (A15) INIT <'CN'>              /* 2  /* DW7     InsuredCN
+  2 #POLICYNUMBER-LBL    (A15) INIT <'POL-NUM'>         /* 3  /* DW7     PolicyNumber
+  2 #BILLDATE-LBL        (A15) INIT <'BillDate'>        /* 4
+  2 #INSUREDNAME-LBL     (A15) INIT <'InsuredName'>     /* 5
+  2 #PAYERCN-LBL         (A15) INIT <'PayerCN'>         /* 6
+  2 #PAYERNAME-LBL       (A15) INIT <'PayerName'>       /* 7
+  2 #STREET1-LBL         (A15) INIT <'Street1'>         /* 8
+  2 #STREET2-LBL         (A15) INIT <'Street2'>         /* 9
+  2 #CITY-LBL            (A15) INIT <'City'>            /* 10
+  2 #STATE-LBL           (A15) INIT <'State'>           /* 11
+  2 #ZIP-LBL             (A15) INIT <'Zip'>             /* 12
+  2 #DUEDATE-LBL         (A15) INIT <'DueDate'>         /* 13
+  2 #ISSUEDATE-LBL       (A15) INIT <'IssueDate'>       /* 14
+  2 #PLAN-LBL            (A15) INIT <'Plan'>            /* 15
+  2 #LAPSEDATE-LBL       (A15) INIT <'LapseDate'>       /* 16
+  2 #PAYMODE-LBL         (A15) INIT <'PayMode'>         /* 17
+  2 #SCANLINE-LBL        (A15) INIT <'ScanLine'>               /* PM20
+  2 #BARCODE1-LBL        (A15) INIT <'Barcode1'>        /* 18
+  2 #BARCODE2-LBL        (A15) INIT <'Barcode2'>        /* 19
+  2 #OTHERCODES-LBL      (A15) INIT <'OtherCodes'>      /* 20
+  2 #PRIORBILL-LBL       (A15) INIT <'PriorBill'>       /* 21
+  2 #LOANTYPE-LBL        (A15) INIT <'LoanType'>        /* 22
+  2 #LOANDATE-LBL        (A15) INIT <'LoanDate'>        /* 23
+  2 #LOANRATE-LBL        (A15) INIT <'LoanRate'>        /* 24
+  2 #LOANCAPITALDATE-LBL (A15) INIT <'LoanCapitalDate'> /* 25
+  2 #LOANBAL-LBL         (A15) INIT <'LoanBalance'>     /* 26   /* DW7   LoanBal
+  2 #BALANCE-LBL         (A15) INIT <'Balance'>         /* 27  AA
+  2 #PREMIUM-LBL         (A15) INIT <'Premium'>         /* 28  AB
+  2 #RIDER-LBL           (A15) INIT <'Rider'>           /* 29  AC
+  2 #DUES-LBL            (A15) INIT <'Dues'>            /* 30  AD
+  2 #BILLADJUST-LBL      (A15) INIT <'BillAdjust'>      /* 31  AE
+  2 #LOANINTEREST-LBL    (A15) INIT <'LoanInterest'>    /* 32  AF
+  2 #CAPLOAN-LBL         (A15) INIT <'CapLoan'>         /* 33  AG
+  2 #AMOUNTDUE-LBL       (A15) INIT <'AmountDue'>       /* 34  AH
+  2 #COLLECTION-DATE     (A15) INIT <'CollectDate'>    /* 35  AI   /* DW16
+1 REDEFINE #NOTICE-XML-LBLS
+  2 #XML-LBL  (A15/36)    /* PM20
+*
+1 #XML-HDR-1      (A60)   /* DW5
+1 #XML-HDR-2      (A60)
+1 #XML-HDR-3      (A60)
+1 #XML-HDR-4      (A60)
+1 #XML-HDR-5      (A60)
+1 #XML-HDR-6      (A60)
+1 #XML-REC        (A100)
+1 REDEFINE #XML-REC
+  2 #XML-REC-X  (A1/100)     /* DW6
+*
+1 #HOLD-XML-REC (A100)      /* DW6
+1 REDEFINE #HOLD-XML-REC
+  2 #HOLD-XML-REC-X (A1/100)
+*
+1 #PLAN-X    (A3)
+1 #PLAN      (A3)                /* DW2
+1 REDEFINE #PLAN
+  2 #PLAN-A1   (A1)
+  2 REDEFINE #PLAN-A1
+    3 #PLAN-A1-N (N1)
+  2 #PLAN-LT2-TERM (N2)
+1 REDEFINE #PLAN
+  2 #PLAN-A2     (A2)
+  2 REDEFINE #PLAN-A2
+    3 #PLAN-A2-N  (N2)
+  2 #PLAN-FIL-2  (A1)
+*
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A    (A4)
+  2 #MM-A      (A2)
+  2 #DD-A      (A2)
+1 #DATN-DISP  (A10)
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+*
+1 #BALANCE-DUE  (A10)    /* DW8
+1 #DOC-TOT      (A5)
+1 #I1           (I2)
+1 #I2           (I2)
+1 #P-X2         (I2)
+1 #FREQ         (A11)
+1 #ABEND-CODE   (I4)
+1 #SPLIT    (A1)
+1 #STREET   (A70)                          /* vt1 was 25  \/
+1 #STREET-2 (A70)                          /* vt1 was 25
+* 1 #CITY     (A50)                          /* vt1 was 22  /\
+* 1 #STATE    (A2)                            /* VT1
+1 #ERR-MSG  (A60)
+1 #DOING-AS   (L)     /* DW17
+*
+1 #FULL-RECORD (A625) 1 REDEFINE #FULL-RECORD
+  2 #FULL-REC  (A125/5)
+*
+1 #REC-250    (A250)
+1 REDEFINE #REC-250
+  2 #REC-125-A (A125)
+  2 #REC-125-B (A125)
+1 REDEFINE #REC-250
+  2 #REC-250-X   (A1/250)
+*
+1 #BILL-DATE        (A8)     /* PM20
+1 #WORK-DATE        (A10)    /* PM20
+1 REDEFINE #WORK-DATE        /* PM20
+  2 #WORK-DATE-MM    (A2)     /* PM20
+  2 #DASH-1          (A1)     /* PM20
+  2 #WORK-DATE-DD    (A2)     /* PM20
+  2 #DASH-2          (A1)     /* PM20
+  2 #WORK-DATE-YYYY  (A4)     /* PM20
+1 #WORK-AMOUNT      (N10.2)  /* PM20
+1 #DISP-WORK-AMOUNT (A10)    /* PM20
+1 #WORK-BILL-TYPE   (A2)     /* PM20
+1 #INVOICE-RECORD   (A250)   /* PM20
+*
+1 p_RC (N4)
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+ON ERROR
+  INCLUDE GABNDCX3
+  STOP                                                 /* SAG RH1 11292005 SS - END
+END-ERROR
+
+* WRITE 'inside the aths07p6' '='#FUNCTION '=' #SEND-CERTIFIED   '=' #V-BILLTYPE
+*  '=' #INSURED-CN          /* vt1
+*  '=' #city  #state  /* vt3
+if #insured-cn = '180292'
+  write '****************in s07p6' #insured-cn '=' #mode
+end-if
+IF #FUNCTION = 'X'   /* XML file Creation Only     DW13
+*    To process this use job T4CYXML7 and AS separation logic not added
+  WRITE 'Doing XML file Cteation Only'
+  MOVE #NOTC-REG-CNT  TO #NUM-REGS
+  MOVE #NOTC-CERT-CNT TO #NUM-CERTS
+  PERFORM WRITE-FINAL-XML-FILE
+  ESCAPE ROUTINE
+END-IF
+*
+IF #FUNCTION = 'F'   /* Finalization processing     DW5
+  CLOSE WORK FILE 6
+  CLOSE WORK FILE 7
+  CLOSE WORK FILE 12
+  WRITE 'Doing Finalization'
+  PERFORM WRITE-FINAL-XML-FILE
+  ESCAPE ROUTINE
+END-IF
+*
+IF  ((NOT #SEND-CERTIFIED) AND (#NOTC-REG-CNT   = 1))   /* DW4
+    OR ((#SEND-CERTIFIED)     AND (#NOTC-CERT-CNT  = 1))
+    OR ((#V-BILLTYPE = 'AS') AND (#NUM-AS = 0))              /* DW18
+  RESET #FULL-REC (*) #P-X2 #REC-250
+*
+  MOVE #XML-LBL (1) TO #REC-250   /* Build Labels Record
+  FOR #I1 2 TO 36   /* DW5/DW16/PM20
+    IF #I1 = 2   /* Selected changes in labels to ASAP (Word Merge File)   /* DW12
+      COMPRESS #REC-250 #TAB 'InsuredCN' INTO #REC-250 LEAVING NO     /* DW15
+    ELSE
+      IF #I1 = 3
+        COMPRESS #REC-250 #TAB 'PolicyNumber' INTO #REC-250 LEAVING NO /* DW12/DW15
+      ELSE
+        IF #I1 = 27                                                    /* PM21 -- was 26
+          COMPRESS #REC-250 #TAB 'LoanBal' INTO #REC-250 LEAVING NO    /* DW12/DW15
+        ELSE
+          COMPRESS #REC-250 #TAB #XML-LBL (#I1) INTO #REC-250 LEAVING NO
+        END-IF
+      END-IF
+    END-IF
+*
+    IF #I1 = 18 OR = 27
+      PERFORM COMBINE-125
+    END-IF
+  END-FOR
+*
+  PERFORM COMBINE-125
+*
+  IF #REC-125-A NE ' '
+    ADD 1 TO #P-X2
+    MOVE #REC-125-A TO #FULL-REC (#P-X2)
+  END-IF
+*
+  IF #SEND-CERTIFIED                  /* DW4
+    WRITE WORK FILE 5 #FULL-RECORD   /* Certified Notices
+  ELSE
+    IF #V-BILLTYPE = 'AS'    /* Allotment STOPS    DW17
+      WRITE WORK FILE 10 #FULL-RECORD
+    ELSE
+      CALLNAT 'BN-EDLV' p_RC                                                          /* bz1 Start 1
+        #PAYOR-CN-N
+        #CONTACT-ID
+        #INSURED-CN-N
+        #POL-NUM
+        #PAYOR-NAME
+        #V-AMT-DUE
+        #V-PMT-DUE-DT
+        #V-LOAN-PMT
+      DECIDE ON FIRST VALUE p_RC
+        VALUE 0
+          WRITE #PAYOR-CN-N  'Web delivery'
+          WRITE(9) NOTITLE #PAYOR-CN-N  '  Web-delivery'
+        VALUE 1
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+        VALUE 2
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+          WRITE #PAYOR-CN-N  'Web delivery canceled. Member has no valid Email'
+        VALUE 3
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+          WRITE #PAYOR-CN-N  'Web delivery canceled. Incorrect Date Format' #V-PMT-DUE-DT
+        NONE
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+          WRITE #PAYOR-CN-N  'Web delivery canceled. Unknown code:'  p_RC
+      END-DECIDE                                                                        /* bz1 End 1
+    END-IF
+  END-IF
+END-IF
+*
+MOVE LEFT #V-UNPD-BAL    TO #V-UNPD-BAL
+MOVE LEFT #V-AMT-DUE     TO #V-AMT-DUE
+MOVE LEFT #V-LOAN-RATE   TO #V-LOAN-RATE
+MOVE LEFT #V-LOAN-CAP-DT TO #V-LOAN-CAP-DT
+MOVE LEFT #V-LOAN-BAL    TO #V-LOAN-BAL
+MOVE LEFT #V-PREM-DUE    TO #V-PREM-DUE
+MOVE LEFT #V-DUES-PMT    TO #V-DUES-PMT
+MOVE LEFT #V-RIDER-PMT   TO #V-RIDER-PMT
+MOVE LEFT #V-LOAN-PMT    TO #V-LOAN-PMT
+MOVE LEFT #V-INT-PMT     TO #V-INT-PMT
+MOVE LEFT #V-BADJ-PMT    TO #V-BADJ-PMT
+
+*        MOVE 'S' TO #SPLIT                                      /* vt1
+* RESET #STREET #STREET-2 #CITY #STATE                      /* vt1 vt3
+*  CALLNAT 'GCTSTSXX'  /* split city/state                                   /* vt1 \/
+* #SPLIT
+* #ADDR-1
+* #ADDR-2
+* #ADDR-3
+* #STREET
+* #STREET-2
+* #CITY
+* #STATE
+* #ERR-MSG
+**   #add-contact-id := #contact-id
+**  callnat 'ADDN0001' #PDA-ADDRESS
+
+IF #ADDR-3 NE ' '
+  #STREET-2 := #ADDR-2
+  #STREET   := #ADDR-1
+ELSE
+  #STREET   := #ADDR-1
+  RESET #STREET-2
+END-IF
+* IF #ADD-COUNTRY NE 'US'                           /* vt1 01032011  \/
+*  #CITY := #ADDR-3
+*  RESET #STATE
+* END-IF                                            /* vt1 01032011  /\
+* #city     := #add-city       /* vt3
+* #state    := #add-state      /* vt3                                                 /* vt1 /\
+*
+RESET #FREQ
+IF #MODE = 'A'
+  MOVE 'Annual' TO #FREQ
+ELSE
+  IF #MODE = 'S'
+    MOVE 'Semi-annual' TO #FREQ
+  ELSE
+    IF #MODE = 'Q'
+      MOVE 'Quarterly' TO #FREQ
+    ELSE
+      if #mode eq ' '                              /* vt3 \/
+        reset #freq
+      else                                         /* vt3 /\
+        MOVE 'Monthly' TO #FREQ
+      end-if                                       /* vt3
+    END-IF
+  END-IF
+END-IF
+*
+IF #V-BILLTYPE = 'AD'                                /* DW9
+  RESET #FREQ
+END-IF
+*
+MOVE #V-PLAN TO #PLAN               /* DW2
+RESET #PLAN-X                      /* DW2
+*
+IF IS-ANNUITY-LIFE (<#V-PLAN>)     /* TT1
+  #V-PLAN  := 'AL'                 /* TT1
+END-IF                             /* TT1
+*
+DECIDE ON FIRST VALUE #V-PLAN
+  VALUE 'SO' MOVE 'SO' TO #PLAN-X
+  VALUE 'AL' MOVE 'AL' TO #PLAN-X
+  VALUE 'LT' MOVE 'L1' TO #PLAN-X
+  VALUE 'RT' MOVE 'RT' TO #PLAN-X
+  VALUE 'EZ' MOVE 'EZ' TO #PLAN-X      /* YK2
+  VALUE 'GPL', 'GP2' MOVE 'GP' TO #PLAN-X     /* DW19  /* YK3
+*
+  NONE
+*   IF (#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z')   /* LT2    /* YK1
+    IF F-LT2-TRUE(<#PLAN>)                                 /* YK1
+      MOVE 'L2' TO #PLAN-X
+    ELSE
+      IF  (#PLAN = 'OL' OR = 'SPF')    /* all types
+          OR (#PLAN = MASK (NN.))         /* if OL's
+          OR (#PLAN = MASK (N'P'.))
+        MOVE 'OL' TO #PLAN-X
+      END-IF
+    END-IF
+END-DECIDE
+*
+RESET #FULL-REC (*) #P-X2
+*
+IF NOT #V-BILLTYPE = 'PB' OR = 'LC'              /* DW8/DW16
+  MOVE #V-UNPD-BAL TO #BALANCE-DUE
+  RESET #V-UNPD-BAL
+END-IF
+*
+PERFORM CREATE-INVOICE-DETAILS    /* PM20
+*
+IF NOT #BYP-BILL-PAYER            /* PM20
+  COMPRESS
+    #V-BILLTYPE                     /* 1
+    #TAB #INSURED-CN-N              /* 2
+    #TAB #POL-NUM                   /* 3
+    #TAB #RUN-DT-MM-DD-YYYY         /* 4
+    #TAB #INSURED-NAME              /* 5
+    #TAB #PAYOR-CN-N                /* 6
+    #TAB #PAYOR-NAME                /* 7
+    #TAB #STREET                    /* 8
+    #TAB #STREET-2                  /* 9
+    #TAB #CITY                      /* 10
+    #TAB #STATE                     /* 11
+    #TAB #ZIP-5                     /* 12a
+    INTO #REC-250 LEAVING NO
+*
+  IF #ZIP-4 NE ' '
+    COMPRESS #REC-250
+      '-' #ZIP-4                  /* 12b
+      INTO #REC-250 LEAVING NO
+  END-IF
+*
+  PERFORM COMBINE-125
+*
+  COMPRESS #REC-250
+    #TAB #V-PMT-DUE-DT              /* 13
+    #TAB #V-ISS-DT                  /* 14
+    #TAB #PLAN-X                    /* 15
+    #TAB #V-LAPSE-DT                /* 16
+    #TAB #FREQ                      /* 17
+    INTO #REC-250 LEAVING NO
+*
+  PERFORM COMBINE-125
+*
+  COMPRESS #REC-250
+    #TAB #SCAN-LINE               /* PM20
+    #TAB #AAFM-BAR-CODE-1           /* 18
+    #TAB #AAFM-BAR-CODE-2           /* 19
+    #TAB #SCR-BAR-CD-SUPPRESSED     /* 20
+    #TAB #V-UNPD-BAL                /* 21
+    #TAB #V-LOAN-TYPE               /* 22
+    #TAB #V-LOAN-DATE               /* 23
+    #TAB #V-LOAN-RATE               /* 24
+    #TAB #V-LOAN-CAP-DT             /* 25
+    #TAB #V-LOAN-BAL                /* 26
+    #TAB #BALANCE-DUE               /* 27 AA         /* DW8
+    INTO #REC-250 LEAVING NO
+*
+  PERFORM COMBINE-125
+*
+  COMPRESS #REC-250
+    #TAB #V-PREM-DUE              /* 28 AB
+    #TAB #V-RIDER-PMT             /* 29 AC
+    #TAB #V-DUES-PMT              /* 30 AD
+    #TAB #V-BADJ-PMT              /* 31 AE
+    #TAB #V-INT-PMT               /* 32 AF
+    #TAB #V-LOAN-PMT              /* 33 AG  /* Combined MIP PRIN & INTR
+    #TAB #V-AMT-DUE               /* 34 AH
+    #TAB #V-COLLECT-DT            /* 35 AI        /* DW16
+    INTO #REC-250 LEAVING NO
+*
+  PERFORM COMBINE-125
+*
+  IF #REC-125-A NE ' '
+    ADD 1 TO #P-X2
+    IF #P-X2 GT 12
+      WRITE #INSURED-CN 'p-x2 =' #P-X2 'TYPE=' #SCR-TYPE-IND
+        #REC-125-A (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+    ELSE
+      MOVE #REC-125-A TO #FULL-REC (#P-X2)
+    END-IF
+  END-IF
+*
+  IF #SEND-CERTIFIED                  /* DW4
+    WRITE WORK FILE 5 #FULL-RECORD   /* Certified Notices
+    ADD 1 TO #NUM-CERTS                  /* DW5
+  ELSE
+    IF #V-BILLTYPE = 'AS'    /* Allotment STOPS    DW17
+      WRITE WORK FILE 10 #FULL-RECORD
+      ADD 1 TO #NUM-AS                    /* DW17
+    ELSE
+      CALLNAT 'BN-EDLV' p_RC                                                         /* bz1 Start 2
+        #PAYOR-CN-N
+        #CONTACT-ID
+        #INSURED-CN-N
+        #POL-NUM
+        #PAYOR-NAME
+        #V-AMT-DUE
+        #V-PMT-DUE-DT
+        #V-LOAN-PMT
+      DECIDE ON FIRST VALUE p_RC
+        VALUE 0
+          WRITE #PAYOR-CN-N  'Web delivery'         /* bz1
+          WRITE(9) NOTITLE #PAYOR-CN-N  '  Web-delivery'
+        VALUE 1
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+          ADD 1 TO #NUM-REGS               /* DW5
+        VALUE 2
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+          ADD 1 TO #NUM-REGS               /* DW5
+          WRITE #PAYOR-CN-N  'Web delivery canceled. Member has no valid Email'
+        VALUE 3
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+          ADD 1 TO #NUM-REGS               /* DW5
+          WRITE #PAYOR-CN-N  'Web delivery canceled. Incorrect Date Format' #V-PMT-DUE-DT
+        NONE
+          WRITE WORK FILE 3 #FULL-RECORD   /* Regular Notices
+          ADD 1 TO #NUM-REGS               /* DW5
+          WRITE #PAYOR-CN-N  'Web delivery canceled. Unknown code:'  p_RC
+      END-DECIDE                                                                        /* bz1 End 2
+    END-IF
+  END-IF
+*
+  PERFORM BUILD-XML-RECS             /* DW5
+END-IF                               /* PM20
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE COMBINE-125
+* * * * * * * * * * * * * * *
+*
+IF #REC-125-B NE ' '
+  ADD 1 TO #P-X2
+  MOVE #REC-125-A TO #FULL-REC (#P-X2)
+  MOVE #REC-125-B TO #REC-125-A
+  RESET #REC-125-B
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE BUILD-XML-RECS             /* DW5
+* * * * * * * * * * * * * * * * *
+*
+MOVE '<DOCUMENT>' TO #XML-REC
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (1) '>' #V-BILLTYPE '</' #XML-LBL (1) '>' INTO #XML-REC LEAVING NO            /* 1
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (2) '>' #INSURED-CN-N '</' #XML-LBL (2) '>'INTO #XML-REC LEAVING NO           /* 2
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (3) '>' #POL-NUM '</' #XML-LBL (3) '>' INTO #XML-REC LEAVING NO               /* 3
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (4) '>' #RUN-DT-MM-DD-YYYY '</' #XML-LBL (4) '>' INTO #XML-REC LEAVING NO     /* 4
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (5) '>' #INSURED-NAME '</' #XML-LBL (5) '>' INTO #XML-REC LEAVING NO          /* 5
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (6) '>' #PAYOR-CN-N '</' #XML-LBL (6) '>' INTO #XML-REC LEAVING NO            /* 6
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (7) '>' #PAYOR-NAME '</' #XML-LBL (7)  '>' INTO #XML-REC LEAVING NO           /* 7
+PERFORM WRITE-XML
+COMPRESS '<' #XML-LBL (8) '>' #STREET '</' #XML-LBL (8)  '>' INTO #XML-REC LEAVING NO               /* 8
+PERFORM WRITE-XML
+*
+IF #STREET-2 NE ' '
+  COMPRESS '<' #XML-LBL (9) '>' #STREET-2 '</' #XML-LBL (9) '>' INTO #XML-REC LEAVING NO            /* 9
+  PERFORM WRITE-XML
+END-IF
+*
+COMPRESS '<' #XML-LBL (10) '>' #CITY '</' #XML-LBL (10) '>' INTO #XML-REC LEAVING NO                /* 10
+PERFORM WRITE-XML
+*
+IF #STATE NE ' '
+  COMPRESS '<' #XML-LBL (11) '>' #STATE '</' #XML-LBL (11) '>' INTO #XML-REC LEAVING NO             /* 11
+  PERFORM WRITE-XML
+END-IF
+*
+IF #ZIP-5 NE ' '
+  COMPRESS '<' #XML-LBL (12) '>' #ZIP-5  INTO #XML-REC LEAVING NO                                  /* 12a
+*
+  IF #ZIP-4 NE ' '
+    COMPRESS #XML-REC
+      '-' #ZIP-4                                                                                  /* 12b
+      INTO #XML-REC LEAVING NO
+  END-IF
+  COMPRESS #XML-REC '</' #XML-LBL (12) '>' INTO #XML-REC LEAVING NO
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-PMT-DUE-DT NE ' '
+  COMPRESS '<' #XML-LBL (13) '>' #V-PMT-DUE-DT '</' #XML-LBL (13) '>' INTO #XML-REC LEAVING NO      /* 13
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-ISS-DT NE ' '                                              /* DW10
+  COMPRESS '<' #XML-LBL (14) '>' #V-ISS-DT '</' #XML-LBL (14) '>'       /* DW14
+    INTO #XML-REC LEAVING NO
+  PERFORM WRITE-XML
+END-IF
+*
+IF #PLAN-X NE ' '                                                /* DW10
+  COMPRESS '<' #XML-LBL (15) '>' #PLAN-X '</' #XML-LBL (15) '>'         /* DW15
+    INTO #XML-REC LEAVING NO
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-LAPSE-DT NE ' '
+  COMPRESS '<' #XML-LBL (16) '>' #V-LAPSE-DT '</' #XML-LBL (16)  '>' INTO #XML-REC LEAVING NO       /* 16
+  PERFORM WRITE-XML
+END-IF
+*
+IF #FREQ NE ' '
+  COMPRESS '<' #XML-LBL (17) '>' #FREQ '</' #XML-LBL (17) '>' INTO #XML-REC LEAVING NO              /* 17
+  PERFORM WRITE-XML
+END-IF
+*
+IF #SCAN-LINE NE ' '                                                                                /*    PM22
+  COMPRESS '<' #XML-LBL (18) '>' #SCAN-LINE '</' #XML-LBL (18) '>' INTO #XML-REC LEAVING NO         /* 18 PM22
+  PERFORM WRITE-XML                                                                                 /*    PM22
+END-IF                                                                                              /*    PM22
+*
+IF #AAFM-BAR-CODE-1 NE ' '
+  COMPRESS '<' #XML-LBL (19) '>' #AAFM-BAR-CODE-1 '</' #XML-LBL (19) '>' INTO #XML-REC LEAVING NO   /* 18
+  PERFORM WRITE-XML
+END-IF
+*
+IF #AAFM-BAR-CODE-2 NE ' '
+  COMPRESS '<' #XML-LBL (20) '>' #AAFM-BAR-CODE-2 '</' #XML-LBL (20) '>' INTO #XML-REC LEAVING NO   /* 19
+  PERFORM WRITE-XML
+END-IF
+*
+IF #SCR-BAR-CD-SUPPRESSED NE ' '
+  COMPRESS '<' #XML-LBL (21) '>' #SCR-BAR-CD-SUPPRESSED '</' #XML-LBL (21) '>' INTO #XML-REC LEAVING NO /*20
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-UNPD-BAL NE ' '
+  COMPRESS '<' #XML-LBL (22) '>' #V-UNPD-BAL '</' #XML-LBL (22) '>' INTO #XML-REC LEAVING NO        /* 21
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-LOAN-TYPE NE ' '
+  COMPRESS '<' #XML-LBL (23) '>' #V-LOAN-TYPE '</' #XML-LBL (23) '>' INTO #XML-REC LEAVING NO       /* 22
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-LOAN-DATE  NE ' '
+  COMPRESS '<' #XML-LBL (24) '>' #V-LOAN-DATE '</' #XML-LBL (24) '>' INTO #XML-REC LEAVING NO       /* 23
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-LOAN-RATE  NE ' '
+  COMPRESS '<' #XML-LBL (25) '>' #V-LOAN-RATE '</' #XML-LBL (25) '>' INTO #XML-REC LEAVING NO       /* 24
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-LOAN-CAP-DT  NE ' '
+  COMPRESS '<' #XML-LBL (26) '>' #V-LOAN-CAP-DT '</' #XML-LBL (26) '>' INTO #XML-REC LEAVING NO     /* 25
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-LOAN-BAL NE ' '
+  COMPRESS '<' #XML-LBL (27) '>' #V-LOAN-BAL '</' #XML-LBL (27) '>' INTO #XML-REC LEAVING NO       /* 26
+  PERFORM WRITE-XML
+END-IF
+*
+* If #V-Unpd-bal ne ' '    /* DW11
+IF #BALANCE-DUE NE ' '     /* DW11
+* compress '<' #xml-lbl (27) '>' #V-Unpd-bal '</' #xml-lbl (27) '>' into #xml-rec leaving no       /* 27
+  COMPRESS '<' #XML-LBL (28) '>' #BALANCE-DUE '</' #XML-LBL (28) '>' INTO #XML-REC LEAVING NO /* DW11/* 27
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-PREM-DUE NE ' '
+  COMPRESS '<' #XML-LBL (29) '>' #V-PREM-DUE '</' #XML-LBL (29) '>' INTO #XML-REC LEAVING NO       /* 28
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-RIDER-PMT NE ' '
+  COMPRESS '<' #XML-LBL (30) '>' #V-RIDER-PMT '</' #XML-LBL (30) '>' INTO #XML-REC LEAVING NO      /* 29
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-DUES-PMT NE ' '
+  COMPRESS '<' #XML-LBL (31) '>' #V-DUES-PMT '</' #XML-LBL (31) '>' INTO #XML-REC LEAVING NO      /* 30
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-BADJ-PMT NE ' '
+  COMPRESS '<' #XML-LBL (32) '>' #V-BADJ-PMT '</' #XML-LBL (32) '>' INTO #XML-REC LEAVING NO      /* 31
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-INT-PMT NE ' '
+  COMPRESS '<' #XML-LBL (33) '>' #V-INT-PMT '</' #XML-LBL (33) '>' INTO #XML-REC LEAVING NO      /* 32
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-LOAN-PMT NE ' '
+  COMPRESS '<' #XML-LBL (34) '>' #V-LOAN-PMT '</' #XML-LBL (34) '>' INTO #XML-REC LEAVING NO     /* 33
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-AMT-DUE NE ' '
+  COMPRESS '<' #XML-LBL (35) '>' #V-AMT-DUE '</' #XML-LBL (35) '>' INTO #XML-REC LEAVING NO      /* 34
+  PERFORM WRITE-XML
+END-IF
+*
+IF #V-COLLECT-DT NE ' '
+  COMPRESS '<' #XML-LBL (36) '>' #V-COLLECT-DT '</' #XML-LBL (36) '>' INTO #XML-REC LEAVING NO      /* 34
+  PERFORM WRITE-XML
+END-IF
+
+COMPRESS '</DOCUMENT>' TO #XML-REC
+PERFORM WRITE-XML
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE WRITE-XML                   /* DW5
+* * * * * * * * * * * * * *
+*
+IF #SEND-CERTIFIED
+  WRITE WORK FILE 7 #XML-REC
+ELSE
+  IF #V-BILLTYPE = 'AS'    /* Allotment STOPS    DW17
+    WRITE WORK FILE 12 #XML-REC
+  ELSE
+    WRITE WORK FILE 6 #XML-REC
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE WRITE-FINAL-XML-FILE              /* DW5
+* * * * * * * * * * * * * * * * * * *
+*
+* Create XML Header Records
+*
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #DATN-DISP WITH '/'
+MOVE '<?xml version="1.0" encoding="ISO-8859-1"?>' TO #XML-REC    /* vt2 \/
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS
+PERFORM WRITE-XML-FINAL                                           /* vt2 /\
+MOVE '<ns0:DALTransfer xmlns:ns0="http://DALSchema.Request">' TO #XML-REC   /* DW7
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS            /* DW17
+PERFORM WRITE-XML-FINAL
+*
+COMPRESS '<TRANSFERDATE>' #RUN-DT-MM-DD-YYYY '</TRANSFERDATE>'  /* DW14
+  INTO #XML-REC LEAVING NO
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS            /* DW17
+PERFORM WRITE-XML-FINAL
+
+*
+RESET #SEND-CERTIFIED
+MOVE EDITED #NUM-REGS (EM=ZZZZZ) TO #DOC-TOT
+MOVE LEFT #DOC-TOT TO #DOC-TOT
+COMPRESS '<TOTALDOCUMENTS>' #DOC-TOT '</TOTALDOCUMENTS>'
+  INTO #XML-REC LEAVING NO
+PERFORM WRITE-XML-FINAL
+*
+MOVE TRUE TO #SEND-CERTIFIED
+MOVE EDITED #NUM-CERTS (EM=ZZZZZ) TO #DOC-TOT
+MOVE LEFT #DOC-TOT TO #DOC-TOT
+COMPRESS '<TOTALDOCUMENTS>' #DOC-TOT '</TOTALDOCUMENTS>'
+  INTO #XML-REC LEAVING NO
+PERFORM WRITE-XML-FINAL
+*
+MOVE TRUE TO #DOING-AS                                /* DW17
+MOVE EDITED #NUM-AS (EM=ZZZZZ) TO #DOC-TOT
+MOVE LEFT #DOC-TOT TO #DOC-TOT
+COMPRESS '<TOTALDOCUMENTS>' #DOC-TOT '</TOTALDOCUMENTS>'
+  INTO #XML-REC LEAVING NO
+PERFORM WRITE-XML-FINAL
+*
+COMPRESS '<BATCHID>' '??' '</BATCHID>'                  /* DW7
+  INTO #XML-REC LEAVING NO
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS            /* DW17
+PERFORM WRITE-XML-FINAL
+*
+* MOVE '<DOCTYPE>BILL</DOCTYPE>' TO #XML-REC                      /* DW7
+MOVE '<DOCTITLE>BILL</DOCTITLE>' TO #XML-REC                      /* YK3
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS            /* DW17
+PERFORM WRITE-XML-FINAL
+* YK3 >
+MOVE '<DESCRIPTION>Billing Notice</DESCRIPTION>' TO #XML-REC
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS
+PERFORM WRITE-XML-FINAL
+MOVE '<MEMBERACCESSIBLE>true</MEMBERACCESSIBLE>' TO #XML-REC
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS
+PERFORM WRITE-XML-FINAL
+* > YK3
+MOVE '<DOCUMENTS>' TO #XML-REC
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS            /* DW17
+PERFORM WRITE-XML-FINAL
+*
+* Create XML Detail Records
+*
+RESET #SEND-CERTIFIED
+READ WORK 6 RECORD #XML-REC
+  PERFORM RESET-XML-CHARS     /* DW6
+  PERFORM WRITE-XML-FINAL
+END-WORK
+*
+MOVE TRUE TO #SEND-CERTIFIED
+READ WORK 7 RECORD #XML-REC
+  PERFORM RESET-XML-CHARS     /* DW6
+  PERFORM WRITE-XML-FINAL
+END-WORK
+*
+READ WORK 12 RECORD #XML-REC
+  PERFORM RESET-XML-CHARS     /* DW6
+  MOVE TRUE TO #DOING-AS                /* DW17
+  PERFORM WRITE-XML-FINAL
+END-WORK
+*
+* Create XML Footer Records
+*
+MOVE '</DOCUMENTS>' TO #XML-REC
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS            /* DW17
+PERFORM WRITE-XML-FINAL
+*
+MOVE '</ns0:DALTransfer>' TO #XML-REC
+RESET #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #SEND-CERTIFIED
+PERFORM WRITE-XML-FINAL
+MOVE TRUE TO #DOING-AS            /* DW17
+PERFORM WRITE-XML-FINAL
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE RESET-XML-CHARS     /* DW6
+* * * * * * * * * * * * * * * * *
+*
+MOVE #XML-REC TO #HOLD-XML-REC
+RESET #XML-REC #I2
+*
+FOR #I1 1 TO 95
+  IF #HOLD-XML-REC-X (#I1) = '&'
+    ADD 1 TO #I2
+    MOVE '&' TO #XML-REC-X (#I2)
+    MOVE 'a' TO #XML-REC-X (#I2 + 1)
+    MOVE 'm' TO #XML-REC-X (#I2 + 2)
+    MOVE 'p' TO #XML-REC-X (#I2 + 3)
+    MOVE ';' TO #XML-REC-X (#I2 + 4)
+    ADD 4 TO #I2
+*
+    WRITE 'Parse=' #HOLD-XML-REC (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+      #XML-REC (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+  ELSE
+    ADD 1 TO #I2
+    MOVE #HOLD-XML-REC-X (#I1) TO #XML-REC-X (#I2)
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE WRITE-XML-FINAL                   /* DW5
+* * * * * * * * * * * * * *
+*
+IF #DOING-AS    /* Allotment STOPS    DW17
+  WRITE WORK FILE 11 #XML-REC
+ELSE
+  IF #SEND-CERTIFIED
+    WRITE WORK FILE 9 #XML-REC
+  ELSE
+    WRITE WORK FILE 8 #XML-REC
+  END-IF
+END-IF
+*
+RESET #DOING-AS                           /* DW17
+*
+END-SUBROUTINE
+*
+**************************************************************************
+DEFINE SUBROUTINE CREATE-INVOICE-DETAILS            /* PM20
+**************************************************************************
+*
+RESET #INV-INVOICE-LINE #SCAN-LINE
+*
+#WORK-BILL-TYPE       := #V-BILLTYPE
+IF #WORK-BILL-TYPE = MASK ('L')
+  DECIDE FOR FIRST CONDITION
+    WHEN #V-LOAN-TYPE = 'variable' OR = 'VARIABLE' OR = 'Variable'
+      #WORK-BILL-TYPE := 'VL'
+    WHEN #V-LOAN-TYPE = 'fixed' OR = 'FIXED' OR = 'Fixed'
+        OR #WORK-BILL-TYPE = 'LC'
+      #WORK-BILL-TYPE := 'FL'
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-IF
+*
+#SCAN-LINE := FUNCTION-CREATE-SCANLINE(<#INSURED-CN-N,#POL-NUM,#WORK-BILL-TYPE>)
+*
+EXAMINE #V-AMT-DUE FOR ',' DELETE
+#WORK-AMOUNT      := VAL(#V-AMT-DUE)
+MOVE EDITED #WORK-AMOUNT (EM=ZZZZZZZ9.99) TO #INV-AMOUNT
+*
+#WORK-DATE        := #RUN-DT-MM-DD-YYYY
+COMPRESS #WORK-DATE-YYYY #WORK-DATE-MM #WORK-DATE-DD INTO #BILL-DATE LEAVING NO
+*
+#INV-SCAN-LINE    := #SCAN-LINE
+#INV-MEMBER-NUM   := #INSURED-CN
+#INV-PAYOR-NAME   := #PAYOR-NAME
+#INV-POL-NUM      := #POL-NUM
+#INV-DATE         := #BILL-DATE
+#INV-TYPE         := #V-BILLTYPE
+#INV-TRANSACTION  := #TRANSACTIONS
+*
+COMPRESS #INV-SCAN-LINE     #TAB
+  #INV-POL-NUM       #TAB
+  #INV-MEMBER-NUM    #TAB
+  #INV-PAYOR-NAME    #TAB
+  #INV-TYPE          #TAB
+  #INV-DATE          #TAB
+  #INV-AMOUNT        #TAB
+  #INV-CHECK-AMOUNT  #TAB
+  #INV-CHECK-NUMBER  #TAB
+  #INV-TRANSACTION INTO #INVOICE-RECORD LEAVING NO
+*
+WRITE WORK FILE 4 #INVOICE-RECORD
+RESET #INVOICE-RECORD
+*
+END-SUBROUTINE
+*
+END

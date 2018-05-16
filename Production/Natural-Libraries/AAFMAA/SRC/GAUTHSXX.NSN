@@ -1,0 +1,198 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: GAUTHSXX
+* Change ALOT-CHG-AUTH to 'A' (AAFMAA Initiated DFAS ALLOTMENT Changes
+***********
+* THIS SUBPROGRAN DOES AN END TRANSACTION SO BE CAREFUL WHEN YOU CALL IT
+* As Of 6/9/2008 these Programs call GAUTHSXX:
+* ATHPLAPS/ATHPRTCK/ATHPTMCV/C2100PAI/C2300PCI/C2500PAM/C2000PNM/ATHPDFAS
+* ATHPIALA/C2200PCG
+*
+* Other Programs which change AUTH-CHG-AUTH to "A" themselves:
+* ATHS05PA
+*
+*  MODIFICATION LOG
+* USER DATE      TAG REASON
+* DRW 06/05/2008 ??? Created
+* DRW 07/09/2008 DW1 Make all entries be tagged to EDS on the TR
+* DRW 07/09/2008 DW2 Check for ALLOTMENT on #FORCE-A
+************************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+*
+parameter
+1 #cn         (n6)
+1 redefine #cn
+ 2 #cn-a      (a6)
+1 #clerk-id  (a3)
+1 #force-a   (l)
+*
+LOCAL
+*
+1 #new-alot          (n7.2)
+1 #CURR-ALOT-A    (A7)
+1 REDEFINE #CURR-ALOT-A
+ 2 #CURR-ALOT     (N5.2)
+1 #update-isn     (p8)
+*
+1 #FOUND-ALOT-PAYOR (l)
+1 #ID         (N6)
+1 REDEFINE #ID
+  2 #ID-A      (A6)
+*
+1 #i1                 (i2)
+1 #has-g-pp        (l)    /* DW2
+*
+1 #TR-REG-auth-GR
+ 2 #TR-REG-auth-LBL-1A        (A3)  INIT <'CI-'>
+ 2 #TR-REG-auth-LBL-1B        (A9)  INIT <'ALOT-AUTH'>
+ 2 #TR-REG-auth-LBL-13        (A19) INIT <'-CHG ALOT-CHG-AUTH '>
+ 2 #TR-REG-auth-code          (A08)
+1 REDEFINE #TR-REG-auth-GR
+ 2 #TR-REG-auth               (A39)
+*
+1 NT-V VIEW OF A-NOTES
+  2 note-date    (n8/60)
+  2 NOTE-TEXT    (60)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC  (60)
+      4 NOTE-TEXT-60           (A60)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-FILL1        (A14)
+        5 NOTE-TEXT-ALOT-PAYS-CN (A6)
+        5 NOTE-TEXT-FILL2        (A40)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-FILL3           (A17)
+        5 NOTE-TEXT-ALOT-PAID-BY-CN (A6)
+        5 NOTE-TEXT-FILL4           (A37)
+*
+1 TR-V VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER (N6)
+  2 PROCESS-IND (A1)
+  2 NAME (A25)
+  2 DATE-LAST-UPDATE (N8)
+  2 TERMINAL-ID (A8)
+  2 CLERK-ID (A3)
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 OLD-DATA (A125/20)
+  2 NEW-DATA (A125/20)
+  2 SYNC-FLD-NUM      (60)
+  2 SYNC-FLD-OLD-DATA (60)
+  2 SYNC-FLD-NEW-DATA (60)
+*
+1 ST-V VIEW OF A-STATUS
+  2 id-number
+  2 LINKED-CN              (1)   /* DW30
+  2 redefine LINKED-CN
+   3 LINKED-CN-A (a6/1)
+  2 name
+  2 process-ind
+  2 INTRO-FLAG
+  2 ALOT-CHG-AUTH
+  2 alot-chg-auth-date
+  2 military-status
+  2 alot-chg-date
+  2 date-other-update
+  2 mode              (9)   /* DW2
+  2 pay-status        (9)
+  2 x-alt-lp-ind      (9)
+  2 x-alt-lp-ind-2    (9)
+*
+END-DEFINE
+* * * * * * * * * * *
+*
+* write 'Top of GAUTHSXX cn=' #cn 'force-a=' #force-a
+find st-v with member-key = #cn-a
+  move *isn to #cga-isn
+end-find
+*
+IF #force-a                      /* DW2
+  FOR #I1 1 TO 9
+    if   ((mode (#i1) = 'G')
+     and (pay-status (#i1) lt '40'))   /* Prem Paying ALLOTMENT
+     or (x-alt-lp-ind   (#i1) = '1' or = '2')   /* Fixed AIP/ALP
+     or (x-alt-lp-ind-2 (#i1) = '1' or = '2')   /* Var AIP/ALP
+      move true to #has-g-PP
+      escape bottom
+    end-if
+  end-for
+end-if                        /* END DW2
+*
+MOVE 'ONR' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX /* ONR returns amt from FA
+*                   and gets 'Current" (not 2 months from now) alot amt needed
+*
+MOVE 'FA' TO #CGA-SCR-COMMAND      #CGA-ORIG-COMMAND
+MOVE st-v.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID
+RESET #CGA-MF-SCR-PARM-1-N
+FETCH RETURN 'C2800PFA'           /* GET NEW ALOT W DIFFERENT PREMS
+move '*'  to #cga-scr-command
+move 'CI' to #cga-orig-command
+*
+COMPUTE #NEW-ALOT = #CGA-MF-SCR-PARM-1-N / 100
+MOVE #CGA-MF-ORIG-PARM-1 TO #CURR-ALOT-A
+*
+if (#new-alot ne #CURR-ALOT)  /* Compare New-alot amt with Curr Amt
+ or (#force-a and #has-g-pp)  /* make it A even if FA does not indicate to
+  move #cga-isn to #update-isn
+*  below is to switch to the payor or the linked member
+  RESET #FOUND-ALOT-PAYOR
+  FIND (1) NT-V WITH ID-NUMBER = st-v.ID-NUMBER
+    FOR #I1 1 TO 60                /* START WITH MAIN PAYOR
+      IF NOTE-TEXT (#I1) = MASK ('*#ALOT:PAID BY')
+        MOVE TRUE TO #FOUND-ALOT-PAYOR
+        MOVE NOTE-TEXT-ALOT-PAID-BY-CN (#I1) TO #ID-A
+        FIND (1) st-v WITH MEMBER-KEY = #ID-A
+          move *isn          to #update-isn
+        END-FIND
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+*
+  GET st-v #CGA-ISN   /* Get the Mbr or the Alot Linked Member
+*
+  IF st-v.INTRO-FLAG = 'S' OR = 'K' OR = 'G' /* start w linked mbr
+      AND (NOT #FOUND-ALOT-PAYOR)
+    FIND (1) st-v WITH MEMBER-KEY = LINKED-CN-A (1)
+      IF NO RECORD FOUND
+        ESCAPE BOTTOM
+      END-NOREC
+*
+      move *isn to #update-isn
+    END-FIND
+  END-IF
+*  above is to switch to the payor or the linked member
+*
+  get st-v #update-isn  /* get the Mbr or Alot linked Mbr or linked Mbr
+*
+  if  (st-v.alot-chg-auth = 'N' or = ' ')
+   and (st-v.military-status = 'R')
+    MOVE st-v.id-number         TO TR-V.ID-NUMBER
+    MOVE st-v.PROCESS-IND       TO TR-V.PROCESS-IND
+    MOVE st-v.name              TO TR-V.NAME
+    MOVE st-v.date-other-update TO TR-V.DATE-LAST-UPDATE
+    MOVE *INIT-ID               TO TR-V.TERMINAL-ID
+*    MOVE #clerk-id              TO TR-V.CLERK-ID      /* DW1
+    move 'EDS'                  to tr-v.clerk-id       /* DW1
+    MOVE *datn                  TO TR-V.TRANSACTION-DATN
+    MOVE *timn                  TO TR-V.TRANSACTION-TIMN
+    move 'N' to #tr-reg-auth-code
+    MOVE #TR-REG-auth TO TR-V.OLD-DATA (1)
+*
+    MOVE 'A'          TO #TR-REG-auth-code
+    MOVE #TR-REG-auth TO TR-V.NEW-DATA (1)
+    store tr-v
+*
+    move 'A' to ALOT-CHG-AUTH
+    move *datn to alot-chg-auth-date
+    reset ALOT-CHG-DATE
+    update (0170)
+    end transaction
+  end-if
+end-if
+*
+END

@@ -1,0 +1,303 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* COPYCODE C2001CNM USED TO CALCULATE FIELDS COMMON TO AI AND NM
+*
+* DRW 08/06/2008 DW1 Add Gen Plus Processing
+* NGG 12/23/2012 NG1 Add Easy Term
+* NGG 20141023   NG2 Annuity life products
+* vxt 05/11/2017 vt1 Group Term Project
+* bz-HD-5046  08/08/2017 Do not calculate Monthly for Plan SP (PUSP)
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALCULATE-FIELDS
+* * * * * * * * * * * * * * * * *
+*
+IF #FLEX-PLAN
+  MOVE #FLEX-ANN-PREM TO #APREM
+  MOVE #FLEX-PREM-AGE TO #AGE
+ELSE
+  MOVE #EFF-YYYYMMDD TO #WORK-DATE-YYYYMMDD
+  SUBTRACT #DOB-YYYYMMDD FROM #WORK-DATE-YYYYMMDD
+  MOVE #WD-YY TO #AGE
+*
+  IF (#SEX = 'F') AND (#EFF-YYYYMMDD LT 19970101)
+    COMPUTE #AGE = #AGE - 3
+  END-IF
+*
+  COMPUTE #FACE-AMT = #SCR-FACE * 1000
+*
+  IF #VAR-TERM or #plan = 'GT1'                               /* vt1 
+    ADD #SCR-FACE-DOLS TO #FACE-AMT
+  END-IF
+*
+  RESET #SCR-SUFFIX
+*
+  IF #PREM-RATING NE ' '
+    COMPRESS  'SB' #PREM-RATING INTO #SCR-SUFFIX LEAVING NO
+  END-IF
+*
+  RESET #APREM
+  if #plan ne 'GT1'                                          /* vt1 
+    CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID #SCR-SUFFIX
+      #PLAN #AGE #APREM #EFF-YYYYMMDD
+      #SMOKER #FACE-AMT #SEX
+  end-if                                                    /* vt1 
+END-IF
+*
+RESET #MON-DUES  /* added 10/7/2002
+*
+MOVE #AT-TOT-FBR-PREM TO #FBR-MON-PREM
+*
+if #mode ne 'B' AND    #PLAN <> 'SP'              /* vt1 
+  IF #MODE = 'G' OR = 'E' OR = 'M' OR = '0'
+    COMPUTE #MPREM = #APREM / 12
+    MOVE #MON-DUES TO #MDUES
+    MOVE #FBR-MON-PREM TO #MFBR
+  ELSE
+    IF #MODE = 'Q' OR = '4'
+      COMPUTE #MPREM = #APREM / 4
+      COMPUTE #MDUES = #MON-DUES * 3
+      COMPUTE #MFBR = #FBR-MON-PREM * 3
+    ELSE
+      IF #MODE = 'S' OR = '2'
+        COMPUTE #MPREM = #APREM / 2
+        COMPUTE #MDUES = #MON-DUES * 6
+        COMPUTE #MFBR = #FBR-MON-PREM * 6
+      ELSE
+        MOVE #APREM TO #MPREM
+        COMPUTE #MDUES = #MON-DUES * 12
+        COMPUTE #MFBR = #FBR-MON-PREM * 12
+      END-IF
+    END-IF
+  END-IF
+end-if                                                   /* vt1 
+*                                          NG1 Start
+MOVE #EFF-YYYYMMDD TO #WORK-DATE-YYYYMMDD
+DECIDE FOR FIRST CONDITION
+  WHEN #FLEX-PLAN
+    ADD #FLEX-YEARS TO #WD-YYYY
+  WHEN #VAR-TERM
+    ADD #VT-YEARS TO #WD-YYYY
+  WHEN #PLAN = '20' OR = '20P'
+    ADD 20 TO  #WD-YYYY
+  WHEN #PLAN = '30' OR = '30P'
+    ADD 30 TO #WD-YYYY
+  WHEN #PLAN = '7P'
+    ADD 7 TO #WD-YYYY
+  WHEN #PLAN = 'RT'
+    ADD 5 TO #WD-YYYY
+  WHEN #PLAN = 'GT1'
+    #wd-dd := 01                                          /* vt1 
+    #wd-mm := 01                                          /* vt1 
+    #WD-YYYY := #WD-YYYY + 1
+  WHEN NONE
+    MOVE #DOB-YYYYMMDD TO #WORK-DATE-YYYYMMDD
+    DECIDE FOR FIRST CONDITION
+      WHEN #PLAN = 'OL' OR = 'GPL'
+        IF #EFF-YYYYMMDD GE 19970101
+          ADD 100 TO #WD-YYYY
+        ELSE
+          ADD 96 TO #WD-YYYY
+        END-IF
+      WHEN #PLAN = 'EZ'
+        ADD 80 TO #WD-YYYY
+      WHEN NONE                  /* MUST BE LT
+        IF #SMOKER = 'S'
+          ADD 50 TO #WD-YYYY
+        ELSE
+          ADD 60 TO #WD-YYYY
+        END-IF
+    END-DECIDE
+END-DECIDE                             /* NG1 End
+*
+/*                                                           vt1  /\
+*
+MOVE #WORK-DATE-YYYYMMDD TO #HOLD-PDUP
+*
+* * * * * build initial paid thru date * * *
+*
+COMPRESS #FPFECENT #FPFEYY #FPFEMM '15'
+  INTO #WORK-DATE-YYYYMMDD-A LEAVING NO SPACE
+*
+IF NOT #FPF-APPROVED                                                     /* PM17-NM PM29-AI
+  #HOLD-FPF-END := #FPF-END                                              /* PM17-NM PM29-AI
+  CALLNAT 'C2012SNM' #C2012SNM-ERROR-INDEX #PLAN #APREM #EFF-YYYYMMDD    /* PM17-NM PM29-AI
+    #WORK-DATE-YYYYMMDD #DEP-RCVD #FPF-END #MODE        /* PM17-NM PM29-AI
+    #EZ-PAY-WAITING                                     /* PM17-NM PM29-AI
+*
+  IF #C2012SNM-ERROR-INDEX > 0                                           /* PM17-NM PM29-AI
+    IF FUNCTION-ACCESS(<*USER,#FPF-SECURITY-CODE>) = 'A' OR = 'U'        /* PM17-NM PM29-AI
+      REINPUT USING HELP                                                 /* PM17-NM PM29-AI
+        MARK *#EFF-DT-A                                                    /* PM17-NM PM29-AI
+    ELSE                                                                 /* PM17-NM PM29-AI
+      REINPUT #C2012SNM-ERROR-MESSAGE (#C2012SNM-ERROR-INDEX)            /* PM17-NM PM29-AI
+        MARK *#EFF-DT-A                                                    /* PM17-NM PM29-AI
+    END-IF                                                               /* PM17-NM PM29-AI
+  END-IF                                                                 /* PM17-NM PM29-AI
+END-IF                                                                   /* PM17-NM PM29-AI
+*
+MOVE #WD-MM TO #PT-MM
+MOVE #WD-YYYY TO #PT-YYYY
+*
+if #plan = 'GT1'                                                      /* vt1  
+  move #hold-pdup to #hold-pd-thru
+else                                                                  /* vt1  
+  MOVE #WORK-DATE-YYYYMMDD TO #HOLD-PD-THRU
+end-if                                                                /* vt1  
+*
+* * * * * bulld initial paid-thru date (FBR)
+*
+IF #HAS-FBR
+  COMPRESS #FPFE-YYYY-FBR #FPFE-MM-FBR '15'
+    INTO #WORK-DATE-YYYYMMDD-A LEAVING NO SPACE
+  MOVE #WORK-DATE-YYYYMMDD TO #HOLD-PD-THRU-FBR
+END-IF
+*
+IF (#FPF-START NE #FPF-END) and (#plan ne 'GT1' )                      /* vt1  
+  PERFORM CALCULATE-FIRST-PLACEMENT-FEE
+  RESET #NO-FPF /* PM3
+END-IF
+*
+RESET #FPF-DUES #MDUES
+*
+IF (#FPF-START NE #FPF-END-FBR ) and (#plan ne 'GT1' )                 /* vt1  
+  PERFORM CALCULATE-FPF-FBR
+END-IF
+*
+END-SUBROUTINE  /* (0052)
+*
+* * * * *
+DEFINE SUBROUTINE CALCULATE-FIRST-PLACEMENT-FEE
+* * * * *
+*
+MOVE #PT-MM TO #WD-MM
+IF #EFF-MM GT #WD-MM
+  ADD 12 TO #WD-MM
+  SUBTRACT 1 FROM #WD-YYYY
+END-IF
+*
+IF #EFF-DD = 1
+  ADD 1 TO #WD-MM
+END-IF
+*
+IF #EFF-YYYY LT #WD-YYYY
+  ADD 12 TO #WD-MM
+END-IF
+*
+SUBTRACT #EFF-MM FROM #WD-MM
+COMPUTE #FPF = (#APREM / 12) * #WD-MM
+COMPUTE #FPF-DUES = #MON-DUES * #WD-MM
+*
+END-SUBROUTINE  /* (0172)
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALCULATE-FPF-FBR
+* * * * * * * * * * * * * * * * * *
+*
+COMPUTE #FPF-FBR = #FBR-MON-PREM  * #WD-MM
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PROCESS-PUSP
+* * * * * * * * * * * * * * * *
+*
+MOVE #PLAN TO #HOLD-PLAN NEW-V.PLAN (#INDEX)
+**IF #PLAN NE 'AL'
+IF NOT IS-ANNUITY-LIFE (< #PLAN >) /* NG2
+  MOVE 'OL ' TO NEW-V.PLAN (#INDEX)
+  MOVE 'SI' TO #PLAN
+END-IF
+*
+MOVE '47' TO NEW-V.PAY-STATUS (#INDEX)
+MOVE NEW-V.ISSUE-DATE(#INDEX) TO NEW-V.PAID-UP-DATE (#INDEX)
+*
+**IF #PLAN = 'AL'
+IF IS-ANNUITY-LIFE (< #PLAN >)  /* NG2
+  MOVE #LUMP-SUM TO #SNG-PREM
+  ADD #EXCH-1035 TO #SNG-PREM
+ELSE
+  RESET #SCR-SUFFIX
+*   ** PAM 09/16/2003 - ADDED PREMIUM RATING FOR PU POLS **
+  IF #PREM-RATING NE ' '
+    COMPRESS  'SB' #PREM-RATING INTO #SCR-SUFFIX LEAVING NO
+  END-IF
+*
+  RESET #APREM
+  CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID #SCR-SUFFIX
+    #PLAN #AGE #SNG-PREM #EFF-YYYYMMDD
+    #SMOKER #FACE-AMT #SEX
+END-IF
+*
+MOVE #HOLD-PLAN TO #PLAN
+* MOVE ROUNDED #SNG-PREM TO #WHOLE-DOLLARS   /* PM1 - added decimal
+* MOVE #WHOLE-DOLLARS TO #SNG-PREM           /* places to 1035 amounts
+*
+MOVE #SNG-PREM TO #FPF                             /* PM1 - repcd
+MOVE #SNG-PREM TO NEW-V.TOT-PREMIUMS-PAID (#INDEX) /* #WHOLE-DOLLARS
+MOVE #SNG-PREM TO NEW-V.COST-BASIS        (#INDEX) /* with #SNG-PREM
+MOVE #SNG-PREM TO NEW-V.ORIG-COST-BASIS   (#INDEX) /*
+MOVE EDITED #SNG-PREM (EM=ZZZ,Z99.99) TO #SPM-AMT     /*
+*
+IF   (#EFF-YYYYMMDD GE 19970101)
+    AND (NOT #INSURED = 'S' OR = 'K' OR = 'G'
+    OR = 'O' OR = 'P' OR = 'Q')
+    AND ((#CGA-ORIG-COMMAND = 'NM') OR #WAS-INACTIVE) /* added 4/99
+  MOVE ' + Dues $' TO #SPM-PLUS-DUES
+  MOVE EDITED #DUES-SP (EM=ZZ9) TO #SPM-DUES-AMT
+  MOVE ' = $'           TO #SPM-EQUALS
+  COMPUTE #TOT-SP = #SNG-PREM + #DUES-SP      /* PM1
+  MOVE EDITED #TOT-SP (EM=ZZZ,ZZ9.99) TO #SPM-TOTAL
+  RESET #MDUES
+  MOVE #DUES-SP TO #FPF-DUES
+END-IF
+*
+IF #FPF-FBR NE 0   /* WILL COVER UP ABOVE TOTAL
+  MOVE ' +FBR $' TO #FBR-PLUS
+  MOVE EDITED #FPF-FBR (EM=ZZ.99) TO #FBR-AMT
+END-IF
+*
+MOVE #SINGLE-PREM-MSG TO #TCM-SP-MSG
+*
+END-SUBROUTINE  /* (0204)
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PROCESS-FLEX-PLAN
+* * * * * * * * * * * * * * * * * *
+*
+RESET #SNG-PREM
+ADD #EXCH-1035 TO #SNG-PREM
+ADD #LUMP-SUM  TO #SNG-PREM
+*
+IF #FLEX-YEARS = 0
+  MOVE EDITED #SNG-PREM (EM=ZZZ,Z99.99) TO #SPM-AMT  /* PM1
+  MOVE '47'                     TO NEW-V.PAY-STATUS   (#INDEX)
+  MOVE NEW-V.ISSUE-DATE(#INDEX) TO NEW-V.PAID-UP-DATE (#INDEX)
+*
+  IF   (#EFF-YYYYMMDD GE 19970101)
+      AND (NOT #INSURED = 'S' OR = 'K' OR = 'G'
+      OR = 'O' OR = 'P' OR = 'Q')
+      AND ((#CGA-ORIG-COMMAND = 'NM') OR #WAS-INACTIVE) /* added 4/99
+    MOVE ' + Dues $' TO #SPM-PLUS-DUES
+    MOVE EDITED #DUES-SP (EM=ZZ9) TO #SPM-DUES-AMT
+    MOVE ' = $'           TO #SPM-EQUALS
+    COMPUTE #TOT-SP = #SNG-PREM + #DUES-SP    /* PM1
+    MOVE EDITED #TOT-SP (EM=ZZZ,ZZ9.99) TO #SPM-TOTAL /* PM1
+    RESET #MDUES
+    MOVE #DUES-SP TO #FPF-DUES
+  END-IF
+*
+  IF #FPF-FBR NE 0   /* WILL COVER UP ABOVE TOTAL
+    MOVE ' +FBR $' TO #FBR-PLUS
+    MOVE EDITED #FPF-FBR (EM=ZZ.99) TO #FBR-AMT
+  END-IF
+*
+  MOVE #SINGLE-PREM-MSG TO #TCM-SP-MSG
+END-IF
+*
+ADD  #SNG-PREM TO #FPF  /* PM1
+MOVE #SNG-PREM TO NEW-V.TOT-PREMIUMS-PAID (#INDEX) /* PM1
+*
+END-SUBROUTINE  /* (0206)

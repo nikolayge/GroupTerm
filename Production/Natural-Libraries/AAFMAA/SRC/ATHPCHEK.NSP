@@ -1,0 +1,174 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPCHEK  *** EXAMINES OUTPUT FROM JES LOG FOR FTP XMIT   ***
+*                   *** COMPLETION.  SETS RETURN CODE IF XMIT FAILED***
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  07222006 DW1  Force abend on selected Bad Transmits
+* PAM  07282006 PM2  Added check for weekly files
+* SAG  08242006 DRC  Modified for Unix ftp out file data
+*******************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX
+LOCAL
+*
+1 #WORK-RECORD-1  (A133)
+1 REDEFINE #WORK-RECORD-1
+** SAG commented out due to Unix file structure 08232006
+** 2 #FIRST-1        (A1)
+** 2 #FIRST-8        (A8)
+** 2 REDEFINE #FIRST-8
+**  3 #FIRST-3       (A3)
+**  3 #REM-5         (A5)
+** 2 #BLK-1          (A1)
+** 2 #PUT-GET        (A3)
+** 2 #BLK-2          (A1)
+** 2 #QUOTE          (A1)
+** 2 #FILE-NAME      (A25)
+** 2 #REM-93         (A93)
+** SAG reformatted due to Unix file layout 08232006
+  2 #FIRST-3        (A3) 
+  2 #SPACE-1        (A1) 
+  2 #MESSAGE1       (A40) 
+  2 #FILE-NAME      (A25) 
+  2 #REM-64         (A64) 
+1 REDEFINE #WORK-RECORD-1
+  2 #FIRST-100      (A100) 
+*
+1 #GOOD-XMIT      (L)
+1 #FOUND-PUT      (L)
+1 #SAVE-FILE-NAME  (A25)
+1 #2N   (N2)
+1 #NOTE-TEXT (A60/5)
+1 #TO-INIT   (A3)
+1 #AFB-FTP   (L)
+*
+1 #TO-DATE                   (N8)
+1 #FROM-DATE                 (N8)
+1 #RETURN-CALC               (N8)
+1 #REQUEST                   (A1)  INIT <'F'>
+1 #BYPASS                    (L)
+*
+END-DEFINE
+************************************************************************
+INCLUDE GONERCXX
+*
+MOVE FALSE TO #GOOD-XMIT
+FORMAT     LS=133 PS=60
+FORMAT (2) LS=133 PS=60
+READ WORK 1 RECORD #WORK-RECORD-1
+*
+* IF #WORK-RECORD-1 = MASK (' EZA1701I >>> USER aafma@ftp.dfckc.com')
+* IF #WORK-RECORD-1 = MASK (' EZA1736I internetpln.eds.com')
+/* SAG 08232006 - add code for AFB when available
+*   MOVE TRUE TO #AFB-FTP
+* END-IF
+*
+  IF #FIRST-3 = '226'    /* Transfer Complete line  
+    MOVE TRUE TO #GOOD-XMIT    
+    WRITE (2) #FIRST-100    
+  END-IF  
+*
+** SAG 08232006 - changed to Unix file specs.
+**IF #FIRST-8 = 'EZA1736I'    /* put/get/FTP/ip addr line
+  IF #FIRST-3 = '200'         /* put/get  
+    WRITE (2) #FIRST-100    
+*
+** SAG 08242006 - changed to Unix file data
+**  IF #PUT-GET = 'put'
+    IF #MESSAGE1 = SCAN 'PORT'    
+      IF #FOUND-PUT AND NOT #GOOD-XMIT      
+        PERFORM BAD-XMIT        
+      END-IF      
+*
+*     MOVE #FILE-NAME TO #SAVE-FILE-NAME
+      MOVE TRUE TO #FOUND-PUT      
+      RESET #GOOD-XMIT      
+    END-IF    
+  END-IF  
+*
+  IF #FIRST-3 = '150'         /* file name  
+    WRITE (2) #FIRST-100    
+    MOVE #FILE-NAME TO #SAVE-FILE-NAME      
+  END-IF  
+*
+  WRITE #FIRST-100  
+END-WORK
+*
+IF #AFB-FTP AND NOT #GOOD-XMIT                                 /* DW1
+  MOVE 'No files sent to AFB' TO #SAVE-FILE-NAME  
+  PERFORM BAD-XMIT  
+END-IF
+*
+IF #FOUND-PUT AND NOT #GOOD-XMIT
+  PERFORM BAD-XMIT  
+END-IF
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE BAD-XMIT
+* * * * * * * * * * * * * *
+*
+PERFORM CHECK-FOR-WEEKLY-FILES                                    /* PM2
+IF #BYPASS                                                        /* PM2
+  ESCAPE ROUTINE                                                  /* PM2  
+END-IF                                                            /* PM2
+*
+* ADD 999 TO #2N
+* IF  (#SAVE-FILE-NAME = MASK ('pdsdc.ath.wacc'))   /* DW1
+*  OR (#SAVE-FILE-NAME = MASK ('pdsdc.ath.printmr'))
+*   ESCAPE ROUTINE
+* END-IF
+*
+COMPRESS 'Bad XMIT on file' #SAVE-FILE-NAME 'on' *DAT4U
+  INTO #NOTE-TEXT (1)   
+* MOVE 'EDS' TO #CGA-CLERK                                       /* vt 06/18/2013 \/
+* * MOVE 'DRW' TO #TO-INIT
+* MOVE '*NX' TO #CGA-SCR-SUFFIX
+* FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)  /* vt 06/182013 /\
+*
+MOVE 'EDS' TO #CGA-CLERK
+MOVE 'VXT' TO #TO-INIT                   /* vt was 'PAM'
+MOVE '*NX' TO #CGA-SCR-SUFFIX
+FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+*
+END TRANSACTION
+WRITE 'NX ERROR Message sent'
+*
+IF  (#SAVE-FILE-NAME = MASK ('pdsdc.ath.wacc'))   /* DW1
+    OR (#SAVE-FILE-NAME = MASK ('No files sent'))    /* DW1 
+  ADD 999 TO #2N                                 /* Force an ABEND  
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CHECK-FOR-WEEKLY-FILES                          /* PM2
+************************************************************************
+*
+MOVE *DATN TO #TO-DATE
+RESET #FROM-DATE
+*
+CALLNAT 'GDATESXX'
+  #TO-DATE  
+  #FROM-DATE  
+  #RETURN-CALC  
+  #REQUEST  
+*
+RESET #BYPASS
+IF  #RETURN-CALC NE 2
+    OR *TIMN GT 1200000 
+  IF  (#SAVE-FILE-NAME = MASK ('pdsdc.ath.newmbrsp'))  
+      OR (#SAVE-FILE-NAME = MASK ('atloanw'))   
+      OR (#SAVE-FILE-NAME = MASK ('atcsvw'))   
+    MOVE TRUE TO #BYPASS    
+  END-IF  
+END-IF
+*
+END-SUBROUTINE
+*
+END

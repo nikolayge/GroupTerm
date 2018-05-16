@@ -1,0 +1,338 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Profile Information Business logic
+*
+****************************************************************************
+*        MODIFICATION LOG
+****************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11202010       Initial Creation
+* YAK    02142011  YK1  Add Owner Field to Return XML
+*                       Owner - 'Yes' if the person owns at least one policy
+* YAK    02162011  YK2  Check for re-grandfathered members (have services)
+* YAK    10122011  YK3  Temporary fix for member names with suffixes
+* YAK    11202011  YK4  Change Look Up key to dynamic (F-LOOK-UP-TABLE)
+* YAK    12052012  YK5  Changes for Premier Services
+* YAK    09202012  YK6  Add date of death to communication area
+* YAK    11142013  YK7  Add paperless options
+* bz     02032014  bz1  Code 'S' is the same as 'N' (OI-2595)
+* YAK    03022014  YK8  Pass MemberServiceTypeCode for SAS members
+* YAK    04022014  YK9  Add PremierServices only
+* YAK    10012016  YK10 Use Policy Ownership structure to determine policy owner
+****************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0001
+PARAMETER 1 #ErrorCode (A3)
+*
+LOCAL USING ADDA0001
+LOCAL USING OBJACONT
+LOCAL USING OBJACPHN
+LOCAL USING OBJACEML
+LOCAL USING OBJAMINF
+LOCAL USING OBJAMB01         /* Member Services file
+LOCAL USING ERROR_L
+* Parameters to get all delivery preferencies
+LOCAL USING OBJAWEBU
+LOCAL
+* Temporary using Status file for this flag
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 DI-BA-MAIL-CD
+* Policy ownership info YK10
+1 POS-V VIEW OF A-POLICY-CONTACTS
+  2 POLICY-NUMBER
+  2 RELATION
+  2 REFERENCE-NUMBER
+  2 CONTACT-ID
+  2 NI-OWNER
+*
+1 #DEL                      (A1) CONST <'-'>
+1 #GET-BY-CN                (A) DYNAMIC CONST <'GET-BY-CN'>
+1 #GET                      (A) DYNAMIC CONST <'GET'>
+1 #GET-PREFERRED            (A) DYNAMIC CONST <'GET-PREFERRED'>
+1 #ACTIVE                   (A) DYNAMIC CONST <'A'>                 /* YK5
+1 #CANCELLED                (A/2) DYNAMIC CONST <'C','T'>           /* YK5
+1 #YES                      (A) DYNAMIC CONST <'Y'>
+1 #NO                       (A) DYNAMIC CONST <'N'>
+1 #PRIMARY                  (A) DYNAMIC CONST <'P'>
+1 #MEMBER                   (A) DYNAMIC CONST <'M'>
+1 #EMPLOYEE                 (A) DYNAMIC CONST <'E'>
+1 #PENDING                  (A) DYNAMIC CONST <'A'>
+1 #OWNER                    (A) DYNAMIC CONST <'O'>
+1 #DOMESTIC                 (A) DYNAMIC CONST <'D'>
+1 #INTERNATIONAL            (A) DYNAMIC CONST <'I'>
+1 #MEMBER-SERVICE-TYPE      (A7) CONST <'CODE022'>
+1 #PARTY-CD                 (A1)
+1 #DATE                     (A8)
+1 REDEFINE #DATE
+  2 #YYYY                   (A4)
+  2 #MM                     (A2)
+  2 #DD                     (A2)
+1 C@Own_Polices     (N2)
+1 #LOOK-UP-VALUE    (A) DYNAMIC
+1 #REQUEST          (A) DYNAMIC
+1 #MSG              (A) DYNAMIC
+1 #GRANDFATHERED    (L)
+1 #ACTIVE-SERVICE   (L)
+1 #Dynamic_Name     (A) DYNAMIC                        /* YK5
+1 #PremierServicesActive    (A) DYNAMIC CONST <'P'>    /* YK5
+1 #PremierServicesCancelled (A) DYNAMIC CONST <'PC'>   /* YK5
+1 #PremierServices          (A) DYNAMIC                /* YK5
+1 #PremierServicesOnly      (A) DYNAMIC CONST <'PO'>   /* YK9
+1 #PremierServicesOnlyCanc  (A) DYNAMIC CONST <'POC'>  /* YK9
+1 #PRIMARY-OWNER            (N2) CONSTANT    <2>       /* YK10
+1 #CO-OWNER                 (N2) CONSTANT    <10>      /* YK10
+*
+END-DEFINE
+*
+PERFORM GET-CONTACT-INFO
+PERFORM GET-MEMBER-STATUS-INFO
+PERFORM GET-OWNER-INFO
+PERFORM GET-ADDRESS-INFO
+PERFORM GET-PHONE-INFO
+PERFORM GET-EMAIL-INFO
+PERFORM GET-PAPERLESS-INFO
+*
+**********************************
+DEFINE SUBROUTINE GET-CONTACT-INFO
+**********************************
+*
+RESET PARM-CONTACT
+PARM-CONTACT.ID-NUMBER := MemberProfile.CN
+PARM-CONTACT.#ACTION := #GET-BY-CN
+CALLNAT 'OBJNCONT' PARM-CONTACT
+IF PARM-CONTACT.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+*
+MemberProfile.ContactID   := PARM-CONTACT.CONTACT-ID
+MemberProfile.FirstName   := PARM-CONTACT.FIRST-NAME
+MemberProfile.LastName    := PARM-CONTACT.LAST-NAME
+MemberProfile.MiddleName  := PARM-CONTACT.MIDDLE-NAME
+MemberProfile.Suffix      := PARM-CONTACT.SUFFIX
+MemberProfile.DateOfBirth := PARM-CONTACT.DATE-OF-BIRTH
+MemberProfile.DateOfDeath := PARM-CONTACT.DATE-OF-DEATH
+MemberProfile.MilitaryRankID := PARM-CONTACT.RANK-ID
+*
+#Dynamic_Name := 'L'
+CALLNAT 'GPRS0CNT' PARM-CONTACT.CONTACT-ID #Dynamic_Name
+MemberProfile.FormattedName := #Dynamic_Name
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-ADDRESS-INFO
+**********************************
+*
+#ADD-CONTACT-ID := MemberProfile.ContactID
+#ADD-TYPE       := #PRIMARY
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+*
+MemberProfile.Street     := #ADD-LINE-1
+MemberProfile.Unit       := #ADD-LINE-2
+MemberProfile.City       := #ADD-LINE-3
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-PHONE-INFO
+********************************
+*
+PARM-PHONE.#ACTION             := #GET-PREFERRED
+PARM-PHONE.CONTACT-ID          := MemberProfile.ContactID
+PARM-PHONE.PREFERRED-PHONE-IND := #YES
+CALLNAT 'OBJNCPHN' PARM-PHONE
+IF PARM-PHONE.#RETURN-CODE NE ' '
+  IF PARM-PHONE.#RETURN-CODE = #PHONE-CONTACT-ID-NOT-FOUND
+    ESCAPE ROUTINE
+  ELSE
+    #ErrorCode := PARM-PHONE.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+END-IF
+DECIDE ON FIRST VALUE PARM-PHONE.TYPE
+  VALUE #DOMESTIC
+    MemberProfile.Type             := PARM-PHONE.TYPE
+    MemberProfile.PhoneType        := PARM-PHONE.PHONE-TYPE-CODE
+    MemberProfile.AreaCode         := PARM-PHONE.AREA-CODE
+    MemberProfile.DialNumber       := PARM-PHONE.DIAL-NUMBER
+    MemberProfile.Extension        := PARM-PHONE.EXT
+  VALUE #INTERNATIONAL
+    MemberProfile.AreaCode         := PARM-PHONE.INTL-ACCESS-CODE
+    MemberProfile.DialNumber       := PARM-PHONE.INTL-DIAL-NUMBER
+    MemberProfile.Extension        := PARM-PHONE.EXT
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-EMAIL-INFO
+********************************
+*
+PARM-EMAIL.#ACTION             := #GET-PREFERRED
+PARM-EMAIL.CONTACT-ID          := MemberProfile.ContactID
+PARM-EMAIL.EMAIL-PREFERRED-IND := #YES
+CALLNAT 'OBJNCEML' PARM-EMAIL
+IF PARM-EMAIL.#RETURN-CODE NE ' '
+  IF PARM-EMAIL.#RETURN-CODE = #EMAIL-CONTACT-ID-NOT-FOUND
+    ESCAPE ROUTINE
+  ELSE
+    #ErrorCode := PARM-EMAIL.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+END-IF
+MemberProfile.EmailAddress      := PARM-EMAIL.EMAIL-ADDRESS
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE GET-MEMBER-STATUS-INFO
+****************************************
+*
+PARM-MEMBER-INFO.ID-NUMBER               := MemberProfile.CN
+PARM-MEMBER-INFO.#ACTION                 := #GET
+*
+CALLNAT 'OBJNMINF' PARM-MEMBER-INFO
+IF PARM-MEMBER-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-MEMBER-INFO.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+MemberProfile.MilitaryStatus             := PARM-MEMBER-INFO.MILITARY-STATUS
+MemberProfile.MilitaryBranch             := PARM-MEMBER-INFO.MILITARY-SERVICE
+IF PARM-MEMBER-INFO.MBR-SINCE NE 0
+  #DATE := PARM-MEMBER-INFO.MBR-SINCE
+  #DD := '01'
+  MemberProfile.MembershipDate             := VAL(#DATE)
+END-IF
+* MembershipType Member/MemberSpouse/Child/Employee/Other
+DECIDE FOR FIRST CONDITION
+  WHEN PROCESS-IND = 'C' AND INTRO-FLAG = 'A'
+    #PARTY-CD := #PENDING
+  WHEN PROCESS-IND = 'C' AND INTRO-FLAG NE 'A'
+    #PARTY-CD := #OWNER
+  WHEN INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    MOVE INTRO-FLAG TO #PARTY-CD
+  WHEN MILITARY-SERVICE = 'EMP'
+    #PARTY-CD := #EMPLOYEE
+  WHEN NONE
+    #PARTY-CD := #MEMBER
+END-DECIDE
+MemberProfile.MembershipType := #PARTY-CD
+* MemberServiceType  G-f/De-gf/Ins-pls/Optot/Non
+* Check services
+PERFORM CHECK-SERVICES
+*
+DECIDE FOR FIRST CONDITION
+  WHEN INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+      OR (MILITARY-SERVICE  = 'EMP')
+      OR (PROCESS-IND = 'C')
+    IGNORE
+  WHEN PROCESS-IND = 'D' AND #GRANDFATHERED                  /* YK4
+    PROCESS-IND := 'G'
+    #LOOK-UP-VALUE := PROCESS-IND                            /* YK4
+    MemberProfile.MemberServiceType :=
+      F-LOOK-UP-TABLE(<#MEMBER-SERVICE-TYPE,#LOOK-UP-VALUE>) /* YK4
+    MemberProfile.MemberServiceTypeCode := PROCESS-IND       /* YK5
+  WHEN NONE
+    #LOOK-UP-VALUE := PARM-MEMBER-INFO.PROCESS-IND           /* YK4
+    MemberProfile.MemberServiceType :=
+      F-LOOK-UP-TABLE(<#MEMBER-SERVICE-TYPE,#LOOK-UP-VALUE>) /* YK4
+    IF PROCESS-IND = 'G' OR = 'S'                            /* YK8
+      MemberProfile.MemberServiceTypeCode := PROCESS-IND     /* YK5
+    END-IF
+END-DECIDE
+IF #PremierServices <> ' '                                                                 /* YK5
+  MemberProfile.MemberServiceTypeCode := #PremierServices
+  DECIDE ON FIRST VALUE #PremierServices
+    VALUE #PremierServicesActive
+      #MSG := FUNCTION-PLAN(<#SVC-MEMBER.SVC-PLAN>)(1)
+      COMPRESS MemberProfile.MemberServiceType '/' #MSG                                      /* YK5
+        INTO MemberProfile.MemberServiceType LEAVING NO                                      /* YK5
+    VALUE #PremierServicesOnly                                                             /* YK9
+      MemberProfile.MemberServiceType := FUNCTION-PLAN(<#SVC-MEMBER.SVC-PLAN>)(1)
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+END-IF
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CHECK-SERVICES                             /* YK5
+********************************
+* Special Processing for De-Grandfathered Members, that are no longer de-grandfathered
+* Add Premier Services
+#REQUEST := #GET-BY-CN
+#SVC-MEMBER.SVC-ID-NUMBER := PARM-MEMBER-INFO.ID-NUMBER
+CALLNAT 'OBJNMB01' #REQUEST #MSG #SVC-MEMBER
+DECIDE FOR FIRST CONDITION
+  WHEN #SVC-MEMBER.SVC-PLAN = '3SR' AND #SVC-MEMBER.SVC-STATUS = #ACTIVE
+    #GRANDFATHERED := TRUE
+  WHEN #SVC-MEMBER.SVC-PLAN = 'PSM' AND #SVC-MEMBER.SVC-STATUS = #ACTIVE        /* YK9
+      AND PROCESS-IND = 'S'                                                  /* YK9
+    #PremierServices := #PremierServicesOnly                                  /* YK9
+  WHEN #SVC-MEMBER.SVC-PLAN = 'PSM' AND #SVC-MEMBER.SVC-STATUS = #CANCELLED(*)  /* YK9
+      AND PROCESS-IND = 'S'                                                  /* YK9
+    #PremierServices := #PremierServicesOnlyCanc                              /* YK9
+  WHEN #SVC-MEMBER.SVC-PLAN = 'PSM' AND #SVC-MEMBER.SVC-STATUS = #ACTIVE
+    #PremierServices := #PremierServicesActive
+  WHEN #SVC-MEMBER.SVC-PLAN = 'PSM' AND #SVC-MEMBER.SVC-STATUS = #CANCELLED(*)
+    #PremierServices := #PremierServicesCancelled
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-OWNER-INFO      /* YK10
+********************************
+* Use policy ownership file structure to determine Owner/Non-Owner
+MemberProfile.Owner := #NO
+FIND POS-V WITH REFERENCE-NUMBER = MemberProfile.CN
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  ACCEPT IF RELATION = #PRIMARY-OWNER OR RELATION = #CO-OWNER
+  IF GET-POLICY-STATUS(<POS-V.POLICY-NUMBER>) = #ACTIVE
+    MemberProfile.Owner := #YES
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE GET-PAPERLESS-INFO      /* YK7
+************************************
+* Call subprogram that returns all delivery preferencies
+PARM-WEB-ACCOUNT-INFO.MEMBER-CN := MemberProfile.CN
+PARM-WEB-ACCOUNT-INFO.#ACTION   := #GET
+CALLNAT 'OBJNWEBU' PARM-WEB-ACCOUNT-INFO
+IF PARM-MEMBER-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-MEMBER-INFO.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+MemberProfile.AnnsDeliveryFlag := PARM-WEB-ACCOUNT-INFO.ANNS-DELIVERY-FLAG
+MemberProfile.BillDeliveryFlag := PARM-WEB-ACCOUNT-INFO.BILL-DELIVERY-FLAG
+*
+FIND(1) ST-V WITH ID-NUMBER = MemberProfile.CN
+  DECIDE FOR FIRST CONDITION
+    WHEN PROCESS-IND = 'G' AND ST-V.DI-BA-MAIL-CD = 'D'
+      MemberProfile.FIRDeliveryFlag := 'W'
+    WHEN PROCESS-IND = 'G' AND ST-V.DI-BA-MAIL-CD = 'S'  /* bz1
+      MemberProfile.FIRDeliveryFlag := 'M'               /* bz1
+    WHEN PROCESS-IND = 'G' AND ST-V.DI-BA-MAIL-CD = 'N'
+      MemberProfile.FIRDeliveryFlag := 'M'
+    WHEN MemberProfile.MemberServiceTypeCode = #PremierServicesActive AND ST-V.DI-BA-MAIL-CD = 'W'
+      MemberProfile.MBADeliveryFlag := 'W'
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FIND
+*
+END-SUBROUTINE
+END

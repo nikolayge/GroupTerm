@@ -1,0 +1,295 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* ----------------------------------------------------------------------
+* Generated from NFN XML TOOLKIT
+*
+*   'CRMNSRP1'
+*
+* DESCRIPTION
+*   XML Parser implementationfor file:
+*   C:\Users\nguentchev\workspace90\MembershipUAT\Natural-Libraries\UAT\ServiceRequest.xsd
+*   using PARSE XML statement and datastructure 'CRMASR01'
+*
+* NGG    05/07/2014  NG1  MEMBERSHIP EXPANSION
+* YAK    06/01/2016  YK1  Add Mortgage and Wealth Management
+* YAK    12/01/2016  YK2  Add Group Term Life Insurance and Complimentary Membership
+* ----------------------------------------------------------------------
+*
+DEFINE DATA PARAMETER
+1 #XML_INPUT             (A) DYNAMIC BY VALUE
+1 XML_SERIALZE_OUTPUT    (A) DYNAMIC        /* Out
+LOCAL USING CRMASR01
+**LOCAL USING OBJAMB01           /* SERVICE MEMBER structure
+LOCAL USING ERROR_L
+LOCAL USING PARSER-X
+LOCAL
+1 #SVC-MEMBER
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8)
+  2 LAST-UPD-TIME (N7)
+  2 SVC-STATUS (A1)
+  2 SVC-PAY-UP (A1)
+  2 SVC-MODE (A1)
+  2 SVC-ISSUE-AGE (N3)
+  2 SVC-ISSUE-DATE (N8)
+  2 SVC-PAID-TO-DATE (N8)
+  2 SVC-BILL-TO-DATE (N8)
+  2 SVC-DATE-ENTERED (N8)
+  2 SVC-TERMINATION-DATE (N8)
+  2 SVC-MONTHLY-RATE (N7.2)
+  2 SVC-FIRST-PLACE-FEE (N7.2)
+  2 SVC-CREATED-BY (A8)
+  2 SVC-CONTRACT-NUMBER (A20)
+  2 SVC-ID-NUMBER (N6)
+  2 SVC-PLAN (A3)
+  2 SVC-AT-NUMBER (N6)
+  2 SVC-ONE-TIME-FEE (N7.2)
+  2 SVC-REACTIVATION-FEE (N7.2)
+  2 CRM-SERVICE-ID (A50)
+1 #XML_PATH             (A) DYNAMIC
+1 #XML_VALUE            (A) DYNAMIC
+1 #XML_NAME             (A) DYNAMIC
+1 #PREV_PARSE-TYPE      (A1)
+1 XML_PARSER_XPATH_TYPE (A1)
+1 XML_PARSER_ERROR_TEXT (A253)
+1 XML_PARSER_RESPONSE   (I4)
+1 XML_PARSER_CONTENT_IS_EMPTY (L)
+*
+LOCAL
+1 #LEN              (I4)
+1 #MSG              (A)  DYNAMIC
+1 #PARSE-ERROR-1      (I4) CONST <-7>
+1 #NATURAL-ERROR    (I4) CONST <-3>
+1 #ERROR-LOG        (I4) CONST <3>
+1 BLANK             (A1) CONST <' '>
+1 #GET              (A)  DYNAMIC CONST <'GET'>
+1 #SERVICE-STATUS   (I4) CONST <8>  /* CODE OF THE CRM FUNCTION
+*
+1 CONTACT VIEW OF A-CONTACTS
+  2 ID-NUMBER
+1 Eligibility (L)
+1 ProductType (A1) INIT <'S'> /* Service=S, Insurance=I
+1 Succeeded   (L)
+1 Rank        (A) DYNAMIC
+1 #ERR-N      (A3)
+*
+END-DEFINE
+*
+ASSIGN #LEN := *LENGTH (#XML_INPUT)
+IF #LEN <= 0
+  ErrorCode := #PARSE-ERROR-1
+  ESCAPE ROUTINE
+END-IF
+RESET ServiceRequest
+*
+INCLUDE PARSER_X '#XML_INPUT'       /* XML file to be parsed
+  '#XML_PATH'                       /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  '#XML_VALUE'                      /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+DEFINE SUBROUTINE PARSER_ERROR
+/*                ============
+ErrorCode := #PARSE-ERROR-1
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE CALLBACK
+/*                ========
+IF XML_PARSER_CONTENT_IS_EMPTY THEN
+  IGNORE
+ELSE
+  #XML_VALUE := *TRIM (#XML_VALUE)
+  MOVE *TRANSLATE(#XML_VALUE, UPPER) TO #XML_VALUE
+  PERFORM PARSE-DOCUMENT
+END-IF
+END-SUBROUTINE
+*
+*   Process service request
+*
+RESET #SVC-MEMBER
+FIND (1) CONTACT WITH CONTACT-ID = ServiceRequest.ContactID
+  IF NO RECORD FOUND
+    ServiceRequest.ErrorCode := 1   /* existing Premier Services
+    ServiceRequest.ErrorDescription :='Only Pending is accepted'
+    CALLNAT 'CRMNSRS1' XML_SERIALZE_OUTPUT ServiceRequest
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+#SVC-MEMBER.SVC-PLAN      := ServiceRequest.Type
+#SVC-MEMBER.SVC-ID-NUMBER := CONTACT.ID-NUMBER
+ServiceRequest.CN         := CONTACT.ID-NUMBER
+*
+*    Check eligibility
+*
+
+CALLNAT 'CQRNSCHK'
+  ServiceRequest.ContactID
+  Rank
+  ServiceRequest.Type
+  Eligibility
+  ProductType
+  Succeeded
+  #MSG
+
+IF #MSG NE BLANK
+  EXAMINE #MSG FOR 'existing' GIVING POSITION #LEN
+  IF #LEN > 0
+    ServiceRequest.ErrorCode := 1   /* existing Premier Services
+  ELSE
+    ServiceRequest.ErrorCode := 8   /* Not eligible
+  END-IF
+  ServiceRequest.ErrorDescription := #MSG
+  CALLNAT 'CRMNSRS1' XML_SERIALZE_OUTPUT ServiceRequest
+  ESCAPE ROUTINE
+END-IF
+*
+IF ServiceRequest.Status = 'R'  /* QUOTE ONLY  NG1
+  ESCAPE ROUTINE
+END-IF
+*
+*    Get member service record
+*
+CALLNAT 'OBJNMB01' #GET #MSG #SVC-MEMBER
+#MSG := *TRIM(#MSG)
+IF #MSG = #NOT-EXIST
+  DECIDE FOR FIRST CONDITION
+    WHEN ServiceRequest.Status = 'P'
+      IGNORE
+    WHEN ServiceRequest.Status = 'A' AND 
+       (ServiceRequest.Type = 'WMT' OR ServiceRequest.Type = 'MTG' OR = 'GTI' OR = 'CMS')            /* YK1 YK2
+      IGNORE
+    WHEN ServiceRequest.Status = 'A' AND NOT ServiceRequest.isCRMCall
+      IGNORE
+    WHEN NONE
+      ServiceRequest.ErrorCode := 8
+      ServiceRequest.ErrorDescription := 'Only PENDING or APPROVED (from Online app) status is allowed for create service'
+      CALLNAT 'CRMNSRS1' XML_SERIALZE_OUTPUT ServiceRequest
+      ESCAPE ROUTINE
+  END-DECIDE
+  #SVC-MEMBER.SVC-STATUS    := ServiceRequest.Status
+  #SVC-MEMBER.SVC-PLAN      := ServiceRequest.Type
+  #SVC-MEMBER.SVC-MODE      := ServiceRequest.PaymentMode
+  IF #SVC-MEMBER.SVC-MODE = BLANK
+    #SVC-MEMBER.SVC-MODE := '0'
+  END-IF
+  #SVC-MEMBER.SVC-ISSUE-DATE   := *DATN
+  #SVC-MEMBER.SVC-PAID-TO-DATE := *DATN
+  #SVC-MEMBER.CRM-SERVICE-ID := ServiceRequest.Id
+  #SVC-MEMBER.LAST-UPD-USER := FUNCTION-WEB-USER (< ServiceRequest.User >) (2)
+  CALLNAT 'CRMNSRM1' #SVC-MEMBER #MSG  /* Create a service
+    ServiceRequest.ErrorCode
+ELSE
+  IF #MSG = BLANK
+    ServiceRequest.ErrorCode := 1
+    #MSG := 'Servise already exists'
+  END-IF
+END-IF
+*
+ServiceRequest.ContractId := #SVC-MEMBER.SVC-CONTRACT-NUMBER
+IF #MSG = BLANK
+  END TRANSACTION
+  RESET ServiceRequest.ErrorCode
+  ServiceRequest.ErrorDescription := BLANK
+  CALLNAT 'CRMNSRS1' XML_SERIALZE_OUTPUT ServiceRequest
+ELSE
+  BACKOUT TRANSACTION
+  IF ServiceRequest.ErrorCode = 0
+    ServiceRequest.ErrorCode := 8
+  END-IF
+  IF *LENGTH(#MSG) GE 3
+    #ERR-N := SUBSTR(#MSG,1,3)
+    IF #ERR-N IS (N3)
+      #MSG := F-ERROR-DESCRIPTION (< #ERR-N >)
+    END-IF
+  END-IF
+  ServiceRequest.ErrorDescription := #MSG
+  CALLNAT 'CRMNSRS1' XML_SERIALZE_OUTPUT ServiceRequest
+END-IF
+* ------------------------------------------------- CALL THE PARSER
+DEFINE PARSE-DOCUMENT
+/*     ==============
+**PARSE XML #XML_INPUT INTO PATH #XML_PATH NAME #XML_NAME VALUE #XML_VALUE
+*
+DECIDE ON FIRST #XML_PATH
+  VALUE 'ServiceRequest//'
+    IGNORE
+  VALUE 'ServiceRequest'
+    RESET INITIAL ServiceRequest
+  VALUE 'ServiceRequest/ErrorCode//'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorCode'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorCode/$'
+    ServiceRequest.ErrorCode := VAL(#XML_VALUE)
+  VALUE 'ServiceRequest/ErrorDescription//'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorDescription'
+    IGNORE
+  VALUE 'ServiceRequest/ErrorDescription/$'
+    ServiceRequest.ErrorDescription := #XML_VALUE
+  VALUE 'ServiceRequest/Id//'
+    IGNORE
+  VALUE 'ServiceRequest/Id'
+    IGNORE
+  VALUE 'ServiceRequest/Id/$'
+    ServiceRequest.Id := #XML_VALUE
+  VALUE 'ServiceRequest/User//'
+    IGNORE
+  VALUE 'ServiceRequest/User'
+    IGNORE
+  VALUE 'ServiceRequest/User/$'
+    ServiceRequest.User := #XML_VALUE
+  VALUE 'ServiceRequest/Status//'
+    IGNORE
+  VALUE 'ServiceRequest/Status'
+    IGNORE
+  VALUE 'ServiceRequest/Status/$'
+    ServiceRequest.Status := #XML_VALUE
+  VALUE 'ServiceRequest/PaymentMode//'
+    IGNORE
+  VALUE 'ServiceRequest/PaymentMode'
+    IGNORE
+  VALUE 'ServiceRequest/PaymentMode/$'
+    ServiceRequest.PaymentMode := #XML_VALUE
+  VALUE 'ServiceRequest/isCRMCall//'
+    IGNORE
+  VALUE 'ServiceRequest/isCRMCall'
+    IGNORE
+  VALUE 'ServiceRequest/isCRMCall/$'
+    /* INFO: is boolean
+    IF #XML_VALUE = 'TRUE'
+      ServiceRequest.isCRMCall := TRUE
+    ELSE
+      ServiceRequest.isCRMCall := FALSE
+    END-IF
+    /*
+  VALUE 'ServiceRequest/Type//'
+    IGNORE
+  VALUE 'ServiceRequest/Type'
+    IGNORE
+  VALUE 'ServiceRequest/Type/$'
+    ServiceRequest.Type := #XML_VALUE
+  VALUE 'ServiceRequest/ContactID//'
+    IGNORE
+  VALUE 'ServiceRequest/ContactID'
+    IGNORE
+  VALUE 'ServiceRequest/ContactID/$'
+    ServiceRequest.ContactId := VAL(#XML_VALUE)
+  VALUE 'ServiceRequest/DeceasedSpouseContactID//'
+    IGNORE
+  VALUE 'ServiceRequest/DeceasedSpouseContactID'
+    IGNORE
+  VALUE 'ServiceRequest/DeceasedSpouseContactID/$'
+    ServiceRequest.DeceasedSpouseContactID  := VAL(#XML_VALUE)
+  NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+END

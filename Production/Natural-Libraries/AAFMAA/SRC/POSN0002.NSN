@@ -1,0 +1,165 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram POSN0002.
+/**
+/** :author nguentchev
+/*
+/* Loads owner relation records in Policy-Contact file
+/*
+DEFINE DATA
+PARAMETER
+1 #ISN     (P8)
+1 #MSG     (A) DYNAMIC
+LOCAL USING POSALOAD
+LOCAL USING POSLROLE
+LOCAL
+1 #NON-INS-OWNER    (L) /* has at least 1 non insured owner
+1 #MULTIPLE-OWNER   (L) /* more than 1 owner for this member
+1 #OWNER-OCC-9 (9)
+  2 #OWNER-FLAG (A1) /* " "=owner is insured "N"=owner is not insured
+  2 #OWNER-CN        (N6/10)   /* up to 10 owners for each pol
+  2 #OWNER-CN-BY-POL (N6)      /* 1st owners of each set of policies
+  2 #OWNER-CN-SEG    (I2/9)    /* all segment of pols owned by above NMO
+  2 #ISSUE-DATE      (N8/9)    /* all pols owned by above non-mbr-owner
+  2 #ISSUE-DATE-DISP (A10/9)
+  2 #BN-TYPE         (A1/2)      /* beneficiary info output
+  2 #BN-TEXT         (A60/10)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 DATE-OF-DEATH
+  2 MEMBER-CONTACT-ID
+  2 C*ACTIVE-SEGMENTS
+  2 ISSUE-DATE  (9)
+1 CNT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+1 #TF              (A5/2)
+1 J       (I2)
+1 K       (I2)
+1 L       (I2)
+1 #GET           (I4) CONST <0>
+1 #ADD           (I4) CONST <1>
+1 #UPDATE        (I4) CONST <2>
+1 #DELETE        (I4) CONST <3>
+1 BLANK          (A1) CONST <' '>
+1 #MESSAGE-LOG   (I4) CONST <2>
+1 #ERROR-LOG     (I4) CONST <3>
+* 1 #PRIMARY-OWNER (N2) CONST <2>
+* 1 #OWNER         (N2) CONST <10>
+END-DEFINE
+*
+RESET #MSG #POWN
+GL.
+GET ST-V #ISN
+*
+IF *ISN (GL.) <= 0
+  COMPRESS 'STATUS record doesnt exist. ISN=' #ISN INTO #MSG
+  CALLNAT 'POSLOG' #MESSAGE-LOG #MSG
+  ESCAPE ROUTINE
+END-IF
+*  The GOWNRSXX has to be the old legacy version reading data from BENE
+CALLNAT 'OLDGOWNR'       /* GET owenership info for a member
+  ST-V.ID-NUMBER
+  #NON-INS-OWNER
+  #MULTIPLE-OWNER
+  #OWNER-OCC-9 (*)
+IF #NON-INS-OWNER
+  #POWN.NI-OWNER := 'Y'
+END-IF
+IF #MULTIPLE-OWNER
+  #TF (2) := 'TRUE'
+ELSE
+  #TF (2) := 'FALSE'
+END-IF
+*
+FOR1.
+FOR J 1 TO 9 /* Up  to 9 pols for CN
+  IF #OWNER-CN (J,1) <= 0
+    ESCAPE BOTTOM
+  END-IF
+  IF #OWNER-FLAG (J) = ' '
+    #OWNER-FLAG (J) := 'Y'
+  END-IF
+  /* Consistency error
+  IF #OWNER-CN (J , 1 ) <= 0
+    ESCAPE TOP
+  END-IF
+  /* Primary owner
+  CALLNAT 'GPLNMSXX' #POWN.POLICY-NUMBER
+    ST-V.ID-NUMBER
+    J
+  #POWN.REFERENCE-NUMBER := #OWNER-CN (J , 1)
+  #POWN.REFERENCE-TYPE := 'O'
+  FIND (1) CNT-V WITH ID-NUMBER = #OWNER-CN (J , 1)
+    #POWN.CONTACT-ID := CNT-V.CONTACT-ID
+  END-FIND
+  #POWN.RELATION := PrimaryOwner
+/*
+  CALLNAT 'POSN0018'  #POWN.POLICY-NUMBER ST-V.ID-NUMBER
+    #POWN.ADD-DATE
+    #POWN.ADD-USER
+  IF #POWN.ADD-DATE = 0
+    #POWN.ADD-DATE :=
+      GET-ISSUE-DATE (< #POWN.POLICY-NUMBER, ST-V.ID-NUMBER >)
+  END-IF
+  IF #POWN.ADD-USER = BLANK
+    MOVE 'LOD' TO #POWN.ADD-USER
+  END-IF
+  MOVE 'LOD' TO #POWN.LAST-UPD-USER
+  #POWN.LAST-UPD-DATE := #POWN.ADD-DATE
+/*
+  CALLNAT 'POSN0001' #ADD #MSG
+    #POWN
+/* Multiple owners
+  FOR K 2 TO 10 /* Up to 10 owners
+    IF #OWNER-CN (J , K ) <= 0
+      ESCAPE BOTTOM
+    END-IF
+    #POWN.REFERENCE-NUMBER := #OWNER-CN (J , K )
+    FIND (1) CNT-V WITH ID-NUMBER = #OWNER-CN (J , K )
+      #POWN.CONTACT-ID := CNT-V.CONTACT-ID
+    END-FIND
+    #POWN.RELATION := CoOwner
+    CALLNAT 'POSN0001' #ADD #MSG
+      #POWN
+  END-FOR
+END-FOR
+*
+* FOR L 1 TO 9 /* all segments of pols owned by above owner
+*   IF #OWNER-CN-SEG (J, L ) <= 0
+*     ESCAPE BOTTOM
+*   END-IF
+*   CALLNAT 'GPLNMSXX' #POWN.POLICY-NUMBER
+*     ST-V.ID-NUMBER
+*     #OWNER-CN-SEG (J, L )
+*   #POWN.REFERENCE-NUMBER := #OWNER-CN-BY-POL (J )
+*   #POWN.REFERENCE-TYPE := 'O'
+*   FIND (1) CNT-V WITH ID-NUMBER = #OWNER-CN-BY-POL (J )
+*     #POWN.CONTACT-ID := CNT-V.CONTACT-ID
+*   END-FIND
+*   #POWN.RELATION := PrimaryOwner
+* /*
+*   CALLNAT 'POSN0018'  #POWN.POLICY-NUMBER ST-V.ID-NUMBER
+*     #POWN.ADD-DATE
+*     #POWN.ADD-USER
+*   IF #POWN.ADD-DATE = 0
+*     #POWN.ADD-DATE :=
+*       GET-ISSUE-DATE (< #POWN.POLICY-NUMBER, ST-V.ID-NUMBER >)
+*   END-IF
+*   IF #POWN.ADD-USER = BLANK
+*     MOVE 'LOD' TO #POWN.ADD-USER
+*   END-IF
+*   MOVE 'LOD' TO #POWN.LAST-UPD-USER
+*   #POWN.LAST-UPD-DATE := #POWN.ADD-DATE
+* /*
+*   CALLNAT 'POSN0001' #ADD #MSG
+*     #POWN
+* END-FOR
+ON ERROR
+  COMPRESS 'ON ERROR STATUS. CN=' ST-V.ID-NUMBER INTO #MSG
+  CALLNAT 'POSLOG' #ERROR-LOG #MSG
+  ESCAPE ROUTINE
+END-ERROR
+END

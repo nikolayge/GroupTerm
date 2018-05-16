@@ -1,0 +1,168 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************************
+* SUBPROGRAM-ID: DNXUN10D
+* DESCRIPTION:   DEATH MAINTENANCE  SELECT CONTACT FOR Claimants
+**************************************************************************
+*        MODIFICATION LOG
+**************************************************************************
+* USER   DATE      TAG  REASON
+* NGG  12/09/2013  None Creation
+* TMT  12/24/2015  TT1  1099 PROJECT
+* vxt  02/05/2018  vt1  fix the problem with storing claimant info on 1099 file
+**************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #ISN                     (P8)
+1 #CLERK-ID                (A3)
+1 #MODE                    (A1)
+1 #MSG                     (A72)
+1 REDEFINE #MSG
+  2 #GLOBAL-USER-COMPANY     (A1)
+  2 #GLOBAL-SECURITY-CODE    (N2)
+LOCAL
+1 #CGA-USER-COMPANY        (A1)
+1 #CGA-SECURITY-CODE       (N2)
+1 #CLAIMANT-CONTACT-ID     (N8/99)    /* TT1
+1 #MEMBER-CN               (N6)
+1 #CONTACT-ID              (N8)
+1 P_PARMS
+  2 P_ERROR_NUM (I4)  /*ERROR NUMBER
+  2 P_ERROR_LINE (I4) /*ERROR LINE
+  2 P_ERROR_PROGRAM (A32)
+  2 P_ERROR_LIB (A32)
+  2 P_ERROR_DBID (I4)
+  2 P_ERROR_FNR (I4)
+  2 P_ERROR_TIME (T)
+  2 P_ERROR_PGM_TYPE (A1)
+  2 P_ERROR_PGM_TYPE_LONG (A11)
+  2 P_ERROR_LANG (I4)
+  2 P_ERROR_LEVEL (I4)
+  2 P_ERROR_CLASS (I1)
+  2 P_ERROR_TYPE (I1)
+1 CONTACT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 ID-NUMBER
+  2 CONTACT-TYPE
+  2 SSN
+  2 DATE-OF-DEATH
+1 INT-1099-V VIEW OF A-INT-1099
+  2 SSN
+  2 RELATED-ID-NUMBER
+  2 CLAIMANT-ID
+  2 CONTACT-ID
+  2 YEAR
+  2 INT-TYPE
+  2 SSN-TAX-ID-IND
+  2 FINAL-PAYMENT-DATE
+  2 POLICY-NUMBER                                          /* TT1
+1 #NUMBER_OF_CLAIMANTS      (I4)
+1 #NN_OF_CLAIMANTS          (I4)
+1 J                         (I4)
+1 K                         (I4)                           /* TT1
+1 #YEAR                     (N8) 1 REDEFINE #YEAR
+  2 #YYYY                   (N4)
+1 #MARK-FOR-DELETE          (L)                            /* TT1
+END-DEFINE
+*
+IF #MODE = 'N'            /* No claimants data
+  RESET #CLAIMANT-CONTACT-ID  (*)
+  GET CONTACT-V #ISN
+  #MEMBER-CN := CONTACT-V.ID-NUMBER
+  #CONTACT-ID := CONTACT-V.CONTACT-ID
+ELSE
+  GET INT-1099-V #ISN
+  #MEMBER-CN := INT-1099-V.RELATED-ID-NUMBER
+  #CONTACT-ID := INT-1099-V.CONTACT-ID
+  FIND (1) CONTACT-V WITH ID-NUMBER = INT-1099-V.RELATED-ID-NUMBER
+  END-FIND
+  FIND INT-1099-V WITH RELATED-ID-NUMBER = INT-1099-V.RELATED-ID-NUMBER
+    IF CLAIMANT-ID > 0
+      ADD 1 TO #NUMBER_OF_CLAIMANTS
+      #CLAIMANT-CONTACT-ID ( #NUMBER_OF_CLAIMANTS ) := CLAIMANT-ID
+    END-IF
+  END-FIND
+END-IF
+#NN_OF_CLAIMANTS := #NUMBER_OF_CLAIMANTS
+*
+CALLNAT 'DNXUN10A'
+  #MEMBER-CN
+  #CLAIMANT-CONTACT-ID   (*)
+  #NUMBER_OF_CLAIMANTS
+  #CGA-USER-COMPANY
+  #CLERK-ID
+  #MSG
+*
+IF CONTACT-V.DATE-OF-DEATH >0
+  #YEAR := CONTACT-V.DATE-OF-DEATH
+ELSE
+  #YEAR := *DATN
+END-IF
+FIND INT-1099-V WITH RELATED-ID-NUMBER = #MEMBER-CN
+  IF CLAIMANT-ID > 0
+      AND FINAL-PAYMENT-DATE = 0
+    FOR K 1 TO #NUMBER_OF_CLAIMANTS                                       /* TT1 BEGIN
+      IF INT-1099-V.CLAIMANT-ID = #CLAIMANT-CONTACT-ID(K)
+        #MARK-FOR-DELETE := FALSE
+        ESCAPE BOTTOM
+      ELSE
+        #MARK-FOR-DELETE := TRUE
+      END-IF
+    END-FOR
+    IF #MARK-FOR-DELETE OR #NUMBER_OF_CLAIMANTS < 1
+      DELETE
+    END-IF
+    RESET #MARK-FOR-DELETE                                                /* TT1 END
+  ELSE
+    FOR J 1 TO #NUMBER_OF_CLAIMANTS
+      IF #CLAIMANT-CONTACT-ID (J) = CLAIMANT-ID
+        RESET #CLAIMANT-CONTACT-ID (J)
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+END-FIND
+*
+RESET INT-1099-V
+IF #NUMBER_OF_CLAIMANTS > 0
+  FOR K 1 TO #NUMBER_OF_CLAIMANTS                                       /* TT1 BEGIN
+    FIND(1) INT-1099-V WITH CLAIMANT-ID = #CLAIMANT-CONTACT-ID (K)
+        and int-1099-v.related-id-number = #member-cn                       /* vt1
+      IF NO RECORDS FOUND
+        INT-1099-V.RELATED-ID-NUMBER := #MEMBER-CN
+        INT-1099-V.CONTACT-ID := #CONTACT-ID
+        INT-1099-V.YEAR := #YYYY
+        INT-1099-V.INT-TYPE := 'A'
+        INT-1099-V.CLAIMANT-ID := #CLAIMANT-CONTACT-ID (K)
+        FIND (1) CONTACT-V WITH CONTACT-ID = #CLAIMANT-CONTACT-ID (K)
+          IF CONTACT-V.CONTACT-TYPE = 'O'
+            INT-1099-V.SSN-TAX-ID-IND := 'T'
+          ELSE
+            INT-1099-V.SSN-TAX-ID-IND := 'S'
+          END-IF
+          INT-1099-V.SSN := CONTACT-V.SSN
+        END-FIND
+        STORE INT-1099-V
+      END-NOREC                                                           /* TT1 END
+    END-FIND
+  END-FOR
+  END TRANSACTION
+END-IF
+/*
+ON ERROR
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  COMPRESS 'Application error' P_ERROR_NUM 'In program' P_ERROR_PROGRAM
+    'Error line' P_ERROR_LINE
+    INTO #MSG
+  INPUT //// #MSG (AD=IO)
+    / 'Please call production support'
+  #MSG := 'PF3'
+  ESCAPE ROUTINE
+END-ERROR
+*
+END
+

@@ -1,0 +1,132 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* SUBPROGRAM  :  PHONEN1M
+* 12/20/2010 BZ
+*
+* FUNCTION : Returns all phones or specific phone, their types and type code
+*
+* USAGE 1) Return All Phones -> RESET p_PhoneN1M(*)
+*           CALLNAT 'PHONEN1M'  <Contact-ID> p_PhoneN1M(*) p_Rc
+*       2)  Return Home Phone -> Type code = 'H'
+*           p_Code(1) := 'H'
+*           CALLNAT 'PHONEN1M'  <Contact-ID> p_PhoneN1M(*) p_Rc
+*       3)  Return Only Preffered phones ->   p_Preferred(1) := 'P'
+*           CALLNAT 'PHONEN1M'  <Contact-ID> p_PhoneN1M(*) p_Rc
+*       4)  Optons 2 and 3 can be combined
+* Return codes : 1 -> contact id = 0
+*                2 -> No records for specified contact id
+*                3 -> Unknown value of PHONE-TYPE-CODE field
+*                4 -> Unknown value of TYPE field
+*
+* Example of Return values:
+*  Phone Number                        : Phone Type       :Code:   Ret. code
+* (719)488-2385 Ext 123456             : Home             : H  :   0
+* (719)488-2385                        : Home Fax         : F  :   0
+* (11)12345678901234567890 Ext 123456  : Cell             : C  :   0
+* _______________________________________________________________________________
+*
+DEFINE DATA PARAMETER
+1 p_CID       (N8)
+1 p_PhoneN1M    (10)
+  2 p_Phone     (A36)
+  2 p_Type      (A16)
+  2 p_Code      (A1)
+  2 p_Preferred (A1)
+1 p_Rc        (N3)
+*
+LOCAL
+*
+1 PHONE VIEW OF A-CONTACT-PHONE
+  2 PHONE-ID (N8)
+  2 CONTACT-ID (N8)
+  2 PHONE-TYPE-CODE (A1)
+  2 TYPE (A1)
+  2 INTL-ACCESS-CODE (N3)
+  2 INTL-DIAL-NUMBER (N20)
+  2 AREA-CODE (N3)
+  2 DIAL-NUMBER (N7)
+  2 REDEFINE DIAL-NUMBER
+    3 DIAL-NUMBER-3   (A3)
+    3 DIAL-NUMBER-4   (A4)
+  2 EXT (N6)
+  2 PREFERRED-PHONE-IND (A1)
+  2 INVALID-IND (A1)
+*
+1 #i                 (N2)    INIT <0>
+1 v_Just_This_Code   (A1)    INIT <' '>
+1 l_Just_Preferred   (L)     INIT <FALSE>
+*
+END-DEFINE
+*
+
+IF p_CID = 0  p_Phone (1) := ' ' p_Rc := 1  ESCAPE ROUTINE  END-IF    /* Validate input
+IF p_Code(1)     <> ' '  v_Just_This_Code := p_Code(1) p_Code(1)      := ' ' END-IF
+IF p_Preferred(1) = 'P'  l_Just_Preferred := TRUE      p_Preferred(1) := ' ' END-IF
+*
+*
+FIND PHONE WITH CONTACT-ID = p_CID
+       IF NO RECORD FOUND
+            p_Rc := 2  ESCAPE ROUTINE
+       END-NOREC
+*
+  IF l_Just_Preferred AND PREFERRED-PHONE-IND <> 'Y' ESCAPE TOP END-IF  /* Return only preffered phone
+  IF v_Just_This_Code <> ' '    /* Return only one phone, v_Just_This_Code presents requested code of type
+     IF v_Just_This_Code = PHONE-TYPE-CODE
+        #i := 1
+        PERFORM DO-EDIT
+        ESCAPE ROUTINE
+     ELSE
+        ESCAPE TOP
+     END-IF
+  END-IF
+
+  #i := #i + 1
+  PERFORM DO-EDIT
+*
+END-FIND
+
+DEFINE SUBROUTINE DO-EDIT
+  DECIDE ON FIRST VALUE OF PHONE-TYPE-CODE
+    VALUE 'B'
+         p_Type(#i) := 'Business'
+    VALUE 'A'
+         p_Type(#i) := 'Business Fax'
+    VALUE 'C'
+         p_Type(#i) := 'Cell'
+    VALUE 'H'
+         p_Type(#i) := 'Home'
+    VALUE 'F'
+         p_Type(#i) := 'Home Fax'
+    VALUE 'M'
+         p_Type(#i) := 'Mobile/Car Phone'
+    VALUE 'O'
+         p_Type(#i) :=  'Other'
+    VALUE 'X'
+         p_Type(#i) := 'Other-fax'
+    VALUE 'P'
+         p_Type(#i) := 'Pager'
+    NONE p_Rc := 3  p_Type(#i) := 'Unknown type code'
+  END-DECIDE
+  p_Code (#i) := PHONE-TYPE-CODE
+
+  DECIDE ON FIRST VALUE OF PHONE.TYPE
+    VALUE 'D'  /* domestic phones
+          COMPRESS '(' PHONE.AREA-CODE ')'
+                 PHONE.DIAL-NUMBER-3 '-'
+                 PHONE.DIAL-NUMBER-4 INTO p_Phone (#I)  LEAVING NO SPACE
+    VALUE 'I'   /* international
+          COMPRESS '(' PHONE.INTL-ACCESS-CODE ')'
+                 PHONE.INTL-DIAL-NUMBER INTO p_Phone (#i) LEAVING NO SPACE
+    NONE p_Rc := 4 p_Phone(#i) := 'Unknown Type'
+  END-DECIDE
+  IF PHONE.EXT > 0
+      COMPRESS p_Phone (#i) 'Ext' EXT INTO p_Phone (#i)
+  END-IF
+  p_Preferred(#i) := PREFERRED-PHONE-IND
+*
+END-SUBROUTINE
+
+END

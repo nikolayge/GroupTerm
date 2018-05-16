@@ -1,0 +1,283 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2315PCI   to handle degrandfathering
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  04222006 DW1  NX PROCESSING FOR AAFM/AFSC INTERFACE
+* TDM  01022007 TM1  REPLACE JMJ WITH MAS FOR NX'S
+* DRW  02212007 DW2  Remove NX's to AFSC 
+*******************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.CI-BLOCK
+LOCAL
+1 #DID-REIN    (L)
+1 #DID-TERM    (L)
+1 #DID-DEAD    (L)
+*
+* above is passed from C2300PCI
+*
+1 #NX-IND      (A1) /* DW1 (1=DE-G/F 2=TERM AAFM 3=REIN  4=REIN W DUES
+1 #STORE-FLAGS   (A2)
+1 REDEFINE #STORE-FLAGS
+ 2 #STORE-PROCESS-IND  (A1)
+ 2 #STORE-INTRO-FLAG   (A1)
+1 #Y-N  (A1)
+*
+1 #TO-INIT           (A3)
+1 #HOLD-SUFFIX       (A3)
+1 #POL-AFT-7-1-2000  (L)
+*
+1 #DATE-DISP  (A10)
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM  (N6)
+ 2 REDEFINE #YYYYMM
+   3 #YYYY  (N4)
+   3 #MM    (N2)
+ 2 REDEFINE #YYYYMM
+   3 #YYYY-A  (A4)
+   3 #MM-A    (A2)
+ 2 #DD-A  (A2)
+*
+1 #NOTE-TEXT (A60/10)
+1 #INT   (I2)
+1 #G-F                 (L)
+1 #DUES-PART-OF-PREM   (L)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+INPUT #DID-REIN #DID-TERM #DID-DEAD
+*
+MOVE #CGA-MF-ORIG-COMMAND TO #STORE-FLAGS
+RESET #CGA-MF-ORIG-PARM-2  /* DW1
+*
+*   DE-GRANDFATHERING PROCESSING
+*
+IF   (#DID-TERM) AND (NOT #DID-DEAD)
+ AND (#STORE-PROCESS-IND = 'G')  /* was Grandfathered
+ AND (NOT #STORE-INTRO-FLAG = 'S' OR = 'K' OR = 'G' OR = 'F')
+  RESET #G-F #POL-AFT-7-1-2000
+*
+  FOR #I1 1 TO 9
+    IF CI-V.STATUS (#I1) = 'D'
+      IF CI-V.ISSUE-DATE (#I1) LT 20000701
+        MOVE TRUE TO #G-F
+      ELSE
+        MOVE TRUE TO #POL-AFT-7-1-2000
+      END-IF
+    END-IF
+  END-FOR
+*
+  IF NOT #G-F  /* immediately de-gf any mbr terming the last g/f pol
+    IF #POL-AFT-7-1-2000   /* and still having a after 7/2000 pol
+      RESET #NOTE-TEXT (*)
+      MOVE *DATN TO #YYYYMMDD
+      COMPRESS #MM-A #DD-A #YYYY-A INTO #DATE-DISP WITH '/'
+      MOVE 1 TO #INT
+      COMPRESS '*#DE-GF ON' #DATE-DISP INTO #NOTE-TEXT (1)
+*
+      IF CI-V.ID-NUMBER GE 106030
+        COMPRESS #NOTE-TEXT (#I1) '- Orig a pipelined mbr'
+           INTO #NOTE-TEXT(1)
+      END-IF
+*
+      CALLNAT 'E4205SDM' #CGA-ID #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+      MOVE 'D' TO #STORE-PROCESS-IND  /* to ind de-grandfathered
+*
+      IF #STORE-INTRO-FLAG = 'C'
+        MOVE 'P' TO #STORE-INTRO-FLAG
+      ELSE
+        IF #STORE-INTRO-FLAG = 'B'
+          MOVE 'Q' TO #STORE-INTRO-FLAG
+        ELSE
+          MOVE 'O' TO #STORE-INTRO-FLAG
+        END-IF
+      END-IF
+*
+      MOVE TRUE TO #CGA-GOOD-TAS   /* ind to update
+    END-IF
+*
+*   MOVE #CGA-SCR-SUFFIX TO #HOLD-SUFFIX   /* DW2
+*   MOVE '*NX' TO #CGA-SCR-SUFFIX
+*   RESET #NOTE-TEXT (*)
+*
+    IF #POL-AFT-7-1-2000
+*     COMPRESS 'CN' #CGA-ID 'has been de Grandfathered'
+*           INTO #NOTE-TEXT (1)
+      MOVE '1' TO #NX-IND     /* DW1
+*     MOVE 'KRM'      TO #TO-INIT    /* DW2    
+*     FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+    ELSE
+*     COMPRESS 'CN' #CGA-ID ' has terminated his AAFMAA membership'
+*           INTO #NOTE-TEXT (1)
+      MOVE '2' TO #NX-IND     /* DW1
+    END-IF
+*
+*   MOVE 'MAS' TO #TO-INIT                                      /* TM1
+*   FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+*
+*   MOVE #HOLD-SUFFIX TO #CGA-SCR-SUFFIX
+  END-IF
+END-IF
+*
+IF #DID-REIN
+ AND (NOT #STORE-INTRO-FLAG = 'S' OR = 'K' OR = 'G' OR = 'F')
+* MOVE #CGA-SCR-SUFFIX TO #HOLD-SUFFIX
+* MOVE '*NX' TO #CGA-SCR-SUFFIX
+* RESET #NOTE-TEXT (*)
+* COMPRESS 'CN' #CGA-ID 'has been reinstated'
+*        INTO #NOTE-TEXT (1)
+  MOVE '3' TO #NX-IND     /* DW1
+* MOVE 'MAS'      TO #TO-INIT                                    /* TM1
+* FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+* MOVE #HOLD-SUFFIX TO #CGA-SCR-SUFFIX
+*
+*      GRANDFATHERING PROCESSING on a rein
+*
+  IF #STORE-PROCESS-IND = 'G'   /* currently g-f
+    FOR #ISC 1 TO 9
+      IF #SCR-TRAN (#ISC) = 'REIN'
+        MOVE #FILE-MATCHING-INDX (#ISC) TO #IFL
+      END-IF
+    END-FOR
+*
+    RESET #G-F
+*
+    FOR #I1 1 TO 9
+      IF CI-V.STATUS (#I1) = 'D'
+        IF #IFL = #I1   /* current reined pol
+          IF   (CI-V.ISSUE-DATE (#I1) LT 19970101)
+           OR  (CI-V.MONTH-ALLOC-AMT (#I1) = 999.99)
+            MOVE TRUE TO #DUES-PART-OF-PREM
+            MOVE TRUE TO #G-F
+          END-IF
+        ELSE
+          IF CI-V.ISSUE-DATE (#I1) LT 20000701
+            MOVE TRUE TO #G-F
+          END-IF
+        END-IF
+      END-IF
+    END-FOR
+*
+    IF NOT #G-F
+      RESET #Y-N
+      INPUT /// ' Was the Termination causing this Reinstatement'
+            /   ' done in error? (Y/N)'  #Y-N
+            /   ' Answering "N" will De-grandfather or De-Pipeline'
+            /   ' the member.'
+*
+      IF NOT #Y-N = 'Y' OR = 'N'
+        REINPUT 'Must be "Y" or "N"'
+        MARK *#Y-N
+      END-IF
+*
+      IF #Y-N NE 'Y'
+        RESET #NOTE-TEXT (*)
+        MOVE *DATN TO #YYYYMMDD
+        COMPRESS #MM-A #DD-A #YYYY-A INTO #DATE-DISP WITH '/'
+        MOVE 1 TO #INT
+        COMPRESS '*#DE-GF ON' #DATE-DISP INTO #NOTE-TEXT (1)
+*
+        IF CI-V.ID-NUMBER GE 106030
+          COMPRESS #NOTE-TEXT (#I1) '- Orig a pipelined mbr'
+             INTO #NOTE-TEXT(1)
+        END-IF
+*
+        CALLNAT 'E4205SDM' #CGA-ID #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+        MOVE 'D' TO #STORE-PROCESS-IND  /* to ind de-grandfathered
+*
+        IF #STORE-INTRO-FLAG = 'C'
+          MOVE 'P' TO #STORE-INTRO-FLAG
+        ELSE
+          IF #STORE-INTRO-FLAG = 'B'
+            MOVE 'Q' TO #STORE-INTRO-FLAG
+          ELSE
+            MOVE 'O' TO #STORE-INTRO-FLAG
+          END-IF
+        END-IF
+*
+        MOVE TRUE TO #CGA-GOOD-TAS
+*
+*       MOVE #CGA-SCR-SUFFIX TO #HOLD-SUFFIX
+*       MOVE '*NX' TO #CGA-SCR-SUFFIX
+*        RESET #NOTE-TEXT (*)
+*
+*       COMPRESS 'CN' #CGA-ID 'has been de Grandfathered'
+*            INTO #NOTE-TEXT (1)
+*       IF #DUES-PART-OF-PREM
+*         MOVE 'and Reinstated pol has dues imbedded in Premium'
+*             TO #NOTE-TEXT (2)
+*       END-IF
+        MOVE '4' TO #NX-IND     /* DW1
+*
+*       MOVE 'KRM'      TO #TO-INIT
+*       FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+*
+*       MOVE 'MAS' TO #TO-INIT                                  /* TM1
+*       FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+*
+*       MOVE #HOLD-SUFFIX TO #CGA-SCR-SUFFIX
+      END-IF
+    END-IF
+  ELSE
+    RESET #Y-N      /* currently ins-only
+    INPUT /// ' Was this Member Grandfathered before being'
+          /   ' terminated? (Y/N)' #Y-N
+          //  ' A Grandfathered member had an IM-CODE of'
+          /   ' anything except "O/P/Q" including blank'
+*
+    IF NOT #Y-N = 'Y' OR = 'N'
+      REINPUT 'Must be "Y" or "N"'
+      MARK *#Y-N
+    END-IF
+*
+    IF #Y-N = 'Y'
+      MOVE 'G' TO #STORE-PROCESS-IND
+*
+      IF #STORE-INTRO-FLAG = 'P'
+        MOVE 'C' TO #STORE-INTRO-FLAG
+      ELSE
+        IF #STORE-INTRO-FLAG = 'Q'
+          MOVE 'B' TO #STORE-INTRO-FLAG
+        ELSE
+          RESET #STORE-INTRO-FLAG
+        END-IF
+      END-IF
+      MOVE TRUE TO #CGA-GOOD-TAS
+    END-IF
+  END-IF
+*
+*  Reseting cap ind on a rein
+  IF #STORE-INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q'
+    RESET #Y-N
+    INPUT '/// Is this the policy tied to the CAP loan?'
+          '/ (Y/N)' #Y-N
+*
+    IF NOT #Y-N = 'Y' OR = 'N'
+      REINPUT 'Must be "Y" or "N"'
+      MARK *#Y-N
+    END-IF
+*
+    IF #Y-N = 'Y'
+      FOR #ISC 1 TO 9
+        IF #SCR-TRAN (#ISC) = 'REIN'
+          MOVE #FILE-MATCHING-INDX (#ISC) TO #IFL
+          MOVE 999 TO CI-V.CONV-DURATION (#IFL)
+        END-IF
+      END-FOR
+    END-IF
+  END-IF
+END-IF
+*
+MOVE #STORE-FLAGS TO #CGA-MF-ORIG-COMMAND
+MOVE #NX-IND      TO #CGA-MF-ORIG-PARM-2  /* DW1
+*
+END

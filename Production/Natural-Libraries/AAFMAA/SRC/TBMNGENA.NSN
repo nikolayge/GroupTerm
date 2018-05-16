@@ -1,0 +1,271 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* * * * * * * * * * * * * * * * * * * * * * * *
+* Subprogram TBMNGENA - executes action passed
+* from the Main Table maintenance Screen
+***********************************************
+* MODIFICATION LOG
+***********************************************
+* USER   DATE      TAG  REASON
+* YAK    12142007  YAK  Initial Creation
+* * * * * * * * * * * * * * * * * * * * * * * *
+*
+DEFINE DATA
+PARAMETER USING OBJAGENT
+PARAMETER 1 #USER-ACTION (A8)
+*
+LOCAL
+1 #GEN-DESCRIPTION      (A75)
+1 #GEN-SECURITY-CODE    (N2)
+1 #SCREEN-ARRAY
+  2 #GEN-KEY           (A4)
+  2 #GEN-SUB-KEY       (A3)
+  2 #GEN-VALUE         (N7.4)
+  2 #GEN-ALPHA-VALUE   (A50)
+  2 #ADDL-INFO-LINES   (A150)
+  2 REDEFINE #ADDL-INFO-LINES
+    3 #ADDL-INFO         (A75)
+    3 #ADDL-INFO-CONT    (A75)
+  2 #EFFECTIVE-DATE     (N8)
+  2 REDEFINE #EFFECTIVE-DATE
+   3 #EFFECTIVE-DATE-A (A8)
+  2 #END-DATE           (N8)
+  2 REDEFINE #END-DATE
+   3 #END-DATE-A         (A8)
+  2 #OWNER-ID           (A3)
+  2 #ALT-OWNER-ID       (A3)
+  2 #LAST-CLERK-UPDATE  (A3)
+  2 #LAST-USER-UPDATE   (A8)
+  2 #LAST-DATE-UPDATE   (N8)
+  2 #APPROVED-FLAG      (A1)
+  2 #USER-APPROVED      (A8)
+  2 #DATE-APPROVED      (N8)
+*
+1 #FIELD-NAME-FLAG      (A13) INIT <'Approved Flag'>
+1 #FIELD-NAME-DATE      (A13) INIT <'Approved Date'>
+1 #FIELD-NAME-USER      (A13) INIT <'Approved User'>
+1 #I  (N3)
+1 #I1 (I2)
+1 #I2 (I2)
+1 #POS (I4)
+1 #DATX      (D)
+1 #CV-KEY    (C)
+1 #CV-CODE   (C)
+1 #CV-APPR   (C)
+*
+1 #TEXT (A78)
+1 #WINDOW-TEXT (A25)
+*
+END-DEFINE
+*
+* Main Processing
+*
+SET KEY PF12 NAMED 'Quit'
+SET KEY PF3 NAMED 'Retrn'
+SET KEY PF1 = Help
+SET KEY PF2 NAMED 'Save'
+IF #USER-ACTION = 'UPDATE'
+  SET KEY PF8 NAMED 'Down'
+  SET KEY PF7 NAMED 'Up'
+  SET KEY PF11 NAMED 'Del'
+END-IF
+*
+DEFINE WINDOW CONFIRMATION                    /* use for expansion
+       SIZE 20*35
+       BASE 64/38
+DEFINE WINDOW ADD-RECORD
+    SIZE 19*80
+    BASE 4/1
+*
+SET WINDOW 'ADD-RECORD'
+#I := 1
+* If action = 'UPDATE' - this is an administrative function
+* Regular User can only have 'ADD' action
+IF #USER-ACTION = 'UPDATE'
+   PERFORM READ-TABLE
+END-IF
+PERFORM POPULATE-SCREEN
+REPEAT
+  INPUT WITH TEXT #TEXT USING MAP 'TBAMGENT'
+  RESET #TEXT
+  DECIDE ON FIRST VALUE *PF-KEY
+   VALUE 'PF12'
+      SET KEY OFF
+      SET WINDOW OFF
+     FETCH 'G1000PXX'
+    VALUE 'PF3'
+      SET WINDOW OFF
+      ESCAPE ROUTINE
+    VALUE 'PF2'
+      RESET #TEXT
+      PERFORM EDIT-CHECK
+      #ACTION := #USER-ACTION
+      PERFORM PROCESS-RECORD
+    VALUE 'PF11'
+      #ACTION := 'DELETE'
+      PERFORM PROCESS-RECORD
+    VALUE 'PF8', 'PF7'
+      PERFORM NEXT-RECORD
+    NONE
+      IGNORE
+    END-DECIDE
+END-REPEAT
+*
+*********************************
+DEFINE SUBROUTINE POPULATE-SCREEN
+*********************************
+*
+RESET #SCREEN-ARRAY
+IF #USER-ACTION = 'ADD'
+  #DATX := *DATX
+  MOVE EDITED #DATX (EM=MMDDYYYY) TO #EFFECTIVE-DATE-A
+  #END-DATE := 99999999
+  #TEXT := '                         ADD Record and Hit "Enter" '
+  #CV-APPR := (AD=NP)
+  IF PARM-GEN-TABLE.#KEY NE ' '
+    #GEN-KEY := PARM-GEN-TABLE.#KEY
+    #GEN-SUB-KEY := PARM-GEN-TABLE.#SUB-KEY
+    #GEN-SECURITY-CODE := FUNCTION-PROC-SEC(<#KEY,#SUB-KEY>)
+    #CV-KEY  := (AD=P)
+    IF #GEN-SECURITY-CODE NE 0
+      #CV-CODE := (AD=P)
+    END-IF
+  END-IF
+ELSE
+  #GEN-DESCRIPTION    := GEN-DESCRIPTION(#I)
+  #GEN-KEY            := GEN-KEY (#I)
+  #GEN-SUB-KEY        := GEN-SUB-KEY (#I)
+  #OWNER-ID           := OWNER-ID (#I)
+  #ALT-OWNER-ID       := ALT-OWNER-ID (#I)
+  #GEN-SECURITY-CODE  := GEN-SECURITY-CODE (#I)
+  #GEN-VALUE          := GEN-NUMBER-VALUE (#I)
+  #GEN-ALPHA-VALUE    := GEN-ALPHA-VALUE (#I)
+  #ADDL-INFO-LINES    := ADDL-INFO       (#I)
+  #EFFECTIVE-DATE     := FUNCTION-DATE(<EFFECTIVE-DATE (#I)>)
+  #END-DATE           := FUNCTION-DATE(<END-DATE (#I)>)
+  #LAST-DATE-UPDATE   := LAST-DATE-UPDATE (#I)
+  #LAST-CLERK-UPDATE  := FUNCTION-CLERK(<LAST-USER-UPDATE (#I)>)
+  #APPROVED-FLAG      := APPROVED-FLAG (#I)
+  #DATE-APPROVED      := DATE-APPROVED (#I)
+  #USER-APPROVED      := USER-APPROVED (#I)
+END-IF
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE READ-TABLE
+****************************
+*
+PARM-GEN-TABLE.#ACTION := 'HIST-SEC'
+CALLNAT 'OBJNGENT' USING PARM-GEN-TABLE
+IF #RETURN-CODE NE ' '
+   REINPUT WITH TEXT #RETURN-MESSAGE
+END-IF
+PARM-GEN-TABLE.#ACTION := 'READ-SEC'
+CALLNAT 'OBJNGENT' USING PARM-GEN-TABLE
+IF #RETURN-CODE NE ' '
+   REINPUT WITH TEXT #RETURN-MESSAGE
+END-IF
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE EDIT-CHECK
+****************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #GEN-SECURITY-CODE = 0
+    #TEXT := 'Security Code can not be equal to "0"'
+    #POS := POS(#GEN-SECURITY-CODE)
+  WHEN #OWNER-ID = #ALT-OWNER-ID
+    #TEXT := 'Owner and alternate owner can not be the same person'
+    #POS := POS(#ALT-OWNER-ID)
+  WHEN #EFFECTIVE-DATE NE MASK(MMDDYYYY)
+    #TEXT := 'Date format should be "MMDDYYYY"'
+    #POS := POS(#EFFECTIVE-DATE)
+  WHEN #END-DATE NE MASK(MMDDYYYY)
+    #TEXT := 'Date format should be "MMDDYYYY"'
+    #POS := POS(#END-DATE)
+  WHEN ANY
+  REINPUT FULL WITH TEXT #TEXT MARK #POS
+  WHEN NONE
+  ESCAPE ROUTINE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE PROCESS-RECORD
+********************************
+*
+PERFORM POPULATE-PARAMETER-FIELDS
+CALLNAT 'OBJNGENT' PARM-GEN-TABLE #I
+IF PARM-GEN-TABLE.#RETURN-MESSAGE NE ' '
+   #TEXT := PARM-GEN-TABLE.#RETURN-MESSAGE
+ELSE
+  IF #USER-ACTION = 'ADD'
+    #TEXT := 'Record added successfully'
+  ELSE
+    IF #ACTION = 'DELETE'
+      #TEXT := 'Record deleted successfully'
+    ELSE
+      #TEXT := 'Record modified successfully'
+    END-IF
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+*******************************************
+DEFINE SUBROUTINE POPULATE-PARAMETER-FIELDS
+*******************************************
+*
+   GEN-KEY (#I) := #GEN-KEY
+   GEN-SUB-KEY (#I) := #GEN-SUB-KEY
+   GEN-NUMBER-VALUE (#I) := #GEN-VALUE
+   GEN-ALPHA-VALUE (#I) := #GEN-ALPHA-VALUE
+   GEN-DESCRIPTION (#I) := #GEN-DESCRIPTION
+   GEN-SECURITY-CODE (#I) := #GEN-SECURITY-CODE
+   ADDL-INFO (#I)       := #ADDL-INFO-LINES
+   EFFECTIVE-DATE (#I)  := FUNCTION-DATE(<#EFFECTIVE-DATE>)
+   END-DATE (#I)        := FUNCTION-DATE(<#END-DATE>)
+   OWNER-ID (#I)        := #OWNER-ID
+   ALT-OWNER-ID (#I)    := #ALT-OWNER-ID
+   LAST-DATE-UPDATE (#I):= *DATN
+   LAST-USER-UPDATE (#I):= *USER
+   IF #APPROVED-FLAG = ' '
+     APPROVED-FLAG (#I) := 'P'
+   ELSE
+     APPROVED-FLAG (#I) := #APPROVED-FLAG
+   END-IF
+   DATE-APPROVED (#I)   := #DATE-APPROVED
+   USER-APPROVED (#I)   := #USER-APPROVED
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE NEXT-RECORD
+*****************************
+IF *PF-KEY = 'PF8'
+   IF #I = #NUMBER-OF-RECORDS
+     #TEXT := 'Last Record'
+     REINPUT WITH TEXT #TEXT
+   ELSE
+     #I := #I + 1
+   END-IF
+ELSE
+   IF #I = 1
+     #TEXT := 'First Record'
+     REINPUT WITH TEXT #TEXT
+   ELSE
+     #I := #I - 1
+   END-IF
+END-IF
+PERFORM POPULATE-SCREEN
+*
+END-SUBROUTINE
+*
+END

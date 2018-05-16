@@ -1,0 +1,206 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center 'GetPaymentHistory'
+* MBCNEP60 - Member Center/Payment Center - MC-II
+*
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    12222014       Initial Creation
+* YAK    03272017  YK1  Payor Role
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+LOCAL USING MBCAEP06
+LOCAL USING OBJLMB01
+LOCAL USING PARSER-X
+LOCAL USING GPRA006N
+LOCAL USING ERROR_L
+LOCAL
+1 ERROR-MESSAGE     (A100)
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML               (A) DYNAMIC
+1 #J                (I2)
+1 #I1               (I2)
+1 #I2               (I2)
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value            (A) DYNAMIC
+*
+1 C@Own_Polices     (N2)
+1 #PREV-ID-NUMBER   (N6)
+*
+1 #PAYABLE         (A3/2) CONST <'PSM','SAS'>
+1 #SERVICE         (A) DYNAMIC CONST <'Service Plan'>
+1 #All_Policies    (A1) CONST <'Y'>
+1 #Owner           (N2) CONST <2>   /* YK1
+1 #OwnerPayer      (N2) CONST <0>   /* YK1
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Business Logic
+RESET RESPONSE-DATA XML
+PERFORM GET-POLICIES
+*
+FOR #J = 1 TO C@Own_Polices
+* Save Policy Number for getting payment history - YK9
+  #I1 := #I1 + 1
+  EXPAND ARRAY PaymentHistory.PolicyNumber TO (*:#I1)
+  PaymentHistory.PolicyNumber(#I1) := PARM-POLICIES.POLICY-NUMBER(#J)
+  IF PARM-POLICIES.ID-NUMBER(#J) = #PREV-ID-NUMBER
+    ESCAPE TOP
+  END-IF
+  #PREV-ID-NUMBER := PARM-POLICIES.ID-NUMBER(#J)
+* Save CN for getting payment history - YK9
+  #I2 := #I2 + 1
+  EXPAND ARRAY PaymentCN TO (*:#I2)
+  PaymentHistory.PaymentCN(#I2) := PARM-POLICIES.ID-NUMBER(#J)
+END-FOR
+*
+PERFORM GET-PAYOFF-HISTORY
+PERFORM GET-PAYMENT-HISTORY
+PERFORM COMPOSE-RESPONSE-DATA
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'PaymentHistory'
+    Ignore
+  VALUE 'PaymentHistory/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      PaymentHistory.ViewCN := VAL(#value)
+    END-IF
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET XML
+#ErrorCode       := XML_PARSER_RESPONSE
+#ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+ESCAPE MODULE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE GET-POLICIES
+******************************
+* Call subprogram that returns all policy numbers this member owns
+PARM-CN := PaymentHistory.ViewCN
+CALLNAT 'GPRN006N' PARM-CN PARM-MEMBER-CN PARM-POLICIES(*) #OwnerPayer #All_Policies    /* YK1
+C@Own_Polices := *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+*
+IF C@Own_Polices = 0 OR PARM-CN = PARM-MEMBER-CN
+  PERFORM CHECK-SERVICES
+END-IF
+*
+IF C@Own_Polices = 0
+  RESET XML
+  #ErrorCode := #NO-POLICIES-OWN
+  PERFORM COMPOSE-RESPONSE-DATA
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CHECK-SERVICES
+********************************
+*
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = PARM-CN
+  ACCEPT IF SVC-MEMBER-V.SVC-PLAN = #PAYABLE(*)
+  IF SVC-STATUS = 'A'
+      OR SVC-PLAN = 'SAS' AND SVC-STATUS = 'P' OR= 'F'
+** IF F-SERV-EXIST(<PARM-CN>) = #ACTIVE
+    C@Own_Polices := C@Own_Polices + 1
+    EXPAND ARRAY PARM-POLICIES TO (*:C@Own_Polices)
+    PARM-POLICIES.ID-NUMBER(C@Own_Polices)     := PARM-CN
+    PARM-POLICIES.POLICY-NUMBER(C@Own_Polices) := #SERVICE
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE GET-PAYOFF-HISTORY
+************************************
+*
+CALLNAT 'MBCNEP62' PaymentHistory
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE GET-PAYMENT-HISTORY
+*************************************
+*
+CALLNAT 'MBCNEP61' PaymentHistory
+*
+END-SUBROUTINE
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS
+  '<PaymentHistory>'
+  '<CN>' PaymentHistory.ViewCN '</CN>'
+  '<PaidOffAccounts>' INTO XML LEAVING NO
+FOR #I1 = 1 TO PaymentHistory.C@PaidOffAccount
+  COMPRESS XML '<PaidOffAccount>'
+    '<PaidOffAccountName>' PaymentHistory.PaidOffAccountName(#I1) '</PaidOffAccountName>'
+    '<PaidOffAccountType>' PaymentHistory.PaidOffAccountType(#I1) '</PaidOffAccountType>'
+    '<PaidOffAccountDate>' PaymentHistory.PaidOffAccountDate(#I1) '</PaidOffAccountDate>'
+    '</PaidOffAccount>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</PaidOffAccounts>'
+  '<Payments>' INTO XML LEAVING NO
+FOR #I1 = 1 TO PaymentHistory.C@HistoryPayment
+  COMPRESS XML '<Payment>'
+    '<PaymentDate>' PaymentHistory.PaymentDate(#I1) '</PaymentDate>'
+    '<PaymentPolicy>' PaymentHistory.PaymentPolicy(#I1) '</PaymentPolicy>'
+    '<PaymentInsuredName>' PaymentHistory.PaymentInsuredName(#I1) '</PaymentInsuredName>'
+    '<PaymentAmount>' PaymentHistory.PaymentAmount(#I1) '</PaymentAmount>'
+    '<PaymentMethod>' PaymentHistory.PaymentMethod(#I1) '</PaymentMethod>'
+    '<PaymentType>' PaymentHistory.PaymentType(#I1) '</PaymentType>'
+    '</Payment>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</Payments>' INTO XML LEAVING NO
+COMPRESS XML
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</PaymentHistory>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

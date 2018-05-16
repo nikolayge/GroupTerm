@@ -1,0 +1,240 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  RETS00MC - Create RET SERIES 
+*  bz 02/20/2012 - - - - - - -
+*  p_Mode = 'V' validate only
+*  p_Mode = '.X' Do not create TAS
+*
+
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+PARAMETER
+1 p_RET00MC
+  2 p_CN         (N6)
+  2 p_D1         (N8)
+  2 p_D2         (N8)
+  2 p_D3         (N8)
+  2 p_Mode        (A2)
+  2 p_Err        (N4)
+  2 p_MSG        (A)  DYNAMIC
+  2 p_FileData   (A)  DYNAMIC OPTIONAL
+LOCAL
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      
+  2 MEMBER-CONTACT-ID 
+  2 MILITARY-STATUS
+  2 MILITARY-SERVICE
+  2 DATE-OF-RANK
+  2 RANK
+  2 CHIEF-OF-STAFF-IND
+  2 ACTIVE-DUTY-BASE-DATE 
+  2 BASE-PAY-EF-DATE
+  2 RSV-NG-20-YR-CERT-LTR-DATE 
+  2 RSV-NG-RETIRE-PTS
+*
+1 TAS-ERROR-FILE
+  2 TEF-ID-NUMBER   (N6)
+  2 TEF-BAD-AD      (L)
+  2 TEF-REQUEST     (L)
+  2 TEF-MANUAL-REVUE(L)
+  2 TEF-BAD-BA      (L)
+  2 TEF-NUM-PAGES   (N2)
+  2 TEF-WL-LT       (A1)  /* DW99
+*
+1 #DATN       (N8)
+  1 REDEFINE #DATN
+    2 #DATN-A    (A8)
+1 v_D           (D)     
+1 v_ISN         (P8)
+*
+1 #FIN-ISN          (P8)
+1 #PASS-FD-TYPE     (A2)   INIT <'FD'>
+1 #FORMATTED-NAME  (A35)
+1 v_DOFMA          (N1) 
+1 v_CLERK-ID       (A3) INIT <'EDS'>
+1 v_BASD           (N8)
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+1  P_GPRS0CNT
+  2 p_CID    (N8)
+  2 p_NAME   (A)    DYNAMIC
+  2 p_DOB_N  (N8)
+*
+ 
+END-DEFINE
+*
+* ON ERROR
+*       PRINT (1) *PROGRAM  *ERROR-NR  'Line:' *ERROR-LINE
+*       COMPRESS  'Natural Error:' *PROGRAM  *ERROR-NR  'Line:' *ERROR-LINE  INTO p_MSG
+*       p_Err := *ERROR-NR
+*       ESCAPE ROUTINE
+* END-ERROR
+*
+#DATN    := *DATN
+v_DOFMA  := 1
+v_BASD   := 0
+SET GLOBALS ZD=OFF
+*
+  FST.
+  FIND (1) ST-V WITH  ID-NUMBER = p_CN
+    IF NO RECORDS FOUND
+      p_Msg := 'Memeber Not found' 
+      p_Err := 0002
+      PRINT (2) p_Msg p_CN
+      ESCAPE ROUTINE
+    END-NOREC
+    v_ISN := *ISN(FST.)
+  END-FIND
+* 
+  p_Err := 0
+  PERFORM sbr_VLD
+  IF p_Err <> 0 ESCAPE ROUTINE END-IF
+  IF p_Mode = 'V' ESCAPE ROUTINE END-IF
+  
+  #CGA-ISN := v_ISN
+  MOVE ID-NUMBER    TO #CGA-SCR-ID
+                       #CGA-ID
+                       #CGA-ORIG-ID
+*
+  MOVE 'AD'         TO #CGA-SCR-COMMAND
+                       #CGA-ORIG-COMMAND
+  MOVE 'RET'        TO #CGA-SCR-SUFFIX
+                       #CGA-ORIG-SUFFIX
+  MOVE p_D1 TO #CGA-MF-SCR-PARM-1-N /* FOR "AD" TO USE RET-DT
+  MOVE v_CLERK-ID TO #CGA-CLERK                 /* FOR "AD" CORRESPOND USE
+*
+  FETCH RETURN 'S3500PAD'                     
+  MOVE #CGA-MF-SCR-PARM-1-N  TO p_D1   /* RESET RET DT IF CHGED
+*
+  MOVE 'DI'         TO #CGA-SCR-COMMAND
+                       #CGA-ORIG-COMMAND
+  MOVE 'RET'        TO #CGA-SCR-SUFFIX
+                       #CGA-ORIG-SUFFIX
+  FETCH RETURN 'E4000PDI'
+*
+    p_CID := ST-V.MEMBER-CONTACT-ID
+    p_NAME := 'AS'
+    CALLNAT 'GPRS0CNT' p_GPRS0CNT
+
+  IF  HAS-INVESTMENTS(<p_CN,#FIN-ISN>) > 0
+    #FORMATTED-NAME := p_NAME
+    MOVE 'FD' TO #CGA-SCR-COMMAND
+                 #CGA-ORIG-COMMAND
+    MOVE 'OVW' TO #CGA-SCR-SUFFIX
+                  #CGA-ORIG-SUFFIX
+    FETCH RETURN 'D3280PFD' #FIN-ISN #PASS-FD-TYPE #FORMATTED-NAME
+    IF #CGA-SCR-SUFFIX = 'BPD'
+      FETCH RETURN 'D3282PFD' #FIN-ISN #PASS-FD-TYPE #FORMATTED-NAME
+    END-IF
+  END-IF
+*
+  IF p_DOB_N      NE 0   /* must have dob
+    MOVE 'GT'         TO #CGA-SCR-COMMAND  #CGA-ORIG-COMMAND
+    MOVE 'RET'        TO #CGA-SCR-SUFFIX   #CGA-ORIG-SUFFIX
+    FETCH RETURN 'G4720PGT'
+*
+    MOVE 'SI'         TO #CGA-SCR-COMMAND  #CGA-ORIG-COMMAND
+    MOVE 'RET'        TO #CGA-SCR-SUFFIX   #CGA-ORIG-SUFFIX
+    MOVE p_D1 TO #CGA-MF-SCR-PARM-1-N      /* FOR "AD" TO USE RET-DT
+    FETCH RETURN 'D3000PXX'
+*
+    MOVE p_D1 TO #DATN
+    PERFORM PROCESS-RET-BAS
+*
+    IF p_D2 NE 0
+      MOVE 'AD'         TO #CGA-SCR-COMMAND
+                           #CGA-ORIG-COMMAND
+      MOVE 'RET'        TO #CGA-SCR-SUFFIX
+                           #CGA-ORIG-SUFFIX
+      MOVE p_D2 TO #CGA-MF-SCR-PARM-1-N
+      MOVE 'RT*' TO #CGA-CLERK
+      FETCH RETURN 'S3500PAD' 
+*
+      MOVE #CGA-MF-SCR-PARM-1-N TO p_D2
+      MOVE p_D2 TO #DATN
+      PERFORM PROCESS-RET-BAS
+    END-IF
+*
+    IF p_D3 NE 0
+      MOVE 'AD'         TO #CGA-SCR-COMMAND
+                           #CGA-ORIG-COMMAND
+      MOVE 'RET'        TO #CGA-SCR-SUFFIX
+                           #CGA-ORIG-SUFFIX
+      MOVE p_D3 TO #CGA-MF-SCR-PARM-1-N
+      MOVE 'RT*' TO #CGA-CLERK
+      FETCH RETURN 'G3500PAD'                          /* bz1
+*
+      MOVE #CGA-MF-SCR-PARM-1-N TO p_D3
+      MOVE p_D3 TO #DATN
+      PERFORM PROCESS-RET-BAS
+    END-IF
+  END-IF
+*
+ IF p_Mode <> MASK (.'X')
+    MOVE #CGA-ID TO TEF-ID-NUMBER
+    MOVE TRUE TO TEF-REQUEST
+    MOVE 99   TO TEF-NUM-PAGES
+    WRITE WORK 9 TAS-ERROR-FILE   
+END-IF  
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DEFINE SUBROUTINE PROCESS-RET-BAS
+
+IF #DATN <> MASK (YYYYMMDD)
+   IGNORE /* Process Date Error ESCAPE 
+END-IF  
+MOVE EDITED #DATN-A TO v_D (EM=YYYYMMDD)
+v_D := v_D - 1
+MOVE EDITED v_D (EM=YYYYMMDD) TO #DATN-A 
+MOVE #DATN TO #CGA-MF-SCR-PARM-1-N     /* FOR ASSUMED RET-DT
+MOVE v_DOFMA TO #CGA-MF-SCR-COMMAND    /* FOR DOPMA CODE
+*
+MOVE 'BA'         TO #CGA-SCR-COMMAND
+                     #CGA-ORIG-COMMAND
+MOVE 'RET'        TO #CGA-SCR-SUFFIX
+                     #CGA-ORIG-SUFFIX
+FETCH RETURN 'D3000PXX'
+*
+END-SUBROUTINE
+*   
+DEFINE sbr_VLD
+*    IF   p_D1  <= (DATE-OF-RANK + 30000)
+*       AND p_D1  >=  (DATE-OF-RANK + 20000)
+*       AND (RANK =  'MG' OR = 'BG' OR = 'LTC' OR = 'COL')
+*       v_DOFMA := 2 /* OR/AND return message
+*    END-IF
+* 1 - - - - - - - - - - - - - - -
+ IF ST-V.MILITARY-STATUS NE 'A'
+      p_Err := 0003
+      p_MSG := 'You must be active duty to perform a retirement analysis'
+      ESCAPE ROUTINE
+    ESCAPE TOP
+  END-IF
+* 2 - - - - - - - - - - - - - - - 
+   IF (ACTIVE-DUTY-BASE-DATE = 0) AND (BASE-PAY-EF-DATE = 0 )
+      p_Err := 0003
+      COMPRESS  'Basic Active Service Date (BASD) is required for retirement analysis.'
+                'Please enter BASD on the Military Information screen under Account Profile.'
+      INTO p_MSG 
+      ESCAPE ROUTINE
+   END-IF   
+   v_BASD := ACTIVE-DUTY-BASE-DATE
+   IF v_BASD = 0 v_BASD := BASE-PAY-EF-DATE END-IF
+* 3 - - - - - - - - - - - - - - -
+   IF   ( NOT (MILITARY-SERVICE = 'A' OR = 'F' OR = 'M' OR = 'N'))
+    AND ((RSV-NG-20-YR-CERT-LTR-DATE = 0) OR (RSV-NG-RETIRE-PTS = 0))
+      p_Err := 0004
+      COMPRESS 'You are not eligible for retirement analysis based on the selected date(s)'
+               'and the years of service.' INTO p_MSG
+   END-IF  
+* 4 - - - - - - - - - - - - - - - - 
+   IF ((CHIEF-OF-STAFF-IND NE 'U')   AND (p_D1 - v_BASD LT 200000))
+     OR ((CHIEF-OF-STAFF-IND = 'U')  AND (p_D1 - v_BASD LT 150000))
+     AND  MILITARY-SERVICE = 'A' OR = 'F' OR = 'M' OR = 'N'
+      p_Err := 0005
+      p_MSG := 'You are not eligible for retirement analysis based on the selected date.'
+   END-IF  
+END-SUBROUTINE
+END

@@ -1,0 +1,695 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram AUCNCRM1.
+/**
+/** :author nguentchev   ONLY PARENT RELATIONS
+/*
+*******************************************
+*              MODIFICATION LOG
+* USER DATE     TAG  REASON
+* RSE  06/28/12 RE1  Populate name for TR
+DEFINE DATA
+PARAMETER USING AUCACR01
+LOCAL USING OBJLCTRL
+LOCAL USING OBJADBTS
+LOCAL USING GPRARINF
+LOCAL USING C2230ACB
+LOCAL USING C2231ACB
+LOCAL
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER
+  2 PREFIX-TITLE
+  2 FIRST-NAME
+  2 MIDDLE-NAME
+  2 LAST-NAME
+  2 SUFFIX
+  2 SSN
+  2 SSN-PROTECT
+  2 GENDER-CD
+  2 DATE-OF-DEATH
+  2 REDEFINE DATE-OF-DEATH
+    3 #YY (A4)
+    3 #MM (A2)
+    3 #DD (A2)
+  2 DEATH-CERT-CODE
+  2 DATE-OF-BIRTH
+  2 REDEFINE DATE-OF-BIRTH
+    3 #YYY (A4)
+    3 #MMM (A2)
+    3 #DDD (A2)
+  2 BIRTH-CERT-CODE
+  2 FIRM-ORGANIZATION-NAME
+  2 FIRM-ESTABLISHED-DATE
+  2 FIRM-CERT-CODE
+  2 WEBSITE-URL
+  2 CONTACT-REMARKS(3)
+*
+1 TERM-V VIEW OF A-TERMINALS
+  2 CLERK-ID
+*
+1 ST-V VIEW OF A-STATUS
+  2 STATUS-CODE-SP
+  2 DATE-OF-MARRIAGE
+  2 DATE-OF-DIVORCE
+  2 MARRIAGE-CERT-CODE
+  2 FORMER-SPOUSE-STATUS
+  2 FORMER-SPOUSE-DATE-OF-MARRIAGE
+  2 FORMER-SPOUSE-DATE-OF-DIVORCE
+  2 FS-MARR-CERT-CD
+1 FR-V VIEW OF A-FIRS
+  2 DEPN-CONTACT-ID  (60)
+  2 DEPN-STATUS-CD   (60)
+*
+1 #RELATION    (A) DYNAMIC
+1 #SYNCHRONIZE (L)
+1 #SynchData
+  2 SystemSource                 (A) DYNAMIC
+  2 ParentContact                (N8)
+  2 DependentContact             (N8)
+  2 RelationshipCode             (A1)
+  2 ExistingRelationshipCode     (A1)
+  2 DependentStatusCode          (A1)
+  2 SpouseDateOfMarriage         (N8)
+  2 SpouseBirthCertCode          (A1)
+  2 SpouseMarriageCertCode       (A1)
+  2 FormerSpouseDateOfDivorce    (N8)
+  2 FormerSpouseDateOfMarriage   (N8)
+  2 FormerSpouseBirthCertCode    (A1)
+  2 FormerSpouseMarriageCertCode (A1)
+*
+1 #GET         (I4) CONST <0>
+1 #ADD         (I4) CONST <1>
+1 #UPDATE      (I4) CONST <2>
+1 #DELETE      (I4) CONST <3>
+1 #GETBYTYPE   (I4) CONST <4>
+1 BLANK        (A1) CONST <' '>
+1 #CALL_MBCN0064  (L)
+1 #CALL_MBCN0065  (L)
+1 #DO-VALIDATION  (L)
+1 #ERROR-CODE-A   (A3)
+1 REDEFINE #ERROR-CODE-A
+  2 #ERROR-CODE-N (N3)
+*
+1 #GEN-ROLES   (A3) CONST <'KGD'>
+1 #UNSUPPORTED (A) DYNAMIC CONST <'UNSUPPORTED REQUEST'>
+1 #REQUIRED    (A) DYNAMIC CONST <'ADDRESS POOL ID IS REQUIRED'>
+1 #CIREQUIRED  (A) DYNAMIC CONST <'CONTACT ID IS REQUIRED'>
+1 #UPDATECONFLICT (A) DYNAMIC CONST <'UPDATE CONFLICT'>
+1 #NOFIR       (A) DYNAMIC CONST <'NO FIRS RECORD'>
+1 #NOSTATUS    (A) DYNAMIC CONST <'NO STATUS RECORD'>
+*
+1 #BD-LINKS    (N6/100)
+1 #I           (I4)
+1 #DATE        (A11)
+1 #SAVE-ACTION-TYPE   (I4)
+1 #FROM-DEPN-TO-OTHER (L)
+*
+END-DEFINE
+*
+EXPAND ARRAY #ERROR-CODE    TO (*:10)
+EXPAND ARRAY #VALIDATE-FLAG TO (*:26)
+*
+RESET ContactRelation.ErrorCode ContactRelation.ErrorDescription
+*
+#DB.#FILE-NAME := 'A-CONTACT-RELATIONSHIPS'
+*
+DECIDE FOR FIRST CONDITION
+  WHEN ContactRelation.RelationID NE 0
+    GETR.
+    GET CR-V ContactRelation.RelationID
+    IF *ISN (GETR.) = 0
+      ContactRelation.ErrorCode := 1
+      ContactRelation.ErrorDescription := #REQUIRED
+      escape ROUTINE
+    END-IF
+    MOVE ContactRelation.RelationID TO #DB.#FILE-REC-ISN
+    #DB.#REQUEST   := #GET
+    CALLNAT 'OBJNDBTS' #DB
+    PERFORM MOVE-OLD-VALUES-FOR-TR
+  WHEN ContactRelation.ActionType EQ #ADD
+      AND ( ContactRelation.ContactID = 0 OR ContactRelation.Contact2ID = 0 )
+    ContactRelation.ErrorCode := 1
+    ContactRelation.ErrorDescription := #CIREQUIRED
+    escape ROUTINE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+DECIDE ON FIRST VALUE OF ContactRelation.ActionType
+  VALUE #GET          PERFORM GET-RECORD
+  VALUE #ADD          PERFORM ADD-RECORD
+  VALUE #UPDATE       PERFORM UPDATE-RECORD
+  VALUE #DELETE       PERFORM DELETE-RECORD
+  ANY VALUE
+    IF ErrorCode = 0 AND #SYNCHRONIZE
+      PERFORM SYNC-OPERATIONS
+      PERFORM WRITE-TRANS-REG
+    END-IF
+  NONE VALUE
+    ContactRelation.ErrorCode := 3
+    ContactRelation.ErrorDescription := #UNSUPPORTED
+END-DECIDE
+
+DEFINE GET-RECORD
+/*     ==========
+GET CR-V #DB.#FILE-REC-ISN
+ContactRelation.LastUpdatedDate := #DB.LAST-DATE-UPD
+ContactRelation.LastUpdatedTime := #DB.LAST-TIME-UPD
+ContactRelation.LastUpdatedUser := #DB.LUU-NAME
+IF ContactRelation.RelationType  = 'M' OR= 'D'
+  ContactRelation.ContactID     := CR-V.CONTACT-2-ID
+  CurrentRelationshipCode       := CR-V.ROLE-2-CD
+  Contact2ID                    := CR-V.CONTACT-1-ID
+ELSE
+  ContactRelation.ContactID     := CR-V.CONTACT-1-ID
+  CurrentRelationshipCode       := CR-V.ROLE-1-CD
+  Contact2ID                    := CR-V.CONTACT-2-ID
+END-IF
+ContactRelation.CN2 := F-GET-CN (< Contact2ID >) /* Parent Contact CN (if any)
+*
+#RELATION := FUNCTION-ROLE-TYPE (<CurrentRelationshipCode>)
+DECIDE ON FIRST VALUE OF #RELATION
+  VALUE 'DEPENDENT'
+    FIND (1) FR-V WITH CONTACT-ID-NUMBER = CR-V.CONTACT-1-ID
+      IF NO RECORD FOUND
+        ContactRelation.ErrorCode := 4
+        ContactRelation.ErrorDescription := #NOFIR
+        ESCAPE BOTTOM
+      END-NOREC
+      FOR #I 1 60
+        IF DEPN-CONTACT-ID(#I) = CONTACT-2-ID
+          ContactRelation.DependentStatusCode := DEPN-STATUS-CD (#I)
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-FIND
+  VALUE 'SPOUSE', 'FORMER SPOUSE'
+    FIND (1) ST-V WITH MEMBER-CONTACT-ID = CR-V.CONTACT-1-ID
+      IF NO RECORD FOUND
+        ContactRelation.ErrorCode := 5
+        ContactRelation.ErrorDescription := #NOSTATUS
+      END-NOREC
+      IF #RELATION = 'SPOUSE'
+        ContactRelation.DependentStatusCode := ST-V.STATUS-CODE-SP
+        ContactRelation.DateOfMarriage      := ST-V.DATE-OF-MARRIAGE
+        ContactRelation.MarriageCertificateCode := ST-V.MARRIAGE-CERT-CODE
+      ELSE
+        ContactRelation.DependentStatusCode := ST-V.FORMER-SPOUSE-STATUS
+        ContactRelation.DateOfMarriage      := FORMER-SPOUSE-DATE-OF-MARRIAGE
+        ContactRelation.MarriageCertificateCode := ST-V.FS-MARR-CERT-CD
+*        IF ST-V.FORMER-SPOUSE-STATUS NE 'D'
+        ContactRelation.DateOfDivorce := FORMER-SPOUSE-DATE-OF-DIVORCE
+*        END-IF
+      END-IF
+    END-FIND
+  NONE
+    IGNORE
+END-DECIDE
+*
+IF ContactRelation.ContactID = CR-V.CONTACT-2-ID
+  FIND CNT-V WITH CONTACT-ID = CR-V.CONTACT-2-ID
+    COMPRESS CNT-V.CONTACT-REMARKS(1) CNT-V.CONTACT-REMARKS(2) CNT-V.CONTACT-REMARKS(3)
+      INTO ContactRelation.Remarks
+  END-FIND
+ELSE
+  FIND CNT-V WITH CONTACT-ID = CR-V.CONTACT-1-ID
+    COMPRESS CNT-V.CONTACT-REMARKS(1) CNT-V.CONTACT-REMARKS(2) CNT-V.CONTACT-REMARKS(3)
+      INTO ContactRelation.Remarks
+  END-FIND
+END-IF
+*
+RESET #BD-LINKS (*)
+#BD-LINKS (*) := FUNCTION-BD-LINKS(< ContactRelation.ContactID >)(*)
+IF #BD-LINKS (*) > 0
+  ContactRelation.Beneficiary := 'Y'
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE ADD-RECORD
+/*     ==========
+#RELATION-INFO.MEMBER-CONTACT-ID   := ContactRelation.Contact2ID
+#RELATION-INFO.RELATION-CONTACT-ID := ContactRelation.ContactID
+PERFORM VALIDATE-FIELDS
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+RESET CR-V
+CR-V.CONTACT-1-ID  := Contact2ID
+CR-V.CONTACT-2-ID  := ContactRelation.ContactID
+CR-V.ROLE-2-CD     := CurrentRelationshipCode
+ContactRelation.CN2 := F-GET-CN (< Contact2ID >) /* Parent Contact CN (if any)
+#RELATION := FUNCTION-ROLE-TYPE (<CurrentRelationshipCode>)
+DECIDE ON FIRST VALUE OF #RELATION
+  VALUE 'SPOUSE', 'FORMER SPOUSE'
+    ROLE-1-CD      := CurrentRelationshipCode
+    #CALL_MBCN0064 := TRUE
+  VALUE 'DEPENDENT'
+    ROLE-1-CD      := 'P'
+    #CALL_MBCN0065 := TRUE
+  VALUE 'FORMER HUSBAND', 'OTHER'
+    ROLE-1-CD      := 'M'
+  NONE
+    IGNORE
+END-DECIDE
+STORE-CR.
+STORE CR-V
+MOVE *ISN (STORE-CR.) TO #DB.#FILE-REC-ISN
+#DB.#REQUEST   := #ADD
+#DB.LAST-USER-UPD := ContactRelation.User
+CALLNAT 'OBJNDBTS' #DB
+ContactRelation.LastUpdatedDate := #DB.LAST-DATE-UPD
+ContactRelation.LastUpdatedTime := #DB.LAST-TIME-UPD
+ContactRelation.LastUpdatedUser := #DB.LUU-NAME
+*
+MOVE TRUE TO #SYNCHRONIZE
+IF #CALL_MBCN0064 OR #CALL_MBCN0065
+  RESET #SynchData
+  MOVE BY NAME ContactRelation TO #SynchData
+  #SynchData.ParentContact          := Contact2ID
+  #SynchData.DependentContact       := ContactRelation.ContactID
+  #SynchData.RelationshipCode       := CurrentRelationshipCode
+  IF #RELATION = 'SPOUSE'
+    #SynchData.SpouseDateOfMarriage   := ContactRelation.DateOfMarriage
+    #SynchData.SpouseMarriageCertCode := MarriageCertificateCode
+  END-IF
+  IF #RELATION = 'FORMER SPOUSE'
+    #SynchData.FormerSpouseDateOfDivorce := DateOfDivorce
+    #SynchData.FormerSpouseMarriageCertCode := MarriageCertificateCode
+    #SynchData.FormerSpouseDateOfMarriage := DateOfMarriage
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+DEFINE UPDATE-RECORD
+/*     =============
+IF #DB.LAST-DATE-UPD = ContactRelation.LastUpdatedDate
+    AND #DB.LAST-TIME-UPD = ContactRelation.LastUpdatedTime
+  UPDATE-CR.
+  GET CR-V #DB.#FILE-REC-ISN    /* Record for update - only for 'right' side of relation
+  ContactRelation.ContactID     := CR-V.CONTACT-2-ID
+  Contact2ID                    := CR-V.CONTACT-1-ID
+  ContactRelation.CN2 := F-GET-CN (< Contact2ID >) /* Parent Contact CN (if any)
+  IF CR-V.ROLE-2-CD NE CurrentRelationshipCode
+    MOVE TRUE TO #DO-VALIDATION
+  ELSE
+    RESET #DO-VALIDATION
+  END-IF
+  #RELATION := FUNCTION-ROLE-TYPE (<CurrentRelationshipCode>)
+  DECIDE ON FIRST VALUE OF #RELATION
+    VALUE 'SPOUSE', 'FORMER SPOUSE'
+      #CALL_MBCN0064 := TRUE
+      IF CR-V.ROLE-2-CD = 'K' OR = 'D' OR = 'G'
+        #CALL_MBCN0065      := TRUE
+        #FROM-DEPN-TO-OTHER := TRUE
+      END-IF
+      FIND (1) ST-V WITH MEMBER-CONTACT-ID = CR-V.CONTACT-1-ID
+        IF NO RECORD FOUND
+          ContactRelation.ErrorCode := 5
+          ContactRelation.ErrorDescription := #NOSTATUS
+        END-NOREC
+        IF #RELATION = 'SPOUSE'
+          IF ContactRelation.DependentStatusCode NE ST-V.STATUS-CODE-SP
+              OR ContactRelation.DateOfMarriage  NE ST-V.DATE-OF-MARRIAGE
+              OR ContactRelation.MarriageCertificateCode NE ST-V.MARRIAGE-CERT-CODE
+            MOVE TRUE TO #DO-VALIDATION
+          END-IF
+        ELSE
+          IF ContactRelation.DependentStatusCode NE ST-V.FORMER-SPOUSE-STATUS
+              OR ContactRelation.DateOfMarriage  NE FORMER-SPOUSE-DATE-OF-MARRIAGE
+              OR ContactRelation.DateOfDivorce   NE FORMER-SPOUSE-DATE-OF-DIVORCE
+              OR ContactRelation.MarriageCertificateCode NE FS-MARR-CERT-CD
+            MOVE TRUE TO #DO-VALIDATION
+          END-IF
+        END-IF
+      END-FIND
+      IF CR-V.ROLE-2-CD NE CurrentRelationshipCode
+          AND ContactRelation.DependentStatusCode = ' '
+        RESET #OLD-STATUS-CODE
+      END-IF
+    VALUE 'DEPENDENT'         /* K, D, G
+      #CALL_MBCN0065 := TRUE
+      #DO-VALIDATION := TRUE
+      IF CR-V.ROLE-2-CD = 'S' OR = 'X'
+        #CALL_MBCN0064 := TRUE
+      END-IF
+*       FIND (1) FR-V WITH CONTACT-ID-NUMBER = CR-V.CONTACT-1-ID
+*         IF NO RECORD FOUND
+*           ContactRelation.ErrorCode := 4
+*           ContactRelation.ErrorDescription := #NOFIR
+*           ESCAPE BOTTOM
+*         END-NOREC
+*          FOR #I 1 60
+*            IF DEPN-CONTACT-ID (#I) = ContactRelation.ContactID
+*              IF ContactRelation.DependentStatusCode NE DEPN-STATUS-CD (#I)
+*                MOVE TRUE TO #DO-VALIDATION
+*                ESCAPE BOTTOM
+*              END-IF
+*            END-IF
+*          END-FOR
+*       END-FIND
+    VALUE 'OTHER'
+      IF CR-V.ROLE-2-CD = 'S' OR = 'X'
+        #CALL_MBCN0064 := TRUE
+      END-IF
+      IF CR-V.ROLE-2-CD = 'K' OR = 'D' OR = 'G'
+        #CALL_MBCN0065      := TRUE
+        #FROM-DEPN-TO-OTHER := TRUE
+      END-IF
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+  IF #DO-VALIDATION
+    #RELATION-INFO.MEMBER-CONTACT-ID   := CR-V.CONTACT-1-ID
+    #RELATION-INFO.RELATION-CONTACT-ID := ContactRelation.ContactID
+    PERFORM VALIDATE-FIELDS
+    IF ErrorDescription EQ BLANK
+      IF #CALL_MBCN0064 OR #CALL_MBCN0065
+        RESET #SynchData
+        MOVE BY NAME ContactRelation TO #SynchData
+        #SynchData.ParentContact          := Contact2ID
+        #SynchData.DependentContact       := ContactRelation.ContactID
+        #SynchData.RelationshipCode       := ContactRelation.CurrentRelationshipCode
+        #SynchData.ExistingRelationshipCode  := CR-V.ROLE-2-CD
+        IF #RELATION = 'SPOUSE'
+          #SynchData.SpouseDateOfMarriage   := ContactRelation.DateOfMarriage
+          #SynchData.SpouseMarriageCertCode := MarriageCertificateCode
+        END-IF
+        IF #RELATION = 'FORMER SPOUSE'
+          #SynchData.FormerSpouseDateOfDivorce := DateOfDivorce
+          #SynchData.FormerSpouseDateOfMarriage := DateOfMarriage
+          #SynchData.FormerSpouseMarriageCertCode := MarriageCertificateCode
+        END-IF
+      END-IF
+      ROLE-2-CD     := CurrentRelationshipCode
+      DECIDE ON FIRST VALUE OF #RELATION
+        VALUE 'SPOUSE', 'FORMER SPOUSE'
+          ROLE-1-CD := ROLE-2-CD
+        VALUE 'DEPENDENT'         /* K, D, G
+          ROLE-1-CD := 'P'
+        NONE VALUE
+          ROLE-1-CD := 'M'
+      END-DECIDE
+      UPDATE (UPDATE-CR.)
+      #DB.#REQUEST   := #UPDATE
+      #DB.LAST-USER-UPD := ContactRelation.User
+      CALLNAT 'OBJNDBTS' #DB
+      ContactRelation.LastUpdatedDate := #DB.LAST-DATE-UPD
+      ContactRelation.LastUpdatedTime := #DB.LAST-TIME-UPD
+      ContactRelation.LastUpdatedUser := #DB.LUU-NAME
+      MOVE TRUE TO #SYNCHRONIZE
+    END-IF
+  END-IF
+ELSE
+  ErrorCode := 99
+  COMPRESS *PROGRAM #UPDATECONFLICT INTO ErrorDescription
+END-IF
+END-SUBROUTINE
+*
+DEFINE DELETE-RECORD
+/*     =============
+IF #DB.LAST-DATE-UPD = ContactRelation.LastUpdatedDate
+    AND #DB.LAST-TIME-UPD = ContactRelation.LastUpdatedTime
+  GET CR-V #DB.#FILE-REC-ISN           /* Record for delete - only 'right' relations
+  ContactRelation.ContactID     := CR-V.CONTACT-2-ID
+  CurrentRelationshipCode       := CR-V.ROLE-2-CD
+  Contact2ID                    := CR-V.CONTACT-1-ID
+  ContactRelation.CN2 := F-GET-CN (< Contact2ID >) /* Parent Contact CN (if any)
+  #RELATION := FUNCTION-ROLE-TYPE (<CR-V.ROLE-2-CD>)
+  DECIDE ON FIRST VALUE OF #RELATION
+    VALUE 'SPOUSE', 'FORMER SPOUSE'
+      #CALL_MBCN0064 := TRUE
+    VALUE 'DEPENDENT'
+      #CALL_MBCN0065 := TRUE
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+  DELETE (0417)
+  #DB.LAST-USER-UPD := ContactRelation.User
+  MOVE TRUE TO #SYNCHRONIZE
+  IF #CALL_MBCN0064 OR #CALL_MBCN0065
+    RESET #SynchData
+    #SynchData.ParentContact             := Contact2ID
+    #SynchData.DependentContact          := ContactRelation.ContactID
+    #SynchData.ExistingRelationshipCode  := CR-V.ROLE-2-CD
+  END-IF
+ELSE
+  ContactRelation.ErrorCode := 99
+  COMPRESS *PROGRAM #UPDATECONFLICT INTO ContactRelation.ErrorDescription
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE VALIDATE-FIELDS
+/*     ===============
+#SYSTEM := 'UNIX'
+#RELATION-INFO.ROLE                    := ContactRelation.CurrentRelationshipCode
+#RELATION-INFO.DATE-OF-MARRIAGE        := ContactRelation.DateOfMarriage
+#RELATION-INFO.MARRIAGE-CERT-CODE      := ContactRelation.MarriageCertificateCode
+#RELATION-INFO.DATE-OF-DIVORCE         := ContactRelation.DateOfDivorce
+#SYSTEM                                := 'UNIX'
+*
+MOVE 'Y' TO #VALIDATE-FLAG(1)                    /* Role
+PERFORM CALL-VALIDATION-ROUTINE
+IF ContactRelation.ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+DECIDE ON FIRST VALUE OF #RELATION
+  VALUE 'SPOUSE'
+    MOVE 'Y' TO #VALIDATE-FLAG(2)                /* Spouse Status Code
+    #RELATION-INFO.STATUS-CODE-SP := ContactRelation.DependentStatusCode
+  VALUE 'FORMER SPOUSE'
+    MOVE 'Y' TO #VALIDATE-FLAG(3)                /* Former Spouse Status Code
+    #RELATION-INFO.FORMER-SPOUSE-STATUS := ContactRelation.DependentStatusCode
+  VALUE 'DEPENDENT'
+    MOVE 'Y' TO #VALIDATE-FLAG(4)                /* Dependent Status Code
+    #RELATION-INFO.DEPN-STATUS-CODE := ContactRelation.DependentStatusCode
+  ANY VALUE
+    PERFORM CALL-VALIDATION-ROUTINE
+    IF ContactRelation.ErrorDescription NE ' '
+      ESCAPE ROUTINE
+    END-IF
+  NONE
+    IGNORE
+END-DECIDE
+*
+MOVE 'Y' TO #VALIDATE-FLAG(5)                    /* SSN
+PERFORM CALL-VALIDATION-ROUTINE
+IF ContactRelation.ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(6)                    /* Date of Marriage
+PERFORM CALL-VALIDATION-ROUTINE
+IF ContactRelation.ErrorDescription NE ' '
+  IF ContactRelation.ErrorCode = 207             /* Marriage must precede death
+    PERFORM DISPLAY-DOD-MSG
+  END-IF
+  IF ContactRelation.ErrorCode = 204             /* Date of Birth must precede Date of Marriage
+    PERFORM DISPLAY-DOB-MSG
+  END-IF
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(7)                    /* Date of Marriage Certificate
+PERFORM CALL-VALIDATION-ROUTINE
+IF ContactRelation.ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(8)                    /* Date of Divorce
+PERFORM CALL-VALIDATION-ROUTINE
+IF ContactRelation.ErrorDescription NE ' '
+  IF ContactRelation.ErrorCode = 209             /* Divorce must precede death
+    PERFORM DISPLAY-DOD-MSG
+  END-IF
+  IF ContactRelation.ErrorCode = 205             /* Date of Birth must precede Date of Divorce.
+    PERFORM DISPLAY-DOB-MSG
+  END-IF
+  ESCAPE ROUTINE
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE CALL-VALIDATION-ROUTINE
+/*     =======================
+CALLNAT 'GPRNRINF' #RELATION-INFO #RELATION-OTHERS
+IF #ERROR-CODE(1) NE ' '
+  ContactRelation.ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE(1)>)
+  #ERROR-CODE-A    := #ERROR-CODE(1)
+  ContactRelation.ErrorCode        := #ERROR-CODE-N
+END-IF
+*
+RESET  #VALIDATE-FLAG(*)
+*
+END-SUBROUTINE
+*
+DEFINE DISPLAY-DOD-MSG
+/*     ===============
+FIND CNT-V WITH CONTACT-ID = ContactRelation.ContactID
+  COMPRESS #MM '/' #DD '/' #YY '.' INTO #DATE LEAVING NO
+  COMPRESS 'Contact"s date of death is' #DATE ContactRelation.ErrorDescription INTO
+    ContactRelation.ErrorDescription
+END-FIND
+*
+END-SUBROUTINE
+*
+DEFINE DISPLAY-DOB-MSG
+/*     ===============
+FIND CNT-V WITH CONTACT-ID = ContactRelation.ContactID
+  COMPRESS #MMM '/' #DDD '/' #YYY '.' INTO #DATE LEAVING NO
+  COMPRESS 'Contact"s date of birth is' #DATE ContactRelation.ErrorDescription INTO
+    ContactRelation.ErrorDescription
+END-FIND
+*
+END-SUBROUTINE
+*
+DEFINE SYNC-OPERATIONS
+/*     ===============
+IF ActionType NE #GET
+*
+  IF #FROM-DEPN-TO-OTHER
+    MOVE ActionType TO #SAVE-ACTION-TYPE
+    MOVE #DELETE TO ActionType
+  END-IF
+  CALLNAT 'GOSTCN05'
+    ActionType
+    #CALL_MBCN0064
+    #CALL_MBCN0065
+    ErrorCode
+    ErrorDescription
+    #SynchData
+  IF #FROM-DEPN-TO-OTHER
+    MOVE #SAVE-ACTION-TYPE TO ActionType
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE WRITE-TRANS-REG
+/*     ===============
+IF ContactRelation.ActionType NE #GET
+  IF CN2 > 0
+    PERFORM MOVE-NEW-VALUES-FOR-TR
+    CALLNAT 'C2230SCB' #OLD-VALUES #NEW-VALUES
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE MOVE-OLD-VALUES-FOR-TR
+/*     ======================
+#OLD-ROLE              := CR-V.ROLE-2-CD
+DECIDE ON FIRST VALUE OF FUNCTION-ROLE-TYPE(<CR-V.ROLE-2-CD>)
+  VALUE 'SPOUSE', 'FORMER SPOUSE'
+    FIND ST-V WITH MEMBER-CONTACT-ID = CR-V.CONTACT-1-ID
+      IF FUNCTION-ROLE-TYPE(<CR-V.ROLE-2-CD>) = 'SPOUSE'
+        #OLD-STATUS-CODE := ST-V.STATUS-CODE-SP
+        IF ST-V.DATE-OF-MARRIAGE > 0
+          #OLD-DOM         := ST-V.DATE-OF-MARRIAGE
+        END-IF
+        #OLD-MCC         := ST-V.MARRIAGE-CERT-CODE
+        IF ST-V.STATUS-CODE-SP NE 'D'
+          IF ST-V.DATE-OF-DIVORCE > 0
+            #OLD-DIV     := ST-V.DATE-OF-DIVORCE
+          END-IF
+        END-IF
+      ELSE
+        #OLD-STATUS-CODE := ST-V.FORMER-SPOUSE-STATUS
+        IF FORMER-SPOUSE-DATE-OF-MARRIAGE > 0
+          #OLD-DOM       := FORMER-SPOUSE-DATE-OF-MARRIAGE
+        END-IF
+        #OLD-MCC         := ST-V.FS-MARR-CERT-CD
+*        IF ST-V.FORMER-SPOUSE-STATUS NE 'D'
+        IF FORMER-SPOUSE-DATE-OF-DIVORCE > 0
+          #OLD-DIV     := FORMER-SPOUSE-DATE-OF-DIVORCE
+        END-IF
+*        END-IF
+      END-IF
+    END-FIND
+  VALUE 'DEPENDENT'
+    FIND FR-V WITH CONTACT-ID-NUMBER = CR-V.CONTACT-1-ID
+      FOR #I 1 60
+        IF DEPN-CONTACT-ID(#I) = CONTACT-2-ID
+          #OLD-STATUS-CODE := DEPN-STATUS-CD(#I)
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-FIND
+  NONE
+    IGNORE
+END-DECIDE
+*
+FIND CNT-V WITH CONTACT-ID = CR-V.CONTACT-2-ID               /* RE1
+  #OLD-ROLE        := CR-V.ROLE-2-CD
+  #OLD-FIRST-NAME  := FIRST-NAME
+  #OLD-MIDDLE-NAME := MIDDLE-NAME
+  #OLD-LAST-NAME   := LAST-NAME
+  #OLD-SUFFIX      := SUFFIX
+END-FIND                                                     /* RE1
+*
+END-SUBROUTINE
+*
+DEFINE MOVE-NEW-VALUES-FOR-TR
+/*     ======================
+*   Member
+#ID-NUMBER        := CN2
+#ORIG-COMMAND     := 'CB'
+#CGA-CLERK        := FUNCTION-CLERK(<#DB.LAST-USER-UPD>)
+#LAST-FM-DATE     := *DATN
+#ROLE             := ContactRelation.CurrentRelationshipCode
+#STATUS-CODE      := ContactRelation.DependentStatusCode
+FIND CNT-V WITH CONTACT-ID = ContactRelation.Contact2ID
+  #ST-NAME := FUNCTION-DISP-CT-NAME(<CNT-V.FIRST-NAME,CNT-V.MIDDLE-NAME,CNT-V.LAST-NAME,CNT-V.SUFFIX>)
+END-FIND
+*   Dependent
+FIND CNT-V WITH CONTACT-ID = ContactRelation.ContactID
+  IF ContactRelation.ActionType = #ADD
+    IF CNT-V.DATE-OF-BIRTH > 0
+      #DATE-OF-BIRTH  := CNT-V.DATE-OF-BIRTH
+    END-IF
+    #SSN              := CNT-V.SSN
+    #SEX              := CNT-V.GENDER-CD
+    #BCC              := CNT-V.BIRTH-CERT-CODE
+    #DCC              := CNT-V.DEATH-CERT-CODE
+    IF CNT-V.DATE-OF-DEATH > 0
+      #DOD            := CNT-V.DATE-OF-DEATH
+    END-IF
+    #ORG-NAME         := CNT-V.FIRM-ORGANIZATION-NAME
+    #SSN-PROTECT      := CNT-V.SSN-PROTECT
+    #PREFIX-TITLE     := CNT-V.PREFIX-TITLE
+    #WEBSITE-URL      := CNT-V.WEBSITE-URL
+    IF CNT-V.FIRM-ESTABLISHED-DATE > 0
+      #EST-DATE         := CNT-V.FIRM-ESTABLISHED-DATE
+    END-IF
+    #ECC              := CNT-V.FIRM-CERT-CODE
+    #REMARKS(*)       := CNT-V.CONTACT-REMARKS(*)
+  END-IF
+  IF ContactRelation.ActionType NE #DELETE     /* RE1
+    #FIRST-NAME  := FIRST-NAME
+    #MIDDLE-NAME := MIDDLE-NAME
+    #LAST-NAME   := LAST-NAME
+    #SUFFIX      := SUFFIX
+  END-IF
+END-FIND
+*
+IF ContactRelation.DateOfMarriage = 0
+  RESET #DATE-OF-MARRIAGE
+ELSE
+  #DATE-OF-MARRIAGE := ContactRelation.DateOfMarriage
+END-IF
+IF ContactRelation.DateOfDivorce = 0
+  RESET #DATE-OF-DIVORCE
+ELSE
+  #DATE-OF-DIVORCE  := ContactRelation.DateOfDivorce
+END-IF
+#MCC              := ContactRelation.MarriageCertificateCode
+*
+END-SUBROUTINE
+*
+END

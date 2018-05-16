@@ -1,0 +1,129 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* RETS01MC - Driver for RET report
+*  bz 02/20/2012 - - - - - - -
+*  For Member Center 'BATCH' only 
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+PARAMETER
+1 p_RET00MC
+  2 p_CN         (N6)
+  2 p_D1         (N8)
+  2 p_D2         (N8)
+  2 p_D3         (N8)
+  2 p_Mode       (A2)
+  2 p_Err        (N4)
+  2 p_ErrDscr    (A)  DYNAMIC
+  2 p_FileData   (A)  DYNAMIC 
+LOCAL
+ 1 f_DIR               (A)    DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/PROD">
+ 1 f_LOG               (A)  DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/PROD/RET_MC.LOG">
+ 1 f_TAS               (A)  DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/PROD/RET_MC.TAS">
+ 1 f_KSH               (A)    DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/toPDF">
+ 1 f_Name              (A)    DYNAMIC
+ 1 f_Name_2            (A)    DYNAMIC
+ 1 f_Name_80           (A80)
+ 1 v_shell             (A)    DYNAMIC
+ 1 v_RC                (N3)
+ 1 v_PN                (I1)   INIT  <1>  
+ 1 v_A80               (A80)  
+ 1 #i                  (I2)
+ 1 #j                  (I2)
+ 1 v_Msg               (A121)
+ 1  Page-id        (A1)   INIT  <H'0C'>
+ 1 #pb               (I2)
+ 
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+END-DEFINE
+*
+*   ON ERROR
+*       PRINT (2) *PROGRAM  *ERROR-NR  'Line:' *ERROR-LINE
+*       COMPRESS  'Natural Error:' *PROGRAM  *ERROR-NR  'Line:' *ERROR-LINE  INTO p_ErrDscr
+*       p_Err := *ERROR-NR
+*   END-ERROR
+ DEFINE WORK FILE 9 f_TAS TYPE 'ASCII-COMPRESSED'
+ COMPRESS  f_DIR '/' 'RET_MC' p_CN  '_' *DATN '.txt' INTO f_Name     LEAVING NO SPACE
+ CLOSE PRINTER (1)
+* CLOSE PRINTER (2)
+ f_Name_80 := f_Name
+ v_PN := 1    
+ v_RC := PRT_FN_PUT(<v_PN, f_Name_80>)
+*  v_PN := 2    
+*  v_RC := PRT_FN_PUT(<v_PN, f_LOG>)
+DEFINE WORK FILE 12 f_LOG TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+ 
+ FORMAT (1) LS=121 PS=80
+* FORMAT (2) LS=151 PS=200
+* PRINT (2) NOTITLE *PROGRAM *DATX *TIME  'CN=' p_CN 'D1=' p_D1 'D2=' p_D2 'D3=' p_D3 'Mode=' p_Mode
+ COMPRESS *PROGRAM *DATX *TIME   'CN=' p_CN 'D1=' p_D1 'D2=' p_D2 'D3=' p_D3 'Mode=' p_Mode INTO v_MSG
+ WRITE WORK FILE 12  v_MSG
+ CALLNAT 'RETS00MC' p_RET00MC
+ IF p_Err <> 0 
+     COMPRESS 'Error:'  p_Err   p_ErrDSCR  INTO v_MSG
+     WRITE WORK FILE 12  v_MSG
+*    PRINT (2) 'Error' p_CN p_Err / p_ErrDSCR
+    ESCAPE ROUTINE
+ END-IF
+ CLOSE PRINTER (1)
+ CLOSE WORK FILE 9
+ DEFINE WORK FILE 4 f_Name
+ f_Name_2 := f_Name 
+ EXAMINE f_Name_2 FOR '.txt' REPLACE '_200.TXT'
+ DEFINE WORK FILE 5 f_Name_2 
+ FETCH RETURN 'ATHP200X'
+ CLOSE WORK FILE 5
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+ DEFINE WORK FILE 4 f_Name_2
+ EXAMINE f_Name FOR '.txt' REPLACE '.TXT'
+ DEFINE WORK FILE 5 f_Name TYPE 'ASCII-COMPRESSED'
+ 
+ READ WORK FILE 4  v_A80
+ EXAMINE   v_A80 FOR Page-id  GIVING NUMBER #pb
+ IF #pb <> 0 AND #j = 0 ESCAPE TOP 
+ 
+ END-IF
+   #j := #j + 1
+   
+   IF v_A80 = ' '  
+        #i := #i + 1
+        IF #i > 2 
+           ESCAPE TOP 
+        ELSE 
+           WRITE WORK FILE 5 VARIABLE ' '
+        END-IF
+   ELSE 
+    EXAMINE v_A80 FOR '^' REPLACE ' '
+    EXAMINE v_A80 FOR 'This correspondence has been prepared by:' 
+            REPLACE 'This correspondence has been prepared by: Member'
+    WRITE WORK FILE 5 VARIABLE v_A80
+     #i := 0
+  END-IF  
+ END-WORK 
+ CLOSE WORK FILE 4
+ CLOSE WORK FILE 5 
+
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+ COMPRESS f_KSH f_Name  INTO v_Shell
+  CALL 'shcmd' v_Shell
+  v_RC := RET('shcmd')
+  IF v_RC <> 0 
+      p_ErrDscr := 'PDF conversion error' 
+      p_Err     := 99
+      COMPRESS 'Error:'  p_Err   p_ErrDSCR  INTO v_MSG
+      WRITE WORK FILE 12  v_MSG
+*      PRINT (2) 'Error' p_CN 'PDF conversion error' v_RC
+      ESCAPE ROUTINE
+  END-IF    
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -   
+  EXAMINE f_Name FOR '.TXT' REPLACE '.pdf'
+  DEFINE WORK FILE 4 f_Name  TYPE 'UNFORMATTED'
+  READ WORK FILE 4 ONCE p_FileData
+  COMPRESS 'Processed'  *TIMX  INTO v_MSG
+  WRITE WORK FILE 12  v_MSG
+  CLOSE WORK FILE 12
+*  PRINT (2) 'Processed' '-'(30) 
+  END

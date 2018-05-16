@@ -1,0 +1,242 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM ATHPCCIN - CREDIT CARD parse input from AAFMAA
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* DRW    08272005  DW0     Create program                              *
+* DRW    10102005  DW1     Add CC num to Extract file & sort by it     *
+* SAG  12062005  RH1  SS - Replaced the HEX constant '7F'(Double Quote)*
+*                     in EBCDIC to HEX code '22' in ASCII.             *
+* PAM    02262009  PM2     Added CAP credit card logic                 *
+* YAK    03272009  YK1     Accept new file layout from PayWare         *
+* YAK    04202009  YK2     Create rejected file for manual reprocessing*
+*                          with full credit card numbers to be send to *
+*                          secure folder                               *
+*                          Add address verification code to the output *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL
+*
+1 #DQ     (A1) INIT <H'22'>   /* Double Quote   DW15 /* SAG RH1 12062005 SS
+*
+1 ST-V VIEW OF A-STATUS
+  2 CC-NUM
+  2 STATUS (9)                  /* PM2
+  2 X-ALT-LP-IND (9)            /* PM2
+*
+1 #CC-REC-OUT  (A58)
+1 REDEFINE #CC-REC-OUT
+  2 #CC-OUT-APP-REJ  (A3)
+  2 #CC-OUT-CN       (A6)
+  2 #CC-OUT-AMT      (N5.2)
+  2 #CC-OUT-REJ-DESC (A25)
+  2 #CC-OUT-CC-NUM   (A16)
+  2 #CC-AV-CODE      (A1)                   /* YK2
+*
+1 #CC-RESPONSE        (A150)                /* YK1
+1 unicAAFMAAKey       (A) DYNAMIC
+1 statusDescription   (A) DYNAMIC
+1 status              (A) DYNAMIC
+1 statusCode          (A) DYNAMIC
+1 connectionStatus    (A) DYNAMIC
+1 addressVerification (A) DYNAMIC
+1 transactionAmount   (A) DYNAMIC
+*
+1 #CAP-CC-RECORD      (A10)      /* PM2
+1 REDEFINE #CAP-CC-RECORD        /* PM2
+ 2 #CAP-CC-MEMBER     (A6)       /* PM2
+ 2 #CAP-CC-DASH       (A1)       /* PM2
+ 2 #CAP-CC-TYPE       (A1)       /* PM2
+ 2 #CAP-CC-DASH-2     (A1)       /* PM2
+ 2 #CAP-CC-APP        (A1)       /* PM2
+*
+1 #CC-REJECT-TABLE               /* PM2
+ 2 #CC-REJECT-OCC     (1000)     /* PM2
+  3 #CC-NUMBER        (A16)      /* PM2
+*
+1 #FOUND              (L)        /* PM2
+1 #DATA     (A120)               /* DW15
+1 REDEFINE #DATA
+  2 #DATA-X  (A1/120)
+1 #FLD-#     (N2)
+*
+1 #TOT-APPR-AMT    (N7.2)
+1 #TOT-REJ-AMT     (N7.2)
+1 #TOT-CC-AMT      (N7.2)
+*
+1 #COUNTERS
+  2 #RECS-READ        (P5)
+  2 #CNT              (P5)
+  2 #CNT-2            (P5)
+  2 #CNT-3            (P5)
+  2 #CNT-4            (P5)
+  2 #CNT-5            (P5)
+  2 #CNT-6            (P5)
+  2 #CNT-7            (P5)
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #I3               (I2)
+  2 #I4               (I2)
+  2 #I8               (I2)
+  2 #I9               (I2)
+  2 #REJ-I            (I2)      /* PM2
+1 #NUM-RECS          (N5)
+*
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A    (A8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM        (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY          (N4)
+    3 #MM            (N2)
+  2 #DD            (N2)
+*
+1 #TAB             (A1)   INIT <H'09'>       /* YK1
+1 #CNT-APP         (N5)                      /* YK1
+1 #CNT-REJ         (N5)                      /* YK1
+END-DEFINE
+************************************************************************
+*
+***  This report is not being used by users
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Accepted CC Payments Applied'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+***  This report is not being used by users
+FORMAT (4) LS=133 PS=76
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Rejected CC Pmts or Bad Exp Dt to be converted to A/S/Q'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+DEFINE WORK FILE 2 TYPE 'ASCII-COMPRESSED'                          /* YK2
+*
+READ WORK 1 RECORD #CC-RESPONSE
+  IF #CC-RESPONSE = ' '
+     ESCAPE TOP
+  END-IF
+  SEPARATE #CC-RESPONSE INTO unicAAFMAAKey statusDescription status statusCode
+                    connectionStatus addressVerification transactionAmount
+                    with delimiter #TAB
+  RESET #CC-REC-OUT
+  statusCode := *TRIM(statusCode)
+  #CC-AV-CODE  := addressVerification
+  if statusCode = '4'                   /* approved/captured
+     MOVE 'APP' TO #CC-OUT-APP-REJ
+     PERFORM REFORMAT-REC
+*
+     ADD #CC-OUT-AMT TO #TOT-APPR-AMT
+     ADD 1 TO #CNT-APP
+     DISPLAY (3) #CNT-APP #CC-OUT-CN #CC-OUT-AMT 'CC Software Info' #CC-OUT-REJ-DESC
+*
+  else                  /* rejected
+     MOVE 'REJ' TO #CC-OUT-APP-REJ
+     PERFORM REFORMAT-REC
+     ADD #CC-OUT-AMT TO #TOT-REJ-AMT
+     ADD 1 TO #CNT-REJ
+     DISPLAY (4) #CNT-REJ #CC-OUT-CN #CC-OUT-AMT 'REJ DESC' #CC-OUT-REJ-DESC
+*
+     ADD 1 TO #REJ-I                                                /* PM2
+     #CC-NUMBER (#REJ-I) := #CC-OUT-CC-NUM                          /* PM2
+* write rejected ccard transactions to be manually reprocessed      /* YK2
+     compress unicAAFMAAKey #TAB #cc-out-cc-num #TAB statusDescription #TAB
+              status #TAB addressVerification #TAB transactionAmount
+              into #CC-RESPONSE leaving no
+     write work file 2 #CC-RESPONSE                                 /* YK2
+  end-if
+END-WORK
+*
+COMPUTE #TOT-CC-AMT = #TOT-APPR-AMT + #TOT-REJ-AMT
+WRITE (3) 'TOT-APPROVED =' #TOT-APPR-AMT (EM=ZZZ,ZZZ.99)
+WRITE (3) 'TOT-REJECTED =' #TOT-REJ-AMT  (EM=ZZZ,ZZZ.99)
+WRITE (3) 'TOT-CC-AMT   =' #TOT-CC-AMT (EM=ZZZ,ZZZ.99)
+WRITE (4) 'TOT-REJECTED =' #TOT-REJ-AMT  (EM=ZZZ,ZZZ.99)
+*
+READ WORK 3 RECORD #CC-REC-OUT  /* READ REFORMATED TRANS
+END-ALL
+*
+SORT BY #CC-OUT-CC-NUM
+  USING #CC-REC-OUT
+  WRITE WORK 3 #CC-REC-OUT
+END-SORT
+*
+PERFORM UPDATE-CAP-CREDIT-CARD-FILE                              /* PM2
+*
+************************************************************************
+DEFINE SUBROUTINE REFORMAT-REC
+************************************************************************
+*
+ unicAAFMAAKey := *TRIM(unicAAFMAAKey)
+ #CC-OUT-CN := substr(unicAAFMAAKey,1,6)
+ transactionAmount := *TRIM(transactionAmount)
+ move edited  transactionAmount to #CC-OUT-AMT (EM=ZZZZ9.99)
+ IF #CC-OUT-APP-REJ = 'REJ'
+    #CC-OUT-REJ-DESC := *TRIM(statusDescription)
+ END-IF
+*
+FIND (1) ST-V WITH MEMBER-KEY = #CC-OUT-CN    /* DW99
+  MOVE CC-NUM TO #CC-OUT-CC-NUM
+END-FIND
+*
+IF #CC-OUT-CC-NUM = ' '
+  WRITE #CC-OUT-CN 'Credit Card # not found'
+END-IF
+*
+WRITE WORK 3 #CC-REC-OUT
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE UPDATE-CAP-CREDIT-CARD-FILE                     /* PM2
+************************************************************************
+*
+READ WORK 4 #CAP-CC-RECORD
+  RESET #FOUND
+  C01.
+  FIND (1) ST-V WITH MEMBER-KEY = #CAP-CC-MEMBER
+    FOR #REJ-I 1 TO 1000
+      IF #CC-NUMBER (#REJ-I) = ' '
+        ESCAPE BOTTOM
+      END-IF
+*
+      IF ST-V.CC-NUM = #CC-NUMBER (#REJ-I)
+        #FOUND := TRUE
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    #CAP-CC-DASH-2 := '-'
+    IF #FOUND
+      #CAP-CC-APP  := 'R'
+    ELSE
+      #CAP-CC-APP  := 'A'
+    END-IF
+*
+    WRITE WORK 5 #CAP-CC-RECORD
+*
+    IF #CAP-CC-TYPE = 'C'
+     AND NOT #FOUND
+       FOR #I1 1 TO 9
+         IF ST-V.STATUS (#I1) = 'D'
+          AND ST-V.X-ALT-LP-IND (#I1) = 'C'
+           ST-V.X-ALT-LP-IND (#I1) := '!'
+         END-IF
+       END-FOR
+*
+       UPDATE (C01.)
+       END TRANSACTION
+    END-IF
+  END-FIND
+END-WORK
+*
+END-SUBROUTINE
+*
+END

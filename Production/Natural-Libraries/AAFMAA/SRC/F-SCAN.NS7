@@ -1,0 +1,144 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : F-SCAN                                                *
+* AUTHOR       : Copyright: Electronic Data Systems - an HP company    *
+* DESCRIPTION  : Create bill scanline                                  *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    12/08/2010  None    Program Written                           *
+************************************************************************
+*
+DEFINE FUNCTION FUNCTION-CREATE-SCANLINE RETURNS (A18) BY VALUE
+*
+DEFINE DATA
+*
+PARAMETER
+*
+1 #MEMBER-NUMBER         (N6)
+1 #POLICY-NUM            (A16)
+1 #BILL-TYPE             (A2)
+*
+LOCAL USING OBJLSTAT
+LOCAL USING SCNL0001
+LOCAL USING GDATEAXX
+LOCAL
+*
+1 #ODD-DIGIT             (L)
+1 #DIG-I                 (I2)
+1 #I1                    (I2)
+1 #I2                    (I2)
+1 #CNT                   (P5)
+1 #2-X-NUM               (N2)
+1 REDEFINE #2-X-NUM
+ 2 #2-X-NUM-X            (N1/2)
+1 #MOD-10-NUM            (N2)
+1 #SUM-OF-DIGITS         (N5)
+1 REDEFINE #SUM-OF-DIGITS
+ 2 #SUM-OF-DIGITS-FIRS   (N4)
+ 2 #SUM-OF-DIGITS-LAST   (N1)
+1 #WORK-CHECK-DIGIT      (A17)
+1 REDEFINE #WORK-CHECK-DIGIT
+ 2 #DIGIT-CNT            (17)
+  3 #DIGIT               (N1)
+1 #WORK-BILL-TYPE        (A2)
+1 REDEFINE #WORK-BILL-TYPE
+ 2 #WORK-BILL-1          (A1)
+ 2 #WORK-BILL-2          (A1)
+*
+1 #REAL-CHECK-DIGIT      (N1)
+*
+END-DEFINE
+************************************************************************
+*
+RESET #SCAN-LINE
+*
+MOVE EDITED #MEMBER-NUMBER (EM=999999) TO #SCAN-MEMBER-CN
+*
+PERFORM LOAD-POLICY-INFORMATION
+#I1 := F_POLICY_SEGMENT(<#POLICY-NUM,#SCAN-MEMBER-CN>)
+*
+FUNCTION-CREATE-SCANLINE := #SCAN-LINE
+*
+PERFORM LOAD-POLICY-INFORMATION
+*
+#WORK-BILL-TYPE := #BILL-TYPE
+MOVE EDITED #WORK-BILL-1 (EM=HH) TO #SCAN-BILL-TYPE
+*
+PERFORM CREATE-CHECK-DIGIT
+*
+FUNCTION-CREATE-SCANLINE := #SCAN-LINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-POLICY-INFORMATION
+************************************************************************
+*
+IF #I1 = 0
+  #SCAN-ISSUE-DATE := '00000000'
+  #SCAN-POL-IND    := '1'
+ELSE
+  FIND (1) ST-V WITH ST-V.ID-NUMBER = #MEMBER-NUMBER
+    #REQUEST := 'C'
+    #TO-DATE := ST-V.ISSUE-DATE (#I1)
+    CALLNAT 'GDATESXX'
+      #PDA-GDATESXX
+*
+    MOVE EDITED #RETURN-CALC (EM=99999999) TO #SCAN-ISSUE-DATE
+*
+    RESET #CNT
+    FOR #I2 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.ISSUE-DATE (#I2) = #TO-DATE
+        ADD +1 TO #CNT
+      END-IF
+    END-FOR
+*
+    IF #CNT LE 1
+     OR ST-V.NUM-MBRSHIPS (#I1) = 0
+      #SCAN-POL-IND := '1'
+    ELSE
+      MOVE EDITED ST-V.NUM-MBRSHIPS (#I1) (EM=9) TO #SCAN-POL-IND
+    END-IF
+  END-FIND
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-CHECK-DIGIT
+************************************************************************
+*
+MOVE TRUE TO #ODD-DIGIT   /* True on every odd digit
+RESET #SUM-OF-DIGITS
+#WORK-CHECK-DIGIT := #SCAN-WORK-CHECK-DIGIT
+*
+FOR #DIG-I 17 TO 1 STEP -1   /* START with the check digit at right
+  IF #ODD-DIGIT
+    ADD #DIGIT (#DIG-I) TO #SUM-OF-DIGITS
+    RESET #ODD-DIGIT
+  ELSE
+    COMPUTE #2-X-NUM = #DIGIT (#DIG-I) * 2
+    COMPUTE #MOD-10-NUM = #2-X-NUM-X (1) + #2-X-NUM-X (2)
+    ADD #MOD-10-NUM TO #SUM-OF-DIGITS
+    MOVE TRUE TO #ODD-DIGIT
+  END-IF
+END-FOR
+*
+IF #SUM-OF-DIGITS-LAST = 0
+  #REAL-CHECK-DIGIT := 0
+ELSE
+  COMPUTE #REAL-CHECK-DIGIT := 10 - #SUM-OF-DIGITS-LAST
+END-IF
+*
+MOVE EDITED #REAL-CHECK-DIGIT (EM=9) TO #SCAN-CHECK-DIGIT
+*
+END-SUBROUTINE
+*
+END-FUNCTION
+*
+END

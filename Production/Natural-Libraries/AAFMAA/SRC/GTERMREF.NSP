@@ -1,0 +1,605 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GTERMREF                                              *
+*                                                                      *
+* DESCRIPTION  : Process Debit/credit or Term refund files             *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* VXT    07/20/2013          Initial creation                          *
+* YAK    11/20/2013  YK1     Change file selection interface           *
+* YAK    01/09/2014  YK2     Add move/delete processed files           *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX
+LOCAL USING OBJLUSER            /* view of a-terminal file
+LOCAL USING GPOAFILE
+LOCAL USING OBJAGENT            /* view of A-GEN-TABLE
+*
+LOCAL
+1 STAT VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 DEBIT-CREDIT-AMT
+  2 OUT-TERM-REF-AMOUNT  (99)
+  2 DATE-OF-DEATH
+  2 MEMBER-CONTACT-ID
+*
+1 #IN-FILE                  (A80)
+1 #CNT                      (P7)
+1 #CN-IN                    (A) DYNAMIC
+1 #AMT-IN                   (A) DYNAMIC
+1 #AMT                      (N7.2)
+1 #CN-A                     (A6)
+1 REDEFINE #CN-A
+  2 #CN                     (N6)
+1 #TAB                      (A1) INIT <H'09'>
+1 #I1                       (I4)
+1 #I2                       (I4)
+1 #I3                       (I4)
+1 #SCR-IND                  (I4)
+1 #LINE-COUNT               (I4)
+1 #MAIN-DET-IND             (I4)
+1 #MAX-ENTRY                (I4)    INIT <15>
+1 #MAIN-MAX-ENTRY           (I4)
+1 #FULL-ACCESS              (L)
+1 #ADMIN-ACCESS             (L)
+1 #PROCESS-FILE             (L)
+1 #COMPLETE                 (L)
+1 #TEXT                     (A78)
+1 #FUNCTION-ATTRIBUTES      (A68)
+1 REDEFINE #FUNCTION-ATTRIBUTES
+  2 #PROGRAM                (A8)
+  2 #SEPARATOR              (A1)
+  2 #FUNCTION-PARM          (A7)
+  2 #HEADER-1               (A50)
+  2 #SECURITY-CODE          (N2)
+*
+1 #WORK-AREAS
+  2 #SHCMD                   (A250)
+  2 #HEADING                 (A7)
+  2 #HEADER                  (A) DYNAMIC
+  2 #SCREEN                  (P5)
+  2 #SCREEN-COUNT            (P5)
+*
+1 #FILE-TABLE               (100)
+  2 #TBL-SEL                 (A1)
+  2 #TBL-CN                  (N6)
+  2 #TBL-AMT                 (N7.2)
+  2 #TBL-COMMENT             (A27)
+*
+1 #SCR-ARRAY           (16)
+  2 #SCR-SEL                 (A1)
+  2 #SCR-CN                  (N6)
+  2 #SCR-AMT                 (N7.2)
+  2 #SCR-COMMENT             (A27)
+  2 #SCR-CV                  (C)
+*
+1 #DBCR                      (L)
+1 #TRMF                      (L)
+1 #J                         (I2)
+1 #TRMF-AMOUNT               (N7.2/100)
+1 #PROCESS-CNT               (P5)
+1 #NOT-PROCESS-CNT           (P5)
+1 #TOTAL-TO-APPLY            (N11.2)
+1 #TOTAL-NOT-TO-APPLY        (N11.2)
+1 #OUT-FILE                  (A80)
+1 #TBL-AMT-A                 (A12)
+1 #MULTIPLE-OWNER (L)
+1 #NON-INS-OWNER  (L)
+1 #OWNER-OCC-9    (9)
+  2 #OWNER-FLAG    (A1)
+  2 #OWNER-CN      (N6/10)
+  2 #OWNER-CN-BY-POL (N6)
+  2 #OWNER-CN-SEG    (I2/9)
+  2 #ISS-DATE        (N8/9)
+  2 #ISS-DATE-DISP   (A10/9)
+*     beneficiary info output
+  2 #BENE-TYPE       (A1/2)
+  2 #BENE-TEST       (A60/10)
+*
+1 #NO-FILES    (A78) CONST <'No files found for processing'>
+1 #UNIX-FILE-NAME (A) DYNAMIC CONST <'/usr/SAG/tmp/UI/upload_file.txt'>
+1 #LINE-CNT (N4)
+1 #DATA-ARRAY (A/*) DYNAMIC
+* Define for Get DIR Content / Get File scripts
+1 v_SCRIPT     (A) DYNAMIC INIT<'/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/FTP_GET_RDIR'>
+1 WIN_DIR      (A50)  INIT <'/ftp/PolServ/RefundFiles'>
+1 WIN_DIR_TEST (A50)  INIT <'/ftp/PolServ/RefundFiles/Test'>
+1 WIN_DIR_WC   (A50)  INIT <'"*.*"'>
+1 WIN_PROCESSED_FILE(A) DYNAMIC INIT <'Processed/'>
+1 UNIX_DIR     (A) DYNAMIC  INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH'>
+1 UNIX_FN      (A) DYNAMIC  INIT <'dir.txt'>
+1 v_shcmd      (A) DYNAMIC
+1 v_rc         (N3)
+1 GET-SCRIPT-NAME   (A) DYNAMIC INIT<'/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/FTP_GET_FILE'>
+1 MOVE-SCRIPT-NAME  (A) DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/FTP_MOVE_FILE'>
+1 WIN_FN      (A) DYNAMIC
+1 #I          (I2) 
+* Define for Get DIR Content End
+*
+END-DEFINE
+***********************************************************************
+INCLUDE GONERCXX
+*
+IF F-IS-DEV(<>)
+  WIN_DIR := WIN_DIR_TEST
+END-IF
+*
+DEFINE WINDOW CONFIRMATION-BOX
+  SIZE 10*60
+  BASE 5/7
+*
+IF *DATA NE 0
+  INPUT #FUNCTION-ATTRIBUTES
+END-IF
+*
+RESET #ADMIN-ACCESS #FULL-ACCESS
+IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A'
+  #ADMIN-ACCESS  := #FULL-ACCESS := TRUE
+ELSE
+  IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'U'
+    #FULL-ACCESS := TRUE
+  END-IF
+END-IF
+*
+IF NOT #FULL-ACCESS
+  #TEXT := 'User not authorized to perform this function. Browse access only'
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #FUNCTION-PARM = 'A' OR = ' '
+*   PERFORM LOAD-FTP-FILE                        /* YK1
+    MOVE TRUE to #DBCR
+    MOVE 'DB/CR' to #HEADER
+    DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/REFUND.TXT' TYPE 'ASCII'
+  WHEN #FUNCTION-PARM = 'B'
+*   PERFORM LOAD-FTP-FILE                        /* YK1
+    MOVE TRUE TO #TRMF
+    MOVE 'Term Ref' TO #HEADER
+    DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/TERM-REF-OUT.TXT' TYPE 'ASCII'
+  WHEN NONE
+    WRITE 'Error in program. Please contact a technical representative'
+    ESCAPE ROUTINE
+END-DECIDE
+*
+PERFORM GET-DIR-CONTENT
+IF #LINE-CNT = 0
+  #TEXT := #NO-FILES
+  PERFORM RETURN-TO-MENU
+END-IF
+*
+********************************
+DEFINE SUBROUTINE RETURN-TO-MENU
+********************************
+*
+#FUNCTION-PARM := 'TRDC   '
+#PROGRAM       := 'G1000PUI'
+FETCH #PROGRAM #FUNCTION-ATTRIBUTES #TEXT
+END-SUBROUTINE
+*
+
+PERFORM LOAD-FTP-FILE
+PERFORM LOAD-TABLE
+PERFORM CALCULATE-SCREEN-COUNT
+*
+PERFORM SET-KEYS
+*
+PERFORM NEXT-SCREEN
+*
+REPEAT
+  PERFORM SET-KEYS
+*
+  #MAIN-DET-IND := ((#SCREEN - 1) * 15) + 1
+  #LINE-COUNT   := #MAIN-DET-IND + 15
+  IF #LINE-COUNT > #MAIN-MAX-ENTRY
+    #LINE-COUNT := #MAIN-MAX-ENTRY
+  END-IF
+*
+  INPUT TEXT #TEXT USING MAP 'GPOMTRDC'
+*
+  PERFORM SCREEN-EDITS
+*
+  RESET #TEXT #PROCESS-FILE
+*
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF2'
+      #PROCESS-FILE     := TRUE
+    VALUE 'PF3'
+      FOR #I1 1 #CNT
+        IF #TBL-SEL(#I1) = 'Y'
+          PERFORM DISPLAY-CANCEL-SCREEN
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+      #FUNCTION-PARM := 'PROC '
+      #PROGRAM := 'G1000PUI'
+      STACK TOP DATA #FUNCTION-ATTRIBUTES
+      FETCH #PROGRAM
+    VALUE 'PF8', 'PF7'
+      PERFORM NEXT-SCREEN
+    VALUE 'PF12'
+      #CGA-SCR-COMMAND := 'GM'
+      RESET #CGA-SCR-SUFFIX
+      PERFORM CALL-G1000PXX
+    NONE
+      IGNORE
+  END-DECIDE
+*
+  IF NOT #FULL-ACCESS
+    #TEXT := 'User not authorized to perform this function. Browse access only'
+    ESCAPE TOP
+  END-IF
+*
+  IF #PROCESS-FILE
+    PERFORM PROCESS-FILE
+    IF #COMPLETE
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+END-REPEAT
+*
+#CGA-SCR-COMMAND := 'UI'
+RESET #CGA-SCR-SUFFIX
+*
+PERFORM CALL-G1000PXX
+*
+*********************************
+DEFINE SUBROUTINE GET-DIR-CONTENT      /* YK1
+*********************************
+*
+/* Get Dir content
+COMPRESS UNIX_DIR '/' UNIX_FN INTO UNIX_FN LEAVE NO SPACE
+COMPRESS v_SCRIPT WIN_DIR WIN_DIR_WC UNIX_FN INTO v_shcmd
+* PRINT v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+  ESCAPE ROUTINE
+END-IF
+/* Get Dir content END
+/* Read Dir content
+DEFINE WORK FILE 1 UNIX_FN TYPE 'ASCII-COMPRESSED'
+RESET #LINE-CNT
+READ WORK FILE 1 #IN-FILE
+  #LINE-CNT := #LINE-CNT + 1
+  RESIZE ARRAY #DATA-ARRAY TO (*:#LINE-CNT)
+  #DATA-ARRAY(#LINE-CNT) := #IN-FILE
+END-WORK
+IF #LINE-CNT = 0
+  #TEXT := #NO-FILES
+END-IF
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE LOAD-FTP-FILE      /* YK1
+*******************************
+*
+CALLNAT 'GPRNDD02' #DATA-ARRAY(*) #HEADER WIN_FN WIN_DIR
+*
+IF WIN_FN <> ' '
+  RESET #I
+  WIN_FN := *TRIM(WIN_FN)
+  EXAMINE WIN_FN FOR ' ' NUMBER #I
+  IF #I <> 0
+    #TEXT := ' Please, correct File name - Spaces not allowed'
+    PERFORM RETURN-TO-MENU
+  ELSE
+*
+    UNIX_FN := #UNIX-FILE-NAME
+    DEFINE WORK FILE 1 UNIX_FN
+*
+**===============================================
+    COMPRESS GET-SCRIPT-NAME WIN_DIR WIN_FN UNIX_FN INTO v_shcmd
+    CALL 'shcmd' v_shcmd
+    v_rc:=  RET('shcmd')
+    IF v_rc <> 0
+      #TEXT := ' Error in script - contact Technical Support'
+      PERFORM RETURN-TO-MENU
+    END-IF
+  END-IF
+ELSE
+  PERFORM RETURN-TO-MENU
+END-IF  
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE LOAD-TABLE
+****************************
+*
+RESET #CNT
+READ WORK 1 #IN-FILE
+  SEPARATE #IN-FILE INTO
+    #CN-IN
+    #AMT-IN
+  IGNORE WITH DELIMITER #TAB
+  #CN-A := #CN-IN
+  IF #CN  NE MASK (9)
+    ESCAPE TOP
+  END-IF
+  MOVE RIGHT #CN-A TO #CN-A
+  EXAMINE #AMT-IN FOR '$' REPLACE ' '
+  EXAMINE #AMT-IN FOR '-' REPLACE ' '
+  IF #AMT-IN IS (N7.2)
+    #AMT  := VAL(#AMT-IN)
+    ADD 1 TO #CNT
+    ADD 1 TO #I2
+    #TBL-CN (#I2) := #CN
+    #TBL-AMT (#I2) := #AMT
+  END-IF
+END-WORK
+*
+FOR #I3 1 #CNT
+  FIND STAT WITH ID-NUMBER = #TBL-CN(#I3)
+    IF NO
+      ESCAPE BOTTOM
+    END-NOREC
+    IF #DBCR
+      #TBL-AMT(#I3) := #TBL-AMT(#I3) * (-1)
+      IF STAT.DEBIT-CREDIT-AMT NE #TBL-AMT (#I3)
+        MOVE 'DB/CR Amount Mismatch' TO #TBL-COMMENT (#I3)
+        MOVE 'N'               TO #TBL-SEL     (#I3)
+      ELSE
+        RESET #TBL-COMMENT (#I3)
+        MOVE 'Y'                 TO #TBL-SEL     (#I3)
+      END-IF
+    END-IF
+    IF #TRMF
+      FOR #J 1 99
+        IF   STAT.OUT-TERM-REF-AMOUNT (#J) NE 0
+          ADD STAT.OUT-TERM-REF-AMOUNT (#J) TO #TRMF-AMOUNT(#I3)
+        END-IF
+      END-FOR
+*
+      IF #TRMF-AMOUNT(#I3) NE #TBL-AMT (#I3)
+        MOVE 'Term Ref Amount Mismatch' TO #TBL-COMMENT (#I3)
+        MOVE 'N'               TO #TBL-SEL     (#I3)
+      ELSE RESET #TBL-COMMENT (#I3)
+        MOVE 'Y'                 TO #TBL-SEL   (#I3)
+      END-IF
+    END-IF
+    IF #TBL-COMMENT (#I3) NE 'N'
+      IF F-UNDEL-ADDRESS (< STAT.MEMBER-CONTACT-ID >)
+        MOVE 'Bypassed - Undeliv. Address' TO #TBL-COMMENT (#I3)
+        MOVE 'N' TO #TBL-SEL (#I3)
+      END-IF
+*
+      CALLNAT 'GOWNRSXX'
+        STAT.ID-NUMBER
+        #NON-INS-OWNER
+        #MULTIPLE-OWNER
+        #OWNER-OCC-9 (1:9)
+*
+      IF #NON-INS-OWNER
+        MOVE  'Bypassed - Non-Insured Owner'   TO #TBL-COMMENT (#I3)
+        MOVE 'N' TO #TBL-SEL (#I3)
+      END-IF
+*
+      IF STAT.DATE-OF-DEATH NE 0
+        MOVE  'Bypassed - Member Deceased' TO #TBL-COMMENT (#I3)
+        MOVE 'N' TO #TBL-SEL (#I3)
+      END-IF
+    END-IF
+  END-FIND
+END-FOR
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SET-KEYS
+***********************************************************************
+*
+SET KEY PF3   NAMED 'Retrn'
+SET KEY PF12  NAMED 'Quit'
+SET KEY PF7   NAMED 'Up'
+SET KEY PF8   NAMED 'Down'
+SET KEY PF2   NAMED 'Submt'
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE DISPLAY-CANCEL-SCREEN
+***********************************************************************
+*
+SET WINDOW 'CONFIRMATION-BOX'
+INPUT WINDOW = 'CONFIRMATION-BOX' WITH TEXT #TEXT
+  '  You have elected to terminate processing of the file.' /
+  '  No processing has taken place. ' /
+  '  Please press ENTER to exit.'
+*
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CALL-G1000PXX
+***********************************************************************
+*
+SET KEY OFF
+FETCH 'G1000PXX'
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE NEXT-SCREEN
+***********************************************************************
+*
+IF *PF-KEY = 'PF8'
+  IF #SCREEN = #SCREEN-COUNT
+
+    #TEXT := 'Last Screen'
+  ELSE
+    #SCREEN := #SCREEN + 1
+  END-IF
+ELSE
+  IF #SCREEN = 1
+    IF #FULL-ACCESS
+      #TEXT := 'First Screen'
+
+    END-IF
+  ELSE
+    #SCREEN := #SCREEN - 1
+  END-IF
+END-IF
+*
+PERFORM POPULATE-SCREEN
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-FILE
+***********************************************************************
+*
+FOR #I1 1 TO #CNT
+  IF #TBL-SEL(#I1) = 'Y'
+    ADD 1 TO #PROCESS-CNT
+    ADD #TBL-AMT(#I1) TO #TOTAL-TO-APPLY
+  ELSE
+    ADD 1 TO #NOT-PROCESS-CNT
+    ADD #TBL-AMT(#I1) TO #TOTAL-NOT-TO-APPLY
+  END-IF
+  MOVE EDITED #TBL-AMT(#I1) (EM=ZZZZZZ9.99) TO #TBL-AMT-A
+  COMPRESS #TBL-CN(#I1) #TAB #TBL-AMT-A INTO #OUT-FILE LEAVING NO
+  WRITE WORK 2 #OUT-FILE
+END-FOR
+*
+IF #PROCESS-CNT = 0
+  REINPUT 'No records available for processing'
+    MARK *#SCR-SEL(1)
+END-IF
+*
+CLOSE WORK 2
+*
+SET WINDOW 'CONFIRMATION-BOX'
+PERFORM SET-KEYS
+*
+INPUT USING MAP 'GPOMTRD1'
+*
+DECIDE ON FIRST VALUE OF *PF-KEY
+  VALUE 'PF3'
+    SET WINDOW OFF
+    PERFORM DISPLAY-CANCEL-SCREEN
+    RESET #PROCESS-CNT #TOTAL-TO-APPLY #NOT-PROCESS-CNT #TOTAL-NOT-TO-APPLY
+    PERFORM CALCULATE-SCREEN-COUNT
+    PERFORM NEXT-SCREEN
+    PERFORM SET-KEYS
+  VALUE 'PF2'
+    #COMPLETE := TRUE
+  NONE
+    REINPUT ' Please select "PF3" to Quit or "PF2" to submit'
+END-DECIDE
+SET WINDOW OFF
+*
+IF #PROCESS-CNT GT 0 AND #COMPLETE
+  PERFORM CALL-SHCMD
+END-IF
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE POPULATE-SCREEN
+***********************************************************************
+*
+RESET #SCR-ARRAY(*)
+MOVE (AD=U) TO #SCR-CV(*)
+*
+#I1         := ((#SCREEN - 1) * #MAX-ENTRY) + 1
+#LINE-COUNT := #CNT - (#SCREEN - 1)*#MAX-ENTRY
+IF #LINE-COUNT > #MAX-ENTRY
+  #LINE-COUNT := #MAX-ENTRY
+ELSE
+  #SCR-IND := #LINE-COUNT + 1
+  FOR #SCR-IND #SCR-IND TO #MAX-ENTRY
+    MOVE (AD=P) TO #SCR-CV (#SCR-IND)
+  END-FOR
+END-IF
+*
+FOR #SCR-IND = 1 TO #LINE-COUNT
+  #SCR-CN (#SCR-IND)     := #TBL-CN (#I1)
+  #SCR-AMT (#SCR-IND)    := #TBL-AMT (#I1)
+  #SCR-SEL (#SCR-IND)    := #TBL-SEL (#I1)
+  #SCR-COMMENT(#SCR-IND) := #TBL-COMMENT (#I1)
+*
+  ADD +1 TO #I1
+END-FOR
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SCREEN-EDITS
+***********************************************************************
+*
+#I1 := ((#SCREEN - 1) * #MAX-ENTRY) + 1
+*
+FOR #SCR-IND 1 TO #LINE-COUNT
+  IF NOT #SCR-sel (#SCR-IND) = ' ' OR = 'Y' OR = 'N'
+    REINPUT 'Please select "Y" to process the record or "N" to not process it'
+      MARK *#SCR-sel (#SCR-IND)
+  END-IF
+*
+  IF #SCR-SEL (#SCR-IND) = 'Y'
+      AND #SCR-comment (#SCR-IND)    = 'The specified amount does not exist'
+    REINPUT 'A specified amount from input file cannot be processed as it does not exist on DB'
+      MARK *#SCR-SEL(#SCR-IND)
+  END-IF
+*
+  #TBL-SEL (#I1) := #SCR-SEL(#SCR-IND)
+  ADD +1 TO #I1
+END-FOR
+*
+END-SUBROUTINE
+*
+**************************************************************************
+DEFINE SUBROUTINE CALL-SHCMD
+*************************************************************************
+*
+IF #DBCR
+  #SHCMD := '/usr/SAG/cronus/.scripts/T4CYRFND.bsh >/dev/null'
+  CALL 'SHCMD' #SHCMD
+END-IF
+*
+IF #TRMF
+  #SHCMD := '/usr/SAG/cronus/.scripts/T4CYRFNT.bsh >/dev/null'
+  CALL 'SHCMD' #SHCMD
+END-IF
+*
+* Move processed file to the "Processed" folder    ********
+COMPRESS WIN_PROCESSED_FILE WIN_FN INTO WIN_PROCESSED_FILE LEAVING NO
+COMPRESS MOVE-SCRIPT-NAME WIN_DIR WIN_FN WIN_PROCESSED_FILE INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+* Delete Input File
+COMPRESS 'rm' #UNIX-FILE-NAME INTO v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+END-IF
+*
+SET WINDOW 'Confirmation-box'
+INPUT USING MAP 'GPBMDFAC'
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE CALCULATE-SCREEN-COUNT
+**********************************************************************
+COMPUTE #SCREEN-COUNT = #CNT / #MAX-ENTRY
+IF #SCREEN-COUNT * #MAX-ENTRY < #CNT
+  #SCREEN-COUNT := #SCREEN-COUNT + 1
+END-IF
+#SCREEN := 1
+*
+END-SUBROUTINE
+END
+

@@ -1,0 +1,174 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************
+* LISTTA
+* Compare allotment file with TA records
+*
+* vxt 06/28/2014
+**************************************
+*
+define data local
+
+1 ACCOUNT VIEW OF A-ACCOUNTING-REGISTER
+  2 ACCTTX
+    3 ID-NUMBER (N6)
+    3 TRANSACTION-DATN (P9)
+    3 TRANSACTION-TIMN (P7)
+    3 TXN-CODE (A4)
+    3 SEQUENCE-NUM (N1)
+    3 NAME (A25)
+    3 TXN-ACCT-NUMBER (N3)
+    3 ACCT-DATE (N8)
+    3 DATE-LAST-ACCT-UPDATE (N8)
+    3 DEBIT-AMOUNT (P7.2)
+    3 CREDIT-AMOUNT (P7.2)
+    3 DESCRIPTION (A20)
+    3 MESSAGE-CODE (A1)
+    3 AALP-FLAG (A1)
+    3 CLERK-ID (A3)
+    3 TERMINAL-ID (A8)
+  2 POLICY-NUMBER  (a16)
+  2 CASH-CODE (A1)
+  2 PROCESS-IND (A1)
+  2 USER-COMPANY (A1)
+  2 month-end
+  2 c*sungard-info
+  2 SUNGARD-INFO (1:15)
+    3 SG-CATEGORY-1 (A2)
+    3 SG-CATEGORY-2 (A2)
+    3 SG-AMOUNT (N6.2)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 INTRO-FLAG
+*
+1 LK-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 INTRO-FLAG
+*
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 NOTE-TEXT    (60)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC  (60)
+      4 NOTE-TEXT-60           (A60)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-FILL1        (A14)
+        5 NOTE-TEXT-ALOT-PAYS-CN (A6)
+        5 NOTE-TEXT-FILL2        (A40)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-FILL3           (A17)
+        5 NOTE-TEXT-ALOT-PAID-BY-CN (A6)
+        5 NOTE-TEXT-FILL4           (A37)
+*
+1 ALOT-REC     (A45)
+1 REDEFINE ALOT-REC
+  2 AL-SSN-A    (A09)
+  2 REDEFINE AL-SSN-A
+    3 AL-SSN     (N09)
+  2 AL-SERV     (A01)
+  2 AL-STATUS   (A01)
+  2 AL-AMOUNT-A (A06)
+  2 REDEFINE AL-AMOUNT-A
+    3 AL-AMOUNT  (N4.2)
+  2 REDEFINE AL-AMOUNT-A
+    3 AL-AMOUNT-X  (A1/6)
+  2 AL-NAME     (A22)
+  2 AL-EFF-YYYYMM (A6)
+*
+local
+1 #SSN            (N9)
+1 #CN             (N6)
+1 #TOTAL          (N8.2)
+1 #hold-total     (N8.2)
+1 #cnt           (n9)
+1 #i2             (i2)
+1 #out-file       (a132)
+1 #tab            (a1) init<h'09'>
+1 #al-amount-a    (a6) 
+*
+end-define
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/AAFMDFAS.TXT' TYPE 'ASCII'
+* define work file 2 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/RESULT.TXT'TYPE 'ASCII'
+*
+read work 1 alot-rec
+  add 1 to #cnt
+  #SSN := VAL(AL-SSN-A)
+
+  reset #hold-total
+  find st-v with st-v.SSN = #ssn
+    if no
+      write 'no status record for' account.id-number
+      escape bottom
+    end-norec
+*
+    IF ST-V.PROCESS-IND = 'C'
+        AND ST-V.INTRO-FLAG NE 'A'
+*      write    'bypassed' id-number process-ind intro-flag al-amount
+      ESCAPE TOP
+    END-IF
+*
+    #CN := ST-V.ID-NUMBER
+    PERFORM FIND-TRANSACTION-TOTAL
+    #HOLD-TOTAL := #TOTAL
+
+    compress #ssn #tab
+      AL-AMOUNT-A #tab
+      #cn #tab
+      #total #tab
+        into #out-file leaving no
+    write work 2 #out-file
+*
+    FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+      FOR #I2 1 TO 60
+        IF NT-V.NOTE-TEXT (#I2) = ' '
+          ESCAPE BOTTOM
+        END-IF
+*
+        IF NT-V.NOTE-TEXT (#I2) = MASK ('*#ALOT:PAYS')
+          FIND LK-V WITH MEMBER-KEY = NOTE-TEXT-ALOT-PAYS-CN (#I2)
+            #CN := LK-V.ID-NUMBER
+            PERFORM FIND-TRANSACTION-TOTAL
+            ADD #TOTAL TO #HOLD-TOTAL
+
+            compress #ssn #tab
+              #AL-AMOUNT-A #tab
+              #cn #tab
+              #total #tab
+              #hold-total #tab into #out-file leaving no
+            write work 2 #out-file
+
+          END-FIND
+        END-IF
+      END-FOR
+    END-FIND
+  end-find
+*
+
+  if AL-amount ne #hold-total
+    display  #ssn AL-AMOUNT-A #hold-total
+  end-if
+*
+  at end of data
+    write 'rec read' #cnt
+  end-enddata
+end-work
+*******************
+define subroutine FIND-TRANSACTION-TOTAL
+*******************
+reset #total
+find  account with account.id-number = #cn and
+    account.transaction-datn = 20140701
+  if account.cash-code = 'G' and account.month-end = 'Y'
+    add account.credit-amount to #total
+    subtract account.debit-amount from #total
+  end-if
+end-find
+end-subroutine
+end

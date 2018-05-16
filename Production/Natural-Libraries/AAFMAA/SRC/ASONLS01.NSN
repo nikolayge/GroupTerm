@@ -1,0 +1,192 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram ASONLS01  Joint and Survivor Annuity Option
+/**
+/** :author nguentchev
+/*
+* The Last Survivor annuity only applies as a settlement option
+* on the Annuity Life Product.
+* With a Joint and Survivor annuity, there are often options so
+* that the payment while both are alive is not necessarily the
+* same as the payment when only one is alive.
+* We created the spreadsheet to have those options although
+* it is AAFMAA's intent to only offer the 100% option.
+* That option means that the payment is the same whether
+* there is one annuitant alive or they are both alive
+* (i.e., no change to the payment on the first death.)
+* The deduct is a factor we need in the annuity calculation.
+* That factor is based on whether the continued payment to
+* the survivor is 100%, 75%, etc.
+* For the 100% option, the deduct factor is 100%.
+* You do not need to worry about the other options or deduct factors;
+* they are not in scope for this project.
+*
+* Parameters and tables for calculations
+*
+* %SurvivorOption = 100%
+* %DeductOption = 100%
+* APR = 4.00%
+* Annuity-Survivor-M ( Age ) Table
+* Annuity-Survivor-F ( Age ) Table
+* G = 1 - Annuity-Survivor-M ( Age )/1000
+* H = 1 - Annuity-Survivor-F ( Age )/1000
+* F(0)=10000000
+* F(N+1) = F(N)*G(N)*H(N)
+* J(116) = 0
+* J(N) = I(N) + J(N+1)
+* I = F / (1+APR)^ Age
+* L = (J/I - 13/24) * 12
+* MaleNx (Age)   Table
+* MaleDx (Age)   Table
+* FemaleNx (Age) Table
+* FemaleDx (Age) Table
+* Male_ax = ( MaleNx ( Age ) / MaleDx (Age) - 13/24 ) * 12
+* Female_ax = ( FemaleNx (Age) / FemaleDx (Age) - 13/24 ) * 12
+* S = M * %SurvivorOption + N * %SurvivorOption - L * %DeductOption
+*
+* Joint_Survivor: This tab computes the annuity factor for a joint life
+* and survivor annuity.  There are four options available although we have
+* only discussed the Joint & 100% Survivor option so far.
+* Also, it currently assumes one male and one female annuitant.
+* We will be updating the spreadsheet to account for same gender situations.
+* The annuity factor can be found in cell O12 (highlighted).
+* The life income annuity payment would equal the deposit amount (death benefit)
+* divided by the annuity factor.
+* Life income annuity = Death benefit / S ( annuity factor )
+*
+* Member insured is male age 67 with a young female spouse of 35.
+* They invest $258,314 into an AnnuityLife policy, electing to immediately annuitize under
+* the Joint and Survivor option.
+* Using the settlement option calculator, the annuity payment would be $1,000/month or $12,000/year.
+* To determine how much of each payment is not taxable, we need to find the intersection of ages 67 and 35
+* in the IRS tax table VI.  The intersection returns a multiplier of 47.6.
+* With a multiplier of 47.6, the expected return equals 47.6 * $12,000 = $571,200
+* Now, you compute the portion of each payment that is excludable from taxation by taking the ratio
+* of the investment in the contract to the expected return:  $258,314 / $571,200 = 45.223%
+
+DEFINE DATA
+PARAMETER
+1 Annuity           (N7.2) /* Amt to annuitize
+1 Gender            (A1/2)
+1 Age               (N4/2)
+1 Annuity-amount    (N7.2)
+1 Annuity-factor    (N4.5)
+1 Expectancy-amount (N7.2)
+1 Tax-Percent       (N2.7)
+1 Tax-Monthly       (N7.2)
+1 Tax-Amount        (N7.2)
+LOCAL
+1 #SurvivorOption  (N3.4)  INIT <1.0>
+1 #DeductOption    (N3.4)  INIT <1.0>
+1 #APR             (N3.4)  INIT <0.04>
+*
+1 Monthly-axy      (N7.5)
+1 Lx               (N8.7/0:115)
+1 Nxy              (N9.7/0:115)
+1 Dxy              (N8.7/0:115)
+1 One-Qx1          (N1.6/0:115)
+1 One-Qx2          (N1.6/0:115)
+1 #WORK            (N4.7)
+1 #AGE             (N4)
+1 #GENDER          (A1)
+1 J                (I4)
+1 K                (I4)
+1 #LINE            (A) DYNAMIC
+1 #A15             (A15)
+END-DEFINE
+*
+DEFINE WORK FILE 2 '/usr/SAG/tmp/LastSurvivor.txt' TYPE 'ASCII-COMPRESSED'
+*
+#AGE := Age (1)
+#GENDER := Gender (1)
+PERFORM BUILD-1-QX1
+#AGE := Age (2)
+#GENDER := Gender (2)
+PERFORM BUILD-1-QX2
+*                   Biuld lx Table
+Lx (0) := 10000000
+RESET K
+FOR J 0 114
+  ADD 1 TO K
+  COMPUTE ROUNDED Lx (K) = Lx (J) * One-Qx1 (J) * One-Qx2 (J)
+END-FOR
+PERFORM EXPORT-LX
+*                   Build Dxy Table
+Dxy (0) := Lx (0)
+#WORK := 1.04
+FOR K 1 115
+  COMPUTE ROUNDED Dxy (K) = Lx (K) / #WORK
+  COMPUTE ROUNDED #WORK = #WORK * 1.04
+END-FOR
+PERFORM EXPORT-DXY
+*                   Build Nxy Table
+Nxy (115) := Dxy (115)
+FOR J 114 0 STEP -1
+  Nxy (J) := Nxy (J + 1) + Dxy (J)
+END-FOR
+PERFORM EXPORT-NXY
+*
+COMPUTE ROUNDED Monthly-axy := ( Nxy (0) / Dxy (0) - 0.5416667) * 12
+COMPUTE ROUNDED Annuity-factor =
+  Annuitant_AX (< Age (1), Gender (1) >) * #SurvivorOption
+  + Annuitant_AX (< Age (2), Gender (2) >) * #SurvivorOption
+  - Monthly-axy * #DeductOption
+COMPUTE ROUNDED Annuity-amount = Annuity / Annuity-factor
+*
+COMPUTE ROUNDED Expectancy-amount := Annuity-amount * 12 * LIFE-EXPECTANCY-TVI (< Age (1), Age (2) >)
+COMPUTE ROUNDED Tax-Percent := 1.00 - Annuity / Expectancy-amount
+COMPUTE ROUNDED Tax-Monthly := Annuity-amount * Tax-Percent
+*
+DEFINE BUILD-1-QX1
+/*     ===========
+FOR J 0 115
+  IF #AGE <= 115
+    COMPUTE ROUNDED One-Qx1 (J) = 1 - Annuity-Survivor (< #AGE, #GENDER>) / 1000
+    ADD 1 TO #AGE
+    MOVE EDITED One-Qx1 (J) (EM=9(8).9(6)) TO #A15; WRITE WORK 2 #A15
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+DEFINE BUILD-1-QX2
+/*     ===========
+FOR J 0 115
+  IF #AGE <= 115
+    COMPUTE ROUNDED One-Qx2 (J) = 1 - Annuity-Survivor (< #AGE, #GENDER >) / 1000
+    ADD 1 TO #AGE
+    MOVE EDITED One-Qx2 (J) (EM=9(8).9(6)) TO #A15; WRITE WORK 2 #A15
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+DEFINE EXPORT-LX
+#A15 := 'Lx Table'
+WRITE WORK 2 #A15
+FOR J 0 115
+  MOVE EDITED Lx (J) (EM=9(8).9(6)) TO #A15
+  WRITE WORK 2 #A15
+END-FOR
+END-SUBROUTINE
+*
+DEFINE EXPORT-DXY
+#A15 := 'Dxy Table'
+WRITE WORK 2 #A15
+FOR J 0 115
+  MOVE EDITED Dxy (J) (EM=9(8).9(6)) TO #A15
+  WRITE WORK 2 #A15
+END-FOR
+END-SUBROUTINE
+*
+DEFINE EXPORT-NXY
+#A15 := 'Nxy Table'
+WRITE WORK 2 #A15
+FOR J 0 115
+  MOVE EDITED Nxy (J) (EM=9(8).9(6)) TO #A15
+  WRITE WORK 2 #A15
+END-FOR
+END-SUBROUTINE
+*
+END

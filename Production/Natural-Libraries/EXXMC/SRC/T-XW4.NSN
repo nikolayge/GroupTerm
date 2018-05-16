@@ -1,0 +1,116 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* T-XW4 Interface to schema subprogram T-W40A
+* 01-04-2016 BZ Ver 2.0 1/30/2018 
+DEFINE DATA
+ PARAMETER
+1 r_ID           (A) Dynamic
+1 r_IN           (A) Dynamic
+1 r_OUT          (A) Dynamic       
+*
+LOCAL
+1 p_AT-W4
+  2 p_Mode       (A2) 
+  2 p_From       (N8)
+  2 p_To         (N8)
+  2 p_TEXT       (A/*) DYNAMIC
+*
+1 v_A200         (A200)
+1 #x             (N3) 
+1 #i             (N4)
+1 mode           (A2/7)  INIT <'W1','W2','W3','W4','W5','WR','WU'>
+*
+1 v_A12          (A12)
+1 v_A_1          (A) DYNAMIC
+1 v_A_2          (A) DYNAMIC
+1 v_A8           (A8)
+1 REDEFINE v_A8
+  2 v_YYYY       (A4)
+  2 v_MM         (A2)
+  2 v_DD         (A2)
+1 REDEFINE v_A8
+  2 v_N8         (N8)
+1 #d             (D) 
+************
+1 f_Rep-N        (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/@@W.TXT">
+1 f_Rep-Summ     (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/W_Summary.TXT">
+1  v_PN          (I1)  INIT  <2>
+1  v_RC          (N3)
+************  
+1 ftp_Parm_N     (A) DYNAMIC INIT<'WORK, @@W.TXT, FTP/Applications/W4,,  -e '>    
+1 ftp_Parm_Summ  (A) DYNAMIC INIT<'WORK, W_Summary.TXT, FTP/Applications/W4,,  -e '> 
+1 ftp_Msg        (A) DYNAMIC
+1 ftp_RC         (N4)
+1 v_Line         (A80)
+************
+1 nl             (A5)  INIT <'<br/>'>
+END-DEFINE
+ 
+ SEPARATE r_IN INTO v_A_1 v_A_2 WITH DELIMITER ';'
+ MOVE EDITED v_A_1 TO #d (EM=MM/DD/YYYY)
+ MOVE EDITED #d(EM=YYYYMMDD) TO v_A8
+ p_From := val(v_A8)
+
+ MOVE EDITED v_A_2 TO #d (EM=MM/DD/YYYY)
+ MOVE EDITED #d(EM=YYYYMMDD) TO v_A8
+ p_To := val(v_A8)
+
+ v_PN := 2    v_RC := PRT_FN_PUT(<v_PN, f_Rep-Summ>)
+ p_Mode := '**'
+ CALLNAT 'T-W4A' p_AT-W4
+ CLOSE PRINTER(2)
+ 
+  IF *OCCURRENCE(p_TEXT)<> 0
+     #x := *UBOUND(p_TEXT(*))
+     IF F-IS-DEV(<>) 
+        COMPRESS  '  Dev:' GET_DBN(<>) INTO v_A12
+     ELSE 
+        v_A12 := '  Production'
+     END-IF
+     COMPRESS FULL '<h2>' '<pre>' ' Withdraw report  '  v_A_1 '-' v_A_2 '  ' v_A12 '</h2>'  INTO  r_OUT
+     FOR #i = 1 TO #x
+       COMPRESS r_OUT nl p_TEXT(#i) INTO r_OUT
+     END-FOR
+     DEFINE WORK FILE 2 f_Rep-Summ
+     READ WORK 2 v_Line
+       EXAMINE v_Line FOR H'09' REPLACE ':'
+       COMPRESS r_OUT v_Line nl INTO r_OUT
+     END-WORK
+     COMPRESS r_OUT nl nl INTO  r_OUT
+  
+     FOR #i = 1 TO 7
+       v_Line := f_Rep-N
+       v_A_2 := ftp_Parm_N
+       EXAMINE v_Line FOR '@@W' REPLACE mode(#i)
+       EXAMINE v_A_2 FOR '@@W' REPLACE mode(#i)
+       v_PN := 2    v_RC := PRT_FN_PUT(<v_PN, v_Line>)
+       p_Mode := mode(#i)
+       CALLNAT 'T-W4A' p_AT-W4 
+       CLOSE PRINTER(2)
+       CALLNAT 'FTP-PS' v_A_2 ftp_Msg ftp_RC
+       IF ftp_RC = 0 
+            COMPRESS r_OUT 'ftp:' p_Mode  INTO  r_OUT
+       ELSE 
+          IF ftp_Msg <> SCAN ('3009')
+             COMPRESS r_OUT 'ftp Error:' p_Mode ':' ftp_Msg INTO  r_OUT
+          END-IF    
+       END-IF
+     END-FOR       
+
+     ftp_Msg := ' '  ftp_RC := 0
+     CALLNAT 'FTP-PS' ftp_Parm_Summ ftp_Msg ftp_RC    
+     IF ftp_RC = 0 
+           COMPRESS r_OUT nl 'ftp: Summary' INTO  r_OUT
+     ELSE 
+           COMPRESS r_OUT nl 'ftp Error: Summary' ':' ftp_Msg INTO  r_OUT  
+     END-IF
+
+     COMPRESS r_OUT '</pre>'  INTO  r_OUT
+  ELSE 
+    COMPRESS 'Result is blank for date range' p_From '-' p_To INTO r_OUT
+  END-IF  
+  
+END

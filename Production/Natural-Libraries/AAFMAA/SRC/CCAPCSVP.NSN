@@ -1,0 +1,163 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: CCAPCSVP  ** calc CAP cash value
+* CALLED IN C2600PST/C2V10PVP/C2060SNC/G3500PAD
+*
+DEFINE DATA
+PARAMETER
+*
+1 #ID-NUMBER (N6)
+1 #ISS-DATE (N8)  /* date pol was issued
+1 REDEFINE #ISS-DATE
+ 2 #ISS-DT-YYYY (N4)
+ 2 #ISS-DT-MM   (N2)
+ 2 #ISS-DT-DD   (N2)
+1 #LOAN-END-DATE (N8)  /* date loan was paid-off
+1 REDEFINE #LOAN-END-DATE
+ 2 #LOAN-END-DT-YYYY (N4)
+ 2 #LOAN-END-DT-MM   (N2)
+ 2 #LOAN-END-DT-DD   (N2)
+1 #CALC-DATE (N8)   /* date to use for csv calc
+1 #CONV-ACV  (P7.2) /* acv at point of cap loan (0 if a new policy)
+1 #CSV       (P7.2)   /* current csv
+1 #CAP-CSV   (P7.2)   /* newly calculated cap csv
+1 #CAP-LOAN-MONS   (N3) /* mons between iss-dt & today
+1 #CAP-CSV-MONS    (N3) /* mons between loan-payoff & today
+1 #CAP-REMAIN-MONS (N3) /* mons between today & end of 10 yr period
+*
+LOCAL
+*
+1 #CURR-CALC-MONS  (N8) /* # mons from issue to curr date
+1 #CURR-CSV-MONS   (N8) /* # mons from loan-payoff to curr-mon
+1 #TOT-CSV-MONS    (N8) /* # mons from loan-payoff to 10 years
+*
+1 #WORK-CALC-DATE (N8)
+1 REDEFINE #WORK-CALC-DATE
+ 2 #WCD-YYYY   (N4)
+ 2 #WCD-MM     (N2)
+ 2 #WCD-DD     (N2)
+*
+END-DEFINE
+* * * * * * * * * * * *
+*
+*   DISPLAY #ID-NUMBER
+*     #ISS-DATE
+*     #LOAN-END-DATE
+*     #CALC-DATE
+*     #CONV-ACV
+*     #CSV
+*
+*  CAP RETARDED csv growth wes ended on 4/16/2004  (RLB)
+MOVE #CSV TO #CAP-CSV  /* added 4/16/2004 as per RLB
+ESCAPE ROUTINE
+*
+RESET #CAP-LOAN-MONS #CAP-CSV-MONS #CAP-REMAIN-MONS
+IF #CSV LT 0    /* negative min csv or csv should not chg
+  MOVE #CSV TO #CAP-CSV
+* WRITE 'neg csv' #CSV #CAP-CSV
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE #CALC-DATE TO #WORK-CALC-DATE
+*
+IF #WCD-MM LT #ISS-DT-MM
+  ADD 12 TO #WCD-MM
+  SUBTRACT 1 FROM #WCD-YYYY
+END-IF
+*
+SUBTRACT #ISS-DT-YYYY FROM #WCD-YYYY
+SUBTRACT #ISS-DT-MM   FROM #WCD-MM
+COMPUTE #CURR-CALC-MONS = (#WCD-YYYY * 12) +  #WCD-MM
+*
+IF #CURR-CALC-MONS GT 999
+  MOVE 999 TO #CAP-LOAN-MONS
+ELSE
+  IF #CURR-CALC-MONS LT 0
+*   WRITE #CURR-CALC-MONS #CAP-LOAN-MONS
+    RESET #CAP-LOAN-MONS
+  ELSE
+*   WRITE #CURR-CALC-MONS #CAP-LOAN-MONS
+    MOVE #CURR-CALC-MONS TO #CAP-LOAN-MONS /* <<<<<<<<<<<<<<<<
+  END-IF
+END-IF
+*
+IF #LOAN-END-DATE NE 0
+  MOVE #CALC-DATE TO #WORK-CALC-DATE
+*
+  IF #WCD-MM LT #LOAN-END-DT-MM
+    ADD 12 TO #WCD-MM
+    SUBTRACT 1 FROM #WCD-YYYY
+  END-IF
+*
+  SUBTRACT #LOAN-END-DT-YYYY FROM #WCD-YYYY
+  SUBTRACT #LOAN-END-DT-MM   FROM #WCD-MM
+  COMPUTE #CURR-CSV-MONS = (#WCD-YYYY * 12) +  #WCD-MM
+*
+  IF  #CURR-CSV-MONS GT 999
+    MOVE 999 TO #CAP-CSV-MONS
+  ELSE
+    MOVE #CURR-CSV-MONS TO #CAP-CSV-MONS   /*<<<<<<<<<<<<<<<<<
+  END-IF
+*
+  COMPUTE #WORK-CALC-DATE = #ISS-DATE + 100000
+*
+  IF #WCD-MM LT #LOAN-END-DT-MM
+    ADD 12 TO #WCD-MM
+    SUBTRACT 1 FROM #WCD-YYYY
+  END-IF
+*
+  SUBTRACT #LOAN-END-DT-YYYY FROM #WCD-YYYY
+  SUBTRACT #LOAN-END-DT-MM   FROM #WCD-MM
+  COMPUTE #TOT-CSV-MONS = (#WCD-YYYY * 12) +  #WCD-MM
+*
+  IF #TOT-CSV-MONS GT 999
+    MOVE 999 TO #CAP-REMAIN-MONS
+  ELSE
+    MOVE #TOT-CSV-MONS TO #CAP-REMAIN-MONS  /* <<<<<<<<<<<<<<<<
+  END-IF
+END-IF
+*
+IF #LOAN-END-DATE = 0  /* loan not yet paid off
+  IF  (#CURR-CALC-MONS LE 30)  /* in 1st 2 1/2 years
+   OR ((#CALC-DATE = *DATN) AND (#LOAN-END-DATE = 0)) /* todays calc
+    MOVE #CONV-ACV TO #CAP-CSV
+  ELSE /* future dated cases where loan is not paid off (very seldom)
+    IF #CURR-CALC-MONS GE 120   /* past 10 years
+      MOVE #CSV TO #CAP-CSV
+    ELSE
+      COMPUTE ROUNDED #CAP-CSV =
+         (((#CSV - #CONV-ACV) * (#CURR-CALC-MONS - 30)) / 90)
+          + #CONV-ACV
+    END-IF
+  END-IF
+ELSE                   /* loan is paid off
+  IF #CURR-CSV-MONS LT 0  /* curr date is before loan payoff date
+    MOVE #CONV-ACV TO #CAP-CSV
+  ELSE
+    IF #CURR-CALC-MONS GE 120   /* past 10 years
+      MOVE #CSV TO #CAP-CSV
+    ELSE
+      COMPUTE ROUNDED #CAP-CSV =
+         (((#CSV - #CONV-ACV) * #CURR-CSV-MONS) / #TOT-CSV-MONS)
+         + #CONV-ACV
+    END-IF
+  END-IF
+END-IF
+*
+* IF #ID-NUMBER = 100608
+*   DISPLAY
+*    'ID/NUM' #ID-NUMBER
+*      'CONV/ACV' #CONV-ACV
+*       #CSV
+*    'ISS/DATE' #ISS-DATE
+*      'LOAN/END/DATE' #LOAN-END-DATE
+*    'CALC/DATE' #CALC-DATE
+*      'CURR/CALC/MONS' #CAP-LOAN-MONS
+*      'CURR/CSV/MONS' #CAP-CSV-MONS
+*      'TOT/CSV/MONS' #CAP-REMAIN-MONS
+*      'CAP/CSV' #CAP-CSV
+* END-IF
+END

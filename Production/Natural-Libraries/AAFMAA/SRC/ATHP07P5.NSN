@@ -1,0 +1,168 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* <Natural Source Header
+* PROGRAM-ID: ATHP07P5    - UPDATE SUSPEND-DATE AND CREATE NOTES FOR
+*                         - MONTH-END-NOTICES
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  02262005 DW1  Stop creating note(s) for Overloaned
+* SAG  11292005 RH1  SS - Modified the custom coded ON ERROR stmt &    *
+*                    replaced it with copycode GABNDCX3                *
+* DRW  07092007 DW2  Remove write
+*******************************************
+*
+*  THIS SUB-PROGRAM RUNS IN BATCH MODE ONLY
+*
+DEFINE DATA
+PARAMETER
+1 #RE-CN-NUMBER           (A6)
+1 REDEFINE #RE-CN-NUMBER
+ 2 #RE-CN-NUMBER-N        (N6)
+1 #RE-OLD-SECT            (A1)
+1 #RE-SUBSECTION          (A1)
+1 #SUSPEND-DATE           (N8)
+1 #ISS-DT                 (N8)
+*
+LOCAL  USING GONERLXX                       /* SAG RH1 11292005 SS
+LOCAL
+*
+1 #ISS-DT-DISP   (A10)
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A         (A4)
+ 2 #MM-A           (A2)
+ 2 #DD-A           (A2)
+*
+1 #CLERK    (A3)   INIT <'EDS'>
+1 #INT      (I2)
+1 #NOTE-TEXT (A60/10)
+1 #I1              (I2)
+1 #I2              (I2)
+1 #LST-AST-LINE    (P2)
+1 #DISP-DATE       (A10)
+1 #ABEND-CODE      (I4)
+1 #WRITE-NOTE-RECORD  (L)       /* TRUE IF NOTE RECORD TO BE WRITTEN
+1 #NOTE-REC-NOT-FOUND (L) INIT <TRUE>  /* TRUE IF NO NOTE RECORD YET
+1 #NOTE-ISN           (P8)
+1 #ST-ISN             (P8)
+1 #BYPASS-NOTICE      (L)
+1 #UPDATE-SUSPEND-DATE (L)
+*
+* 1 ST-V VIEW OF A-STATUS
+*  2 ID-NUMBER             (N6)
+*  2 NOTE-REC-IND          (A1)
+*
+1 NT-V VIEW OF A-NOTES
+ 2 ID-NUMBER             (N6)
+ 2 C*NOTE-TABLE
+ 2 NOTE-TABLE            (60)
+  3 NOTE-DATE         (N8)
+  3 NOTE-CLERK-ID     (A3)
+  3 NOTE-LINE-NUM     (P1)
+  3 NOTE-TEXT         (A60)
+  3 REDEFINE NOTE-TEXT
+   4 NOTE-TEXT-BEG      (A12)
+   4 NOTE-TEXT-CURR-OVR (A20)
+   4 NOTE-TEXT-END      (A28)
+*
+1 MBRSHIP-MTD-DET-V VIEW OF A-MBRSHIP-MTD-DETAIL
+ 2 ENTRY-DATE       (N8)
+ 2 REC-ISN          (N8)
+ 2 CODE             (A1)
+ 2 ISSUE-DATE       (N8)
+ 2 NUM-MBRSHIPS
+ 2 USER             (A3)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+ON ERROR
+*    WRITE   / '*E R R O R - N R    ' *ERROR-NR      /* SAG RH1 11292005 SS - BEGIN
+*             / '*E R R O R - L I N E' *ERROR-LINE
+*     WRITE   / ' FILLER'
+*     WRITE   / ' FILLER'
+*     WRITE   / ' FILLER'
+*     MOVE +4095 TO #ABEND-CODE
+*     CALL 'ABEND' USING #ABEND-CODE  /* USER 4095
+INCLUDE GABNDCX3
+STOP                                                 /* SAG RH1 11292005 SS - END
+END-ERROR
+*
+MOVE #ISS-DT TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #ISS-DT-DISP WITH '/'
+*
+MOVE TRUE TO #UPDATE-SUSPEND-DATE
+MOVE #SUSPEND-DATE TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #DISP-DATE WITH '/' /* MM/DD/YYyy
+*
+IF #RE-OLD-SECT     = 'D'
+  MOVE 'FPF UNPAID - LAPSE OR APL' TO #NOTE-TEXT (1)
+ELSE
+  IF #RE-OLD-SECT     = 'E'
+    MOVE 'PREMIUM OVERDUE - LAPSE' TO #NOTE-TEXT (1)
+  ELSE
+    IF #RE-OLD-SECT     = 'F'
+      IF #RE-SUBSECTION = '3'  /* CAP MEMBER
+        MOVE FALSE TO #UPDATE-SUSPEND-DATE
+        MOVE 'ALLOTMENT STOPPED - C.A.P. Member' TO #NOTE-TEXT (1)
+      ELSE
+        MOVE 'ALLOTMENT STOPPED - GIVE APL' TO #NOTE-TEXT (1)
+      END-IF
+    ELSE
+      IF #RE-OLD-SECT     = 'K'
+        IF #RE-SUBSECTION = '5'
+*    below removed 11/98 as per elb
+*         FIND (1) NT-V WITH ID-NUMBER = #RE-CN-NUMBER-N
+*           IF NO RECORDS FOUND
+*             ESCAPE BOTTOM
+*           END-NOREC
+*
+*           FOR #I1 1 TO 60
+*             IF (NOTE-TEXT (#I1) = MASK ('CURRENTLY OVERLOANED'))
+*              OR (NOTE-TEXT-CURR-OVR (#I1) = 'CURRENTLY OVERLOANED')
+*               MOVE TRUE TO #BYPASS-NOTICE
+*               ESCAPE BOTTOM
+*             END-IF
+*           END-FOR
+*         END-FIND
+*
+*         IF #BYPASS-NOTICE
+*           MOVE 99999999 TO #SUSPEND-DATE
+*           ESCAPE ROUTINE
+*         END-IF
+*
+          ESCAPE ROUTINE                        /* DW1
+*         COMPRESS 'Currently overloaned - LAPSE'  /* DW1
+*              'on POL ISS' #ISS-DT-DISP  INTO #NOTE-TEXT (1)
+        ELSE
+          MOVE FALSE TO #UPDATE-SUSPEND-DATE
+          COMPRESS 'Est future overloan on' #DISP-DATE
+              'on POL ISS' #ISS-DT-DISP      INTO #NOTE-TEXT (1)
+        END-IF
+*       WRITE #RE-CN-NUMBER #NOTE-TEXT (1)   /* DW1   DW2
+      ELSE
+        IF #RE-OLD-SECT     = 'N'
+          MOVE FALSE TO #UPDATE-SUSPEND-DATE
+          MOVE 'ALLOT START NOTICE SENT - CHECK IF PMT MADE'
+                                                     TO #NOTE-TEXT (1)
+        ELSE
+          MOVE 'UNKNOWN CAUSE OF SUSPEND-DATE UPDATE - CALL EDS'
+                                                    TO #NOTE-TEXT (1)
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+IF #UPDATE-SUSPEND-DATE
+  COMPRESS '*@' #DISP-DATE #NOTE-TEXT (1) INTO #NOTE-TEXT (1)
+END-IF
+*
+MOVE 1 TO #INT
+CALLNAT 'E4205SDM' #RE-CN-NUMBER-N #INT #CLERK #NOTE-TEXT (1:10)
+*
+END TRANSACTION
+*
+END

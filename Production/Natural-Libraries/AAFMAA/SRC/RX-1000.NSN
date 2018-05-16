@@ -1,0 +1,240 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* RX-10 RX Communications - Submit Order
+* bz Aug 29, 2017. Ver-2.2(11/28/2017)
+* --------------------------------------
+* f_Template: Submit XML Template
+* f_Order:    SOAP Order xml
+* f_Result:   HTTP request response
+* -- Submit Order
+*  Compile HTTP request
+*  Call shell
+*  Save results in DB file
+* -----------------------------------
+DEFINE DATA
+PARAMETER USING RX000PDA
+LOCAL USING ADDA0001
+LOCAL USING RX000LDA
+LOCAL
+* -----------------------------------
+1 AT-V VIEW of A-APPL-TRACKING
+  2 CONTACT-ID              (N8)
+* -----------------------------------
+1 CNT-V VIEW OF A-CONTACTS
+  2 FULL-NAME
+    3 FIRST-NAME            (A25)
+    3 MIDDLE-NAME           (A25)
+    3 LAST-NAME             (A25)
+  2 SSN                    (N9)  (EM=999-99-9999)
+  2 DATE-OF-BIRTH          (N8)  (EM=9999-99-99)
+  2 GENDER-CD              (A1)
+* ------------------------------------
+1 f_Template            (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/Submit.xml'>
+1 f_Order               (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/ORDER/@@AT_Order.xml'>
+1 f_Result              (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/ORDER/@@AT_Result.xml'>
+* -----------------
+1 l_Test                (L)
+1 v_A                   (A) DYNAMIC
+1 Test_SSN              (N9)
+* -----------------
+1 CMD                    (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/RX_HTTP @@FN @@ENV S'>
+1 FNC                    (A) DYNAMIC
+1 RESP                   (A) DYNAMIC
+* -----------------
+1 XML                    (A) DYNAMIC
+1 #b                     (I2)
+1 #e                     (I2)
+1 #l                     (I4)
+1 pars_Tracking          (A)  DYNAMIC
+1 pars_Result            (A1)
+1 pars_Comments          (A)  DYNAMIC
+1 L@                     (L)
+1 http_cd                (A3)
+END-DEFINE
+
+ON ERROR
+  PRINT *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /   /* --db
+    '='#b '='#e '='#l / '-'(70)                             /* --db
+
+  COMPRESS *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR INTO p_Message
+  p_RC := 9
+  ESCAPE ROUTINE
+END-ERROR
+
+IF p_Mode = 'T' l_Test := TRUE  END-IF
+
+PERFORM sbr_Get_Data
+IF p_RC <> 0
+  p_RC := 1
+  ESCAPE ROUTINE
+END-IF
+
+IF l_Test
+  PERFORM sbr_Test
+  IF *PF-KEY = 'PF3' OR Test_SSN = 0
+    p_Message := 'Cancel'
+    p_RC := 10
+    ESCAPE ROUTINE
+  END-IF
+  IF F-IS-DEV(<>)                           /* Server determined URL     
+     EXAMINE CMD FOR '@@ENV' REPLACE 'Test'
+  ELSE
+     EXAMINE CMD FOR '@@ENV' REPLACE 'Prod'
+  END-IF  
+  COMPRESS p_AT '-T' INTO v_A LEAVING NO SPACE
+ELSE
+  EXAMINE CMD FOR '@@ENV' REPLACE 'Prod'
+  v_A := p_AT
+END-IF
+EXAMINE f_Order FOR '@@AT' REPLACE v_A
+EXAMINE f_Result FOR '@@AT' REPLACE v_A
+EXAMINE CMD FOR '@@FN' REPLACE f_Order
+*  WRITE WORK FILE 2 VARIABLE f_Order H'0A'                    /* --db
+
+PERFORM sbr_Request
+IF p_RC = 0
+  FIND(1) RX-V WITH RX-AT = p_AT
+    RX-TRACK       := pars_Tracking
+    UPDATE
+  END-FIND
+END-IF
+* -------------------------------------------------------------------------------
+DEFINE sbr_Get_Data
+*      ------------
+FIND(1) AT-V WITH ID-NUMBER = p_AT
+  IF NO RECORD FOUND
+    COMPRESS 'AT' p_AT 'not found' INTO p_Message
+    p_RC := 1
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+
+FIND(1) CNT-V WITH CONTACT-ID = AT-V.CONTACT-ID
+  IF NO RECORD FOUND
+    COMPRESS 'Contact' AT-V.CONTACT-ID 'not found' INTO p_Message
+    p_RC := 1
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+RESET #PDA-ADDRESS
+#ADD-TYPE := 'P'
+#ADD-CONTACT-ID := AT-V.CONTACT-ID
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+FN.
+FIND NUMBER RX-V WITH RX-AT = p_AT
+IF *NUMBER(FN.) = 0
+  COMPRESS 'RX record was not created' INTO p_Message
+  p_RC := 1
+END-IF
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Request
+*      -----------
+/* --- Read template ---
+p_RC := 0
+DEFINE WORK FILE 1 f_Template TYPE 'UNFORMATTED'
+READ WORK FILE 1 ONCE XML
+CLOSE WORK FILE 1
+
+/* --- Create Request ---
+MOVE EDITED p_AT(EM=999999) TO v_A
+EXAMINE XML FOR '@@AT' REPLACE v_A
+IF l_Test
+  MOVE EDITED Test_SSN(EM=999999999) TO v_A
+ELSE
+  MOVE EDITED CNT-V.SSN(EM=999999999) TO v_A
+END-IF
+IF  v_A = MASK('000')
+  EXAMINE XML FOR '<SSN>@@SSN</SSN>' DELETE
+ELSE
+  EXAMINE XML FOR '@@SSN' REPLACE v_A
+END-IF
+v_A := FIRST-NAME
+EXAMINE XML FOR '@@F-NAME' REPLACE v_A
+v_A := LAST-NAME
+EXAMINE XML FOR '@@L-NAME' REPLACE v_A
+v_A := SUBSTRING(MIDDLE-NAME,1,1)
+EXAMINE XML FOR '@@M-NAME' REPLACE v_A
+EXAMINE XML FOR '@@SEX' REPLACE GENDER-CD
+MOVE EDITED DATE-OF-BIRTH(EM=9999-99-99) TO v_A
+EXAMINE XML FOR '@@DOB' REPLACE v_A
+EXAMINE XML FOR '@@ST' REPLACE #ADD-STATE
+MOVE EDITED #ADD-ZIP5(EM=99999) TO v_A
+EXAMINE XML FOR '@@ZIP' REPLACE v_A
+
+DEFINE WORK FILE 1 f_Order TYPE 'UNFORMATTED'
+L@ := FN_Exist(<f_Order,1>)
+WRITE WORK FILE 1 VARIABLE XML
+CLOSE WORK FILE 1
+
+CALL INTERFACE4 'CMDX' CMD RESP FNC
+IF RET('CMDX') <> 0
+  PRINT 'Error:' CMD RESP                   /* --db
+  p_Message := 'Request Submit Error'
+  p_RC := 3
+  ESCAPE ROUTINE
+ELSE
+  #l := *LENGTH(RESP)
+  #l := #l - 2
+  http_cd := SUBSTRING(RESP,#l,3)
+  IF http_cd <> '200' /* assume --write-out
+    p_Message := 'Vendor Service Error'
+    p_RC := 3
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+EXAMINE RESP FOR '&lt;'  REPLACE '<'
+EXAMINE RESP FOR '&gt;'  REPLACE '>'
+EXAMINE RESP FOR '&amp;' REPLACE '&'
+
+*  WRITE WORK FILE 2 VARIABLE CMD H'0A' RESP  H'0A'    /* Log
+
+DEFINE WORK FILE 1 f_Result TYPE 'UNFORMATTED'
+L@ := FN_Exist(<f_Result,1>)
+WRITE WORK FILE 1 VARIABLE RESP
+CLOSE WORK FILE 1
+
+EXAMINE RESP FOR '<Result>' POSITION #b
+EXAMINE RESP FOR '</Result>' POSITION #e
+#b := #b + 8
+#l := #e - #b
+pars_Result := SUBSTRING(RESP, #b, #l)  /* PRINT '='#l  pars_Result  /* --db
+
+IF pars_Result <> '0'
+  EXAMINE RESP FOR '<TrackingID>'  POSITION #b
+  EXAMINE RESP FOR '</TrackingID>' POSITION #e
+  #b := #b + 12
+  #l := #e - #b
+  pars_Tracking := SUBSTRING(RESP, #b, #l) /* PRINT '='#l  pars_Tracking  /* --db
+ELSE
+  EXAMINE RESP FOR '<Comments>' POSITION #b
+  EXAMINE RESP FOR '</Comments>' POSITION #e
+  IF #b = 0
+    pars_Comments := '-No Comments-'          /* ???
+  ELSE
+    #b := #b + 10
+    #l := #e - #b
+    pars_Comments := SUBSTRING(RESP, #b, #l) /* PRINT '='#l pars_Comments /*
+  END-IF
+  COMPRESS p_Message 'Error-Order.' pars_Comments INTO p_Message
+  p_RC := 11
+END-IF
+* WRITE WORK FILE 2 VARIABLE pars_Tracking H'A0' pars_Comments H'A0'  /* Log
+
+
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Test
+*      -----------
+CALLNAT 'RX-TEST' Test_SSN
+FIRST-NAME    := 'TestF'
+MIDDLE-NAME   := 'M'
+GENDER-CD     := 'M'
+DATE-OF-BIRTH := 20000101
+#ADD-STATE    :=  'VA'
+END-SUBROUTINE
+* -------------------------------------------------------------
+END

@@ -1,0 +1,151 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* WSADDR00 bz 10/10/2017
+* Request data from Addres validation service  
+*
+* better cross platform solution
+*
+DEFINE DATA 
+PARAMETER USING ADVA00WS
+LOCAL
+1 username (A) DYNAMIC INIT<'AAFMAA'>
+1 password (A) DYNAMIC INIT<'Since1879!'>
+
+1 RESP             (A) DYNAMIC
+1 http_RC               (I4)
+*
+1 v_A               (A)  DYNAMIC
+1 nat_Err           (I4)
+1 URL               (A)  DYNAMIC INIT 
+          <'https://www.intelligentsearch.com/CorrectAddressWS/CorrectAddressWebService.asmx/wsCorrectA'>
+1 #i                    (I2)
+1 #b                    (I2)
+1 #e                    (I2)
+1 #l                    (I2)
+1 elm_E (A) DYNAMIC
+1 elm_SK (A) DYNAMIC
+1 elm_L  (N2)
+1 elm  (A/19)  DYNAMIC INIT 
+          <'<StreetNumber>',
+           '<PreDirectional>',
+           '<StreetName>',
+           '<StreetSuffix>',
+           '<PostDirectional>',
+           '<SecondaryDesignation>',
+           '<SecondaryNumber>',
+           '<City>',
+           '<State>',
+           '<ZipAddon>',
+           '<Zip>',
+           '<Addon>',
+           '<RecordType>',
+           '<DeliveryLine1>',
+           '<PMBDesignator>',
+           '<ReturnCodes>',
+           '<ErrorCodes>',
+           '<ErrorDesc>',
+           '<SearchesLeft>'>
+END-DEFINE
+*
+ON ERROR
+*     PRINT *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /                     /* --db
+*     '='#i(EM=z9) elm(#i) '-' elm_E '='#b '='#e                                  /* --db
+    COMPRESS '* Error for:' 'elm:' #i '*'  #b '*'  #e INTO ErrorDesc
+    RETURNCODES := 100
+    ESCAPE ROUTINE
+END-ERROR
+
+ username := 'AAFMAA'
+ password := 'Since1879!'
+ ca_codes := 'Ry'
+ 
+  REQUEST DOCUMENT FROM url
+   WITH 
+     DATA 
+        NAME  'username'         VALUE  username
+        NAME  'password'         VALUE  password
+        NAME  'firmname'         VALUE  ' '
+        NAME  'urbanization'     VALUE  urbanization
+        NAME  'delivery_line_1'  VALUE  delivery_line_1
+        NAME  'delivery_line_2'  VALUE  delivery_line_2
+        NAME  'city_state_zip'   VALUE  city_state_zip
+        NAME  'ca_codes'         VALUE  ca_codes
+        NAME  'ca_filler'        VALUE  ' '
+        NAME  'batchname'        VALUE  ' '
+   RETURN
+     PAGE RESP
+        RESPONSE http_RC
+        GIVING nat_Err
+     IF http_RC <> 200 OR nat_Err = 8304
+      COMPRESS '* CASS verification HTTP-Err:' http_RC 'Nat-Err:' nat_Err INTO ErrorDesc
+      RETURNCODES := 100
+      ESCAPE ROUTINE
+     END-IF 
+
+ IF F-IS-DEV(<>)
+   DEFINE WORK FILE 15 "/usr/SAG/TEMP/wsADDR.log" TYPE 'UNFORMATTED'
+   COMPRESS H'0A' '--' *DAT4U '  ' *TIMX H'0A' INTO v_A
+   WRITE WORK FILE 15 VARIABLE v_A
+   COMPRESS  'ur:' urbanization  ' dl1:'  delivery_line_1  ' dl2:'  delivery_line_2  ' csz:'  city_state_zip  ' cacd:' CA_CODES H'0A' INTO v_A 
+   WRITE WORK FILE 15 VARIABLE v_A
+   WRITE WORK FILE 15 VARIABLE RESP
+   CLOSE WORK FILE 15 
+ END-IF
+
+ EXAMINE RESP FOR '<WsCorrectAddress>'    POSITION #b
+ EXAMINE RESP FOR '</WsCorrectAddress>'   POSITION #e
+ #e := #e + 19
+ #l := #e - #b
+ 
+ RESP := SUBSTRING(RESP, #b, #l)  
+
+ v_A := ' '
+ FOR #i = 1 TO 19
+     elm_L     := *LENGTH(elm(#i))
+     elm_E     := elm(#i)
+     EXAMINE elm_E  FOR '<' REPLACE '</'
+     EXAMINE RESP FOR elm(#i) POSITION #b
+     EXAMINE RESP FOR elm_E   POSITION #e
+     IF ( #b + #e ) = 0         
+          v_A := ' '
+          ESCAPE TOP        /* element not defined or is empty
+     ELSE 
+          IF ( #b * #e ) = 0  
+             ErrorDesc := 'Error in service responce data'
+             RETURNCODES := 100 
+             ESCAPE BOTTOM            /* data or parsing error
+          ELSE
+             #b := #b + elm_L
+             #l := #e - #b
+             v_A := SUBSTRING(RESP, #b, #l)
+          END-IF    
+     END-IF  
+   DECIDE ON FIRST VALUE OF #i
+      VALUE   1  StreetNumber         := v_A 
+      VALUE   2  PreDirectional       := v_A 
+      VALUE   3  StreetName           := v_A 
+      VALUE   4  StreetSuffix         := v_A 
+      VALUE   5  PostDirectional      := v_A 
+      VALUE   6  SecondaryDesignation := v_A
+      VALUE   7  SecondaryNumber      := v_A
+      VALUE   8  City                 := v_A
+      VALUE   9  State                := v_A 
+      VALUE  10  ZipAddon             := v_A 
+      VALUE  11  Zip                  := v_A 
+      VALUE  12  Addon                := v_A 
+      VALUE  13  RecordType           := v_A 
+      VALUE  14  DeliveryLine1        := v_A 
+      VALUE  15  PMBDesignator        := v_A 
+      VALUE  16  ReturnCodes          := v_A  
+      VALUE  17  ErrorCodes           := v_A  
+      VALUE  18  ErrorDesc            := v_A  
+      VALUE  19  SearchesLeft         := val(v_A)
+   NONE IGNORE
+   END-DECIDE  
+ END-FOR
+END
+
+

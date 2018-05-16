@@ -1,0 +1,378 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPRP004M                                              *
+* Copy of GPRP0004 for Member Center transactions ONLY                 *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Create daily reports for financial management         *
+*                1. Nightly peachtree file with credit card AR records *
+*                   sorted by Account number                           *
+*                2. Nightly peachtree file with credit card AR records *
+*                   sorted by CN number                                *
+*                3. Nightly reconcilliation report sorted by           *
+*                   Account number / grouped by Clerk id               *
+*                4. Create an input file for e-mail driver/automated   *
+*                   e-mail processing                                  *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE        TAG     REASON                                    *
+* YAK    11/03/2009  None    Program Written                           *
+* YAK    12/11/2010  YK1     Add report of transactions sorted by clerk*
+*                            Add e-mail file                           *
+* YAK    02/11/2010  YK2     Change logic to extract transactions      *
+*                            with and without "Sungard" break          *
+* YAK    03/08/2010  YK3     Delete output files before processing     *
+*                            Do not create e-mails for credit amounts  *
+* YAK    06/24/2010  YK4     Use member (if available), then insured   *
+*                            email address                             *
+* YAK    08/05/2010  YK5     Correct logic for applying reverse        *
+*                            transactions                              *
+* PAM    12/16/2010  PM6     Adjusted BADJ error                       *
+* YAK    01/20/2011  YK6     Create a copy for Member Center tran only *
+*                            No emails needed - member is getting      *
+*                            confirmation from Member Center directly  *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRL0001       /* Property file
+LOCAL USING OBJLACRG       /* Accounting Register
+*
+LOCAL
+*
+1 #OUTPUT-RECORD
+  2 #ACCOUNT-NUMBER         (A4)
+  2 #ACCOUNT-DESCRIPTION    (A25)
+  2 #AMOUNT                 (N7.2)
+  2 #AMOUNT-DISPLAY         (A11)
+  2 ID-NUMBER               (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A           (A6)
+  2 #NAME                   (A25)
+  2 TXN-CODE                (A4)
+  2 CLERK-ID                (A3)       /* YK1
+  2 #SG-CATEGORY-1          (A2)
+  2 CASH-CODE               (A1)
+  2 MONTH-END               (A1)
+  2 POLICY-NUMBER           (A16)
+*
+1 #PEACHTREE-DYNAMIC-FIELDS
+  2 #PEACHTREE              (A150)
+  2 #PEACH-ACCOUNT-NUMBER   (A9)
+  2 #DESCRIPTION-1          (A25)
+  2 #DESCRIPTION-2          (A25)
+  2 #PEACHTREE-AMOUNT       (A20)
+*
+1 #PEACHTREE-STATIC-FIELDS
+  2 #PEACHTREE-DATE         (A10)
+  2 #PEACHTREE-REC-CNT      (N8)
+*
+1 #DATN                     (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY              (N4)
+  2 #DATN-MM                (A2)
+  2 #DATN-DD                (A2)
+1 #I                        (I2)
+1 #CNT                      (N7)
+1 #CNT-1                    (N7)
+1 #CNT-2                    (N7)
+1 #TXN-CODE                 (A6)
+1 #IGNORE-TRAN              (A4) INIT <'5655'>
+1 #WRITE-OFF-TRAN           (A4) INIT <'5476'>
+1 #NAME-D                   (A)  DYNAMIC
+1 #COMMA                    (A1) INIT <','>
+1 #TAB                      (A1) INIT <H'09'>
+1 #TOTAL-AMOUNT             (N9.2)
+1 #GRAND-TOTAL-AMOUNT       (N9.2)
+1 #USER-TOTAL               (N5.2/*)                                         /* YK1
+1 #TRAN-USER-TOTAL          (A/*) DYNAMIC                                    /* YK1
+1 #WORK-AMOUNT              (A) DYNAMIC                                      /* YK1
+1 #REPORT-OUTPUT            (A150)                                           /* YK1
+1 #CLERK-ID                 (A3)                                             /* YK1
+1 #CLERK-SEQ                (N2)                                             /* YK1
+1 #WORK-FIELD               (A) DYNAMIC                                      /* YK1
+1 #EMPTY-FILE-CMD           (A) DYNAMIC INIT <'>'>                           /* YK3
+1 #DAILY-CREDIT-CARD-TRAN   (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/MC_DailyCreditCardTran.txt'>
+1 #PEACHTREE-DAILY-CC-TRAN-BY-ACCOUNT (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/MC_CCTranByAccount.txt'>
+1 #PEACHTREE-DAILY-CC-TRAN-BY-TRANSACTION (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/MC_CCTranByTrans.txt'>
+1 #REC-DAILY-CC-TRAN-BY-CLERK (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/MC_CCRecTranByClerk.txt'>     /* YK1
+1 #TRAN-USER-ARRAY           (A3/*)                                          /* YK1
+*
+END-DEFINE
+*
+WRITE 'process started'
+DEFINE WORK FILE 1 #DAILY-CREDIT-CARD-TRAN TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 #PEACHTREE-DAILY-CC-TRAN-BY-ACCOUNT TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 3 #PEACHTREE-DAILY-CC-TRAN-BY-TRANSACTION TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 4 #REC-DAILY-CC-TRAN-BY-CLERK TYPE 'ASCII-COMPRESSED'           /* YK1
+*
+* Delete old transaction file
+CALLNAT 'GPRN0002' #EMPTY-FILE-CMD #DAILY-CREDIT-CARD-TRAN                   /* YK3
+* Write Header to report files
+#PEACHTREE := '1,2,3,4,5,6'                                                  /* YK3
+WRITE WORK FILE 2 #PEACHTREE                                                 /* YK3
+WRITE WORK FILE 3 #PEACHTREE                                                 /* YK3
+*
+#DATN := *DATN
+RESET #PEACHTREE                                                             /* YK3
+#WORK-FIELD := FUNCTION-CALENDAR(<#DATN,'D'>)                                /* YK3
+COMPRESS 'Daily R/C  -  CC' #WORK-FIELD INTO #REPORT-OUTPUT                  /* YK3
+WRITE WORK FILE 4 #REPORT-OUTPUT                                             /* YK3
+RESET #PEACHTREE #REPORT-OUTPUT
+*
+EXPAND ARRAY #TRAN-USER-ARRAY TO (*:50)
+FIND ACCT-REG-V WITH TRANSACTION-DATN = #DATN
+  IF NO RECORDS FOUND
+    WRITE 'There are no accounting transaction records for ' #DATN
+  END-NOREC
+* Clerk ID "MCB" - Member Center User                                        /* YK6
+  ACCEPT IF ACCT-REG-V.CLERK-ID = 'MBR'                                      /* YK6
+  IF ACCT-REG-V.CASH-CODE = 'C' AND ACCT-REG-V.MONTH-END NE 'Y'
+    #CNT := #CNT + 1
+    RESET #OUTPUT-RECORD
+    #NAME-D := ACCT-REG-V.NAME
+    #NAME := FUNCTION-FORM-NAME(<#NAME-D,'U'>)
+    MOVE BY NAME ACCT-REG-V TO #OUTPUT-RECORD
+    EXAMINE #TRAN-USER-ARRAY(*) FOR #OUTPUT-RECORD.CLERK-ID INDEX #I
+    IF #I = 0
+      #CLERK-SEQ := #CLERK-SEQ + 1
+      #TRAN-USER-ARRAY(#CLERK-SEQ) := #OUTPUT-RECORD.CLERK-ID
+    END-IF
+    IF C*SUNGARD-INFO = 0                             /* YK2
+      IF ACCT-REG-V.CREDIT-AMOUNT NE 0
+        #AMOUNT := ACCT-REG-V.CREDIT-AMOUNT * -1
+      ELSE
+        #AMOUNT := ACCT-REG-V.DEBIT-AMOUNT
+      END-IF
+      PERFORM WRITE-OUTPUT-RECORD
+    ELSE                                              /* YK2
+      FOR #I = 1 TO C*SUNGARD-INFO                    /* YK2
+        #SG-CATEGORY-1 := SG-CATEGORY-1(#I)           /* YK2
+        IF #SG-CATEGORY-1 = '**'
+          RESET #SG-CATEGORY-1
+        END-IF
+*       IF #SG-CATEGORY-1 NE 'UN' AND ACCT-REG-V.CREDIT-AMOUNT NE 0  /* YK5 PM6
+        IF ACCT-REG-V.CREDIT-AMOUNT NE 0                             /* PM6
+          #AMOUNT := ACCT-REG-V.SG-AMOUNT(#I) * -1    /* YK2
+        ELSE
+          #AMOUNT := ACCT-REG-V.SG-AMOUNT(#I)         /* YK5
+        END-IF
+        PERFORM WRITE-OUTPUT-RECORD                   /* YK2
+      END-FOR
+    END-IF
+* common code in subroutine
+    DEFINE SUBROUTINE WRITE-OUTPUT-RECORD             /* YK2
+    COMPRESS ACCT-REG-V.TXN-CODE #SG-CATEGORY-1 INTO #TXN-CODE LEAVING NO
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<#TXN-CODE>)(1)
+    #ACCOUNT-DESCRIPTION := FUNCTION-ACCT-NUMBER(<#TXN-CODE>)(2)
+    IF #ACCOUNT-NUMBER = #IGNORE-TRAN
+      ESCAPE ROUTINE
+    END-IF
+    MOVE EDITED #AMOUNT (EM=-ZZZZZZ9.99) TO #AMOUNT-DISPLAY
+    WRITE WORK FILE 1 VARIABLE #OUTPUT-RECORD
+    END-SUBROUTINE
+  END-IF
+END-FIND
+IF #CLERK-SEQ > 0
+  RESIZE ARRAY #TRAN-USER-ARRAY TO (*:#CLERK-SEQ)
+END-IF
+*
+IF #CNT = 0
+  WRITE 'There are no credit card transaction records for ' #DATN
+  ESCAPE ROUTINE
+END-IF
+*
+CLOSE WORK FILE 1
+PERFORM CREATE-CC-PEACHTREE-FILE-BY-ACCOUNT
+PERFORM CREATE-CC-PEACHTREE-FILE-BY-TRANSACTION
+PERFORM CREATE-CC-FILE-BY-CLERK
+WRITE 'process ended'
+*
+*****************************************************
+DEFINE SUBROUTINE CREATE-CC-PEACHTREE-FILE-BY-ACCOUNT
+*****************************************************
+*
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+* Count number of rows first
+SORT BY #ACCOUNT-NUMBER USING #AMOUNT
+  AT BREAK OF #ACCOUNT-NUMBER
+    #CNT-1 := #CNT-1 + 1
+  END-BREAK
+  AT END OF DATA
+    #CNT-1 := #CNT-1 + 1                   /* Add summary line
+    #CNT-2 := COUNT(#AMOUNT) + 1
+  END-ENDDATA
+END-SORT
+*
+#PEACHTREE-DATE       := FUNCTION-CALENDAR(<#DATN,'D'>)
+#PEACHTREE-REC-CNT    := #CNT-1
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #ACCOUNT-NUMBER USING #ACCOUNT-DESCRIPTION #AMOUNT #OUTPUT-RECORD.TXN-CODE
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #AMOUNT
+  AT BREAK OF #ACCOUNT-NUMBER
+    #PEACH-ACCOUNT-NUMBER := OLD(#ACCOUNT-NUMBER)
+    #DESCRIPTION-1        := OLD(#ACCOUNT-DESCRIPTION)
+    COMPRESS 'CCRD' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    IF #ACCOUNT-NUMBER = #WRITE-OFF-TRAN
+      COMPRESS #PEACH-ACCOUNT-NUMBER '- 07' INTO #PEACH-ACCOUNT-NUMBER
+    ELSE
+      COMPRESS #PEACH-ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    END-IF
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 2 #PEACHTREE
+    #GRAND-TOTAL-AMOUNT := #GRAND-TOTAL-AMOUNT + #TOTAL-AMOUNT
+    RESET #TOTAL-AMOUNT #PEACHTREE-DYNAMIC-FIELDS
+  END-BREAK
+  AT END OF DATA
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<'CASH  '>)(1)
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+*   #DESCRIPTION-1  := FUNCTION-ACCT-NUMBER(<'CASH  '>)(2)
+* Use Description "CC-dd/mm/yy" not description from the table (user request)
+    COMPRESS 'CC-'  #PEACHTREE-DATE INTO #DESCRIPTION-1 LEAVING NO
+    COMPRESS 'CCRD' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    MOVE EDITED #GRAND-TOTAL-AMOUNT (EM=ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 2 #PEACHTREE
+  END-ENDDATA
+END-SORT
+*
+END-SUBROUTINE
+*
+*********************************************************
+DEFINE SUBROUTINE CREATE-CC-PEACHTREE-FILE-BY-TRANSACTION
+*********************************************************
+*
+RESET #PEACHTREE-DYNAMIC-FIELDS
+#PEACHTREE-REC-CNT    := #CNT-2
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #OUTPUT-RECORD.ID-NUMBER USING #ACCOUNT-NUMBER #AMOUNT ID-NUMBER-A
+    #NAME #OUTPUT-RECORD.TXN-CODE #OUTPUT-RECORD.POLICY-NUMBER
+  RESET #DESCRIPTION-1 #DESCRIPTION-2
+  IF #ACCOUNT-NUMBER = #WRITE-OFF-TRAN
+    COMPRESS #ACCOUNT-NUMBER '- 07' INTO #PEACH-ACCOUNT-NUMBER
+  ELSE
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+  END-IF
+  COMPRESS #OUTPUT-RECORD.TXN-CODE #DATN-MM #DATN-DD 'CN' #OUTPUT-RECORD.ID-NUMBER-A
+    INTO #DESCRIPTION-1 LEAVING NO
+  IF #OUTPUT-RECORD.TXN-CODE NE 'APFP'
+    COMPRESS #NAME #OUTPUT-RECORD.POLICY-NUMBER INTO #DESCRIPTION-2
+  ELSE
+    #DESCRIPTION-2 := #NAME
+  END-IF
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #AMOUNT
+  MOVE EDITED #AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+  MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+  COMPRESS #PEACHTREE-DATE #COMMA
+    #DESCRIPTION-1  #COMMA
+    #PEACHTREE-REC-CNT #COMMA
+    #PEACH-ACCOUNT-NUMBER #COMMA
+    #DESCRIPTION-2 #COMMA
+    #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+  WRITE WORK FILE 3 #PEACHTREE
+  RESET #PEACHTREE-DYNAMIC-FIELDS
+  AT END OF DATA
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<'CASH  '>)(1)
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    #DESCRIPTION-1  := FUNCTION-ACCT-NUMBER(<'CASH  '>)(2)
+    COMPRESS #PEACHTREE-DATE #DESCRIPTION-1 INTO #DESCRIPTION-1
+    RESET #DESCRIPTION-2
+    COMPRESS 'CCRD' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    MOVE EDITED #TOTAL-AMOUNT (EM=ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 3 #PEACHTREE
+  END-ENDDATA
+END-SORT
+*
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE CREATE-CC-FILE-BY-CLERK        /* YK1
+*****************************************
+*
+* Create all columns header for clerks first
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #OUTPUT-RECORD.TXN-CODE #OUTPUT-RECORD.CLERK-ID USING #AMOUNT
+  AT START OF DATA
+    COMPRESS 'Row Labels' #TRAN-USER-ARRAY(*) 'Total' INTO #REPORT-OUTPUT WITH #TAB
+    WRITE WORK FILE 4 #REPORT-OUTPUT
+    IF #CLERK-SEQ > 0
+      EXPAND ARRAY #USER-TOTAL TO (*:#CLERK-SEQ)
+      EXPAND ARRAY #TRAN-USER-TOTAL TO (*:#CLERK-SEQ)
+    ELSE
+      ESCAPE ROUTINE IMMEDIATE
+    END-IF
+    RESET #REPORT-OUTPUT
+    #REPORT-OUTPUT   := #OUTPUT-RECORD.TXN-CODE
+    #TRAN-USER-TOTAL(*) := '0.00'
+  END-START
+  AT BREAK OF #OUTPUT-RECORD.CLERK-ID
+    #TOTAL-AMOUNT := SUM(#AMOUNT)
+    #CLERK-ID := OLD(#OUTPUT-RECORD.CLERK-ID)
+    EXAMINE #TRAN-USER-ARRAY(*) FOR #CLERK-ID INDEX #I
+    #USER-TOTAL(#I) := #USER-TOTAL(#I) + #TOTAL-AMOUNT
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZ9.99) TO #TRAN-USER-TOTAL(#I)
+    #TRAN-USER-TOTAL(#I) := *TRIM(#TRAN-USER-TOTAL(#I))
+  END-BREAK
+  AT BREAK OF #OUTPUT-RECORD.TXN-CODE
+    #TOTAL-AMOUNT := SUM(#AMOUNT)
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #WORK-AMOUNT
+    #WORK-AMOUNT := *TRIM(#WORK-AMOUNT)
+    COMPRESS #REPORT-OUTPUT #TRAN-USER-TOTAL(*) #WORK-AMOUNT
+      INTO #REPORT-OUTPUT WITH #TAB
+    WRITE WORK FILE 4 #REPORT-OUTPUT
+    RESET #REPORT-OUTPUT
+    #REPORT-OUTPUT := #OUTPUT-RECORD.TXN-CODE
+    #TRAN-USER-TOTAL(*) := '0.00'
+  END-BREAK
+  AT END OF DATA
+    #GRAND-TOTAL-AMOUNT := TOTAL(#AMOUNT)
+    #REPORT-OUTPUT := 'Grand Total'
+    FOR #I = 1 TO #CLERK-SEQ
+      MOVE EDITED #USER-TOTAL(#I) (EM=-ZZZZZZZZ9.99) TO #WORK-AMOUNT
+      #WORK-AMOUNT := *TRIM(#WORK-AMOUNT)
+      COMPRESS #REPORT-OUTPUT #WORK-AMOUNT INTO #REPORT-OUTPUT WITH #TAB
+    END-FOR
+    MOVE EDITED #GRAND-TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #WORK-AMOUNT
+    #WORK-AMOUNT := *TRIM(#WORK-AMOUNT)
+    COMPRESS #REPORT-OUTPUT #WORK-AMOUNT INTO #REPORT-OUTPUT WITH #TAB
+    WRITE WORK FILE 4 #REPORT-OUTPUT
+  END-ENDDATA
+END-SORT
+END-SUBROUTINE
+*
+END

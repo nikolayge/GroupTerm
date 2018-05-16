@@ -1,0 +1,111 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* ACOLPEML
+* Description
+*   Send Emails to USER with List of CN stored in the first 6 bytes of Work File 1
+*   If Email of USER is BLANK email will be sent to 'vtokmakova@aafmaa.com,bzaslavskiy@aafmaa.com'
+* Assumptions: 
+*   CN is in the first 6 bytes of the record
+* Modifications log
+**______________________________________________________________________________
+* 10/04/2012   Boris Zaslavskiy        Initial creation
+* ______________________________________________________________________________
+DEFINE DATA 
+LOCAL USING GPRL0EML
+LOCAL
+1 TRM-V VIEW OF A-TERMINALS
+  2 CLERK-ID              (A3)     /* F D
+  2 INIT-USER
+  2 EMAIL                 (A60)
+1 v_Eml          (A60)    INIT <'lbibb@aafmaa.com'>
+1 v_CC           (A)      DYNAMIC  INIT <'cbrown@aafmaa.com,sseng-im@aafmaa.com,vtokmakova@aafmaa.com,bzaslavskiy@aafmaa.com'>
+1 v_IN           (A400) 
+1 v_CN           (A6) 
+1 f_In           (A79)
+   INIT <"/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/DAILYEMAILSENTREPORT-CAP-DEFAULT.TXT">
+
+1 c_#CN              (N3) 
+1 #i                 (N3)    INIT  <0>
+1 #k                 (N3)    INIT  <4>
+1 c_Err              (N3)    INIT  <0>
+******
+1 v_Parm             (A35)
+1 v_A                (A)      DYNAMIC 
+1 #p                 (I2)
+1 #Prod_Debug        (L)  
+END-DEFINE
+*
+ON ERROR
+  PRINT *PROGRAM 'Err No:' *ERROR-NR  'Err line:'  *ERROR-LINE  /
+END-ERROR
+
+IF *DEVICE <> 'BATCH' 
+   DEFINE WORK FILE 1 f_IN
+ELSE
+  REPEAT UNTIL *DATA = 0         
+      INPUT v_PARM
+      IF v_PARM = SCAN ('TEST')
+         #Prod_Debug := TRUE
+         PRINT 3x 'Run as a test'
+      END-IF
+      IF v_PARM = SCAN ('@')
+         #p := #p + 1
+         v_A := *TRIM(v_PARM)
+         IF #p = 1
+            v_CC := v_A
+         ELSE
+            COMPRESS v_CC ',' v_A INTO v_CC LEAVING NO SPACE
+            PRINT v_CC
+         END-IF  
+      END-IF
+  END-REPEAT
+  PRINT v_CC #p
+END-IF   
+
+IF *INIT-USER = 'sag' OR = 'SAG'
+  IGNORE
+ELSE
+  READ  TRM-V 
+     WHERE INIT-USER = *INIT-USER
+     v_Eml := EMAIL
+     ESCAPE BOTTOM
+  END-READ
+END-IF
+
+READ WORK FILE 1 v_In
+  v_CN := SUBSTRING(v_IN,1,6)  
+  IF NOT v_CN IS (N6)
+     c_Err := c_Err + 1
+     ESCAPE TOP
+  END-IF   
+  c_#CN := c_#CN + 1
+  #i := #i + 1
+  IF #i = 11 #k := #k + 1 #i := 1 END-IF
+  COMPRESS p_MSG(#k) v_CN INTO p_MSG(#k) 
+END-WORK
+
+IF #Prod_Debug
+   v_Eml :=  'bzaslavskiy@aafmaa.com'
+   v_CC  :=  'vtokmakova@aafmaa.com'
+   PRINT 'Test eml TO' v_Eml / 'Test eml CC' v_CC
+END-IF
+   
+IF v_Eml =  ' ' 
+   RESET INITIAL v_Eml 
+   COMPRESS  'Blank email for [' *INIT-USER '] Changed to [' v_Eml ']' INTO p_MSG (2)
+END-IF
+p_CC   := v_CC
+p_To   := v_Eml                 /* vt
+  COMPRESS "'" 'Submitted notifications for CAP Collections Warnings' c_#CN "'" INTO p_Subj
+COMPRESS '-- List of' c_#CN  'processed CNs --       Date:' *DAT4U  '  Time:' *TIMX *INIT-USER INTO p_MSG (1)
+IF c_Err <> 0 
+    COMPRESS c_Err 'CNs' 'Have incorrect format' INTO p_MSG (#k + 2)
+END-IF    
+ CALLNAT 'GPRS0EML' p_EMAIL
+IF p_rc > 0 
+   PRINT 'Send Email returns Error Code:' p_rc 
+END-IF   
+END

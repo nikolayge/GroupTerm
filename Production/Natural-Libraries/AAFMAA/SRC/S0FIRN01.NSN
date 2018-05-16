@@ -1,0 +1,173 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  S0FIRN01 
+* 1. Create Record in FIR 
+* Prerequisites: Contact All relevent Contact records must exist
+* Usage 
+* CALLNAT 'S0FIRN01' #FIR p_Err p_Err_Dscr p_Mod
+* Parameters: 
+* #FIR - PDA 'S0FIRA01'   (FIR) 
+*  p_CN         (N6)
+*  p_Err        (N4)  
+*  p_Err_Dscr   (A78)   
+*  p_Mod        (A1)  
+***  ALL FIELDS IN PDA are requered ***
+* bz created 05/15/2011
+
+DEFINE DATA 
+PARAMETER 
+1 p_CN         (N6)
+1 p_Err        (N4)     
+1 p_Err_Dscr   (A78)  
+1 p_Mod        (A1)   
+LOCAL
+1 #SVC-MEMBER-PLAN    /* USING GOSMPA01      /*   Contact-ID and  (SVC-MEMBER-PLAN) fields
+  2 CONTACT-ID (N6) 
+  2 PLAN        (A3)
+LOCAL
+
+1 FIR-V VIEW OF A-FIRS
+  2 ID-NUMBER
+  2 CONTACT-ID-NUMBER
+  2 MEMBER-FLAG
+  2 WIDOW-FLAG
+*
+  2 INS-LAST-FM-DATE (N8.0) /*
+  2 POLICY-TABLE (1)
+    3 POL-CODE (A1)
+    3 POL-NAME (A19)
+    3 POL-NUMBER (A14)
+    3 POL-TYPE (A4)
+    3 POL-AMOUNT (P7.0)
+    3 POL-DATE (N8.0)
+  2 CAUSE-OF-DEATH (A35)
+*
+  2 C*DEPENDENT-TABLE
+  2 DEPENDENT-TABLE (50)
+    3 DEPN-CONTACT-ID                   (N8.0)  /* D
+    3 DEPN-NAME                         (A15)
+    3 DEPN-BIRTH-CD                     (A1)
+    3 DEPN-STATUS-CD                    (A1)    /* G- Grand Child, others - Child
+    3 DEPN-REMARKS                      (A20)
+    3 DEPN-DATE-OF-BIRTH                (N8)
+    3 DEPN-SSN                          (N9)
+  2  DTS-DATN                (P9.0)
+  2  DTS-TIMN                (P7.0)
+*  
+1 CNT-V VIEW OF A-CONTACTS
+   2 ID-NUMBER
+   2 CONTACT-ID       (N8)         /* D
+   2  FULL-NAME
+      3  FIRST-NAME
+      3  MIDDLE-NAME
+      3  LAST-NAME
+      3  SUFFIX
+   2  DATE-OF-BIRTH
+   2  BIRTH-CERT-CODE
+   2  DATE-OF-DEATH
+   2  SSN
+   2  GENDER-CD
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+   2 CONTACT-1-ID             
+   2 ROLE-1-CD                
+   2 CONTACT-2-ID             
+   2 ROLE-2-CD
+   2 ACCESS-AUTH-SVC
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 MEMBER-CONTACT-ID
+ 2 MEMBER-FLAG
+ 2 WIDOW-FLAG
+ 2 MILITARY-STATUS
+ 2 MILITARY-SERVICE
+*
+   
+*   
+1 #ISN-FIR-V              (P9)
+1 v_A15                   (A15)
+1 v_Dep                   (N2)
+1 v_YYYYMMDD              (N8) INIT <*DATN>
+1 REDEFINE v_YYYYMMDD     
+  2 v_YYYYMM              (N6) 
+END-DEFINE
+*
+ ON ERROR 
+    p_Err := *ERROR-NR
+    COMPRESS 'Natural Error:' *PROGRAM *ERROR-NR  'Error Line:' *ERROR-LINE INTO p_Err_Dscr
+    ESCAPE ROUTINE 
+ END-ERROR  
+
+  IF p_CN = 0
+     p_Err := 0001  COMPRESS 'CN = 0' INTO p_Err_Dscr  ESCAPE ROUTINE 
+  END-IF
+*
+       FIND (1) ST-V WITH ST-V.ID-NUMBER = p_CN
+           IF NO RECORD FOUND
+              p_Err := 0002  COMPRESS 'CN:' p_CN 'NOT FOUND' INTO p_Err_Dscr  ESCAPE ROUTINE
+           END-NOREC
+       END-FIND 
+*
+  PERFORM DO-NEW-FIR
+  v_Dep := 0
+  GFIR-V.
+  GET FIR-V #ISN-FIR-V
+  FIND  CR-V WITH CR-V.CONTACT-1-ID = FIR-V.CONTACT-ID-NUMBER
+           WHERE ROLE-2-CD = 'K' OR = 'G' OR = 'D'
+     FIND (1)  CNT-V WITH CNT-V.CONTACT-ID = CONTACT-2-ID
+               IF NO RECORD FOUND
+                   p_Err := 3
+                   COMPRESS 'No Contact for Role:' ROLE-2-CD 'CI:' CONTACT-2-ID
+                   'Member CI:' FIR-V.CONTACT-ID-NUMBER  INTO p_Err_Dscr
+                   ESCAPE ROUTINE  
+               END-NOREC 
+         v_Dep := v_Dep + 1
+         PERFORM DO-NEW-DEPN
+     END-FIND
+  IF v_Dep > 0 
+     UPDATE (GFIR-V.)
+  END-IF
+  END-FIND
+
+* PRINT  *PROGRAM *LINE FIR-V.ID-NUMBER 'BOTTOM' 
+* FIR-V.CONTACT-ID-NUMBER 'Depn:' v_Dep  'Error:' p_Err  /  p_Err_Dscr / '-'(50)
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = FIR
+DEFINE DO-NEW-FIR
+       RESET FIR-V
+       FIR-V.ID-NUMBER          := ST-V.ID-NUMBER
+       FIR-V.CONTACT-ID-NUMBER  := ST-V.MEMBER-CONTACT-ID
+       FIR-V.MEMBER-FLAG        := ST-V.MEMBER-FLAG
+       FIR-V.WIDOW-FLAG         := ST-V.WIDOW-FLAG
+       
+       IF   (ST-V.MILITARY-STATUS = 'A')
+            AND (NOT ST-V.MILITARY-SERVICE = 'ACR' OR = 'FCR')
+           FIR-V.POL-NAME(1)      := 'SGLI'
+           FIR-V.POL-AMOUNT(1)    := 400000
+           FIR-V.POL-TYPE(1)      := 'GPTM'
+           FIR-V.INS-LAST-FM-DATE := *DATN
+       END-IF
+       FIR-V.DTS-DATN             := *DATN
+       FIR-V.DTS-TIMN             := *TIMN
+       SFIR-V.
+       STORE FIR-V
+       #ISN-FIR-V := *ISN(SFIR-V.)
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE DO-NEW-DEPN
+       DEPN-CONTACT-ID(v_Dep) := CNT-V.CONTACT-ID
+       CNT-V.LAST-NAME := ' '
+       v_A15 :=  EDIT_NAME_FMLS(<CNT-V.FULL-NAME>)
+       DEPN-NAME (v_Dep) := v_A15
+       DEPN-DATE-OF-BIRTH(v_Dep) := CNT-V.DATE-OF-BIRTH
+       DEPN-SSN(v_Dep) := CNT-V.SSN
+       DEPN-BIRTH-CD(v_Dep) := CNT-V.BIRTH-CERT-CODE
+       IF ROLE-2-CD =  'G'
+           DEPN-STATUS-CD(v_Dep) := 'G'
+       END-IF
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+END

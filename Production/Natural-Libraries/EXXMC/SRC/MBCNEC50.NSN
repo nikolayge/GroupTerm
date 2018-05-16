@@ -1,0 +1,301 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Function ManageBankAccounts - called via EntireX
+* MBCNEC50 - Called from Member Center/Payment Center
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    08012014       Initial Creation
+* YAK    11152016  YK2  Changes for EB&P II
+* YAK    04102017  YK3  Changes for EB&P III
+************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+LOCAL USING PARSER-X
+LOCAL USING MBCAEC50
+LOCAL USING MBCAEC51
+LOCAL USING ERROR_L
+LOCAL
+1 ERROR-MESSAGE     (A100)
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 #XML               (A) DYNAMIC
+1 #I                (I2)
+1 #II               (I2)
+1 #K                (I2)
+1 #J                (I2)
+1 #JJ               (I2)
+1 #value            (A) DYNAMIC
+*
+1 #MethodId        (N2)
+1 #ErrorCode       (A3) INIT <'0'>
+1 #ErrorDescription(A) DYNAMIC
+1 #ActionType      (A) DYNAMIC
+1 #GET             (A) DYNAMIC CONST <'0'>
+1 #Add             (A) DYNAMIC CONST <'1'>
+1 #Update          (A) DYNAMIC CONST <'2'>
+1 #Delete          (A) DYNAMIC CONST <'3'>
+1 #ReplaceEZ       (A) DYNAMIC CONST <'5'>               /* YK2
+1 #GET-ALL         (A) DYNAMIC CONST <'GET-ALL'>
+1 #GET-ST          (A) DYNAMIC CONST <'GET-ST'>
+1 #ADD-ACCOUNT     (A) DYNAMIC CONST <'ADD'>
+1 #UPDATE-ACCOUNT  (A) DYNAMIC CONST <'UPDATE'>
+1 #DELETE-ACCOUNT  (A) DYNAMIC CONST <'DELETE'>
+1 #ADD-EZPAY       (A) DYNAMIC CONST <'ADD-EZPAY'>       /* YK2
+1 #REPLACE-EZPAY   (A) DYNAMIC CONST <'REPLACE-EZPAY'>   /* YK2
+1 #HIST            (A) DYNAMIC CONST <'HIST'>
+1 #EZ              (A) DYNAMIC CONST <'EZ-Pay'>
+1 #UsedForRecurringPayments (A) DYNAMIC                  /* YK3
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Input verify
+DECIDE FOR FIRST CONDITION
+  WHEN BankAccounts.ViewCN = 0 AND #ActionType = #Get
+    #ErrorCode  := #MISSING-CN
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN BankAccount.AccountCN = 0 AND #ActionType <> #Get
+    #ErrorCode  := #MISSING-CN
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+DECIDE FOR FIRST CONDITION
+* Get all saved Bank accounts
+  WHEN #ActionType = #Get
+    PERFORM GET-BA-DATA
+* YKK2 - Replace EZ-Pay account and save the old one as eCheck
+  WHEN #ActionType = #Add AND BankAccount.CheckType = #EZ
+    BankAccount.ActionType := #ADD-EZPAY
+    CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+* Add eCheck account
+  WHEN #ActionType = #Add
+    BankAccount.ActionType := #ADD-ACCOUNT
+    CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+* Update existing Bank Account
+  WHEN #ActionType = #Update
+    BankAccount.ActionType := #UPDATE-ACCOUNT
+    CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+* Delete existing Bank Account
+  WHEN #ActionType = #Delete
+    BankAccount.ActionType := #DELETE-ACCOUNT
+    PERFORM CHECK-DELETE-ACCOUNT
+    CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+* YK2 - Save existing eCheck account as EZ-pay
+* Save existing EZ-Pay as eCheck if it is not there
+  WHEN #ActionType = #ReplaceEZ
+    BankAccount.ActionType := #REPLACE-EZPAY
+    CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF #ActionType <> #Get
+  IF #ErrorCode = '0'
+    END TRANSACTION
+  ELSE
+    BACKOUT TRANSACTION
+  END-IF
+END-IF
+PERFORM COMPOSE-RESPONSE-DATA
+*
+************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'Members/ActionType/$'
+    #ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/SystemSource/$'                                /* YK3
+    BankAccounts.SystemSource := *TRIM(XML_PARSER_CONTENT)      /* YK3
+    BankAccount.SystemSource  := BankAccounts.SystemSource      /* YK3
+  VALUE 'Members/UserID/$'
+    BankAccount.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      BankAccounts.ViewCN := VAL(#value)
+    END-IF
+  VALUE 'Members/BankAccounts/BankAccount/AccountCN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      BankAccount.AccountCN := VAL(#value)
+    END-IF
+  VALUE 'Members/BankAccounts/BankAccount/CheckType/$'
+    BankAccount.CheckType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/CheckID/$'
+    BankAccount.CheckID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountHolderFirstName/$'
+    BankAccount.AccountHolderFirstName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountHolderLastName/$'
+    BankAccount.AccountHolderLastName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/RoutingNumber/$'
+    BankAccount.RoutingNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountNumber/$'
+    BankAccount.AccountNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountType/$'
+    BankAccount.AccountType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountStreet/$'
+    BankAccount.AccountStreet := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountCity/$'
+    BankAccount.AccountCity := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountState/$'
+    BankAccount.AccountState := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/AccountZipCode/$'
+    BankAccount.AccountZipCode := *TRIM(XML_PARSER_CONTENT)
+* YK3 >
+  VALUE 'Members/BankAccounts/BankAccount/UsedForRecurringPayments/$'
+    #UsedForRecurringPayments := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/BankAccounts/BankAccount/LastUpdatedDate/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8)
+      BankAccount.LastUpdatedDate := VAL(#value)
+    END-IF
+  VALUE 'Members/BankAccounts/BankAccount/LastUpdatedTime/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N7)
+      BankAccount.LastUpdatedTime := VAL(#value)
+    END-IF
+  VALUE 'Members/BankAccounts/BankAccount/LastUpdatedUser/$'
+    BankAccount.LastUpdatedUser := *TRIM(XML_PARSER_CONTENT)
+* < YK3
+  VALUE 'Members/PaymentSettings/BankAccountDisclaimerConfirmed/$'
+    BankAccount.BankAccountDisclaimerConfirmed := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET #XML
+#ErrorCode        := XML_PARSER_RESPONSE
+#ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE GET-BA-DATA
+*****************************
+*
+EXPAND ARRAY Account TO (*:1)
+BankAccounts.ActionType := #GET-ALL
+CALLNAT 'MBCNEC51' BankAccounts #ErrorCode
+IF #ErrorCode = #NO-ECHECK-DATA-EXIST
+  #ErrorCode := '0'                             /* no bank account data exist
+END-IF
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-GET-XML
+*********************************
+*
+FOR #I = 1 TO BankAccounts.C@Account
+  #MethodID := #I
+  COMPRESS #XML
+    '<BankAccount>'
+    '<MethodID>' #MethodID '</MethodID>'
+    '<AccountCN>' BankAccounts.AccountCN(#I) '</AccountCN>'
+    '<CheckID>'BankAccounts.CheckId(#I)'</CheckID>'
+    '<CheckType>'BankAccounts.CheckType(#I)'</CheckType>'
+    '<RoutingNumber>'BankAccounts.RoutingNumber(#I)'</RoutingNumber>'
+    '<BankName><![CDATA[' BankAccounts.BankName(#I) ']]></BankName>'
+    '<UsedForRecurringPayments>'BankAccounts.Recurring(#I)'</UsedForRecurringPayments>'
+    '<IsModifiable>'BankAccounts.Modifiable(#I)'</IsModifiable>'
+    '<AccountNumber>'BankAccounts.AccountNumber(#I)'</AccountNumber>'
+    '<AccountType>'BankAccounts.AccountType(#I)'</AccountType>'
+    '<AccountHolderFirstName>'BankAccounts.AccountHolderFirstName(#I)'</AccountHolderFirstName>'
+    '<AccountHolderLastName>'BankAccounts.AccountHolderLastName(#I)'</AccountHolderLastName>'
+    '<AccountStreet>'BankAccounts.AccountStreet(#I)'</AccountStreet>'
+    '<AccountCity>'BankAccounts.AccountCity(#I)'</AccountCity>'
+    '<AccountState>'BankAccounts.AccountState(#I)'</AccountState>'
+    '<AccountZipCode>'BankAccounts.AccountZipCode(#I)'</AccountZipCode>'
+    '<LastUpdatedDate>' BankAccounts.LastUpdatedDate(#I) '</LastUpdatedDate>'
+    '<LastUpdatedTime>' BankAccounts.LastUpdatedTime(#I) '</LastUpdatedTime>'
+    '<LastUpdatedUser>' BankAccounts.LastUpdatedUser(#I) '</LastUpdatedUser>'
+    '</BankAccount>'
+    INTO #XML LEAVING NO
+END-FOR
+COMPRESS  '<BankAccounts>'
+  #XML
+  '</BankAccounts>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+COMPRESS
+  '<Members>'
+  '<CN>' BankAccounts.ViewCN '</CN>'
+  '<BankAccounts>'
+  '<BankAccount>'
+  '<AccountCN>' BankAccount.AccountCN '</AccountCN>'
+  '</BankAccount>'
+  '</BankAccounts>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</Members>'
+  INTO RESPONSE-DATA LEAVING NO
+ESCAPE MODULE
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+IF #ErrorCode = ' ' #ErrorCode := '0' END-IF
+DECIDE FOR FIRST CONDITION
+  WHEN #ErrorCode <> '0' AND #ErrorDescription = ' '
+    #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+    PERFORM COMPOSE-XML
+  WHEN #ErrorCode = '0' AND #ActionType = #GET
+    PERFORM COMPOSE-GET-XML
+  WHEN #ErrorCode = '0' AND #ActionType <> #GET
+    PERFORM COMPOSE-XML
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE CHECK-DELETE-ACCOUNT
+**************************************
+*
+CALLNAT 'MBCNEC53' BankAccount #ErrorCode
+IF #ErrorCode <> '0'
+  PERFORM COMPOSE-RESPONSE-DATA
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+END

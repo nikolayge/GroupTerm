@@ -1,0 +1,288 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: G2A03SCR -  Search Lockbox/Deposit file by SSN
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    04262005  NONE    Program Written                             *
+* PAM    08192005  PM1     Allow SSN's under 001000000 for temp SSN's  *
+* PAM    12052007  PM2     Added Credit Card Numbers to Display        *
+* RSE    10032009  RE1     Change PROCESS-IND logic for Unification    *
+* bz     11/19/2009 bz1    Remove Re1. Unification: Identify SAS Only
+* vxt    12/04/2012 vt1    Fix the logic of reading of deposit file /ticket 1638/ *
+***********************************************************************************
+*
+DEFINE DATA
+PARAMETER
+*
+1 #SKIP-TO                  (A25)
+1 REDEFINE #SKIP-TO
+  2 #SKIP-TO-SSN-N           (N9)
+  2 REDEFINE #SKIP-TO-SSN-N
+    3 #SKIP-TO-SSN-A          (A9)
+  2 #SKIP-TO-REST            (A16)
+1 #CGA-SCR-COMMAND          (A2)
+1 #CGA-SCR-ID               (N9)
+1 #CGA-SCR-SUFFIX           (A3)
+*
+LOCAL
+*
+1 AD-V VIEW OF A-DEPOSITS
+  2 SSN                      (P9)
+  2 DEPOSIT-OCC              (99)
+    3 AMOUNT                  (P7.2)
+    3 DATE                    (N8)
+    3 REDEFINE DATE
+      4 DATE-YYYY              (A4)
+      4 DATE-MM                (A2)
+      4 DATE-DD                (A2)
+    3 SENT-BY                 (A1)
+    3 TYPE                    (A1)
+    3 CHECK-NUM               (A6)
+    3 SPLIT                   (A1)
+    3 NAME                    (A25)
+    3 ADDR-1                  (A25)
+    3 ADDR-2                  (A25)
+    3 CITY                    (A22)
+    3 STATE                   (A2)
+    3 ZIP-CODE                (N9)
+    3 REDEFINE ZIP-CODE
+      4 ZIP-5                  (A5)
+      4 ZIP-4                  (N4)
+      4 REDEFINE ZIP-4
+        5 ZIP-4-A               (A4)
+    3 CC-NUM                  (A16)                                  /* PM2
+    3 REDEFINE CC-NUM                                                /* PM2
+      4 CC-NUM-12              (A12)                                  /* PM2
+      4 CC-NUM-4               (A4)                                   /* PM2
+    3 APPLIED-DATE            (N8)
+    3 REDEFINE APPLIED-DATE
+      4 APPLIED-DATE-YYYY      (A4)
+      4 APPLIED-DATE-MM        (A2)
+      4 APPLIED-DATE-DD        (A2)
+    3 APPLIED-CN              (N6)
+*
+1 ST-V VIEW OF A-STATUS
+  2 SSN                      (N9)
+  2 ID-NUMBER                (N6)
+  2 PROCESS-IND              (A1)
+  2 INTRO-FLAG
+  2 STATUS(9)
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER                (N6)
+  2 SSN                      (N9)
+  2 INTRO-FLAG               (A1)
+  2 ACTION-FLAG              (A1)
+*
+1 #NUM-SCR-LINES            (P3)  INIT <18>
+1 #SCR-LINE                 (A78/18)
+1 REDEFINE #SCR-LINE
+  2 #SCR-LINE-OCC            (18)
+    3 #SCR-SSN                (A9)
+    3 #S-1                    (A2)
+    3 #SCR-DATE               (A10)
+    3 #S-2                    (A2)
+    3 #SCR-AMOUNT             (A12)
+    3 #S-3                    (A3)
+    3 #SCR-SENT-BY            (A1)
+    3 #S-4                    (A4)
+    3 #SCR-TYPE               (A1)
+    3 #S-5                    (A2)
+    3 #SCR-CHECK-NUM          (A6)
+    3 #S-6                    (A3)
+    3 #SCR-SPLIT              (A1)
+    3 #S-7                    (A3)
+    3 #SCR-CN                 (A6)
+    3 #S-8                    (A2)
+    3 #SCR-APPLIED-DATE       (A10)
+    3 #S-9                    (A1)
+*
+1 REDEFINE #SCR-LINE
+  2 #SCR-LINE-OCC-NAME       (18)
+    3 #S-NAME-1               (A11)
+    3 #SCR-NAME-LABEL         (A8)
+    3 #SCR-NAME-REST          (A59)
+    3 REDEFINE #SCR-NAME-REST
+      4 #SCR-CITY              (A26)
+      4 #SCR-STATE-LABEL       (A4)
+      4 #SCR-STATE             (A2)
+      4 #SCR-NAME-3            (A1)
+      4 #SCR-ZIP-LABEL         (A5)
+      4 #SCR-ZIP               (A21)
+*
+1 #EXTRA-INFO               (L)
+1 #RESTART                  (L)
+1 #I1                       (I2)
+1 #L1                       (I2)
+1 #HOLD-SSN                 (N9)
+1 #TEXT                     (A60)
+1 #AFFL-ONLY (L) INIT <FALSE>                                         /*  bz1
+*
+END-DEFINE
+************************************************************************
+*
+REPEAT
+  RESET #TEXT #SCR-LINE (*) #L1
+  READ AD-V BY SSN FROM #SKIP-TO-SSN-N
+*   IF AD-V.SSN LT 001000000   /* lowest possible ssn-others are  /* PM1
+    IF AD-V.SSN LT 000001000   /* lowest possible ssn-others are rebuild
+      ESCAPE TOP
+    END-IF
+*
+    MOVE EDITED AD-V.SSN (EM=999999999) TO #SKIP-TO-SSN-A
+*
+
+    FOR #I1 1 TO 99
+*      IF AD-V.AMOUNT (#I1) = 0                      /* vt1 \/
+*        ESCAPE BOTTOM
+*      END-IF
+*
+      if ad-v.amount(#i1) ne 0                      /* vt1 /\
+        RESET #EXTRA-INFO
+        IF AD-V.NAME (#I1)      NE ' '
+            OR AD-V.ADDR-1 (#I1)   NE ' '
+            OR AD-V.ADDR-2 (#I1)   NE ' '
+            OR AD-V.CITY  (#I1)    NE ' '
+            OR AD-V.STATE (#I1)    NE ' '
+            OR AD-V.ZIP-CODE (#I1) NE 0
+          MOVE TRUE TO #EXTRA-INFO
+          IF #L1 + 4 GT #NUM-SCR-LINES
+            PERFORM SHOW-SCREEN
+            IF #RESTART
+              ESCAPE BOTTOM
+            END-IF
+          END-IF
+        ELSE
+          IF #L1 + 1 GT #NUM-SCR-LINES
+            PERFORM SHOW-SCREEN
+            IF #RESTART
+              ESCAPE BOTTOM
+            END-IF
+          END-IF
+        END-IF
+*
+        ADD +1 TO #L1
+        MOVE EDITED AD-V.SSN (EM=999999999)        TO #SCR-SSN (#L1)
+        MOVE EDITED AD-V.AMOUNT (#I1) (EM=Z,ZZZ,ZZ9.99)
+          TO #SCR-AMOUNT (#L1)
+        MOVE AD-V.SENT-BY (#I1)                    TO #SCR-SENT-BY (#L1)
+        MOVE AD-V.TYPE (#I1)                       TO #SCR-TYPE (#L1)
+        IF AD-V.TYPE (#I1) = 'K'                                           /* PM2
+          MOVE AD-V.CC-NUM-4 (#I1)                 TO #SCR-CHECK-NUM (#L1) /* PM2
+        ELSE                                                               /* PM2
+          MOVE AD-V.CHECK-NUM (#I1)                TO #SCR-CHECK-NUM (#L1)
+        END-IF                                                             /* PM2
+        MOVE AD-V.SPLIT (#I1)                      TO #SCR-SPLIT (#L1)
+*
+        COMPRESS AD-V.DATE-MM (#I1) AD-V.DATE-DD (#I1) AD-V.DATE-YYYY (#I1)
+          INTO #SCR-DATE (#L1) WITH '/'
+*
+        IF AD-V.APPLIED-DATE (#I1) NE 0
+          COMPRESS AD-V.APPLIED-DATE-MM (#I1) AD-V.APPLIED-DATE-DD (#I1)
+            AD-V.APPLIED-DATE-YYYY (#I1) INTO #SCR-APPLIED-DATE (#L1)
+            WITH '/'
+        END-IF
+*
+        IF AD-V.APPLIED-CN (#I1) NE 0
+          MOVE EDITED AD-V.APPLIED-CN (#I1) (EM=999999) TO #SCR-CN (#L1)
+        ELSE
+          FIND ST-V WITH SSN = AD-V.SSN
+*          IF ST-V.PROCESS-IND = 'S' OR = 'C'         RE1
+            PERFORM  CHECK-AFFL-ONLY                                             /*  bz1
+            IF ST-V.PROCESS-IND = 'C'                 /* RE1
+*           OR AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)   /* RE1
+                OR #AFFL-ONLY                           /* RE1
+                OR ST-V.ID-NUMBER LT 1900
+              ESCAPE TOP
+            ELSE
+              MOVE EDITED ST-V.ID-NUMBER (EM=999999) TO #SCR-CN (#L1)
+            END-IF
+          END-FIND
+        END-IF
+*
+        IF #SCR-CN (#L1) = ' '
+          FIND AT-V WITH AT-V.SSN = AD-V.SSN
+            IF AT-V.INTRO-FLAG = 'V'
+                OR AT-V.ACTION-FLAG = 'W' OR = 'A'
+              ESCAPE TOP
+            END-IF
+*
+            MOVE EDITED AT-V.ID-NUMBER (EM=999999) TO #SCR-CN (#L1)
+            ESCAPE BOTTOM
+          END-FIND
+        END-IF
+*
+        IF #EXTRA-INFO
+          ADD +1 TO #L1
+          MOVE 'Name:'                          TO #SCR-NAME-LABEL (#L1)
+          MOVE AD-V.NAME (#I1)                  TO #SCR-NAME-REST (#L1)
+          ADD +1 TO #L1
+          MOVE 'Street:'                        TO #SCR-NAME-LABEL (#L1)
+          MOVE AD-V.ADDR-1 (#I1)                TO #SCR-NAME-REST (#L1)
+          COMPRESS #SCR-NAME-REST (#L1) AD-V.ADDR-2 (#I1)
+            INTO #SCR-NAME-REST (#L1)
+          ADD +1 TO #L1
+          MOVE 'City:'                          TO #SCR-NAME-LABEL (#L1)
+          MOVE AD-V.CITY (#I1)                  TO #SCR-CITY (#L1)
+          MOVE 'ST:'                            TO #SCR-STATE-LABEL (#L1)
+          MOVE AD-V.STATE (#I1)                 TO #SCR-STATE (#L1)
+          MOVE 'Zip:'                           TO #SCR-ZIP-LABEL (#L1)
+          MOVE AD-V.ZIP-5 (#I1)                 TO #SCR-ZIP (#L1)
+          IF AD-V.ZIP-4 (#I1) NE 0
+            COMPRESS #SCR-ZIP (#L1) '-' AD-V.ZIP-4-A (#I1)
+              INTO #SCR-ZIP (#L1) LEAVING NO
+          END-IF
+        END-IF
+      end-if                                          /* vt1
+    END-FOR
+*
+    IF #RESTART
+      ESCAPE BOTTOM
+    END-IF
+  END-READ
+*
+  IF NOT #RESTART
+    MOVE 'END OF DEPOSITS' TO #TEXT
+    MOVE '000000001' TO #SKIP-TO-SSN-A
+    PERFORM SHOW-SCREEN
+  ELSE
+    RESET #RESTART
+  END-IF
+*
+END-REPEAT
+*
+************************************************************************
+DEFINE SUBROUTINE SHOW-SCREEN
+************************************************************************
+*
+MOVE #SKIP-TO-SSN-N TO #HOLD-SSN
+INPUT TEXT #TEXT MARK *#SKIP-TO-SSN-A USING MAP 'G2A03MCR'
+IF #CGA-SCR-COMMAND NE '*'
+  FETCH 'G1000PXX'
+END-IF
+RESET #L1 #SCR-LINE (*)
+IF #SKIP-TO-SSN-N NE #HOLD-SSN
+  MOVE TRUE TO #RESTART
+END-IF
+*
+END-SUBROUTINE
+** - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DEFINE SUBROUTINE CHECK-AFFL-ONLY                                       /*  bz1
+*  PERFORM  CHECK-AFFL-ONLY                                             /*  bz1
+* 1 #AFFL-ONLY (L) INIT <FALSE>                                         /*  bz1
+IF ( ST-V.PROCESS-IND <> "S" ) OR ( ST-V.STATUS(*) <> " " )            /*  bz1
+  #AFFL-ONLY := FALSE                                                  /*  bz1
+ELSE                                                                   /*  bz1
+  IF ST-V.INTRO-FLAG NE 'A'  #AFFL-ONLY := TRUE                        /*  bz1
+  ELSE #AFFL-ONLY := FALSE                                          /*  bz1
+  END-IF                                                               /*  bz1
+END-IF                                                                 /*  bz1
+END-SUBROUTINE                                                          /*  bz1
+*                                                                       /*  bz1
+*
+END

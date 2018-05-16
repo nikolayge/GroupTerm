@@ -1,0 +1,286 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*   bz
+*   SERVICES
+* 08/30/13 11:31:45 AFA-CODE Env: Development 224
+* 08/30/13     00min:50sec:2
+* Record read                      154,200
+* Skiped  App, Emp, Cont, SKG       21,804
+* Inactive                          23,132
+* Mem                               90,619
+* Wid                               18,645
+* Member has no Services            52,857
+* Bad Address                        4,730
+* Wid Accepted                      14,315
+* Wid Excluded                       4,330
+* Output                           109,264
+* Has Web Account                   37,362
+* Has Ann.Statment delivery          8,977
+* FIR MC delivery                      326
+*
+
+* ---------------------------------------------------------------------------------------
+*
+DEFINE DATA
+LOCAL USING CONTPDA1
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 WIDOW-FLAG
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 NUMBER-MEMBERSHIPS
+  2 MILITARY-SERVICE
+  2 DATE-OF-DEATH
+  2 INS-MAIL-CODE
+  2 DI-BA-MAIL-CD
+  2 STATUS-CODE-SP
+  2 MAILING-FLAG-SP
+*   2 DATE-OF-BIRTH
+*   2 REDEFINE DATE-OF-BIRTH
+*     3 DATE-OF-BIRTH_A   (A8)
+*  2 DATE-OF-BIRTH-SP
+*   2 REDEFINE DATE-OF-BIRTH-SP
+*     3 DATE-OF-BIRTH-SP_A   (A8)
+1 OBSOLETE-STATUS-FIELD
+  2 SEX                 (A1)
+  2 DATE-OF-BIRTH       (N8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DATE-OF-BIRTH_A   (A8)
+  2 DATE-OF-BIRTH-SP    (N8)
+  2 REDEFINE DATE-OF-BIRTH-SP
+    3 DATE-OF-BIRTH-SP_A   (A8)
+*
+1 SMP-V VIEW OF A-SVC-MEMBER
+  2 SVC-ID-NUMBER
+  2 SVC-PLAN
+  2 SVC-STATUS
+*
+1 WEB-V VIEW OF A-WEB-ACCOUNT-INFO
+  2 MEMBER-CN
+  2 ANNS-DELIVERY-FLAG
+*
+1 EML-V VIEW of A-CONTACT-EMAIL
+  2 CONTACT-ID
+  2 EMAIL-PREFERRED-IND
+  2 EMAIL-ADDRESS
+*
+1 ADR-R VIEW OF A-ADDRESS-RELATIONSHIP
+  2 CONTACT-ID        (N8)
+  2 ADDRESS-POOL-ID   (N8)
+  2 ADDR-TYPE-CD      (A1)
+  2 RETURNED-MAIL-IND
+1  v_WEB               (A) DYNAMIC
+1  v_ADR               (A) DYNAMIC
+1  v_SRV               (A) DYNAMIC
+
+1  f_out                (A80)    INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/FIRS-MC.TXT">
+1  dm                   (A1)     INIT <H'09'>
+*
+1 #i                    (I2)
+1 c_In                  (N6)    (EM=ZZZ,ZZ9)
+1 c_Skip_ST             (N6)    (EM=ZZZ,ZZ9)
+1 c_Mem                 (N6)    (EM=ZZZ,ZZ9)
+1 c_Wid                 (N6)    (EM=ZZZ,ZZ9)
+1 c_Inact               (N6)    (EM=ZZZ,ZZ9)
+1 c_Mem_No_SVC          (N6)    (EM=ZZZ,ZZ9)
+1 c_bad_addr            (N6)    (EM=ZZZ,ZZ9)
+1 c_bad_EML             (N6)    (EM=ZZZ,ZZ9)
+1 c_Wid_excl            (N6)    (EM=ZZZ,ZZ9)
+1 c_Wid_accepted        (N6)    (EM=ZZZ,ZZ9)
+1 c_WEB                 (N6)    (EM=ZZZ,ZZ9)
+1 c_ANN                 (N6)    (EM=ZZZ,ZZ9)
+1 c_FIR_MC              (N6)    (EM=ZZZ,ZZ9)
+1 c_OK                  (N6)    (EM=ZZZ,ZZ9)
+1 v_Header              (A78)
+1 v_A400                (A400)
+1 v_Email               (A50)
+1 v_GF          (A)  DYNAMIC
+1 #D0           (D)  INIT <*DATX>
+1 #BD           (D)
+1 v_AGE         (N3)
+1 SPOUSE-SEX     (A1)        
+*
+END-DEFINE
+***********************************
+ON ERROR
+  WRITE  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR / ST-V.ID-NUMBER
+  ESCAPE ROUTINE
+END-ERROR
+****
+* PRINT '!An accident!' STOP
+****
+DEFINE WORK FILE 1 f_out TYPE 'ASCII-COMPRESSED'
+IF F-IS-DEV(<>) v_Header := 'Development'
+ELSE            v_Header := 'Production'
+END-IF
+COMPRESS *DATX *TIMX *PROGRAM 'Env:' v_Header GET_DBN(<>) INTO v_Header
+PRINT (0)   NOTITLE v_Header
+
+SETA. SETTIME
+READ  ST-V BY ID-NUMBER  FROM 1900
+  c_In := c_In + 1
+  IF    ( PROCESS-IND ='C' )
+      OR (INTRO-FLAG = 'A' OR = 'S' OR ='K' OR = 'G')
+      OR MILITARY-SERVICE = 'EMP'
+    c_Skip_ST := c_Skip_ST + 1
+    ESCAPE TOP
+  END-IF
+  v_ADR := ' '
+  FIND ADR-R  WITH ADR-R.CONTACT-ID = MEMBER-CONTACT-ID
+      WHERE ADDR-TYPE-CD = 'P'
+    IF NO RECORD FOUND
+      RETURNED-MAIL-IND := 'Y'
+      ESCAPE BOTTOM
+    END-NOREC
+  END-FIND
+
+  IF RETURNED-MAIL-IND = 'Y'
+    c_bad_addr := c_bad_addr + 1
+    v_ADR := ' '
+  ELSE
+    v_ADR := 'Y'
+  END-IF
+
+  RESET WEB-V
+  v_WEB := ' '
+
+  FIND (1) WEB-V WITH MEMBER-CN = ST-V.ID-NUMBER
+    IF NO RECORD FOUND
+      v_WEB := ' '
+      ESCAPE BOTTOM
+    END-NOREC
+    c_WEB := c_WEB + 1
+    v_WEB := 'Y'
+  END-FIND
+  RESET PDA-CONTACT
+  P-CONTACT-ID := MEMBER-CONTACT-ID
+  CALLNAT 'CONTS001' PDA-CONTACT DATE-OF-BIRTH-SP SPOUSE-SEX
+    MEMBER-CONTACT-ID := P-CONTACT-ID  
+    SEX               := P-GENDER
+    DATE-OF-BIRTH     := P-DATE-OF-BIRTH
+    
+  IF DATE-OF-DEATH = 0           /* Member
+    IF NUMBER-MEMBERSHIPS = 0
+      c_Inact :=   c_Inact + 1   /* Member is alive and inactive
+      ESCAPE TOP
+    END-IF
+    v_SRV := ' '
+    IF PROCESS-IND = 'G'
+      v_SRV := 'GF'
+    ELSE
+      FIND (1) SMP-V WITH SVC-ID-NUMBER = ST-V.ID-NUMBER
+        IF SVC-STATUS = 'A'
+          v_SRV := SVC-PLAN
+        END-IF
+      END-FIND
+    END-IF
+
+    IF v_SRV = ' '
+      c_Mem_No_SVC := c_Mem_No_SVC + 1
+    END-IF
+
+    IF DATE-OF-BIRTH = MASK(YYYYMMDD)
+      MOVE EDITED DATE-OF-BIRTH_A TO #BD (EM=YYYYMMDD)
+      v_AGE := ( #D0 - #BD ) / 365.242
+    ELSE
+      v_AGE := 0
+    END-IF
+
+    c_Mem := c_Mem + 1
+    PERFORM sbr_Out
+  ELSE                           /*   Widow
+    IF ( STATUS-CODE-SP = 'D' OR = 'G' OR = 'N' )
+      c_wid_excl := c_wid_excl + 1
+      v_SRV := 'Wid Excluded'
+    ELSE
+      v_SRV := 'Wid'
+      c_wid_accepted := c_wid_accepted + 1
+    END-IF
+
+    IF DATE-OF-BIRTH-SP = MASK(YYYYMMDD)
+      MOVE EDITED DATE-OF-BIRTH-SP_A TO #BD (EM=YYYYMMDD)
+      v_AGE := ( #D0 - #BD ) / 365.242
+    ELSE
+      v_AGE := 0
+    END-IF
+
+    c_Wid := c_Wid + 1
+    PERFORM sbr_Out
+
+  END-IF
+END-READ
+WRITE NOTITLE   *DATX  *TIMD(SETA.) (EM=ZZh:99min:99sec:9) /
+  'Record read                     '   c_IN            /
+  'Skiped  App, Emp, Cont, S,K,G   '   c_Skip_ST       /
+  'Skiped Inactive                 '   c_inact         /
+  'Accepted Mem                    '   c_Mem           /
+  'Accepted Wid                    '   c_Wid           /
+  'Member has no Services          '   c_Mem_No_SVC    /
+  'No/Udeliverable Prim. Address   '   c_bad_addr      /
+  'No Prim. Emails                  '  c_bad_EML       /
+  'Wid Accepted                    '   c_Wid_accepted  /
+  'Wid Excluded                    '   c_Wid_excl      /
+  'Output                          '   c_OK            /
+  'Has Web Account                 '   c_Web           /
+  'Has Ann.Statment delivery       '   c_Ann           /
+  'FIR MC delivery                 '   c_FIR_MC
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE sbr_Out
+c_OK  := c_OK + 1
+IF c_OK = 1
+  v_A400 := v_Header
+  WRITE WORK FILE 1 v_A400
+  COMPRESS 'CN' 'Active Service'
+    'Has WEB Account'
+    'Has WEB AnnSt Flag'
+    'MC Code'
+    'Pref. Email'
+    'Has Pref. Deliverable Address'
+    'Age'
+    INTO v_A400 WITH DELIMITERS dm
+  WRITE WORK FILE 1 v_A400
+END-IF
+
+PERFORM sbr_Get_Email
+
+IF ANNS-DELIVERY-FLAG = 'W'
+  c_ANN := c_ANN + 1
+END-IF
+
+IF DI-BA-MAIL-CD = 'D'
+  c_FIR_MC := c_FIR_MC + 1
+END-IF
+
+COMPRESS
+  ST-V.ID-NUMBER
+  dm  v_SRV
+  dm  v_WEB
+  dm  ANNS-DELIVERY-FLAG
+  dm  DI-BA-MAIL-CD
+  dm  v_Email
+  dm  v_ADR
+  dm  v_AGE
+
+  INTO v_A400 LEAVING NO SPACE
+WRITE WORK FILE 1 v_A400
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE sbr_Get_Email
+v_Email := " "
+FIND EML-V WITH CONTACT-ID = MEMBER-CONTACT-ID
+  IF EMAIL-PREFERRED-IND <> 'Y' ESCAPE TOP END-IF
+*            v_Email := 'Y'
+  v_Email := EMAIL-ADDRESS
+  ESCAPE BOTTOM
+END-FIND
+IF v_Email = ' '
+  c_bad_EML := c_bad_EML + 1
+END-IF
+END-SUBROUTINE
+
+END

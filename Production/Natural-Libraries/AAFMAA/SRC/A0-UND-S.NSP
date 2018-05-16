@@ -1,0 +1,341 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*   A0-UND-S bz 3019
+*   Undeliv addr by Owner (Monthly undeliverable addresses - sorted)
+* Sorting:
+* 0. reverse order of lapses and then in the order 1 - 4 below.
+* 1. Paymode Q,S,A (Bills first quarterly, semiannually, annually).
+* 2. Paymode M, 0, 1, 2, 4 (paying automatically with a CC).
+* 3. Paymode: E (Ez Pay).
+* 4. Paymode: G (Gov allotment).
+* ---------------------------------------------------------------------------------------
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital                              
+*                                             
+DEFINE DATA 
+LOCAL USING ADDA0001
+LOCAL
+ 1 ST-V VIEW OF A-STATUS
+   2 WIDOW-FLAG
+   2 ID-NUMBER
+   2 MEMBER-CONTACT-ID
+   2 PROCESS-IND 
+   2 INTRO-FLAG 
+   2 NUMBER-MEMBERSHIPS
+   2 MILITARY-SERVICE
+   2 INS-MAIL-CODE
+   2 C*ACTIVE-SEGMENTS
+   2 ACTIVE-SEGMENTS(9)
+     3 STATUS
+     3 PAY-STATUS
+     3 MODE
+     3 PAID-TO-DATE
+*
+ 1 ST-O-V VIEW OF A-STATUS
+    2 MEMBER-CONTACT-ID
+*
+ 1 AR-V VIEW OF A-ADDRESS-RELATIONSHIP
+   2 RETURNED-MAIL-DATE       
+*
+1 GT-V VIEW OF A-GEN-TABLE 
+  2  GEN-ALPHA-VALUE     (A50)  
+  2  GEN-NUMBER-VALUE    (N7.4)  
+  2  SEC-KEY             (A7) 
+
+ 1 p_GPRS0CNT
+   2 p_CID           (N8)
+   2 p_Name          (A)    DYNAMIC
+   2 p_DOB_N         (N8)
+   2 p_DOB           (A10)
+   2 p_DOD_N         (N8)
+   2 p_DOD           (A10) 
+*   
+ 1  f_out                (A80)    INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/Und-Addr.TXT">
+ 1  f_sort               (A80)    INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/Und-Addr-Sorted.TXT">
+ 1  f_Err                (A80)    INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/Und-Addr_Err.TXT">
+ 1  dm                   (A1)     INIT <H'09'>
+*
+ 1 #i                    (N2)  
+ 1 v_A400                (A400) 
+ 1 v_limit               (I4) INIT <300000>
+ 1 c_In                  (N6)    (EM=ZZZ,ZZ9)
+ 1 c_Skip_1              (N6)    (EM=ZZZ,ZZ9)
+ 1 c_Skip_2              (N6)    (EM=ZZZ,ZZ9)
+ 1 c_Err_1               (N6)    (EM=ZZZ,ZZ9)
+ 1 c_Err_2               (N6)    (EM=ZZZ,ZZ9)
+ 1 c_Dup                 (N6)    (EM=ZZZ,ZZ9)
+ 1 c_Non_Ow              (N6)    (EM=ZZZ,ZZ9)
+ 1 c_OK                  (N6)    (EM=ZZZ,ZZ9)
+ 1 v_Phone               (A)      DYNAMIC
+ 1 v_Email               (A)      DYNAMIC
+ 1 v_Msg                 (A)      DYNAMIC
+ 1 v_CN_OW               (A) DYNAMIC  INIT <' '>
+ 1 A10-1                 (A10)  INIT <' '>    
+ 1 A10-2                 (A10)  INIT <' '>
+ 1 A10-3                 (A10)  INIT <' '>      
+ 1 v_Paid_To_Last         (N8)  INIT <0>
+ 1 v_Billable             (N1)  INIT <0>
+*
+ 1 #ID-NUMBER          (N6)
+ 1 #NON-INS-OWNER      (L)       /*  Has at least 1 non insured owner
+ 1 #MULTIPLE-OWNER     (L)       /*  More than 1 owner for this member
+ 1 #OWNER-OCC-9 (9)
+   2 #OWNER-FLAG       (A1)      /*  " "=owner is insured "N"=owner is not insured
+   2 #OWNER-CN         (N6/10)   /*  Up to 10 owners for each pol
+   2 #OWNER-CN-BY-POL  (N6)      /*  1st owners of each set of policies
+   2 #OWNER-CN-SEG     (I2/9)    /*  All segment of pols owned by above NMO
+   2 #ISSUE-DATE       (N8/9)    /*  All pols owned by above non-mbr-owner
+   2 #ISS-DATE-DISP    (A10/9)
+   2 #BENE-TYPE        (A1/2)    /*  Beneficiary info output
+   2 #BENE-TEXT        (A60/10)  
+   
+1 v_CI                 (N8)   
+1 v_CI_Used            (N8)   
+* - - - -
+1  #pt                 (N7)   
+1  #px                 (I4)   
+1  #pMsg_1             (A)  DYNAMIC
+* - - - -
+1 v_Sort_Order         (A1/10)  INIT<'M','Q','S','A','0','4','2','1','E','G'>
+1 v_Sort_2             (A2)
+1 #s                   (N2)
+1 cmd                  (A)  DYNAMIC
+1 RC                   (I4)
+
+END-DEFINE
+***********************************
+ON ERROR
+  WRITE  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR / ST-V.ID-NUMBER 'Segm:' #i 'of' C*ACTIVE-SEGMENTS
+  ESCAPE ROUTINE
+END-ERROR
+
+DEFINE WORK FILE 1 f_out TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 f_Err TYPE 'ASCII-COMPRESSED'
+
+IF *DEVICE <> 'BATCH'
+INPUT (IP=OFF) 
+       '-- Sorted Undeliverable Addresses for owner --'(I)  10x *DATX *TIMX            /  
+       'Pid:' *PID(AL=8) 'Parm:' *PARM-USER(AL=8) 'User:' *USER(AL=8)   //            
+       'Limit' v_limit(AD=IM EM=ZZZZZZ)                                ///
+ELSE
+  REPEAT UNTIL *DATA = 0         
+      INPUT A10-1
+      IF A10-1 IS (N6)
+         v_Limit := val(A10-1)
+      END-IF
+  END-REPEAT
+  DEFINE PRINTER(0) OUTPUT 'LPT1'
+END-IF
+
+lb_PRGRS. SETTIME
+READ ST-V BY ID-NUMBER  FROM  1900  /*  TO 13510
+     c_In := c_In + 1
+     IF *COUNTER > v_Limit ESCAPE BOTTOM END-IF
+     IF *DEVICE <> 'BATCH' PERFORM sbr_PRGR END-IF
+     IF PROCESS-IND = 'C'
+        OR NUMBER-MEMBERSHIPS = 0  
+        OR INTRO-FLAG  = 'A'
+        OR MILITARY-SERVICE = 'EMP'
+        OR (INS-MAIL-CODE = 'E' OR = 'F'  OR = 'B')
+           c_Skip_1 := c_Skip_1 + 1 
+           ESCAPE TOP 
+      END-IF
+      RESET INITIAL v_Paid_To_Last v_Billable
+      FOR #i = 1 TO  C*ACTIVE-SEGMENTS
+        IF NOT ( STATUS(#i) = 'D' AND PAY-STATUS(#i) < '40' ) ESCAPE TOP END-IF
+        v_Billable := v_Billable + 1
+        IF PAID-TO-DATE(#i) > v_PAID_To_Last 
+           v_PAID_To_Last := PAID-TO-DATE(#i)
+        END-IF
+      END-FOR  
+
+      PERFORM sbr_GET_Owner
+      FOR #i = 1 TO C*ACTIVE-SEGMENTS
+         IF NOT ( STATUS(#i) = 'D' AND PAY-STATUS(#i) < '40' )
+            ESCAPE TOP
+         END-IF
+
+         IF #OWNER-CN(#i,1) <> ST-V.ID-NUMBER 
+             FIND(1) ST-O-V WITH ST-O-V.ID-NUMBER = #OWNER-CN(#i,1)
+                  IF NO RECORD FOUND
+                      MOVE EDITED #OWNER-CN(#i,1)(EM=999999' Err') TO v_CN_Ow
+                      WRITE WORK 2 'Owner status record not found. Owner CN: ' #OWNER-CN(#i,1) '  Ins CN:' ID-NUMBER '  Segm: ' #i
+                     v_CI := ST-V.MEMBER-CONTACT-ID
+                     c_Err_1 := c_Err_1 + 1
+                     ESCAPE BOTTOM
+                  END-NOREC
+                  MOVE  #OWNER-CN(#i,1) TO v_CN_Ow
+                  v_CI := ST-O-V.MEMBER-CONTACT-ID
+             END-FIND
+             c_Non_Ow := c_Non_Ow + 1  
+         ELSE
+             v_CI := ST-V.MEMBER-CONTACT-ID
+             v_CN_Ow := ' '
+         END-IF
+
+         IF v_CI = v_CI_Used
+            c_Dup := c_Dup + 1
+            ESCAPE TOP
+         ELSE
+             v_CI_Used := v_CI
+         END-IF   
+
+         RESET #PDA-ADDRESS
+         #ADD-TYPE := 'P'
+         #ADD-CONTACT-ID := v_CI 
+         CALLNAT 'ADDN0001' #PDA-ADDRESS
+
+         IF #ADD-RETURNED-MAIL <> 'Y'
+            ESCAPE TOP
+         END-IF
+     
+         FIND(1) AR-V WITH ADDRESS-POOL-ID = #ADD-POOL-ID  END-FIND   
+         p_CID :=  v_CI
+         p_Name := '!L'                       /* bz-Name-C
+         CALLNAT 'GPRS0CNT' p_GPRS0CNT
+         IF p_Name = ' ' 
+            c_Err_2 := c_Err_2 + 1
+         END-IF   
+
+         IF p_DOD_N <> 0    
+            c_Skip_2 := c_Skip_2 + 1
+            COMPRESS v_Msg 'Has DoD' INTO v_Msg   
+         END-IF
+
+         v_Email := GET-EML(<v_CI>)
+         v_Phone := GET-PHONE(<v_CI>)  
+         PERFORM sbr_Out
+     END-FOR
+END-READ   
+  CLOSE WORK FILE 1
+  CLOSE WORK FILE 2
+
+  PRINT(0) NOTITLE  *DATX *TIMX  *TIMD(LB_PRGRS.) (EM=ZZh:99min:99sec:9) /
+   'Record read                 '   c_IN           / 
+   'Bug   No Owner              '   c_Err_1        /
+   'Bug   No CNT                '   c_Err_2        /
+   'Not Active etc              '   c_Skip_1       /
+   'DOD <> 0                    '   c_Skip_2       /
+   'Non Owner                   '   c_Non_Ow       /
+   'Duplicates                  '   c_Dup          /
+   'Output                      '   c_OK           /
+   
+ COMPRESS 'sort -k1,16' f_out '| cut -c 11- >' f_sort INTO cmd
+ call 'shcmd' cmd
+ rc := RET('shcmd')
+ PRINT 'Sorted rc=' rc
+  
+   
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE sbr_Out
+    c_OK  := c_OK + 1
+    IF c_OK = 1
+       COMPRESS  'Owner CN' 'Name' 'DOB' 'Address 1' 'Address 2' 'Address 3' 
+       'Valid Ind' 'Phone' 'Email' 'Intro-Flag' 
+       'Undeliv. date' 'Address last update' 'Latest Paid-To' 'Billable policies'
+       'Pay Mode' 'Pay status'
+          INTO v_A400 WITH DELIMITERS dm
+        WRITE WORK FILE 1 '0000000000' 'CN    ' dm v_A400
+    END-IF 
+
+      IF RETURNED-MAIL-DATE = MASK(YYYYMMDD)
+         MOVE EDITED RETURNED-MAIL-DATE(EM=9999-99-99) TO A10-1
+      ELSE
+         A10-1 := ' '
+      END-IF
+         
+      IF #ADD-LAST-DATE-UPD = MASK(YYYYMMDD)
+         MOVE EDITED #ADD-LAST-DATE-UPD(EM=9999-99-99) TO A10-2
+      ELSE
+         A10-2 := ' '
+      END-IF   
+
+      IF v_Paid_To_Last = MASK(YYYYMMDD)
+         MOVE EDITED v_Paid_To_Last(EM=9999-99-99) TO A10-3
+      ELSE
+         A10-3 := ' '
+      END-IF
+   
+      EXAMINE v_Sort_order(*) FOR MODE(#i) GIVING INDEX #s
+      IF #s = 0 
+        v_Sort_2 := '00'
+      ELSE 
+        MOVE EDITED #s(EM=99) TO v_Sort_2
+      END-IF 
+      
+      FIND GT-V WITH SEC-KEY = 'CODEPST'
+        MOVE EDITED GEN-NUMBER-VALUE(EM=99) TO v_Msg
+        IF v_MSG = PAY-STATUS(#i) 
+           v_MSG := GEN-ALPHA-VALUE
+        ESCAPE BOTTOM        
+        END-IF        
+      END-FIND  
+
+      COMPRESS 
+               v_CN_OW
+           dm  p_Name 
+           dm  p_DOB
+           dm  #ADD-LINE-1 
+           dm  #ADD-LINE-2 
+           dm  #ADD-LINE-3
+           dm  #ADD-VALID-IND
+           dm  v_Phone
+           dm  v_Email
+           dm  INTRO-FLAG
+           dm  A10-1
+           dm  A10-2
+           dm  A10-3
+           dm  v_Billable
+           dm  MODE(#i)
+           dm  v_MSG
+                              INTO v_A400 LEAVING NO SPACE
+          WRITE WORK FILE 1 v_Paid_To_Last v_Sort_2 ST-V.ID-NUMBER dm v_A400
+          RESET INITIAL v_Msg A10-1 A10-2 A10-3 
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE sbr_GET_Owner
+     #ID-NUMBER := ST-V.ID-NUMBER
+     RESET   #NON-INS-OWNER  #MULTIPLE-OWNER  #OWNER-OCC-9 (1:9)
+     CALLNAT 'GOWNRSXX' 
+       #ID-NUMBER
+       #NON-INS-OWNER
+       #MULTIPLE-OWNER
+       #OWNER-OCC-9 (1:9)
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+DEFINE sbr_PRGR
+  IF *DEVICE = 'BATCH' ESCAPE ROUTINE END-IF
+  #px := #px + 1
+  IF #px < 10000 ESCAPE ROUTINE END-IF
+  #px := 0
+  #pt := *TIMD(lb_PRGRS.)
+  COMPRESS 'Output:' c_OK  INTO #pMsg_1 
+  CALLNAT 'PROGRESS' ST-V.ID-NUMBER c_In #pt #pMsg_1
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = 
+END
+* 02/25/15 09:54:31     05min:06sec:3    
+* Record read 162,459                    
+* Bug   No Owner       4                 
+* Bug   No CNT       0                   
+* Not Active etc  60,262                 
+* DOD <> 0       0                       
+* Non Owner   8,109                      
+* Duplicates  16,414                     
+* Output   2,493                         
+*                                        
+* Sorted rc=           0     
+
+* 06/29/15 11:10:33     04min:34sec:2 
+* Record read 164,098                 
+* Bug   No Owner       3              
+* Bug   No CNT       0                
+* Not Active etc  62,193              
+* DOD <> 0       0                    
+* Non Owner   8,279                   
+* Duplicates  16,251                  
+* Output   2,372                      
+*                                     
+* Sorted rc=           0                           

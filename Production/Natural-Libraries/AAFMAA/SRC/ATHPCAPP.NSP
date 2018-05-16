@@ -1,0 +1,800 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPCAPP - print CAP pay-off letter & FA
+*                        ATHPCAPL prints CAP option letter
+* SIMPLY RUN THIS JOB TO GET CAP Pay-off LTR (NO CHANGES NEEDED)
+* can be run multiple times per month
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    11092004  PM1     Adjusted process to not print allotment     *
+*                          forms if changes are not necessary.         *
+* DRW    01052005  DW2     Do not use 'Y' if in Bankruptcy             *
+* DRW    01062005  DW3     Do not bypass undelives of CAP refund  file *
+* DRW    05272005  DW4     Do not set PD-OFF-IND to Y if inactive      *
+* PAM    06022005  PM5     Do not send if loan not issued yet.         *
+* DRW    08182005  DW6     Do not send if Loan sent to COLLECTIONS     *
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII                     *
+* DRW    08312006  DW7     Increase size of #recs-read                 *
+* PAM    07182007  PM8     Change report 5 title                       *
+* PAM    07242007  PM9     Added pgm to locate CAP policy              *
+* PAM    09212007  PM10    Include loans with balances for no AIP      *
+*                          report                                      *
+* DRW    10232007  DW11    ISSUE-DATE not equal LOAN-DATE REPORT       *
+* PAM    04012008  PM12    Do not include BANKRUPT members on missing  *
+*                          AIP report                                  *
+* DRW    04022008  DW13    Chg location of 'SENT to Collections' note  *
+* DRW  03/09/2009  DW14    Increase Note occurance from 60 to 500      *
+* PAM  03/27/2009  PM15    Include AIW in report                       *
+* PAM  12/09/2010  PM16    Remove FA form from CAP payoff letters      *
+* vxt  05/07/2012  vt1     Add deceased column to the work file 1      *
+*                          (ticket# 1193)                              *
+* JNT  09/17/2013  JT1     Address normalization                       *
+* YAK  06/17/2014  YK1     Write data for Pay-off letters to Letters   *
+*                          file to use from SSRS                       *
+* YAK   08/07/2015 YK2     Stop CAP Pay-off letters by user request    *
+* YF1   01/22/2018 YF1     Unique identifier for plan Ticket 5936      *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING ADDA0001                                                  /* JT1
+LOCAL USING GPBACOMM                                                  /* YK1
+LOCAL USING G3500AAD
+LOCAL USING ATHLCAPP                                                  /* PM9
+LOCAL
+*
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+1 #SENT-TO-COLL      (L)      /* DW8
+1 #FTP-FILE    (A125)
+1 #DISP-10     (A10)
+1 #DISP-6      (A6)
+1 #UNDL        (A4)
+1 #DO-NOT-REF  (L)
+1 #DB-CR-LESS-THAN-MIN   (N5)
+1 #PD-OFF-IND            (A1)
+*
+1 #NOTE-AMT  (N3.2)
+1 #AMT    (N3.2)
+1 REDEFINE #AMT
+  2 #AMT-DOLS  (A3)
+  2 REDEFINE #AMT-DOLS
+    3 #AMT-DOLS-X  (A1/3)
+  2 #AMT-CENTS (A2)
+*
+* * * *   S T A T U S   F I L E   * * * * * * * * * * * * * * *
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NBR       (A6)
+  2 WIDOW-FLAG          (A1)
+  2 MILITARY-STATUS
+  2 MILITARY-SERVICE
+  2 INTRO-FLAG          (A1)
+  2 SSN
+  2 REDEFINE SSN
+    3 SSN-A   (A9)
+  2 PROCESS-IND
+  2 NAME                (A25)
+  2 APPL-SOURCE
+  2 MEMBER-CONTACT-ID                                    /* JT1
+  2 DEBIT-CREDIT-AMT
+  2 X-BILL-ADJUST    (9)
+  2 PAD-CODE
+  2 LAST-MBRSHIP-PHONE-DT
+  2 MEMBERSHIP-DRIVE (A6)
+  2 REDEFINE MEMBERSHIP-DRIVE
+    3 PC-1        (A1)
+    3 PC-2        (A1)
+    3 PC-3        (A1)
+    3 PC-4        (A1)
+    3 PC-5        (A1)
+    3 PC-6        (A1)
+  2 X-LOAN-DATE     (9)
+  2 X-LOAN-AMOUNT   (9)
+  2 X-ALT-LP-AMT    (9)
+  2 X-ALT-LP-IND    (9)              /* PM15
+  2 ALOT-AMT
+  2 NUMBER-MEMBERSHIPS
+  2 C*ACTIVE-SEGMENTS
+  2 STATUS              (9)
+  2 MODE                (9)
+  2 PLAN                (9)
+  2 PAY-STATUS          (9)
+  2 FACE-AMOUNT         (9)
+  2 ANNUAL-PREM         (9)
+  2 ISSUE-DATE          (N8/9)
+  2 SPLIT-IND           (N1/9)
+  2 NUM-MBRSHIPS        (N1/9)
+  2 CASH-VALUE          (9)
+  2 PAID-TO-DATE        (N8/9)
+  2 CONV-DURATION       (N3/9)
+  2 MONTH-ALLOC-AMT     (N7.2/9)   /* NG99
+  2 SMOKER-FLAG         (9)
+  2 DATE-OF-DEATH                                     /* vt1
+*
+1 VA-V VIEW OF A-VA-HISTORY
+  2 RECORD-KEY    (N15)
+  2 REDEFINE RECORD-KEY
+    3 ID-NO        (N6)
+    3 ISS-DT       (N8)
+    3 SPLIT-IND     (N1)
+  2 TERMINATION-DATE    (P7)
+  2 TERMINATION-CODE     (A3)
+*
+1 #VA-KEY     (N15)
+1 REDEFINE #VA-KEY
+  2 #VA-ID      (N6)
+  2 #VA-ISS-DT  (N8)
+  2 #VA-SPL-IND (N1)
+*
+1 NT-V VIEW OF A-NOTES
+  2 C*NOTE-TABLE              /* DW14
+  2 NOTE-TEXT   (A60/500)     /* DW14
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC  (500)     /* DW14
+      4 NOTE-TEXT-60   (A60)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-25   (A25)
+        5 NT-YEAR        (A5)
+        5 NOTE-TEXT-AMT  (A7)
+        5 REDEFINE NOTE-TEXT-AMT
+          6 NT-AMT-D-SGN (A1)
+          6 NT-AMT-DOLS  (A3)
+          6 NT-AMT-DEC   (A1)
+          6 NT-AMT-CENTS (A2)
+        5 NT-CHK-#       (A23)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-14   (A14)
+        5 NT-DO-NOT-REF  (A13)
+        5 NT-REST        (A33)
+      4 REDEFINE NOTE-TEXT-60   /* DW6
+        5 NOTE-TEXT-24    (A24)
+        5 NT-SENT-TO-COLL (A24)
+        5 NT-REST-1       (A12)
+      4 REDEFINE NOTE-TEXT-60                /* DW13
+        5 NOTE-TEXT-24-2    (A25)
+        5 NT-SENT-TO-COLL-2 (A24)
+        5 NT-REST-1-2       (A11)
+*
+1 #CANCEL   (L)
+1 #BANKR    (L)
+1 #ST-ISN   (P8)
+1 #SMOKER-NON (A11)
+1 #SM-NS-AGE   (A2)
+1 #SM-NS-AGE-P (A3)
+1 #SAVE (A5)
+1 #OPT-1-MON-PREM  (N5.2)
+1 #OPT-2A-MON-PREM  (N5.2)
+1 #OPT-2A-W-REFUND  (N5.2)
+1 #OPT-2B-MON-PREM  (N5.2)
+1 #OPT-2B-W-REFUND  (N5.2)
+1 #OPT-3-MON-PREM  (N5.2)
+1 #OPT-4-MON-PREM  (N5.2)
+1 #OPT-1-MON-PREM-DISP  (A8)
+1 #OPT-2A-MON-PREM-DISP (A7)
+1 #OPT-2A-W-REFUND-DISP (A7)
+1 #OPT-2B-MON-PREM-DISP (A7)
+1 #OPT-2B-W-REFUND-DISP (A7)
+1 #OPT-3-MON-PREM-DISP  (A8)
+1 #OPT-4-MON-PREM-DISP  (A8)
+*
+1 #NEW-CAP-DATE   (N8)
+1 REDEFINE #NEW-CAP-DATE
+  2 #NCD-YYYY   (N4)
+  2 #NCD-MM     (N2)
+  2 #NCD-DD     (N2)
+*
+1 #FND-RT   (L)
+1 #CAP-RTS  (N5)
+1 #UPDATE         (L)             /* YK1
+1 #SEND-CAP-LTR   (L)
+1 #EXCP-REASON    (A35)
+1 #CAP-EXCP       (L)
+1 #LTR-MSG        (A50)
+1 #FORMATED-NAME-DEAR (A35)
+1 #FORMAT-CN        (A8)
+1 #OTHER-G-PREMS    (P5.2)
+1 #PREM             (P5.2)
+1 #CAP-MODE         (A1)
+1 #CAP-MODAL-PMT    (P5.2)
+1 #CAP-MONTH-ALLOC-AMT (P7.2)     /* NG99
+1 #FACE-AMOUNT-DISP  (A13)        /* NG99
+1 #CAP-FACE-AMOUNT  (N7.2)        /* NG99
+1 #CAP-PLAN         (A3)
+1 #CAP-CASH-VALUE   (N8)
+1 #CAP-PAY-STATUS   (A2)
+1 #CAP-PAID-TO-DATE (N8)
+1 REDEFINE #CAP-PAID-TO-DATE
+  2 #CAP-PAID-TO-DATE-YYYYMM  (N6)
+  2 #CAP-PAID-TO-DATE-DD      (N2)
+1 #CAP-ISSUE-DATE   (N8)
+1 REDEFINE #CAP-ISSUE-DATE
+  2 #CAP-ISSUE-DATE-A (A8)
+1 #CAP-SPLIT-IND    (N1)
+1 #CAP-SMOKER-FLAG  (A1)
+*
+1 #MONS-TO-PAYOFF   (N3.2)
+1 REDEFINE #MONS-TO-PAYOFF
+  2 #MONS-TO-PAYOFF-MONS (N3)
+  2 #MONS-TO-PAYOFF-DEC  (N2)
+*
+1 #TYPE       (A10)
+1 #ISS-DT     (N8)
+1 REDEFINE #ISS-DT
+  2 #ISS-DT-YYYY  (N4)
+  2 #ISS-DT-MM    (N2)
+  2 #ISS-DT-DD    (N2)
+*
+1 #TRM-CD     (A3)
+1 #TRM-DT     (N7)
+1 REDEFINE #TRM-DT
+  2 #FILL         (N1)
+  2 #TRM-DT-YYYY  (N4)
+  2 #TRM-DT-MM    (N2)
+*
+1 #COUNTERS
+  2 #RECS-READ        (P7)   /* DW7
+  2 #CAPS-READ        (P5)
+  2 #NUM-POLS         (P3)
+  2 #CNT              (P5)
+  2 #CNT-2            (P5)
+  2 #CNT-3            (P5)
+  2 #CNT-4            (P5)
+  2 #CNT-5            (P5)
+  2 #CNT-6            (P5)
+  2 #CNT-7            (P5)
+  2 #CNT-8            (P5)
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #TOT-LOAN         (P11.2)
+  2 #TOT-CSV          (P11.2)
+  2 #AGE-4            (N4)
+  2 #AGE-0-30         (N5)
+  2 #AGE-30-35        (N5)
+  2 #AGE-35-99        (N5)
+  2 #1997-CAP-IM      (N5/5)
+  2 #1998-CAP-IM      (N5/5)
+*
+1 #YYYYMMDD (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY   (N4)
+  2 #MMDD   (N4)
+  2 REDEFINE #MMDD
+    3 #MM   (N2)
+    3 #DD   (N2)
+*
+1 #2-MONS-AGO (N8)
+1 REDEFINE #2-MONS-AGO
+  2 #2-AGO-YYYYMM (N6)
+  2 REDEFINE #2-AGO-YYYYMM
+    3 #2-AGO-YYYY   (N4)
+    3 #2-AGO-MM     (N2)
+  2 #2-AGO-DD     (N2)
+*
+1 #NOTE-TXT  (A60)
+1 #TERM-X     (I2)
+1 #TERM-CNT   (P3/100)
+1 #SCR-X      (I2)
+1 #HOLD-OLD-NUMBER (N2)
+* 1 #HOLD-COMP-DB    (N5.2)
+1 #HOLD-NEW-NUMBER (N2)
+1 #HOLD-SCR-ID     (N6)
+1 #SCN-POLICY-NUMBER (A16)
+1 #LPO-IND           (A3)   INIT <'LPO'>                              /* PM9
+1 #ACT-IND           (A3)   INIT <'ACT'>                              /* PM10
+1 #DECEASED          (A8)                                            /* vt1
+* YK1 >
+1 #DATN (N8)
+1 #CAP-PAYOFF      (A10) CONST <'CAP-PAYOFF'>
+1 #NOTE-TEXT       (A60/10)
+1 #LETTER-NOTE     (A) DYNAMIC CONST <'* Sent letter/email: CAP Pay-Off'>
+1 #CLERK-ID        (A3) CONST <'EDS'>
+1 #WORK-AMOUNT     (A) DYNAMIC
+* CVALUESXX communication area
+1 #SUFFIX     (A3)
+1 #LOAN-BAL   (N7.2/9)
+1 #LOAN-BAL-2 (N7.2/9)
+1 #ACC-INT    (N7.2/9)
+1 #ACC-INT-2  (N7.2/9)
+1 #CSV        (N7.2/9)
+1 #CVALUE     (N7.2/9)
+1 #LVALUE     (N7.2/9)
+1 #MCSV       (N7.2/9)
+1 #DB         (N7.2/9)
+1 #ANN-PREMIUM (N7.2/9)
+1 #FACE-AMT   (N7.2/9)
+1 #TPP        (N7.2/9)
+1 #CSV-P      (P7.2/9)
+* < YK1
+*
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/CAPPINFO.TXT'  /* vt1
+*   TYPE 'ASCII'
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'CAP Members - exceptions'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'CAP Paid-up Letter Detail'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'CAP LOAN where Iss DT not = LOAN-DATE'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (4) LS=133 PS=76
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'C.A.P. Member with DEBIT/CREDIT or Billing Adjust'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (5) LS=133 PS=76
+WRITE  (5) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+*         'CAPS with loans but no ALP/AIP/ELP/EIP'                  /* PM8
+  'CAP loan balances with no automatic loan payment'        /* PM8
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (6) LS=133 PS=76
+WRITE  (6) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'CAP pols to be Resigned at mbrs requext when loan pd off'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+* YK1 - replaced with SSRS
+* (7)   CAP PAID-OFF no fefund
+* (8)   CAP PAID-OFF-LETTERS letters with refund
+*
+#DATN := *DATN
+MOVE #DATN TO #2-MONS-AGO
+SUBTRACT 2 FROM  #2-AGO-MM
+IF #2-AGO-MM LT 1
+  ADD 12 TO #2-AGO-MM
+  SUBTRACT 1 FROM #2-AGO-YYYY
+END-IF
+*
+MOVE *DATN TO #NEW-CAP-DATE
+MOVE 1 TO #NCD-DD
+*
+COMPRESS 'CN'
+  #TAB 'SSN'
+  #TAB 'ISS-DATE'
+  #TAB 'DB/CR'
+  #TAB 'BILL-ADJ'
+  #TAB 'NAME'
+  #TAB 'LOAN-DATE'
+  #TAB 'ALOT-AMT'
+  #TAB '#UNDL'
+  #TAB 'MIL-STAT'
+  #TAB 'MIL-ID'
+  #TAB 'REFD-NOTE-AMT'
+  #TAB 'PD/OFF'
+  #tab 'Deceased ?'                                                 /* vt1
+  INTO #FTP-FILE  LEAVING NO
+WRITE WORK 1 #FTP-FILE
+*
+READ ST-V BY MEMBER-KEY FROM '001900'
+  MOVE *ISN TO #ST-ISN
+  IF PROCESS-IND = 'C'
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #RECS-READ
+*
+  IF NOT INTRO-FLAG = 'B' OR = 'C' OR = 'P' OR = 'Q'
+    FOR #I1 1 TO 9
+      IF   (CONV-DURATION (#I1) = 999)
+          AND (STATUS (#I1) = 'D')
+        WRITE ST-V.ID-NUMBER 'Has a C.A.P. Policy but not C.A.P. Member'
+          ISSUE-DATE (#I1)
+      END-IF
+    END-FOR
+*
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  RESET #PDA-ADDRESS                                           /* JT1
+  #ADD-TYPE        := 'P'                                      /* JT1
+  #ADD-CONTACT-ID := ST-V.MEMBER-CONTACT-ID                    /* JT1
+  CALLNAT 'ADDN0001' #PDA-ADDRESS                              /* JT1
+*
+  RESET #UNDL
+*   IF  (ADDRESS-CHG-CODE = 'U' OR = 'V')                      /* JT1
+  IF F-UNDEL-ADDRESS (< ST-V.MEMBER-CONTACT-ID >)              /* JT1
+*      OR (ADDRESS-1 = ' ')                                    /* JT1
+      OR (#ADD-LINE-1 = ' ')                                   /* JT1
+    MOVE 'UNDL' TO #UNDL
+*   WRITE ST-V.ID-NUMBER 'Bypassed due to Undeliv Addr'
+*
+    END TRANSACTION
+*   ESCAPE TOP     /* DW3
+  END-IF
+*
+  IF DATE-OF-DEATH NE 0                                      /* VT1 \/
+    MOVE 'DECEASED' TO #DECEASED
+  ELSE
+    RESET #DECEASED
+  END-IF                                                     /* VT1 /\
+*
+  ADD 1 TO #CAPS-READ
+*
+  #CAP-IND:= #ACT-IND                                              /* PM10
+  PERFORM FIND-CAP-POL                                             /* PM10
+*
+  IF   (X-LOAN-AMOUNT (#CAP-X) NE 0)
+      AND ((X-ALT-LP-AMT (#CAP-X) = 0)
+      OR (X-ALT-LP-AMT (#CAP-X) NE 0 AND X-ALT-LP-IND (#CAP-X) = '9')) /* PM15
+*
+    RESET #BANKR                                                   /* PM12
+    FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER                  /* PM12
+      FOR #I1 1 TO C*NOTE-TABLE                          /* DW14   /* PM12
+        IF NOTE-TEXT (#I1) = MASK ('*Mbr in bnkrptcy')             /* PM12
+          MOVE TRUE TO #BANKR                                      /* PM12
+          ESCAPE BOTTOM                                            /* PM12
+        END-IF                                                     /* PM12
+*
+        IF NOTE-TEXT (#I1) = ' '                                   /* PM12
+          ESCAPE BOTTOM                                            /* PM12
+        END-IF                                                     /* PM12
+      END-FOR                                                      /* PM12
+    END-FIND                                                       /* PM12
+*
+    IF NOT #BANKR                                                  /* PM12
+      ADD 1 TO #CNT-5
+      DISPLAY (5) #CNT-5 'CXN' ST-V.ID-NUMBER
+        'Iss/Date' #CAP-ISSUE-DATE
+        'Loan/Date' X-LOAN-DATE (#CAP-X)
+        'Loan/Amount' X-LOAN-AMOUNT (#CAP-X)
+        'Alot/Amount'   ALOT-AMT
+        'Mode' #CAP-MODE
+        'DB/CR' DEBIT-CREDIT-AMT  (EM=-ZZZ,ZZZ.99)
+    END-IF                                                         /* PM12
+  END-IF
+*
+  IF   (X-LOAN-AMOUNT (#CAP-X) NE 0)          /* DW11
+      AND (ISSUE-DATE (#CAP-X) NE X-LOAN-DATE (#CAP-X))
+    ADD 1 TO #CNT-3
+    DISPLAY (3) #CNT-3 'CN' ST-V.ID-NUMBER
+      'Iss/Date' #CAP-ISSUE-DATE
+      'Loan/Date' X-LOAN-DATE (#CAP-X)
+      'Loan/Amount' X-LOAN-AMOUNT (#CAP-X)
+      'Alot/Amount'   ALOT-AMT
+      'Mode' #CAP-MODE
+      'DB/CR' DEBIT-CREDIT-AMT  (EM=-ZZZ,ZZZ.99)
+  END-IF
+
+*
+  #CAP-IND           := #LPO-IND                                     /* PM10
+  PERFORM FIND-CAP-POL
+  MOVE #CAP-X TO #I1
+*
+  IF  (DEBIT-CREDIT-AMT LT 0)
+*  OR (x-BILL-ADJUST (?) LT 0))
+      AND (X-LOAN-AMOUNT (#CAP-X) = 0)
+      AND (X-LOAN-DATE (#CAP-X) NE 0)                                /* PM5
+*  AND (X-LOAN-DATE (#CAP-X) = 20041101)  /* temp date check
+    IF   (DEBIT-CREDIT-AMT GE -5.00)
+        AND (DEBIT-CREDIT-AMT LT 0)
+      ADD 1 TO #DB-CR-LESS-THAN-MIN
+*     WRITE ST-V.ID-NUMBER 'DB/CR less than 5.00 it is' DEBIT-CREDIT-AMT
+    END-IF
+*
+    RESET #NOTE-AMT #AMT #DO-NOT-REF #BANKR     /* DW1
+      #SENT-TO-COLL                             /* DW6
+    FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+      FOR #I1 1 TO C*NOTE-TABLE            /* DW14
+        IF NOTE-TEXT (#I1) = MASK ('*Mbr in bnkrptcy')  /* DW1
+          MOVE TRUE TO #BANKR                           /* DW1
+        END-IF
+*
+        IF  (NT-SENT-TO-COLL   (#I1) = 'LOAN SENT TO COLLECTIONS')  /* DW6
+            OR (NT-SENT-TO-COLL-2 (#I1) = 'LOAN SENT TO COLLECTIONS')  /* DW13
+          MOVE TRUE TO #SENT-TO-COLL
+        END-IF
+*
+        IF  (NT-DO-NOT-REF (#I1) = 'DO NOT REFUND')
+            OR (NOTE-TEXT (#I1) = MASK ('DO NOT REFUND'))
+            OR (NOTE-TEXT (#I1) = MASK ('*DO NOT REFUND'))
+            OR (NOTE-TEXT (#I1) = MASK ('* DO NOT REFUND'))
+          WRITE ST-V.ID-NUMBER 'Has "DO NOT REFUND" note'
+          MOVE TRUE TO #DO-NOT-REF
+        END-IF
+*
+        IF  (NOTE-TEXT (#I1) = MASK ('Outstanding Trm Rfnd'))
+            OR (NOTE-TEXT (#I1) = MASK ('OUTSTANDING TRM RFND'))
+          MOVE NT-AMT-DOLS  (#I1) TO #AMT-DOLS
+          MOVE NT-AMT-CENTS (#I1) TO #AMT-CENTS
+*
+          FOR #I2 1 TO 3
+            IF #AMT-DOLS-X (#I2) = ' '
+              MOVE '0' TO #AMT-DOLS-X (#I2)
+            END-IF
+          END-FOR
+*
+          MOVE #AMT TO #NOTE-AMT
+*         WRITE ST-V.ID-NUMBER 'Refund note=' #AMT 'dc='DEBIT-CREDIT-AMT
+        END-IF
+      END-FOR
+    END-FIND
+*
+    IF NOT #DO-NOT-REF
+      RESET #PD-OFF-IND
+      IF  (PC-5 = ' ' OR = 'O') /* paid-off letter will be sent this mon
+*     OR ((PC-5 = 'Q' OR = 'P') AND (LAST-MBRSHIP-PHONE-DT = 20030930)))
+          AND NOT #BANKR          /* if in bankruptcy do not use "Y" DW1
+          AND NOT #SENT-TO-COLL   /* if in Collections do not use "Y" DW6
+          AND NUMBER-MEMBERSHIPS NE 0   /* must be active    /* DW4
+        MOVE 'Y' TO #PD-OFF-IND
+        WRITE ST-V.ID-NUMBER 'PD-OFF-IND "Y"' #UNDL 'PC-5=' PC-5
+          'LN-PD-off-dt=' X-LOAN-DATE (#CAP-X)
+      END-IF
+*
+      ADD 1 TO #CNT-4
+      DISPLAY (4) #CNT-4 ST-V.ID-NUMBER
+        SSN
+        NAME  (EM=XXXXXXXXXX)
+        'Iss/Date'    #CAP-ISSUE-DATE-A
+        'Loan/Date'   X-LOAN-DATE (#CAP-X)
+        'Loan/Amt'    X-LOAN-AMOUNT(#CAP-X)
+        'Alot/Amt'    ST-V.ALOT-AMT
+        'DB/CR'       ST-V.DEBIT-CREDIT-AMT
+        'Bill/Adjust' ST-V.X-BILL-ADJUST (#CAP-X)
+        'UNDL'        #UNDL
+        'Mil/Stat'    MILITARY-STATUS
+        'Mil/ID'      MILITARY-SERVICE
+        'PO/IN'  #PD-OFF-IND
+*
+      COMPRESS ID-NBR
+        #TAB SSN-A
+        #TAB #CAP-ISSUE-DATE-A
+        INTO #FTP-FILE LEAVING NO
+      MOVE EDITED ST-V.DEBIT-CREDIT-AMT (EM=-ZZZZZZ.99) TO #DISP-10
+      COMPRESS #FTP-FILE #TAB #DISP-10 INTO #FTP-FILE  LEAVING NO
+      MOVE EDITED ST-V.X-BILL-ADJUST(#CAP-X)(EM=-ZZZZZZ.99) TO #DISP-10
+      COMPRESS #FTP-FILE #TAB #DISP-10 INTO #FTP-FILE  LEAVING NO
+      COMPRESS #FTP-FILE
+        #TAB NAME
+        #TAB X-LOAN-DATE (#CAP-X)
+        INTO #FTP-FILE LEAVING NO
+*      MOVE EDITED X-LOAN-AMOUNT (#CAP-X) (EM=-ZZZZZZ.99) TO #DISP-10
+*      COMPRESS #FTP-FILE #TAB #DISP-10 INTO #FTP-FILE  LEAVING NO
+      MOVE EDITED ST-V.ALOT-AMT (EM=ZZZ.99) TO #DISP-6
+      COMPRESS #FTP-FILE #TAB #DISP-6 INTO #FTP-FILE  LEAVING NO
+      COMPRESS #FTP-FILE
+        #TAB #UNDL
+        #TAB MILITARY-STATUS
+        #TAB MILITARY-SERVICE
+        INTO #FTP-FILE LEAVING NO
+      MOVE EDITED #NOTE-AMT (EM=ZZZ.99) TO #DISP-6
+      COMPRESS #FTP-FILE #TAB #DISP-6
+        #TAB #PD-OFF-IND
+        #tab #deceased                                    /* vt1
+        INTO #FTP-FILE  LEAVING NO
+      WRITE WORK 1 #FTP-FILE
+    END-IF
+  END-IF
+*
+  IF  (#CAP-ISSUE-DATE GE #NEW-CAP-DATE) /* BYPASS NEW CAPS BEFORE LOAN
+*       OR (ADDRESS-CHG-CODE = 'U' OR = 'V')                     /* JT1
+      OR F-UNDEL-ADDRESS (< ST-V.MEMBER-CONTACT-ID >)            /* JT1
+*       OR (ST-V.ADDRESS-1 = ' ')                                /* JT1
+      OR (#ADD-LINE-1 = ' ')                                     /* JT1
+      OR (NUMBER-MEMBERSHIPS = 0)
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF NOT #CAP-FND AND (NUMBER-MEMBERSHIPS NE 0)
+    IF  (#CAP-X = 0)
+        AND (X-LOAN-AMOUNT (1) NE 0)
+      WRITE ST-V.ID-NUMBER 'CAP Mbr with no CAP Pols but with a FIXED loan'
+    END-IF
+*
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  ADD  X-LOAN-AMOUNT (#CAP-X) TO #TOT-LOAN
+  ADD  #CAP-CASH-VALUE TO #TOT-CSV
+  RESET #UPDATE                                                      /* YK1
+*
+  IF   (X-LOAN-AMOUNT (#CAP-X) = 0)
+      AND (X-LOAN-DATE (#CAP-X) NE 0)                                /* PM5
+      AND (PC-5 = ' ' OR = 'O')   /*paid-off letter not sent
+*  AND (X-LOAN-DATE (#CAP-X) = 20041101)  /* temp date check
+*  AND (LAST-MBRSHIP-PHONE-DT = 20041029) /* temp date check
+*
+    RESET #CANCEL #BANKR #SENT-TO-COLL
+    FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+      FOR #I1 1 TO C*NOTE-TABLE         /* DW14
+        IF NOTE-TEXT (#I1) = MASK ('*Mbr in bnkrptcy')
+          MOVE TRUE TO #BANKR
+        END-IF
+*
+        IF  (NT-SENT-TO-COLL (#I1) = 'LOAN SENT TO COLLECTIONS')  /* DW6
+            OR (NT-SENT-TO-COLL-2 (#I1) = 'LOAN SENT TO COLLECTIONS')  /* DW13
+          MOVE TRUE TO #SENT-TO-COLL
+        END-IF
+*
+        IF NOTE-TEXT (#I1) = MASK ('*CANCEL INSURANCE WHEN CAP LOAN IS')
+          MOVE TRUE TO #CANCEL
+        END-IF
+      END-FOR
+    END-FIND
+*
+    IF #BANKR
+      WRITE ST-V.ID-NUMBER 'paid-off letter bypassed due to bankruptcy'
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+*
+    IF #SENT-TO-COLL    /* DW6
+      WRITE ST-V.ID-NUMBER 'PAID-OFF LETTER bypassed due to Collections'
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+* YK1 < YK2 < Comment out letter creation
+*     PERFORM PAYOFF-LETTER   /* print CAP Payoff Letter
+*     PERFORM WRITE-NOTE
+* < YK2
+* Remove Old letter
+*     MOVE #ST-ISN TO #CGA-ISN
+*     MOVE 'AD' TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+*     MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID #CGA-ID       /* PM1
+*     MOVE 'CLP' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+*     FETCH RETURN 'G3500PAD'
+*
+*     RESET #CGA-SCR-SUFFIX
+*     IF #CANCEL
+*       MOVE 'CLP' TO #CGA-SCR-SUFFIX /* orig must always be clp
+*     ELSE                                                          /* PM1
+*       MOVE 'CLK' TO #CGA-SCR-SUFFIX /* orig must always be clp       PM1
+*     END-IF
+*
+*     MOVE 'FA' TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND             /* PM16
+*     FETCH RETURN 'C2800PFA'                                     /* PM16
+* > YK1
+    ADD 1 TO #CNT-2
+    DISPLAY (2) #CNT-2 ST-V.ID-NUMBER
+      'Issue/Date' #CAP-ISSUE-DATE ALOT-AMT
+      'DB/CR' DEBIT-CREDIT-AMT
+      'ALP/AMT' X-ALT-LP-AMT (#CAP-X)
+      'Paid/to/Date' #CAP-PAID-TO-DATE PC-5 NAME
+*
+    IF #CANCEL
+      ADD 1 TO #CNT-6
+      DISPLAY (6) #CNT-6 ST-V.ID-NUMBER #CAP-ISSUE-DATE
+        X-LOAN-DATE (#CAP-X) ALOT-AMT X-ALT-LP-AMT (#CAP-X)
+    END-IF
+  END-IF
+*
+  IF #UPDATE
+    UPDATE (0384)
+  END-IF
+*
+  END TRANSACTION
+END-READ
+*
+WRITE (2) 'TOT-RECS-READ        = ' #RECS-READ
+WRITE (2) 'TOT-cap-records      = ' #CAPS-READ
+WRITE (2) 'DB-CR less than min  = ' #DB-CR-LESS-THAN-MIN
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ADD-SERVICE-FEE
+* * * * * * * * * * * * * * * * * *
+*
+IF  (#CAP-ISSUE-DATE LT 19970101)    /* NEW processing
+    OR (#CAP-MONTH-ALLOC-AMT = 999.99)   /* 999.99 is pre-1997 processing
+    OR (ST-V.INTRO-FLAG = 'O' OR = 'P' OR = 'Q') /* ins-only
+  ESCAPE ROUTINE
+END-IF
+*
+DECIDE ON FIRST VALUE #CAP-PLAN
+  VALUE 'SI' ADD 450.00 TO #PREM
+  VALUE '7P' ADD 6.00 TO #PREM
+  VALUE '20' ADD 3.00 TO #PREM
+  VALUE '30' ADD 2.50 TO #PREM
+  VALUE 'OL' ADD 2.00 TO #PREM
+  VALUE 'RT' ADD 2.00 TO #PREM
+  VALUE 'LT' ADD 2.00 TO #PREM
+  NONE IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-CAP-POL
+* * * * * * * * * * * * * * * *
+*
+#CAP-MEMBER-NUMBER := ST-V.ID-NUMBER                                  /* PM9
+*
+CALLNAT 'ATHSCAPP'                                                    /* PM9
+  #PDA-CAP-POLICY                                                     /* PM9
+*
+#I1 := #CAP-X                                                         /* PM9
+*
+MOVE ISSUE-DATE (#I1)   TO #CAP-ISSUE-DATE
+MOVE ST-V.SPLIT-IND (#I1) TO #CAP-SPLIT-IND
+MOVE PAID-TO-DATE (#I1) TO #CAP-PAID-TO-DATE
+MOVE CASH-VALUE   (#I1) TO #CAP-CASH-VALUE
+MOVE MODE         (#I1) TO #CAP-MODE
+MOVE PAY-STATUS   (#I1) TO #CAP-PAY-STATUS
+MOVE ST-V.PLAN    (#I1) TO #CAP-PLAN         /* YF1
+MOVE SMOKER-FLAG (#I1)  TO #CAP-SMOKER-FLAG
+MOVE ST-V.FACE-AMOUNT  (#I1) TO #CAP-FACE-AMOUNT
+MOVE EDITED ST-V.FACE-AMOUNT  (#I1) (EM=Z,ZZZ,ZZZ.99) TO #FACE-AMOUNT-DISP  /* NG99
+COMPRESS '$' #FACE-AMOUNT-DISP INTO #FACE-AMOUNT-DISP LEAVING NO
+MOVE MONTH-ALLOC-AMT (#I1) TO #CAP-MONTH-ALLOC-AMT
+COMPUTE #CAP-MODAL-PMT = ANNUAL-PREM (#I1) / 12
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE PAYOFF-LETTER     /* YK1
+*******************************
+*
+MOVE ST-V.FACE-AMOUNT(*) TO #FACE-AMT(*)
+CALLNAT 'CVALUSXX'          /* To get current FACE AMOUNT  /* DW5
+  ST-V.ID-NUMBER
+  #SUFFIX
+  #DATN
+  #LOAN-BAL   (1:9)
+  #LOAN-BAL-2 (1:9)
+  #ACC-INT    (1:9)
+  #ACC-INT-2  (1:9)
+  #CSV        (1:9)
+  #CVALUE     (1:9)
+  #LVALUE     (1:9)
+  #MCSV       (1:9)
+  #DB         (1:9)
+  #ANN-PREMIUM  (1:9)
+  #FACE-AMT   (1:9)
+  #TPP        (1:9)
+*
+RESET PARM-LETTERS
+PARM-LETTERS.ID-NUMBER     := ST-V.ID-NUMBER
+PARM-LETTERS.PROCESS-TYPE  := #CAP-PAYOFF
+COMPRESS PARM-LETTERS.ID-NUMBER '-' ST-V.NUM-MBRSHIPS(#CAP-X) INTO PARM-LETTERS.POLICY-NUMBER LEAVING NO
+MOVE EDITED #FACE-AMT(#CAP-X) (EM=Z,ZZZ,ZZZ.99) TO #FACE-AMOUNT-DISP
+#FACE-AMOUNT-DISP := *TRIM(#FACE-AMOUNT-DISP)
+COMPRESS '$' #FACE-AMOUNT-DISP INTO #FACE-AMOUNT-DISP LEAVING NO
+PARM-LETTERS.FACE-AMOUNT   := #FACE-AMOUNT-DISP
+*
+CALLNAT 'GPBNCOMM' PARM-LETTERS
+*
+IF PC-5 = ' '
+  MOVE 'Q' TO PC-5    /* to indicate paid off letter, but not option letter
+ELSE
+  MOVE 'P' TO PC-5    /* to indicate both have been done
+END-IF
+MOVE #DATN TO LAST-MBRSHIP-PHONE-DT
+*
+MOVE TRUE TO #UPDATE
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE WRITE-NOTE     /* YK1
+****************************
+*
+#I2 := 1
+#NOTE-TEXT(#I2) := #LETTER-NOTE
+*
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER
+  #I2
+  #CLERK-ID
+  #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+END

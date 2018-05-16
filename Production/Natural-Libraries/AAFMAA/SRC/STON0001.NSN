@@ -1,0 +1,290 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : STON0001                                              *
+* AUTHOR       : Copyright: Hewlett Packard                            *
+* DESCRIPTION  : Review list of debit/credit items                     *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    05/24/2010  None    Program Written                           *
+* PAM    01/12/2010  PM1     Added Term refund credit processing       *
+* PAM    04/12/2011  PM2     Revised description when no year          *
+* VXT    11/06/2012  VT1     Add pol number to term refund screen /ticket 478/ *
+* vxt    12/11/2014  vt2     fix the logic for calculating the term refund amonts.
+********************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #MEMBER-CN                           (N6)
+1 #FUNCTION                            (A4)
+*
+LOCAL USING OBJLACRG
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+  2 DEBIT-CREDIT-AMT
+  2 OUT-TERM-REF-AMOUNT                 (99)    /* PM1
+  2 OUT-TERM-REF-YEAR                   (99)    /* PM1
+  2 OUT-TERM-REF-ENTRY-DATE             (99)    /* PM1
+  2 new-term-pol-nbr                    (99)                          /* vt1
+*
+1 #TRF-I                               (I4)    /* PM1
+1 #TXN-I                               (I4)
+1 #SCREEN-COUNT                        (P5)
+1 #SCREEN                              (N3)
+1 #MAX-REC                             (P5)   INIT <500>
+1 #TEXT                                (A60)
+1 #SCR-HEADER                          (A50)
+1 #SCR-ID                              (A6)
+1 #SCR-I                               (I4)
+1 #I1                                  (I4)
+1 #BALANCE                             (N6.2)
+1 #EXIT                                (L)
+1 #WORK-DATE                           (N8)
+1 REDEFINE #WORK-DATE
+  2 #WORK-YYYY                          (A4)
+  2 #WORK-MM                            (A2)
+  2 #WORK-DD                            (A2)
+1 #WORK-ID                             (A6)
+*
+1 #TXN-TABLE                           (1:*)
+  2 #TXN-CODE                           (A4)
+  2 #TXN-DATE                           (N8)
+  2 #TXN-POL-NUM                        (A16)
+  2 #TXN-CLERK                          (A3)
+  2 #TXN-AMOUNT                         (N6.2)
+  2 #TXN-BALANCE                        (N6.2)
+  2 #TXN-DESC                           (A20)
+*
+1 #SCREEN-TABLE                        (15)
+  2 #SCR-POL-NUM                        (A16)
+  2 #SCR-TXN-DATE                       (A10)
+  2 #SCR-TXN-CODE                       (A4)
+  2 #SCR-CLERK                          (A3)
+  2 #SCR-AMOUNT                         (N6.2)
+  2 #SCR-BALANCE                        (N6.2)
+  2 #SCR-DESC                           (A20)
+*
+END-DEFINE
+************************************************************************
+*
+EXPAND ARRAY #TXN-TABLE TO (*:#MAX-REC)
+MOVE EDITED #MEMBER-CN (EM=999999) TO #SCR-ID
+*
+SET KEY PF3   NAMED 'Retrn'
+SET KEY PF7   NAMED 'Up'
+SET KEY PF8   NAMED 'Down'
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #FUNCTION = 'DBCR'
+    FIND (1) ST-V WITH ST-V.ID-NUMBER = #MEMBER-CN
+    END-FIND
+    #SCR-HEADER := 'DEBIT/CREDIT ACCOUNTING TRANSACTIONS'
+    PERFORM LOAD-DBCR-TRANSACTIONS
+  WHEN #FUNCTION = 'TMRF'                                    /* PM1
+    #SCR-HEADER := 'OUTSTANDING TERM REFUND CREDITS'         /* PM1
+    PERFORM LOAD-TMRF-TRANSACTIONS                           /* PM1
+  WHEN NONE
+    ESCAPE ROUTINE
+END-DECIDE
+*
+COMPUTE #SCREEN-COUNT = #TXN-I / 15 + 1
+*
+#SCREEN := 1
+PERFORM NEXT-SCREEN
+*
+REPEAT
+  INPUT TEXT #TEXT USING MAP 'STOM0001'
+*
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF3'
+      #EXIT := TRUE
+      ESCAPE BOTTOM
+    VALUE 'PF8', 'PF7'
+      PERFORM NEXT-SCREEN
+    NONE
+      IGNORE
+  END-DECIDE
+*
+  IF #EXIT
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-DBCR-TRANSACTIONS
+************************************************************************
+*
+FIND ACCT-REG-V WITH ACCT-REG-V.ID-NUMBER = #MEMBER-CN
+  IF NOT ACCT-REG-V.TXN-CODE = 'ADCR' OR = 'RDCR'
+    ESCAPE TOP
+  END-IF
+END-ALL
+*
+SORT BY ACCT-REG-V.TRANSACTION-DATN DESCENDING
+    USING ACCT-REG-V.TXN-CODE
+    ACCT-REG-V.POLICY-NUMBER
+    ACCT-REG-V.CLERK-ID
+    ACCT-REG-V.DESCRIPTION
+    ACCT-REG-V.CREDIT-AMOUNT
+    ACCT-REG-V.DEBIT-AMOUNT
+  ADD +1 TO #TXN-I
+  IF #TXN-I > #MAX-REC
+    #MAX-REC := #MAX-REC + 100
+    RESIZE ARRAY #TXN-TABLE TO (*:#MAX-REC)
+  END-IF
+*
+  #TXN-CODE     (#TXN-I)      := ACCT-REG-V.TXN-CODE
+  #TXN-DATE     (#TXN-I)      := ACCT-REG-V.TRANSACTION-DATN
+  #TXN-CLERK    (#TXN-I)      := ACCT-REG-V.CLERK-ID
+  #TXN-BALANCE  (#TXN-I)      := ST-V.DEBIT-CREDIT-AMT - #BALANCE
+*
+  IF ACCT-REG-V.DESCRIPTION = ' '
+    PERFORM LOAD-CASH-CODE
+  ELSE
+    #TXN-DESC     (#TXN-I)    := ACCT-REG-V.DESCRIPTION
+  END-IF
+*
+  #WORK-ID                    := #MEMBER-CN
+  IF ACCT-REG-V.POLICY-NUMBER NE #WORK-ID
+    #TXN-POL-NUM  (#TXN-I)    := ACCT-REG-V.POLICY-NUMBER
+  END-IF
+*
+  IF ACCT-REG-V.TXN-CODE = 'ADCR'
+    #TXN-AMOUNT (#TXN-I)      := ACCT-REG-V.CREDIT-AMOUNT
+    #BALANCE                  := #BALANCE - ACCT-REG-V.CREDIT-AMOUNT
+  ELSE
+    #TXN-AMOUNT (#TXN-I)      := ACCT-REG-V.DEBIT-AMOUNT
+    #BALANCE                  := #BALANCE + ACCT-REG-V.DEBIT-AMOUNT
+  END-IF
+END-SORT
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-TMRF-TRANSACTIONS                          /* PM1
+************************************************************************
+*
+FIND (1) ST-V WITH ST-V.ID-NUMBER = #MEMBER-CN
+  FOR #TRF-I 1 TO 99
+*    IF ST-V.OUT-TERM-REF-AMOUNT (#TRF-I) = 0       /* vt2 \/
+*       ESCAPE BOTTOM
+*     END-IF
+*
+    if st-v.out-term-ref-amount (#trf-i) ne 0       /* vt2   /\
+      ADD ST-V.OUT-TERM-REF-AMOUNT (#TRF-I) TO #BALANCE
+    end-if                                          /* vt2  
+  END-FOR
+*
+  FOR #TRF-I 1 TO 99
+*     IF ST-V.OUT-TERM-REF-AMOUNT (#TRF-I) = 0      /* vt2   \/
+*       ESCAPE BOTTOM
+*     END-IF                                        /* vt2   /\ 
+    if st-v.out-term-ref-amount (#trf-i) ne 0       /* vt2  
+*
+      ADD +1 TO #TXN-I
+      IF #TXN-I > #MAX-REC
+        #MAX-REC := #MAX-REC + 100
+        RESIZE ARRAY #TXN-TABLE TO (*:#MAX-REC)
+      END-IF
+*
+      #TXN-CODE     (#TXN-I)      := ' '
+      #TXN-DATE     (#TXN-I)      := ST-V.OUT-TERM-REF-ENTRY-DATE (#TRF-I)
+      #TXN-CLERK    (#TXN-I)      := ' '
+      #TXN-BALANCE  (#TXN-I)      := #BALANCE
+      #TXN-POL-NUM  (#TXN-I)      := st-v.new-term-pol-nbr (#TRF-I)                                       /* vt1
+*
+      IF ST-V.OUT-TERM-REF-YEAR (#TRF-I) NE 0           /* PM2
+        COMPRESS 'Out' ST-V.OUT-TERM-REF-YEAR (#TRF-I) 'term refund' INTO #TXN-DESC (#TXN-I)
+      ELSE                                              /* PM2
+        #TXN-DESC (#TXN-I)        := 'Out term refund'  /* PM2
+      END-IF                                            /* PM2
+*
+      #TXN-AMOUNT (#TXN-I)        := ST-V.OUT-TERM-REF-AMOUNT (#TRF-I)
+      #BALANCE                    := #BALANCE - ST-V.OUT-TERM-REF-AMOUNT (#TRF-I)
+    end-if                                 /* vt 12/11/2014
+  END-FOR
+END-FIND
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE LOAD-CASH-CODE
+***********************************************************************
+*
+DECIDE ON FIRST VALUE ACCT-REG-V.CASH-CODE
+  VALUE 'E'
+    #TXN-DESC     (#TXN-I)    := 'EZPay'
+  VALUE 'G'
+    #TXN-DESC     (#TXN-I)    := 'Allotment'
+  VALUE 'C'
+    #TXN-DESC     (#TXN-I)    := 'Credit Card'
+  VALUE '$'
+    #TXN-DESC     (#TXN-I)    := 'Cash'
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE NEXT-SCREEN
+***********************************************************************
+*
+IF *PF-KEY = 'PF8'
+  IF #SCREEN LT #SCREEN-COUNT
+    #SCREEN := #SCREEN + 1
+  END-IF
+*
+  IF #SCREEN = #SCREEN-COUNT
+    #TEXT := 'Last Screen'
+  END-IF
+ELSE
+  IF #SCREEN GT 1
+    #SCREEN := #SCREEN - 1
+  END-IF
+*
+  IF #SCREEN = 1
+    #TEXT   := 'First Screen'
+  END-IF
+END-IF
+*
+RESET #SCREEN-TABLE (*)
+*
+IF #SCREEN = 1
+  #I1 := 1
+ELSE
+  COMPUTE #I1 = (#SCREEN * 15) - 15 + 1
+END-IF
+*
+IF #TXN-I = 0
+  #SCR-POL-NUM (1) := 'NO TRANSACTIONS'
+END-IF
+*
+FOR #SCR-I 1 TO 15
+  IF #I1 GT #TXN-I
+    ESCAPE BOTTOM
+  END-IF
+*
+  #SCR-POL-NUM  (#SCR-I) := #TXN-POL-NUM (#I1)
+  #SCR-TXN-CODE (#SCR-I) := #TXN-CODE (#I1)
+  #SCR-CLERK    (#SCR-I) := #TXN-CLERK (#I1)
+  #SCR-AMOUNT   (#SCR-I) := #TXN-AMOUNT (#I1)
+  #SCR-BALANCE  (#SCR-I) := #TXN-BALANCE (#I1)
+  #SCR-DESC     (#SCR-I) := #TXN-DESC (#I1)
+*
+  #WORK-DATE             := #TXN-DATE (#I1)
+  COMPRESS #WORK-MM #WORK-DD #WORK-YYYY INTO #SCR-TXN-DATE (#SCR-I) WITH '/'
+*
+  ADD +1 TO #I1
+END-FOR
+*
+END-SUBROUTINE
+*
+END

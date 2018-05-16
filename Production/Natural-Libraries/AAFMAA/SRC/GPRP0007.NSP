@@ -1,0 +1,393 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPRP0007 - UNDELIVERABLE ADDRESS TRACKING
+* Runs twice a week on Tuesday and Friday
+* Checking if RETURNED-MAIL-IND has been changed to 'Y'
+* Checking if RETURNED-MAIL-IND has been changed to 'Y' more than 15 days ago
+* Checking if address was changed to deliverable
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE         TAG  REASON                                        *
+* YAK  05/05/2010        Initial Creation                              *
+* YAK  07/17/2012   YK1  Add process to send emails to ALL members with*
+*                        undeliverable addresses every two months      *      
+* YAK  11/14/2013   YK2  Exclude Inactive records from report          *
+************************************************************************
+DEFINE DATA
+LOCAL USING GPRA0004                /* Parameters passed to write transaction log
+LOCAL USING GPRL0004                /* Transaction log labels description
+LOCAL USING GPRA0005                /* Email information PDA
+LOCAL USING OBJLADRL                /* Address Relation file description
+LOCAL
+1 #TAB       (A1) CONST <H'09'>
+1 #OUTPUT-RECORD (A150)
+1 #EXTRACT-RECORD
+  2 #CN-NUMBER         (N6)
+  2 #MEMBER-WIDOW-FLAG (A1)
+  2 #OLD-CODE          (A1)
+  2 #NEW-CODE          (A1)
+  2 #ADDR-CHG-DATE     (N8)
+  2 #CLERK-ID          (A3)
+  2 #NAME              (A35)
+  2 #RANK              (A3)
+  2 #ADDRESS-1         (A35)
+  2 #ADDRESS-2         (A35)
+  2 #ADDRESS-3         (A35)
+  2 #EMAIL-ADDRESS     (A60)
+  2 #PREF-PHONE-NUMBER (A17)
+*
+1 CN-INFORMATION
+  2 CN-NUMBER         (N6)
+  2 CONTACT-ID        (N8)
+  2 MEMBER-WIDOW-FLAG (A) DYNAMIC
+  2 ACTIVE-STATUS     (A) DYNAMIC
+  2 FULL-NAME         (A) DYNAMIC
+  2 RANK              (A) DYNAMIC
+  2 ADDRESS-LINE-1    (A) DYNAMIC
+  2 ADDRESS-LINE-2    (A) DYNAMIC
+  2 ADDRESS-LINE-3    (A) DYNAMIC
+  2 EMAIL-ADDRESS     (A) DYNAMIC
+  2 PREF-PHONE-NUMBER (A) DYNAMIC
+  2 INS-MAIL-CODE     (A) DYNAMIC
+*
+1 #YES                (A1)  CONST <'Y'>
+1 #PRIMARY            (A1)  CONST <'P'>
+*
+1 #DATX     (D)
+1 #DAY      (A) DYNAMIC
+1 #TUESDAY  (A) DYNAMIC CONST <'Tuesday'>
+1 #FRIDAY   (A) DYNAMIC CONST <'Friday'>
+1 #WORK-FIELD (A) DYNAMIC
+1 #LAST-RUN-DATE (N8)
+1 REDEFINE #LAST-RUN-DATE
+  2 #LAST-RUN-DATE-A (A8)
+1 #D-RUN-DATE   (N8)
+1 REDEFINE #D-RUN-DATE
+  2 #D-RUN-DATE-A (A8)
+1 #U-CHANGE-DATE (N8)          /* Normally 15 days ago
+1 REDEFINE #U-CHANGE-DATE
+  2 #U-CHANGE-DATE-A (A8)
+1 #V-CHANGE-DATE (N8)          /* Normally 20 days ago - change to the previous run before last
+1 REDEFINE #V-CHANGE-DATE
+  2 #V-CHANGE-DATE-A (A8)
+1 #V-RUN-DATE   (N8)                                         /* YK1
+1 REDEFINE #V-RUN-DATE                                       /* YK1
+  2 #V-RUN-DATE-A (A8)                                       /* YK1 
+1 #DATN     (N8)
+1 REDEFINE #DATN
+  2 #DATE-A (A8)
+1 #DEFAULT-CLERK                  (A3) CONST <'EDS'>
+1 v_PN                            (I1)
+1 v_RC                            (N3)
+*
+1 #BI-WEEKLY-RUN                  (A3) CONST <'UAD'>
+1 #BI-MONTHLY-RUN                 (A3) CONST <'DAD'>
+1 #TWO-MONTHLY-RUN                (A3) CONST <'VAD'>           /* YK1
+1 #READ                           (A1) CONST <'R'>
+1 #WRITE                          (A1) CONST <'W'>
+1 #UNDELIVERABLE-ADDRESS-TEMPLATE (A) DYNAMIC CONST <'UAD'>
+1 #V-REMINDER-ADDRESS-TEMPLATE    (A) DYNAMIC CONST <'VAD'>    /* YK1
+1 #SEND-V-EMAIL                   (L)                          /* YK1
+1 #PARM                           (A10)
+1 #DELETE-FILE-NAME               (A) DYNAMIC CONST
+  <'"/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/ADDR_*"'>
+*
+1 #RM-SCRIPT-NAME      (A) DYNAMIC CONST <'/usr/SAG/cronus/.scripts/removeFile'>
+1 #MV-SCRIPT-NAME      (A) DYNAMIC CONST <'/usr/SAG/cronus/.scripts/renameFile'>
+1 #SORT-D-FILE         (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/AddrChgCode_D_Extract.txt'>
+1 #SORT-V-FILE         (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/AddrChgCode_V_Extract_'>
+1 #EMAIL-REQUEST-FILE (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/EmailRequestFile.txt'>
+1 #EXCEPTIONS-FILE    (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/ExceptionsFile.txt'>
+*
+1 R1 (A80) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/ADDR_U_REPORT.TXT'>
+1 R2 (A80) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/ADDR_V_REPORT.TXT'>
+1 R3 (A80) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/ADDR_D_REPORT.TXT'>
+1 R4 (A80) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/ADDR_V_BY_NAME.TXT'>
+1 R5 (A80) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/ADDR_V_BY_DATE.TXT'>
+*
+END-DEFINE
+*
+INPUT #PARM
+DECIDE ON FIRST VALUE #PARM
+  VALUE 'SKIP'
+    ESCAPE ROUTINE
+  NONE
+    IGNORE
+END-DECIDE
+*
+IF *DEVICE <> 'BATCH'
+  v_PN := 1    v_RC := PRT_FN_PUT(<v_PN, R1>)
+  v_PN := 2    v_RC := PRT_FN_PUT(<v_PN, R2>)
+  v_PN := 3    v_RC := PRT_FN_PUT(<v_PN, R3>)
+  v_PN := 4    v_RC := PRT_FN_PUT(<v_PN, R4>)
+  v_PN := 5    v_RC := PRT_FN_PUT(<v_PN, R5>)
+END-IF
+*
+FORMAT (1) LS=133 PS=78
+FORMAT (2) LS=133 PS=78
+FORMAT (3) LS=133 PS=78
+FORMAT (4) LS=133 PS=78
+FORMAT (5) LS=133 PS=78
+* Remove files from the previous run
+#WORK-FIELD := 'X'
+CALLNAT 'GPRN0002' #RM-SCRIPT-NAME #WORK-FIELD #DELETE-FILE-NAME
+*
+#DATN := *DATN
+*  #datn := 20140619     /* vt 06/20/2014
+MOVE EDITED #DATE-A TO #DATX (EM=YYYYMMDD)
+MOVE EDITED #DATX (EM=N(10)) TO #DAY
+IF #DAY NE #TUESDAY AND #DAY NE #FRIDAY
+  ESCAPE ROUTINE
+END-IF
+#LAST-RUN-DATE   := FUNCTION-EXEC-DATE(<#DATN,#BI-WEEKLY-RUN,#READ>)
+#D-RUN-DATE      := FUNCTION-EXEC-DATE(<#DATN,#BI-MONTHLY-RUN,#READ>)
+#V-RUN-DATE      := FUNCTION-EXEC-DATE(<#DATN,#TWO-MONTHLY-RUN,#READ>)   /* YK1
+*
+IF #DATN >= #V-RUN-DATE                /* YK1
+  #SEND-V-EMAIL := TRUE                /* YK1
+END-IF                                 /* YK1
+*
+WRITE '#LAST-RUN-DATE = ' #LAST-RUN-DATE
+#DATN := *DATN
+MOVE EDITED #DATE-A TO #DATX (EM=YYYYMMDD)
+#DATX := #DATX - 15
+MOVE EDITED #DATX (EM=YYYYMMDD) TO #U-CHANGE-DATE-A
+WRITE '#U-CHANGE-DATE = ' #U-CHANGE-DATE
+MOVE EDITED #DATE-A TO #DATX (EM=YYYYMMDD)
+#DATX := #DATX - 20
+MOVE EDITED #DATX (EM=YYYYMMDD) TO #V-CHANGE-DATE-A
+WRITE '#V-CHANGE-DATE = ' #V-CHANGE-DATE
+*
+COMPRESS #SORT-V-FILE #DATN '.txt' INTO #SORT-V-FILE LEAVING NO
+DEFINE WORK FILE 1 #SORT-D-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 2 #SORT-V-FILE TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 4 #EMAIL-REQUEST-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 5 #EXCEPTIONS-FILE TYPE 'ASCII-COMPRESSED'
+*
+WRITE (1) NOTITLE NOHDR ' CN' 8X 'CHANGE-DATE' 2X 'CLERK' 2X 'NAME'
+  36X 'EMAIL-ADDRESS'
+WRITE (2) NOTITLE NOHDR ' CN' 8X 'V-DATE' 5X 'M/W' 2X 'NAME'
+  33X 'ADDRESS' 30X 'PHONE NUMBER' 6X 'HARRIS SEARCH'
+*
+* 1. Read Address Relation file selecting only Primary addresses
+* 2. Write report with addresses that have become deliverable twice a month
+* 3. Write report with old undeliverable addresses twice a week
+* 4. Write report with new undeliverable addresses twice a week
+*
+READ ADDR-REL-V BY CONTACT-ID
+  ACCEPT IF ADDR-REL-V.ADDR-TYPE-CD = #PRIMARY
+  DECIDE FOR FIRST CONDITION
+    WHEN RETURNED-MAIL-IND = #YES AND RETURNED-MAIL-DATE > #LAST-RUN-DATE
+* address changed to non-deliverable
+      PERFORM FORMAT-RECORD
+      DECIDE FOR FIRST CONDITION
+        WHEN #CN-NUMBER = 0
+          IGNORE
+        WHEN CN-INFORMATION.ACTIVE-STATUS <> 'N' AND CN-INFORMATION.EMAIL-ADDRESS <> ' '
+          PERFORM WRITE-TO-UNDELIVERABLE-U
+          PERFORM CREATE-U-EMAIL-INFO
+        WHEN CN-INFORMATION.ACTIVE-STATUS <> 'N' AND CN-INFORMATION.EMAIL-ADDRESS = ' '
+          PERFORM WRITE-TO-UNDELIVERABLE-V
+        WHEN NONE
+          IGNORE
+      END-DECIDE
+    WHEN RETURNED-MAIL-IND <> #YES AND RETURNED-MAIL-DATE > #LAST-RUN-DATE
+* address changed to deliverable
+      PERFORM FORMAT-RECORD
+      IF #CN-NUMBER <> 0 
+         AND CN-INFORMATION.ACTIVE-STATUS <> 'N'
+         AND CN-INFORMATION.MEMBER-WIDOW-FLAG <> 'W'         /* YK2 
+        WRITE WORK FILE 1 #EXTRACT-RECORD
+      END-IF
+    WHEN RETURNED-MAIL-IND = #YES AND RETURNED-MAIL-DATE < #U-CHANGE-DATE
+        AND RETURNED-MAIL-DATE > #V-CHANGE-DATE
+* address stayed undeliverable for more that 15 days
+      PERFORM FORMAT-RECORD
+      IF #CN-NUMBER <> 0 
+         AND CN-INFORMATION.ACTIVE-STATUS <> 'N' 
+         AND CN-INFORMATION.MEMBER-WIDOW-FLAG <> 'W'          /* YK2            
+        PERFORM WRITE-TO-UNDELIVERABLE-V
+      END-IF
+    WHEN RETURNED-MAIL-IND = #YES AND RETURNED-MAIL-DATE < #U-CHANGE-DATE
+* address stayed undeliverable for more than 20 days
+      PERFORM FORMAT-RECORD
+      IF #CN-NUMBER <> 0 
+         AND CN-INFORMATION.ACTIVE-STATUS <> 'N'   
+         AND CN-INFORMATION.MEMBER-WIDOW-FLAG <> 'W'         /* YK2 
+        WRITE WORK FILE 2 #EXTRACT-RECORD
+* YK1 Start     
+        IF #SEND-V-EMAIL AND 
+          CN-INFORMATION.EMAIL-ADDRESS <> ' ' AND #CN-NUMBER > 1900 AND
+         (CN-INFORMATION.MEMBER-WIDOW-FLAG = 'C' OR                                       /* Contact
+          CN-INFORMATION.MEMBER-WIDOW-FLAG = 'M' AND CN-INFORMATION.ACTIVE-STATUS <> 'N') /* Active Member      
+*
+          RESET EMAIL-INFORMATION
+          EMAIL-INFORMATION.TEMPLATE-TYPE  := #V-REMINDER-ADDRESS-TEMPLATE
+          EMAIL-INFORMATION.DAL-CN := EMAIL-INFORMATION.PENDING-CN :=
+          EMAIL-INFORMATION.POLICY-NUMBER  := CN-INFORMATION.CN-NUMBER
+          EMAIL-INFORMATION.OWNER-EMAIL    := CN-INFORMATION.EMAIL-ADDRESS
+          EMAIL-INFORMATION.MEMBER-NAME    := CN-INFORMATION.FULL-NAME
+          WRITE WORK FILE 4 EMAIL-INFORMATION
+        END-IF
+* YK1 end
+      END-IF
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-READ
+*
+IF #DATN >= #D-RUN-DATE
+  PERFORM D-REPORT
+END-IF
+*
+CLOSE WORK FILE 2
+READ WORK FILE 2 #EXTRACT-RECORD
+END-ALL
+SORT BY #NAME USING #CN-NUMBER #NEW-CODE #ADDR-CHG-DATE #MEMBER-WIDOW-FLAG
+    #ADDRESS-1 #ADDRESS-2 #ADDRESS-3 #PREF-PHONE-NUMBER
+  AT START OF DATA
+    WRITE (4) NOTITLE NOHDR ' CN' 8X 'V-DATE' 5X 'M/W' 2X 'NAME'
+      33X 'ADDRESS' 30X 'PHONE NUMBER' 6X 'HARRIS SEARCH'
+  END-START
+  WRITE (4) #CN-NUMBER 3X #ADDR-CHG-DATE 4X #MEMBER-WIDOW-FLAG 3X #NAME
+    2X #ADDRESS-1 2X #PREF-PHONE-NUMBER
+  WRITE (4) 64X #ADDRESS-2
+  IF #ADDRESS-3 NE ' '
+    WRITE (4) 64X #ADDRESS-3
+  END-IF
+END-SORT
+*
+READ WORK FILE 2 #EXTRACT-RECORD
+END-ALL
+SORT BY #ADDR-CHG-DATE USING #CN-NUMBER #NEW-CODE #NAME #MEMBER-WIDOW-FLAG
+    #ADDRESS-1 #ADDRESS-2 #ADDRESS-3 #PREF-PHONE-NUMBER
+  AT START OF DATA
+    WRITE (5) NOTITLE NOHDR ' CN' 8X 'V-DATE' 5X 'M/W' 2X 'NAME'
+      33X 'ADDRESS' 30X 'PHONE NUMBER' 6X 'HARRIS SEARCH'
+  END-START
+  WRITE (5) #CN-NUMBER 3X #ADDR-CHG-DATE 4X #MEMBER-WIDOW-FLAG 3X #NAME
+    2X #ADDRESS-1 2X #PREF-PHONE-NUMBER
+  WRITE (5) 64X #ADDRESS-2
+  IF #ADDRESS-3 NE ' '
+    WRITE (5) 64X #ADDRESS-3
+  END-IF
+END-SORT
+*
+  FUNCTION-EXEC-DATE(<#DATN,#BI-WEEKLY-RUN,#WRITE>)
+IF #SEND-V-EMAIL                                            /* YK1
+  #V-RUN-DATE-A := FUNCTION-CALENDAR(<#V-RUN-DATE,'T'>)     /* YK1
+  FUNCTION-EXEC-DATE(<#V-RUN-DATE,#TWO-MONTHLY-RUN,#WRITE>) /* YK1
+END-IF                                                      /* YK1
+* 
+*******************************
+DEFINE SUBROUTINE FORMAT-RECORD
+*******************************
+*
+#ADDR-CHG-DATE    := ADDR-REL-V.RETURNED-MAIL-DATE
+#CLERK-ID         := FUNCTION-CLERK (<ADDR-REL-V.LAST-USER-UPD>)
+*
+* get information on the insured person
+* might require changes if to be sent to member
+*
+RESET CN-INFORMATION
+CN-INFORMATION.CONTACT-ID := ADDR-REL-V.CONTACT-ID
+  F-CN-INFO(<CN-INFORMATION>)
+#CN-NUMBER         := CN-INFORMATION.CN-NUMBER
+#NAME              := CN-INFORMATION.FULL-NAME
+#EMAIL-ADDRESS     := CN-INFORMATION.EMAIL-ADDRESS
+#PREF-PHONE-NUMBER := CN-INFORMATION.PREF-PHONE-NUMBER
+#MEMBER-WIDOW-FLAG := CN-INFORMATION.MEMBER-WIDOW-FLAG
+#ADDRESS-1 := CN-INFORMATION.ADDRESS-LINE-1
+#ADDRESS-2 := CN-INFORMATION.ADDRESS-LINE-2
+#ADDRESS-3 := CN-INFORMATION.ADDRESS-LINE-3
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE WRITE-TO-UNDELIVERABLE-U
+******************************************
+*
+WRITE (1) #CN-NUMBER 4X #ADDR-CHG-DATE 5X #CLERK-ID
+  3X #NAME 5X #EMAIL-ADDRESS
+*
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE WRITE-TO-UNDELIVERABLE-V
+******************************************
+*
+WRITE (2) #CN-NUMBER 3X #ADDR-CHG-DATE 4X #MEMBER-WIDOW-FLAG 3X #NAME
+  2X #ADDRESS-1 2X #PREF-PHONE-NUMBER
+WRITE (2) 64X #ADDRESS-2
+IF #ADDRESS-3 NE ' '
+  WRITE (2) 64X #ADDRESS-3
+END-IF
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE CREATE-U-EMAIL-INFO
+*************************************
+*
+* TEMPLATE-TYPE
+* DAL-CN
+* PENDING-CN
+* POLICY-NUMBER
+* FORMATTED-NAME
+* OWNER-RANK
+* OWNER-EMAIL
+* ADDRESS-LINE-1
+* ADDRESS-LINE-2
+* ADDRESS-LINE-3
+* ZIP-CODE
+*
+RESET EMAIL-INFORMATION
+EMAIL-INFORMATION.TEMPLATE-TYPE  := #UNDELIVERABLE-ADDRESS-TEMPLATE
+EMAIL-INFORMATION.DAL-CN := EMAIL-INFORMATION.PENDING-CN :=
+EMAIL-INFORMATION.POLICY-NUMBER  := CN-INFORMATION.CN-NUMBER
+EMAIL-INFORMATION.MEMBER-NAME    := CN-INFORMATION.FULL-NAME        
+EMAIL-INFORMATION.OWNER-EMAIL    := CN-INFORMATION.EMAIL-ADDRESS
+*
+EMAIL-INFORMATION.ADDRESS-LINE-1 := CN-INFORMATION.ADDRESS-LINE-1
+EMAIL-INFORMATION.ADDRESS-LINE-2 := CN-INFORMATION.ADDRESS-LINE-2
+EMAIL-INFORMATION.ADDRESS-LINE-3 := CN-INFORMATION.ADDRESS-LINE-3
+*
+WRITE WORK FILE 4 EMAIL-INFORMATION
+END-SUBROUTINE
+*
+**************************
+DEFINE SUBROUTINE D-REPORT
+**************************
+*
+CLOSE WORK FILE 1
+READ WORK FILE 1 #EXTRACT-RECORD
+END-ALL
+SORT BY #NAME USING #CN-NUMBER #ADDR-CHG-DATE #CLERK-ID #ADDRESS-1
+    #ADDRESS-2 #ADDRESS-3
+  AT START OF DATA
+    WRITE (3) NOTITLE NOHDR 'NAME' 34X 'CN' 10X 'CHANGE-DATE' 2X 'CLERK' 2X 'ADDRESS'
+  END-START
+  WRITE(3)#NAME 2X #CN-NUMBER 5X #ADDR-CHG-DATE 5X #CLERK-ID 4X #ADDRESS-1
+  IF #ADDRESS-2 NE ' '
+    WRITE (3) 70X #ADDRESS-2
+  END-IF
+  IF #ADDRESS-3 NE ' '
+    WRITE (3) 70X #ADDRESS-3
+  END-IF
+END-SORT
+*
+* Rename "D" file into backup name
+#WORK-FIELD := 'X'
+CALLNAT 'GPRN0002' #MV-SCRIPT-NAME #WORK-FIELD #SORT-D-FILE
+* Calculate and save next run date
+#D-RUN-DATE-A := FUNCTION-CALENDAR(<#D-RUN-DATE,'A'>)
+  FUNCTION-EXEC-DATE(<#D-RUN-DATE,#BI-MONTHLY-RUN,#WRITE>)
+END-SUBROUTINE
+*
+END

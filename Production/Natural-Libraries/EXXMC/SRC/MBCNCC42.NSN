@@ -1,0 +1,414 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online / MC-II
+* MBCNCC42 - ManageCreditCardInformation business logic
+* Called from MBCNCC40 / MBCNEP31
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    01152015       Initial Creation
+*                       Added to MC-II, allows expiration date,
+*                       address update from MC
+* YAK    04142016  YK2  Move transaction logic to GPRNTR06
+*                       Add GUID to TR register
+*                       Add UPDATE-EXP-DATE function
+* YAK    04222016  YK3  Add GUID to MC
+* YAK    08202016  YK4  Changes for EB&P Phase II
+* YAK    05102017  YK5  Changes for EB&P Phase III
+************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCACC41
+PARAMETER
+1 #ErrorCode  (A3)
+LOCAL USING OBJACC01
+LOCAL USING GPRATR06          /* YK2
+LOCAL USING ERROR_L
+LOCAL
+1 #value            (A) DYNAMIC
+1 #MEMBER           (A) DYNAMIC INIT <'MEMBER'>
+1 #MEMBER-CENTER-CLERK  (A) DYNAMIC INIT <'MBR'>
+1 #AUC             (A) DYNAMIC CONST <'AUC'>        /* YK5
+1 #FULL-NAME       (A) DYNAMIC
+1 #GET             (A) DYNAMIC CONST <'GET'>
+1 #ADD             (A) DYNAMIC CONST <'ADD'>
+1 #UPDATE          (A) DYNAMIC CONST <'UPDATE'>
+1 #UPDATE-EXP-DATE (A) DYNAMIC CONST <'UPDATE-EXP-DATE'>
+1 #UPDATE-ADDRESS  (A) DYNAMIC CONST <'UPDATE-ADDRESS'>
+1 #UPDATE-DEF-IND  (A) DYNAMIC CONST <'UPDATE-DEF-IND'>
+1 #DELETE          (A) DYNAMIC CONST <'DELETE'>
+1 #HIST            (A) DYNAMIC CONST <'HIST'>
+1 #INTER           (A) DYNAMIC CONST <'2'>
+1 #DOMESTIC        (A) DYNAMIC CONST <'1'>
+1 #US              (A) DYNAMIC CONST <'US'>
+1 #WORK-FIELD      (A) DYNAMIC
+1 #ZIP             (N5)
+1 #TRAN-CN         (N6)
+1 #TRAN-CONTACT-ID (N8)
+1 #DATN            (N8)
+1 #TIMN            (N7)
+1 FUNCTION_CODE    (A) DYNAMIC INIT <'CreditCardInfo'>
+1 #DISCLAIMER      (A) DYNAMIC CONST <'Disclaimer'>
+1 #MasterCard      (A) DYNAMIC CONST <'MasterCard'>
+1 #Visa            (A) DYNAMIC CONST <'Visa'>
+1 #Unknown         (A) DYNAMIC CONST <'Unknown'>
+1 #True            (A) DYNAMIC CONST <'true'>
+1 CC-ARRAY(P9/3)                                     /* YK4
+1 #HOLD-ACTION (A) DYNAMIC                           /* YK4
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+IF CreditCard.UserID <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<CreditCard.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<CreditCard.UserID>)(2)
+END-IF
+*
+#TRAN-CN         := CreditCard.AccountCN
+#TRAN-CONTACT-ID := F-GET-CONTACT-ID(<#TRAN-CN>)
+IF #TRAN-CONTACT-ID = 0
+  #ErrorCode  := #CN-NOT-FOUND
+  ESCAPE MODULE
+END-IF
+*
+DECIDE ON FIRST VALUE CreditCard.ActionType
+  VALUE #GET
+    PERFORM GET-CC-CARD
+  VALUE #ADD, #UPDATE, #DELETE
+    PERFORM ADD-UPDATE-CC-CARD
+  VALUE #UPDATE-DEF-IND
+    PERFORM UPDATE-DEF-INDICATOR
+  NONE VALUE
+    IGNORE
+END-DECIDE
+* Write disclaimer note to transaction log
+IF CreditCard.CreditCardDisclaimerConfirmed = #True
+  RESET BEFORE_IMAGE AFTER_IMAGE
+  AFTER_IMAGE.CC-DISCLAIMER := CreditCard.CreditCardDisclaimerConfirmed
+  FUNCTION_CODE := #DISCLAIMER
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+*
+*****************************
+DEFINE SUBROUTINE GET-CC-CARD       /* YK4
+*****************************
+*
+#ACTION := #HIST
+#PARM-ID-NUMBER := CreditCard.AccountCN
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+IF #NUMBER-OF-RECORDS = 0
+  #ErrorCode  := #NO-CC-EXIST
+  ESCAPE MODULE
+ELSE
+  #ACTION := #GET
+  #PARM-ID-NUMBER := CreditCard.AccountCN
+  CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO CC-ARRAY(*)
+*
+  CreditCard.CardNumber      := PARM-CC-INFO.CC-NUMBER
+  DECIDE FOR FIRST CONDITION
+    WHEN SUBSTR(CreditCard.CardNumber,1,1) = '4'
+      CreditCard.CardType := #Visa
+    WHEN SUBSTR(CardNumber,1,2) > '50' AND SUBSTR(CardNumber,1,2) < '56'
+      CreditCard.CardType := #MasterCard
+    WHEN NONE
+      CreditCard.CardType := #Unknown
+  END-DECIDE
+  CreditCard.CardGUID            := PARM-CC-INFO.CC-GUID                /* YK3
+  IF PARM-CC-INFO.CC-DEFAULT-IND = 'Y'                                  /* YK4
+    CreditCard.DefaultInd        := 'true'
+  ELSE
+    CreditCard.DefaultInd        := 'false'
+  END-IF
+  CreditCard.ExMonth             := PARM-CC-INFO.CC-EXPIRATION-MONTH
+  CreditCard.ExYear              := PARM-CC-INFO.CC-EXPIRATION-YEAR
+  CreditCard.Street              := PARM-CC-INFO.CCHOLDER-STREET-ADDR
+  CreditCard.Street2             := PARM-CC-INFO.CCHOLDER-ADDL-ADDR
+  CreditCard.City                := PARM-CC-INFO.CCHOLDER-CITY
+  CreditCard.StateProvinceRegion := PARM-CC-INFO.CCHOLDER-STATE-CD
+  IF CC-ADDR-FORMAT-CODE = '1'
+    MOVE EDITED PARM-CC-INFO.CCHOLDER-ZIP-CODE (EM=99999) TO CreditCard.ZipCode
+  ELSE
+    CreditCard.ZipCode           := PARM-CC-INFO.CCHOLDER-POSTAL-CODE
+  END-IF
+  CreditCard.CountryCode         := PARM-CC-INFO.CCHOLDER-COUNTRY
+* YK2 >
+* Format Card Holder name if not already formatted
+  IF PARM-CC-INFO.CCHOLDER-NAME = SCAN(',')              /* Convert Last, First Middle to default
+    #FULL-NAME          := PARM-CC-INFO.CCHOLDER-NAME
+    #FULL-NAME          := FUNCTION-FORM-NAME(<#FULL-NAME,'C'>)
+    CreditCard.CardHolder := #FULL-NAME
+  ELSE
+    CreditCard.CardHolder := PARM-CC-INFO.CCHOLDER-NAME    /* First MI Last - default
+  END-IF
+* < YK2
+* YK4 >
+  CreditCard.LastUpdatedDate := PARM-CC-INFO.LAST-DATE-UPDATE
+  CreditCard.LastUpdatedTime := PARM-CC-INFO.LAST-TIME-UPDATE
+  CreditCard.LastUpdatedUser := PARM-CC-INFO.LAST-USER-UPDATE
+* < YK4
+END-IF
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE ADD-UPDATE-CC-CARD    /* YK4
+************************************
+*
+#ACTION := #HIST
+#PARM-ID-NUMBER := CreditCard.AccountCN
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+DECIDE FOR FIRST CONDITION
+  WHEN #NUMBER-OF-RECORDS = 3 AND CreditCard.ActionType = #ADD
+    #ErrorCode  := #MAX-CC-EXIST
+    ESCAPE ROUTINE
+  WHEN #NUMBER-OF-RECORDS = 0 AND CreditCard.ActionType = #UPDATE
+    #ErrorCode  := #NO-CC-EXIST
+    ESCAPE ROUTINE
+  WHEN #NUMBER-OF-RECORDS < 3 AND CreditCard.ActionType = #ADD
+    RESET BEFORE_IMAGE
+    #ACTION := #ADD
+*   PARM-CC-INFO.CC-START-DATE := #DATN
+    IF #NUMBER-OF-RECORDS = 0
+      PARM-CC-INFO.CC-DEFAULT-IND := 'Y'
+    END-IF
+* No updates to credit card number from Member Center (only Add/Delete allowed)
+  WHEN #NUMBER-OF-RECORDS <> 0 AND CreditCard.ActionType = #UPDATE AND CardNumber = SCAN('***')     /* YK2
+    PERFORM POPULATE-BEFORE-IMAGE                                                     /* YK2
+    IF PARM-CC-INFO.CC-EXPIRATION-MONTH = CreditCard.ExMonth
+        AND PARM-CC-INFO.CC-EXPIRATION-YEAR = CreditCard.ExYear
+      #ACTION := #UPDATE-ADDRESS
+    ELSE
+      #ACTION := #UPDATE-EXP-DATE                                                       /* YK2
+    END-IF
+* Should never happen from Member Center
+  WHEN #NUMBER-OF-RECORDS <> 0 AND CreditCard.ActionType = #UPDATE
+    PERFORM POPULATE-BEFORE-IMAGE
+    #ACTION := #UPDATE
+  WHEN #NUMBER-OF-RECORDS = 0 AND CreditCard.ActionType = #DELETE
+    #ErrorCode  := #NO-CC-EXIST
+    ESCAPE ROUTINE
+  WHEN #NUMBER-OF-RECORDS <> 0 AND CreditCard.ActionType = #DELETE
+    PERFORM POPULATE-BEFORE-IMAGE
+    #ACTION := #DELETE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF #ACTION <> #DELETE
+  PARM-CC-INFO.ID-NUMBER               := CreditCard.AccountCN
+  PARM-CC-INFO.CC-NUMBER               := CreditCard.CardNumber        /* YK3
+  PARM-CC-INFO.CC-GUID                 := CreditCard.CardGUID          /* YK3
+  IF CreditCard.DefaultInd = 'true'
+    PARM-CC-INFO.CC-DEFAULT-IND        := 'Y'                          /* YK4
+  END-IF
+  PARM-CC-INFO.CC-EXPIRATION-MONTH     := CreditCard.ExMonth
+  PARM-CC-INFO.CC-EXPIRATION-YEAR      := CreditCard.ExYear
+  PARM-CC-INFO.CCHOLDER-NAME           := *TRANSLATE(CardHolder,UPPER)
+  PARM-CC-INFO.CCHOLDER-STREET-ADDR    := *TRANSLATE(Street,UPPER)
+  PARM-CC-INFO.CCHOLDER-ADDL-ADDR      := *TRANSLATE(Street2,UPPER)
+  PARM-CC-INFO.CCHOLDER-CITY           := *TRANSLATE(City,UPPER)
+  PARM-CC-INFO.CCHOLDER-STATE-CD       := *TRANSLATE(StateProvinceRegion,UPPER)
+  PARM-CC-INFO.CCHOLDER-COUNTRY        := *TRANSLATE(CountryCode,UPPER)
+  DECIDE FOR FIRST CONDITION
+    WHEN CountryCode = #US
+      PARM-CC-INFO.CC-ADDR-FORMAT-CODE   := #DOMESTIC
+      CreditCard.ZipCode := *TRIM(ZipCode)
+      IF CreditCard.ZipCode <> ' '
+        IF *LENGTH(ZipCode) > 5 ZipCode := SUBSTR(ZipCode,1,5) END-IF
+        PARM-CC-INFO.CCHOLDER-ZIP-CODE   := VAL(ZipCode)
+      END-IF
+    WHEN CreditCard.CountryCode <> #US
+      PARM-CC-INFO.CC-ADDR-FORMAT-CODE   := #INTER
+      PARM-CC-INFO.CCHOLDER-POSTAL-CODE  := CreditCard.ZipCode
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+  IF PARM-CC-INFO.CC-ADDR-FORMAT-CODE = #DOMESTIC
+    RESET PARM-CC-INFO.CCHOLDER-POSTAL-CODE
+    PARM-CC-INFO.CCHOLDER-COUNTRY := #US
+  ELSE
+    RESET PARM-CC-INFO.CCHOLDER-ZIP-CODE
+      PARM-CC-INFO.CCHOLDER-STATE-CD
+  END-IF
+  PARM-CC-INFO.CC-ADDR-VALIDATION-CODE := 'Y'
+  PARM-CC-INFO.LAST-USER-UPDATE        := #MEMBER
+  PARM-CC-INFO.LAST-DATE-UPDATE        := #DATN
+  PARM-CC-INFO.LAST-TIME-UPDATE        := #TIMN
+END-IF
+*
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+* YK2 >
+IF PARM-CC-DATA.#RESULT-CODE <> ' '
+  #ErrorCode := #ERROR-UPDATING-CARD-DATA
+  ESCAPE ROUTINE
+ELSE
+  IF #ACTION = #DELETE
+    RESET AFTER_IMAGE
+  ELSE
+    PERFORM POPULATE-AFTER-IMAGE
+  END-IF
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+* > YK2
+* YK4 >
+* Check if transaction log needed for default ind set / reset
+#HOLD-ACTION := #ACTION
+IF #NUMBER-OF-RECORDS > 1 AND #ISN <> 0 AND
+    (((BEFORE_IMAGE.CC-DEFAULT-IND = 'N' OR BEFORE_IMAGE.CC-DEFAULT-IND = ' ') AND AFTER_IMAGE.CC-DEFAULT-IND  = 'Y') OR
+    (BEFORE_IMAGE.CC-DEFAULT-IND = 'Y' AND #ACTION = #DELETE))
+  PERFORM TR-LOG-RESET-DEFAULT-IND
+END-IF
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE UPDATE-DEF-INDICATOR    /* YK4
+**************************************
+* Update default indicator only
+* Find record to update
+#PARM-ID-NUMBER := CreditCard.AccountCN
+PERFORM POPULATE-BEFORE-IMAGE
+IF #NUMBER-OF-RECORDS = 0
+  #ErrorCode  := #NO-CC-EXIST
+  ESCAPE ROUTINE
+END-IF
+*
+#ACTION := CreditCard.ActionType
+IF CreditCard.DefaultInd = 'true'
+  PARM-CC-INFO.CC-DEFAULT-IND        := 'Y'
+ELSE
+  RESET PARM-CC-INFO.CC-DEFAULT-IND
+END-IF
+PARM-CC-INFO.LAST-USER-UPDATE        := #MEMBER
+PARM-CC-INFO.LAST-DATE-UPDATE        := #DATN
+PARM-CC-INFO.LAST-TIME-UPDATE        := #TIMN
+*
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+*
+IF PARM-CC-DATA.#RESULT-CODE <> ' '
+  #ErrorCode := #ERROR-UPDATING-CARD-DATA
+  ESCAPE ROUTINE
+ELSE
+  PERFORM POPULATE-AFTER-IMAGE
+  PERFORM WRITE-TRANSACTION-LOG
+END-IF
+*
+* Check if transaction log needed for default ind set / reset
+#HOLD-ACTION := #ACTION
+IF #NUMBER-OF-RECORDS > 1 AND #ISN <> 0 AND
+    (((BEFORE_IMAGE.CC-DEFAULT-IND = 'N' OR BEFORE_IMAGE.CC-DEFAULT-IND = ' ') AND AFTER_IMAGE.CC-DEFAULT-IND  = 'Y') OR
+    (BEFORE_IMAGE.CC-DEFAULT-IND = 'Y' AND #ACTION = #DELETE))
+  PERFORM TR-LOG-RESET-DEFAULT-IND
+END-IF
+*
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE TR-LOG-RESET-DEFAULT-IND
+******************************************
+*
+#ACTION := 'GET-BY-ISN'
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+RESET BEFORE_IMAGE AFTER_IMAGE
+BEFORE_IMAGE.DATE-LAST-UPDATE := PARM-CC-INFO.LAST-DATE-UPDATE
+BEFORE_IMAGE.CC-NUMBER := AFTER_IMAGE.CC-NUMBER := PARM-CC-INFO.CC-NUMBER
+BEFORE_IMAGE.CC-GUID := AFTER_IMAGE.CC-GUID := PARM-CC-INFO.CC-GUID
+COMPRESS PARM-CC-INFO.CC-EXPIRATION-MONTH PARM-CC-INFO.CC-EXPIRATION-YEAR INTO BEFORE_IMAGE.CC-EXPIRATION-DATE
+AFTER_IMAGE.CC-EXPIRATION-DATE := BEFORE_IMAGE.CC-EXPIRATION-DATE
+IF #HOLD-ACTION = #DELETE
+* log tran to set new default ind when default deleted
+  BEFORE_IMAGE.CC-DEFAULT-IND := 'N'
+  AFTER_IMAGE.CC-DEFAULT-IND  := 'Y'
+ELSE
+* log tran to reset old default ind when new default selected
+  BEFORE_IMAGE.CC-DEFAULT-IND := 'Y'
+  AFTER_IMAGE.CC-DEFAULT-IND  := 'N'
+END-IF
+PERFORM WRITE-TRANSACTION-LOG
+*
+END-SUBROUTINE
+* < YK4
+***************************************
+DEFINE SUBROUTINE POPULATE-BEFORE-IMAGE
+***************************************
+*
+#ACTION := 'GET-BY-GUID'                                                 /* YK4
+PARM-CC-INFO.ID-NUMBER               := CreditCard.AccountCN
+PARM-CC-INFO.CC-GUID                 := CreditCard.CardGUID              /* YK4
+CALLNAT 'OBJNCC01' PARM-CC-DATA PARM-CC-INFO
+* YK5 >
+* Compare date/time of the last update
+IF CreditCard.SystemSource = #AUC
+  IF CreditCard.ActionType = #UPDATE AND PARM-CC-INFO.LAST-DATE-UPDATE = #DATN
+      AND PARM-CC-INFO.LAST-TIME-UPDATE > CreditCard.LastUpdatedTime
+    #ErrorCode := #NOT-LATEST-INFO
+  END-IF
+END-IF
+* < YK5
+BEFORE_IMAGE.DATE-LAST-UPDATE        := PARM-CC-INFO.LAST-DATE-UPDATE
+BEFORE_IMAGE.CC-NUMBER               := PARM-CC-INFO.CC-NUMBER
+BEFORE_IMAGE.CC-GUID                 := PARM-CC-INFO.CC-GUID              /* YK3
+COMPRESS PARM-CC-INFO.CC-EXPIRATION-MONTH PARM-CC-INFO.CC-EXPIRATION-YEAR
+  INTO BEFORE_IMAGE.CC-EXPIRATION-DATE
+BEFORE_IMAGE.CCHOLDER-NAME           := PARM-CC-INFO.CCHOLDER-NAME
+BEFORE_IMAGE.CCHOLDER-ADDRESS-1      := PARM-CC-INFO.CCHOLDER-STREET-ADDR
+BEFORE_IMAGE.CCHOLDER-ADDRESS-2      := PARM-CC-INFO.CCHOLDER-ADDL-ADDR
+IF CC-ADDR-FORMAT-CODE = '1'
+  BEFORE_IMAGE.CCHOLDER-ADDRESS-3    := PARM-CC-INFO.CCHOLDER-ZIP-CODE
+ELSE
+  COMPRESS PARM-CC-INFO.CCHOLDER-POSTAL-CODE PARM-CC-INFO.CCHOLDER-COUNTRY
+    INTO BEFORE_IMAGE.CCHOLDER-ADDRESS-3
+END-IF
+COMPRESS PARM-CC-INFO.CCHOLDER-CITY PARM-CC-INFO.CCHOLDER-STATE-CD BEFORE_IMAGE.CCHOLDER-ADDRESS-3
+  INTO BEFORE_IMAGE.CCHOLDER-ADDRESS-3
+BEFORE_IMAGE.CC-ADDR-VALIDATION-CODE := PARM-CC-INFO.CC-ADDR-VALIDATION-CODE
+BEFORE_IMAGE.CC-DEFAULT-IND := PARM-CC-INFO.CC-DEFAULT-IND                 /* YK4
+IF BEFORE_IMAGE.CC-DEFAULT-IND = ' '                                       /* YK4
+  BEFORE_IMAGE.CC-DEFAULT-IND := 'N'                                       /* YK4
+END-IF                                                                     /* YK4
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE POPULATE-AFTER-IMAGE
+**************************************
+*
+AFTER_IMAGE.CC-NUMBER               := PARM-CC-INFO.CC-NUMBER
+AFTER_IMAGE.CC-GUID                 := PARM-CC-INFO.CC-GUID               /* YK3
+COMPRESS PARM-CC-INFO.CC-EXPIRATION-MONTH PARM-CC-INFO.CC-EXPIRATION-YEAR
+  INTO AFTER_IMAGE.CC-EXPIRATION-DATE
+AFTER_IMAGE.CCHOLDER-NAME           := PARM-CC-INFO.CCHOLDER-NAME
+AFTER_IMAGE.CCHOLDER-ADDRESS-1      := PARM-CC-INFO.CCHOLDER-STREET-ADDR
+AFTER_IMAGE.CCHOLDER-ADDRESS-2      := PARM-CC-INFO.CCHOLDER-ADDL-ADDR
+IF CC-ADDR-FORMAT-CODE = '1'
+  AFTER_IMAGE.CCHOLDER-ADDRESS-3    := PARM-CC-INFO.CCHOLDER-ZIP-CODE
+ELSE
+  COMPRESS PARM-CC-INFO.CCHOLDER-POSTAL-CODE PARM-CC-INFO.CCHOLDER-COUNTRY
+    INTO AFTER_IMAGE.CCHOLDER-ADDRESS-3
+END-IF
+COMPRESS PARM-CC-INFO.CCHOLDER-CITY PARM-CC-INFO.CCHOLDER-STATE-CD AFTER_IMAGE.CCHOLDER-ADDRESS-3
+  INTO AFTER_IMAGE.CCHOLDER-ADDRESS-3
+AFTER_IMAGE.CC-ADDR-VALIDATION-CODE := PARM-CC-INFO.CC-ADDR-VALIDATION-CODE
+AFTER_IMAGE.CC-DEFAULT-IND := PARM-CC-INFO.CC-DEFAULT-IND                 /* YK4
+IF AFTER_IMAGE.CC-DEFAULT-IND = ' '                                       /* YK4
+  AFTER_IMAGE.CC-DEFAULT-IND := 'N'                                       /* YK4
+END-IF                                                                    /* YK4
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+TR_ID_NUMBER  := #TRAN-CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<#TRAN-CONTACT-ID>)
+TR_CLERK      := #MEMBER-CENTER-CLERK
+CALLNAT 'GPRNTR06' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,817 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPBPPECH                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Create nightly peachtree files from AR records        *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    09/23/2009  None    Program Written                           *
+* YAK    09/02/2009  YK1     Create data for automated e-mail process  *
+* PAM    01/07/2009  PM2     Fixed date calc and CAP policy issue      *
+* PAM    06/04/2010  PM3     Added LAA to NX list                      *
+* YAK    07/02/2010  YK2     Increase array size to 500                *
+* PAM    12/28/2011  PM4     Added Suzanne Huttar to NX list           *
+* vxt    06/21/2012  vt1     Added a RC report for CMB5 transactions   *
+*                            during the day                            *
+* VXT    08/23/2012  vt2     Replaced PAM with VXT                       *
+* vxt    02/07/2013  vt3     Replace SH(uzanne Hutter with Cirsten Commor)
+* NG     09/23/2013  NG1     Address normalization
+* TMT    05/13/2014  TT1     Contact Normalization - Emails, DOB, SEX  *
+* vxt    06/26/2014  vt      Fixed the 1316 error.                     *
+* vxt    05/02/2016  vt4     /Tickets 4481, 4482                       *
+* vxt    11/18/2016  vt5     Ticket 1924 - remove Merilynn from getting NX msg
+* vxt    02/02/2017  vt6     Add Christin Nash to NX msg               * 
+* vxt    04/25/2017  vt7     Add Peter Kroeger to NX msg               *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING ATHA03P2
+LOCAL USING GPRA0005        /* Fields to be passed to EmailCreator YK1
+LOCAL USING GPRL0001        /* Init properties                     YK1
+LOCAL USING ADDA0001        /* Address normalization               NG1
+LOCAL
+1 #PRIMARY      (A1) CONST <'P'>
+1 #WORK-FIELDS
+  2 #ISN                    (P8)
+  2 #POLICY-INDEX           (I2)
+  2 #I1                     (I2)
+  2 #SG-INDEX               (I2)
+  2 #INVERSE-ENTRY-DATE     (N8)
+  2 #DATN                   (N8)
+  2 REDEFINE #DATN
+    3 #DATN-YYYY             (A4)
+    3 #DATN-MM               (A2)
+    3 #DATN-DD               (A2)
+  2 #TIME                   (P7)
+  2 #CONV-DURATION          (A3/9)
+  2 #ID-NUMBER              (N6)
+  2 REDEFINE #ID-NUMBER
+    3 #ID-NUMBER-A           (A6)
+  2 #AMOUNT                 (N11.2)
+  2 #ERR-MSG                (A60)
+  2 #HOLD-PEACHTREE-ID      (A10)
+*
+1 #GDATESXX-FIELDS
+  2 #TO-DATE                (N8)
+  2 #FROM-DATE              (N8)    INIT <00000001>
+  2 #RETURN-CALC            (N8)
+  2 #REQUEST-TYPE           (A1)    INIT <'E'>
+*
+1 #TABLE-CNT               (P7)
+1 #TABLE-ENTRIES           (500)
+  2 #TABLE-ID-NUMBER        (N6)
+  2 #TABLE-ISSUE-DATE       (N8)
+  2 #TABLE-POLICY-NUMBER    (A16)
+  2 #TABLE-NAME             (A25)
+*
+1 #PEACHTREE-FIELDS
+  2 #PEACHTREE              (A150)
+  2 #PEACHTREE-DATE         (A10)
+  2 #PEACHTREE-TABLE-CNT    (N8)
+  2 #TAB                    (A1)    INIT <H'09'>
+*
+1 #PEACHTREE-TABLE-ENTRIES (500)
+  2 #PEACH-ID-NUMBER        (A10)
+  2 #PEACH-NAME-POL         (A100)
+  2 #PEACH-DESCRIPTION      (A100)
+  2 #PEACH-TRAN-CODE        (A20)
+  2 #PEACH-ACCT-NUM         (A20)
+  2 #PEACH-AMOUNT           (A20)
+  2 #PEACH-POLICY-NUMBER    (A16)
+*
+1 #NX-RECORDS
+  2 #NOTE-TEXT              (A60/10)
+  2 #TO-INIT                (A3)
+  2 #NOTE-CNT               (P7)
+  2 #NOTE-INDEX             (I2)
+*
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER
+  2 ENTRY-DATE
+  2 CODE
+  2 ISSUE-DATE
+*
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER
+  2 TXN-CODE
+  2 DEBIT-AMOUNT
+  2 CREDIT-AMOUNT
+  2 POLICY-NUMBER
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 SEQUENCE-NUM
+  2 SG-AMOUNT               (15)
+  2 SG-CATEGORY-1           (15)
+  2 SG-CATEGORY-2           (15)
+
+*
+1 ST-V VIEW OF A-STATUS
+  2 MEMBER-CONTACT-ID       (N8)         /* NG1
+  2 CONV-DURATION           (9)
+  2 NAME
+*  2 INTERNET-ADDR    /* YK1    /* TT1
+  2 RANK             /* YK1
+*   2 SEX              /* YK1   /* TT1
+  2 MILITARY-SERVICE /* YK1
+  2 C*ACTIVE-SEGMENTS
+*            /* PM2
+1 TR-V VIEW OF A-ACCOUNTING-REGISTER                        /* vt1 \/
+  2 ID-NUMBER
+  2 TRANSACTION-DATN       (P9)
+  2 TRANSACTION-TIMN       (P7)
+  2 TXN-CODE               (A4)
+  2 SEQUENCE-NUM           (N1)
+  2 DEBIT-AMOUNT           (P7.2)
+  2 CREDIT-AMOUNT          (P7.2)
+  2 CLERK-ID               (A3)
+  2 TERMINAL-ID            (A8)
+  2 PROCESS-IND            (A1)
+  2 MONTH-END              (A1)
+  2 cash-code
+  2 sg-category-1        (2)
+  2 description
+  2 redefine description
+    3 description-7    (a7)
+*
+1 #W-DATE           (P9)
+1 #ci               (i2)
+1 #TI               (I2)
+1 #TI2               (I2)
+1 #CLERK (A24) INIT <'SKS-ELB-EDS-OTH-KHB-'>       /* vt add KHB
+1 REDEFINE #CLERK
+  2 #CLERK-OCC    (6)
+    3 #CLERK-NAME (A3)
+    3 #CLERK-FILL (A1)
+*
+1 #NUM-ENTRIES     (N3) INIT <2>
+1 #TRAN-TABLE
+  2 #TT-1               (A6) INIT <'AIAF-B'>
+  2 #TT-2               (A6) INIT <'PADF-B'>
+1 REDEFINE #TRAN-TABLE
+  2 #TRAN-OCC    (2)
+    3 #SCR-TRAN         (A4)
+    3 REDEFINE #SCR-TRAN
+      4 #SCR-TRAN-2     (A4)
+    3 REDEFINE #SCR-TRAN
+      4 #SCR-TRAN-3     (A4)
+    3 REDEFINE #SCR-TRAN
+      4 #SCR-TRAN-4     (A4)
+    3 #SCR-MIN-PLUS     (A1)
+    3 #SCR-D-C          (A1)
+*
+1 #ACC-ACCUM
+  2 #ACCUM-TRAN-TYPE     (9)                        /* vt was 3
+    3 #ACCUM-CLERK-AMT          (P7.2/9)            /* vt was 3
+    3 REDEFINE #ACCUM-CLERK-AMT
+      4 #ACCUM-CLERK-AMT-2      (P7.2/9)            /* vt was 3
+1 #S-CLERK-TOTAL                (P7.2/9)            /* vt was 5
+1 REDEFINE #S-CLERK-TOTAL
+  2 #S-CLERK-TOTAL-2            (P7.2/9)            /* vt was 5
+1 REDEFINE #S-CLERK-TOTAL
+  2 #S-CLERK-TOTAL-3            (P7.2/9)            /* vt was 5
+*
+1 #S-TYPE-TOTAL                 (P7.2/9)             /* vt was 3
+*
+1 #ACCUM-CLERK-AMT-SPECIAL      (P7.2/9)             /* vt was 3
+1 #S-CLERK-TOTAL-SPECIAL        (P7.2)
+*
+1 #BATCH-CLERK-TABLE (5)
+  2 #BATCH-CLERK                (A3)
+  2 #BATCH-CLERK-TTL            (P11.2)
+  2 #TRAN-OCC         (3)
+    3 #BATCH-CLERK-AMT          (P11.2)
+1 #B-I1                         (I2)
+1 #B-I2                         (I2)
+1 #BATCH-TRAN-TOTAL             (P11.2/9)            /* vt was 3
+*
+1 #SUMM-DET                     (A1) INIT <'T'>
+*
+1 #EXTRACT-RECORD               (A250)
+1 #DISPLAY-AMOUNT               (A18)
+*                                                              /* vt1 /\
+1 #CAP-X           (I2)
+*
+1 #CAP-LOAN-LAPSE-NOTICE (A3) INIT <'LPC'>
+1 #EMAIL-INFORMATION
+  2 #STREET        (A25)
+  2 #STREET-2      (A25)
+  2 #CITY          (A22)
+  2 #STATE         (A2)
+  2 #ZIP           (N9)
+  2 REDEFINE #ZIP
+    3 #ZIP-5       (N5)
+    3 #ZIP-4       (A4)
+  2 #MEMBER-NAME   (A) DYNAMIC
+  2 #RANK          (A3)
+  2 #SEX           (A1)
+  2 #MILITARY-SERVICE (A3)
+  2 #ADDRESS-1     (A25)
+  2 #ADDRESS-2     (A25)
+  2 #ADDRESS-3     (A25)
+1 #SPLIT           (A1)  INIT <'S'>
+1 #II              (I2)
+1 EMAIL-ADDRESS    (A60) /* TT1
+*
+END-DEFINE
+*
+DEFINE WORK FILE 2 #EMAIL-DAILY-FILE TYPE 'ASCII-COMPRESSED'
+  ATTRIBUTES 'APPEND'                          /* YK1 Ends
+*
+************************************************************************
+*
+PERFORM DETERMINE-DATE
+*
+PERFORM CREATE-LAPC-FILES
+*                                       /* vt1 \/
+PERFORM DO-ACCTG-DAILY
+PERFORM CREATE-REPORT
+*                                       /* vt1 /\
+************************************************************************
+DEFINE SUBROUTINE CREATE-LAPC-FILES
+************************************************************************
+*
+#PEACHTREE := '1,2,3,4,5,6'
+WRITE WORK FILE 1 #PEACHTREE
+RESET #PEACHTREE #TABLE-CNT #TABLE-ENTRIES (*)
+*
+COMPUTE #INVERSE-ENTRY-DATE = 99999999 - #DATN
+READ MD-V BY ENTRY-DATE FROM #INVERSE-ENTRY-DATE
+  IF MD-V.ENTRY-DATE GT #INVERSE-ENTRY-DATE
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF  MD-V.CODE = 'V'
+    PERFORM ADD-TO-TABLE
+  END-IF
+END-READ
+*
+FOR #I1 1 TO #TABLE-CNT
+  PERFORM LOAD-AR-AMOUNTS
+END-FOR
+*
+PERFORM CREATE-LAPC-PEACHTREE-FILE
+PERFORM CREATE-NX
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE ADD-TO-TABLE
+************************************************************************
+*
+#ID-NUMBER := MD-V.ID-NUMBER
+*
+RESET #ISN
+FIND (1) ST-V WITH ST-V.MEMBER-KEY = #ID-NUMBER-A
+  IF NO RECORDS FOUND
+    FIND (1) ST-V WITH WIDOW-KEY = #ID-NUMBER-A
+      #ISN := *ISN
+    END-FIND
+  END-NOREC
+*
+  #ISN     := *ISN
+END-FIND
+*
+IF #ISN = 0
+  ESCAPE ROUTINE
+END-IF
+*
+GET ST-V #ISN
+ADD +1 TO #TABLE-CNT
+*
+RESET #POLICY-INDEX #CONV-DURATION (*)
+#CONV-DURATION (*) := ST-V.CONV-DURATION (*)
+FOR #CAP-X 1 TO C*ACTIVE-SEGMENTS                                   /* PM2
+  IF #CONV-DURATION (#CAP-X) = '999'                                /* PM2
+    #POLICY-INDEX := #CAP-X                                         /* PM2
+  END-IF                                                            /* PM2
+END-FOR                                                             /* PM2
+* EXAMINE #CONV-DURATION(*) FOR '999' GIVING INDEX #POLICY-INDEX    /* PM2
+CALLNAT 'GPLNMSXX'
+  #TABLE-POLICY-NUMBER (#TABLE-CNT)
+  #ID-NUMBER
+  #POLICY-INDEX
+*
+#MEMBER-NAME      := ST-V.NAME                                      /* YK1
+#TABLE-NAME (#TABLE-CNT) := FUNCTION-FORM-NAME(<#MEMBER-NAME,'U'>)  /* YK1
+#TABLE-ID-NUMBER (#TABLE-CNT)  := MD-V.ID-NUMBER
+#TABLE-ISSUE-DATE (#TABLE-CNT) := MD-V.ISSUE-DATE
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-AR-AMOUNTS
+************************************************************************
+*
+RESET #TIME
+READ AR-V BY AR-V.ID-NUMBER FROM #TABLE-ID-NUMBER (#I1)
+  IF AR-V.ID-NUMBER GT #TABLE-ID-NUMBER (#I1)
+    WRITE (22) 'Error in LAPC - AR not found for' 1X #TABLE-ID-NUMBER (#I1)
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF AR-V.TXN-CODE = 'LWOF'
+      AND AR-V.TRANSACTION-DATN = #DATN
+      AND AR-V.POLICY-NUMBER = #TABLE-POLICY-NUMBER (#I1)
+    #TIME := AR-V.TRANSACTION-TIMN
+    ESCAPE BOTTOM
+  END-IF
+END-READ
+*
+IF #TIME = 0
+  WRITE (22) 'Error in LAPC - LWOF not found for' 1X #TABLE-ID-NUMBER (#I1)
+  ESCAPE ROUTINE
+END-IF
+*
+READ AR-V BY AR-V.ID-NUMBER FROM #TABLE-ID-NUMBER (#I1)
+  IF AR-V.ID-NUMBER GT #TABLE-ID-NUMBER (#I1)
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF  (AR-V.TRANSACTION-DATN NE #DATN)
+      OR (AR-V.TRANSACTION-TIMN NE #TIME)
+      OR (AR-V.DEBIT-AMOUNT = 0 AND AR-V.CREDIT-AMOUNT = 0)
+    ESCAPE TOP
+  END-IF
+*
+  IF SG-AMOUNT (1) = 0
+    ADD +1 TO #PEACHTREE-TABLE-CNT
+    MOVE EDITED #TABLE-ID-NUMBER (#I1) (EM=999999) TO #PEACH-ID-NUMBER (#PEACHTREE-TABLE-CNT)
+    #PEACH-TRAN-CODE (#PEACHTREE-TABLE-CNT) := AR-V.TXN-CODE
+*
+    #TRAN-CODE-IN := AR-V.TXN-CODE
+    RESET #CAT-1-IN
+    PERFORM GET-GL-ACCT-NUM
+    #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT) := #ACCT-NUM-OUT
+    IF #ACCT-NUM-OUT = '5497' OR = '5499'
+      COMPRESS #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT) '- 07'
+        INTO #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT)
+    ELSE
+      COMPRESS #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT) '- 00'
+        INTO #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT)
+    END-IF
+*
+    IF AR-V.CREDIT-AMOUNT NE 0
+      #AMOUNT := AR-V.CREDIT-AMOUNT * -1
+    ELSE
+      #AMOUNT := AR-V.DEBIT-AMOUNT
+    END-IF
+    MOVE EDITED #AMOUNT (EM=-ZZZZZZZZZZZ.99) TO #PEACH-AMOUNT (#PEACHTREE-TABLE-CNT)
+    MOVE LEFT #PEACH-AMOUNT (#PEACHTREE-TABLE-CNT) TO #PEACH-AMOUNT (#PEACHTREE-TABLE-CNT)
+*
+    #ID-NUMBER := #TABLE-ID-NUMBER (#I1)
+    COMPRESS #TABLE-NAME (#I1) #TABLE-POLICY-NUMBER (#I1) INTO #PEACH-NAME-POL (#PEACHTREE-TABLE-CNT)
+    COMPRESS #PEACH-TRAN-CODE (#PEACHTREE-TABLE-CNT) #DATN-MM #DATN-DD
+      'CN' #ID-NUMBER-A INTO #PEACH-DESCRIPTION (#PEACHTREE-TABLE-CNT)
+      LEAVING NO
+  ELSE
+    FOR #SG-INDEX 1 TO 15
+      IF AR-V.SG-AMOUNT (#SG-INDEX) NE 0
+        ADD +1 TO #PEACHTREE-TABLE-CNT
+        MOVE EDITED #TABLE-ID-NUMBER (#I1) (EM=999999) TO #PEACH-ID-NUMBER (#PEACHTREE-TABLE-CNT)
+        #PEACH-TRAN-CODE (#PEACHTREE-TABLE-CNT) := AR-V.TXN-CODE
+*
+        #TRAN-CODE-IN := AR-V.TXN-CODE
+        #CAT-1-IN     := AR-V.SG-CATEGORY-1 (#SG-INDEX)
+        PERFORM GET-GL-ACCT-NUM
+        #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT) := #ACCT-NUM-OUT
+        IF #ACCT-NUM-OUT = '5497' OR = '5499'
+          COMPRESS #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT) '- 07'
+            INTO #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT)
+        ELSE
+          COMPRESS #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT) '- 00'
+            INTO #PEACH-ACCT-NUM (#PEACHTREE-TABLE-CNT)
+        END-IF
+*
+        IF   (AR-V.TXN-CODE = 'PREP' OR = 'PRER')
+            AND (#ACCT-NUM-OUT = '2235')
+          #PEACH-TRAN-CODE (#PEACHTREE-TABLE-CNT) := 'BADJ'
+        END-IF
+*
+        IF AR-V.CREDIT-AMOUNT NE 0
+          #AMOUNT := AR-V.SG-AMOUNT (#SG-INDEX) * -1
+        ELSE
+          #AMOUNT := AR-V.SG-AMOUNT (#SG-INDEX)
+        END-IF
+        MOVE EDITED #AMOUNT (EM=-ZZZZZZZZZZZ.99) TO #PEACH-AMOUNT (#PEACHTREE-TABLE-CNT)
+        MOVE LEFT #PEACH-AMOUNT (#PEACHTREE-TABLE-CNT) TO #PEACH-AMOUNT (#PEACHTREE-TABLE-CNT)
+*
+        #ID-NUMBER := #TABLE-ID-NUMBER (#I1)
+        COMPRESS #TABLE-NAME (#I1) #TABLE-POLICY-NUMBER (#I1) INTO #PEACH-NAME-POL (#PEACHTREE-TABLE-CNT)
+        COMPRESS #PEACH-TRAN-CODE (#PEACHTREE-TABLE-CNT) #DATN-MM #DATN-DD
+          'CN' #ID-NUMBER-A INTO #PEACH-DESCRIPTION (#PEACHTREE-TABLE-CNT)
+          LEAVING NO
+      END-IF
+    END-FOR
+  END-IF
+END-READ
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE GET-GL-ACCT-NUM
+************************************************************************
+*
+IF #CAT-1-IN = '**'
+  RESET #CAT-1-IN
+END-IF
+*
+IF   (#TRAN-CODE-IN = 'BADJ')
+    AND (#CAT-1-IN = 'UN')
+  RESET #CAT-1-IN
+END-IF
+*
+IF   (#TRAN-CODE-IN = 'ADCR' OR = 'RDCR')
+    AND (#CAT-1-IN = 'DC')
+  RESET #CAT-1-IN
+END-IF
+*
+CALLNAT 'ATHS03P2'
+  #PDA-ATHA03P2
+*
+IF   AR-V.TXN-CODE = 'ADDL'
+    AND AR-V.SEQUENCE-NUM = 2
+  #ACCT-NUM-OUT := '4315'
+  AR-V.TXN-CODE := 'INTV'
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CREATE-NX
+***********************************************************************
+*
+RESET #NOTE-TEXT (*)
+#NOTE-TEXT (1) := 'A LAPC/CMB5 collections Peachtree file has been generated:'
+*
+RESET #NOTE-TEXT (2:5)
+FOR #I1 1 TO #PEACHTREE-TABLE-CNT
+  ADD +1 TO #NOTE-CNT
+  DECIDE FOR FIRST CONDITION
+    WHEN #NOTE-CNT LE 8
+      #NOTE-INDEX := 2
+    WHEN #NOTE-CNT LE 16
+      #NOTE-INDEX := 3
+    WHEN #NOTE-CNT LE 24
+      #NOTE-INDEX := 4
+    WHEN #NOTE-CNT LE 30
+      #NOTE-INDEX := 5
+    WHEN NONE
+      ESCAPE BOTTOM
+  END-DECIDE
+*
+  IF #HOLD-PEACHTREE-ID = #PEACH-ID-NUMBER (#I1)
+    ESCAPE TOP
+  ELSE
+    #HOLD-PEACHTREE-ID := #PEACH-ID-NUMBER (#I1)
+  END-IF
+*
+  IF #I1 GT 1
+    COMPRESS #NOTE-TEXT (#NOTE-INDEX) ',' #PEACH-ID-NUMBER (#I1) INTO #NOTE-TEXT (#NOTE-INDEX) LEAVING NO
+  ELSE
+    COMPRESS #NOTE-TEXT (#NOTE-INDEX) #PEACH-ID-NUMBER (#I1) INTO #NOTE-TEXT (#NOTE-INDEX) LEAVING NO
+  END-IF
+END-FOR
+*
+IF #PEACHTREE-TABLE-CNT GT 0
+*   MOVE 'MB ' TO #TO-INIT                                           /* vt5 11/18/2016 \/
+*   MOVE '*NX' TO #CGA-SCR-SUFFIX
+*   FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)     /* vt5 11/18/2016 /\
+*
+  MOVE 'CMN' TO #TO-INIT                                           /* vt6 02/02//2017 \/
+  MOVE '*NX' TO #CGA-SCR-SUFFIX
+  FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)     /* vt6 02/02/2017 /\
+*
+  MOVE 'AXD' TO #TO-INIT                               /* vt 06/18/2013 was 'BHL'   /* vt4 05/02/2016 was 'SK'
+  MOVE '*NX' TO #CGA-SCR-SUFFIX
+  FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+*
+  MOVE 'KXG' TO #TO-INIT                                        /* PM3   vt 06/19/2013 \/   /* vt4 05/02/2016 \/
+  MOVE '*NX' TO #CGA-SCR-SUFFIX                                 /* PM3
+  FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)  /* PM3   vt 06/19/2013 /\    /* vt4 05/02/2016 \/
+*
+  MOVE 'PTK' TO #TO-INIT                               /* vt2  vt7 removed 'VXT' 04/25/2017
+  MOVE '*NX' TO #CGA-SCR-SUFFIX
+  FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+*
+  MOVE 'RXB' TO #TO-INIT                                        /* PM4  /* vt3  was 'SH' was KMC  /* vt4 05/09/2016
+  MOVE '*NX' TO #CGA-SCR-SUFFIX                                 /* PM4
+  FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)  /* PM4
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CREATE-LAPC-PEACHTREE-FILE
+***********************************************************************
+*
+FOR #I1 1 TO #PEACHTREE-TABLE-CNT
+  COMPRESS #PEACHTREE-DATE          ','
+    #PEACH-DESCRIPTION (#I1) ','
+    #PEACHTREE-TABLE-CNT     ','
+    #PEACH-ACCT-NUM (#I1)    ','
+    #PEACH-NAME-POL (#I1)    ','
+    #PEACH-AMOUNT (#I1) INTO #PEACHTREE LEAVING NO
+*
+  WRITE WORK 1 #PEACHTREE
+*
+* write e-mail information file for 'grand-total' transactions  /* YK1
+  IF SUBSTR(#PEACH-DESCRIPTION (#I1),1,4) = 'LWOF'              /* YK1
+    PERFORM CREATE-EMAIL-INFO                                   /* YK1
+  END-IF                                                        /* YK1
+*
+  RESET #PEACHTREE
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE DETERMINE-DATE
+************************************************************************
+*
+IF *TIMN LT 1200000            /* midnite till 12 noon (normal job time)
+*
+  #TO-DATE := *DATN                                          /* PM2
+  CALLNAT 'GDATESXX'
+    #TO-DATE
+    #FROM-DATE
+    #RETURN-CALC
+    #REQUEST-TYPE
+*
+  #DATN := #RETURN-CALC
+ELSE
+  #DATN := *DATN
+END-IF
+*
+COMPRESS #DATN-MM #DATN-DD #DATN-YYYY INTO #PEACHTREE-DATE WITH '/'
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CREATE-EMAIL-INFO                          /* YK1
+***********************************
+*
+* Dear {MemberName}:
+* CAP Loan Certificate: {PolicyNumber}
+* CAP Loan Balance Due: {CAPBalanceInterest}
+* {StreetAddress}
+* {CityStateZip}
+*
+* TEMPLATE-TYPE
+* POLICY-NUMBER
+* MEMBER-NAME
+* MEMBER-RANK
+* OWNER-EMAIL    (Member e-mail in this case)
+* STREET-ADDRESS
+* CITY-STATE-ZIP
+* CAP-BALANCE-INTEREST
+*
+RESET EMAIL-INFORMATION #EMAIL-INFORMATION
+EXAMINE #PEACH-DESCRIPTION(#I1) FOR 'CN' POSITION #II
+#II := #II + 2
+EMAIL-INFORMATION.DAL-CN := SUBSTR(#PEACH-DESCRIPTION(#I1),#II)
+EXAMINE #PEACH-NAME-POL(#I1) FOR ' ' POSITION #II
+#II := #II + 1
+EMAIL-INFORMATION.POLICY-NUMBER := SUBSTR(#PEACH-NAME-POL(#I1),#II)
+*
+EMAIL-INFORMATION.TEMPLATE-TYPE    := #CAP-LOAN-LAPSE-NOTICE
+* Get status file information for e-mail file             /* YK1
+FIND(1) ST-V WITH MEMBER-KEY = EMAIL-INFORMATION.DAL-CN
+*
+* e-mail to be sent to insured/member - not owner
+  RESET EMAIL-ADDRESS                                          /* TT1
+  EMAIL-ADDRESS := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)      /* TT1
+  EMAIL-INFORMATION.OWNER-EMAIL := EMAIL-ADDRESS               /* TT1
+*  EMAIL-INFORMATION.OWNER-EMAIL := ST-V.INTERNET-ADDR         /* TT1
+*
+* insured/member name
+  #MEMBER-NAME                  := ST-V.NAME
+  EMAIL-INFORMATION.MEMBER-NAME := FUNCTION-FORM-NAME(<#MEMBER-NAME,'U'>)
+  #RANK             := ST-V.RANK                            /* YK1
+  #MILITARY-SERVICE := ST-V.MILITARY-SERVICE                /* YK1
+  RESET #SEX                                                /* TT1
+  #SEX              := GET-GENDER(<ST-V.MEMBER-CONTACT-ID>) /* TT1
+*
+  RESET #PDA-ADDRESS                                       /* NG1 START
+  MOVE ST-V.MEMBER-CONTACT-ID TO #ADD-CONTACT-ID
+  MOVE #PRIMARY TO #ADD-TYPE
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+*
+  #ADDRESS-1        := #ADD-LINE-1
+  #ADDRESS-2        := #ADD-LINE-2
+  #ADDRESS-3        := #ADD-LINE-3
+  #ZIP              := #ADD-ZIP-CODE
+END-FIND                                                   /* NG 1 END
+*
+MOVE #PEACH-AMOUNT(#I1) TO EMAIL-INFORMATION.CAP-BALANCE-INTEREST
+COMPRESS '$' EMAIL-INFORMATION.CAP-BALANCE-INTEREST INTO
+  EMAIL-INFORMATION.CAP-BALANCE-INTEREST LEAVING NO
+* Format rank
+IF #RANK NE ' '
+  EMAIL-INFORMATION.MEMBER-RANK := FUNCTION-RANK(<#RANK,#MILITARY-SERVICE,'F'>)
+END-IF
+IF EMAIL-INFORMATION.MEMBER-RANK = ' '
+  DECIDE ON FIRST VALUE #SEX
+    VALUE 'M'
+      EMAIL-INFORMATION.MEMBER-RANK := 'Mr.'
+    VALUE 'F'
+      EMAIL-INFORMATION.MEMBER-RANK := 'Ms.'
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+END-IF
+* Format Address fields
+CALLNAT 'GCTSTSXX'
+  #SPLIT
+  #ADDRESS-1
+  #ADDRESS-2
+  #ADDRESS-3
+  #STREET
+  #STREET-2
+  #CITY
+  #STATE
+  #ERR-MSG
+*
+COMPRESS #STREET #STREET-2 INTO STREET-ADDRESS
+COMPRESS #CITY ',' INTO EMAIL-INFORMATION.CITY-STATE-ZIP LEAVING NO
+COMPRESS EMAIL-INFORMATION.CITY-STATE-ZIP #STATE #ZIP-5 INTO
+  EMAIL-INFORMATION.CITY-STATE-ZIP
+IF #ZIP-4 NOT = ' ' AND #ZIP-4 NOT = '0000'
+  COMPRESS EMAIL-INFORMATION.CITY-STATE-ZIP '-' #ZIP-4 INTO
+    EMAIL-INFORMATION.CITY-STATE-ZIP LEAVING NO
+END-IF
+*
+WRITE WORK FILE 2 EMAIL-INFORMATION
+*
+END-SUBROUTINE
+*                                                                      /* vt1 \/
+*****************
+DEFINE SUBROUTINE DO-ACCTG-DAILY
+*****************
+*
+READ TR-V LOGICAL WITH TRANSACTION-DATN = #datn
+  IF  TRANSACTION-DATN NE #DATN
+    ESCAPE ROUTINE
+  END-IF
+*
+  if ( tr-v.cash-code eq 'T' or = 'A' ) and sg-category-1(1) = 'CP'
+      and tr-v.description-7 = 'CAP MBR'
+    ignore
+  else
+    escape top
+  end-if
+*
+  PERFORM DO-ACCUMULATION
+END-READ
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE DO-ACCUMULATION
+*****************
+*
+FOR #CI 1 TO 5
+  IF #CLERK-NAME(#CI) = TR-V.CLERK-ID
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+* write '=' #clerk-name(*)
+PERFORM FIND-BATCH-CLERK
+*
+* write '=' #num-entries
+FOR #TI 1 TO #NUM-ENTRIES
+  IF #SCR-TRAN (#TI) = TR-V.TXN-CODE
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF #TI GT #NUM-ENTRIES
+  COMPUTE #TI = #NUM-ENTRIES - 2
+  MOVE 6 TO #TI   /* the 1st Other Index /* <<<<<<<<<<<<<<
+END-IF
+*
+COMPUTE #TI2 = #TI + 1
+IF #SCR-D-C (#TI) = 'C'
+  ADD TR-V.CREDIT-AMOUNT TO #ACCUM-CLERK-AMT(#TI,#CI)
+  ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)
+  ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI)
+ELSE
+  IF #SCR-D-C (#TI) = 'D'
+    ADD TR-V.DEBIT-AMOUNT TO #ACCUM-CLERK-AMT(#TI,#CI)
+    ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)
+    ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI)
+  ELSE
+
+    ADD TR-V.CREDIT-AMOUNT TO #ACCUM-CLERK-AMT (#TI,#CI)
+    ADD TR-V.DEBIT-AMOUNT  TO #ACCUM-CLERK-AMT (#TI2, #CI)
+    ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)
+    ADD TR-V.CREDIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI)
+    ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-TTL (#B-I1)
+    ADD TR-V.DEBIT-AMOUNT TO #BATCH-CLERK-AMT (#B-I1,#TI2)
+
+  END-IF
+END-IF
+*
+IF #SUMM-DET ='D'
+  WRITE TR-V.ID-NUMBER TR-V.TXN-CODE TR-V.CLERK-ID
+    TR-V.DEBIT-AMOUNT TR-V.CREDIT-AMOUNT TR-V.TRANSACTION-DATN
+END-IF
+*
+END-SUBROUTINE
+*
+*
+*****************
+DEFINE SUBROUTINE FIND-BATCH-CLERK
+*****************
+*
+FOR #B-I1 1 TO 5
+  IF #BATCH-CLERK (#B-I1) = TR-V.CLERK-ID
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #BATCH-CLERK (#B-I1) = ' '
+    #BATCH-CLERK (#B-I1) := TR-V.CLERK-ID
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE CREATE-REPORT
+*****************
+*
+COMPRESS 'TRANSACTION' #TAB '+/-' INTO #EXTRACT-RECORD LEAVING NO
+*
+FOR #B-I1 1 TO 5
+  IF #BATCH-CLERK (#B-I1) = ' '
+    COMPRESS #EXTRACT-RECORD #TAB
+      'TOTAL' INTO #EXTRACT-RECORD LEAVING NO
+    WRITE WORK 3 #EXTRACT-RECORD
+    RESET #EXTRACT-RECORD
+    ESCAPE BOTTOM
+  END-IF
+*
+  COMPRESS #EXTRACT-RECORD #TAB
+    #BATCH-CLERK (#B-I1) INTO #EXTRACT-RECORD LEAVING NO
+END-FOR
+*
+FOR #B-I2 1 TO #NUM-ENTRIES                               /* DW11
+  IF #SCR-TRAN (#B-I2) = ' '             /* DW11
+    ESCAPE TOP
+  END-IF
+*
+  COMPRESS #SCR-TRAN (#B-I2) #TAB
+    #SCR-MIN-PLUS (#B-I2) INTO #EXTRACT-RECORD LEAVING NO
+*
+  FOR #B-I1 1 TO 5
+    IF #BATCH-CLERK (#B-I1) = ' '
+      ADD #BATCH-TRAN-TOTAL (#B-I2) TO #BATCH-TRAN-TOTAL (3)
+      MOVE EDITED #BATCH-TRAN-TOTAL (#B-I2) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99)
+        TO #DISPLAY-AMOUNT
+      COMPRESS #EXTRACT-RECORD #TAB
+        #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+      WRITE WORK 3 #EXTRACT-RECORD
+      RESET #EXTRACT-RECORD
+      ESCAPE BOTTOM
+    END-IF
+*
+    MOVE EDITED #BATCH-CLERK-AMT (#B-I1,#B-I2) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99)
+      TO #DISPLAY-AMOUNT
+    ADD #BATCH-CLERK-AMT (#B-I1, #B-I2) TO #BATCH-TRAN-TOTAL (#B-I2)
+*
+    COMPRESS #EXTRACT-RECORD #TAB
+      #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+  END-FOR
+END-FOR
+*
+#EXTRACT-RECORD := #TAB
+FOR #B-I1 1 TO 3
+  IF #BATCH-CLERK (#B-I1) = ' '
+    MOVE EDITED #BATCH-TRAN-TOTAL (3) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99)
+      TO #DISPLAY-AMOUNT
+    COMPRESS #EXTRACT-RECORD #TAB
+      #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+    WRITE WORK 3 #EXTRACT-RECORD
+    RESET #EXTRACT-RECORD
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE EDITED #BATCH-CLERK-TTL (#B-I1) (EM=-ZZ,ZZZ,ZZZ,ZZ9.99)
+    TO #DISPLAY-AMOUNT
+
+  COMPRESS #EXTRACT-RECORD #TAB
+    #DISPLAY-AMOUNT INTO #EXTRACT-RECORD LEAVING NO
+END-FOR
+*
+END-SUBROUTINE                                                        /* vt1 /\
+*
+END

@@ -1,0 +1,705 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHP03P2   *** CREATE SUNGARD EXTRACT FROM ACCT REGISTER
+*                        *** AND MONTH-END BATCH FILE
+*    SEE LINE 3610 FOR TEMPORARY STOP
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE     TAG  REASON                                            *
+* SAG  11282005 RH1  SS - Modified the custom coded ON ERROR stmt &    *
+*                    replaced it with copycode GABNDCX1                *
+*                                                                      *
+* PAM  11082007 PM02 Create accounting register entries from Sungard   *
+*                    file                                              *
+* DRW  01202008 DW1  Increase size of Counters                         *
+* PAM  02282008 PM03 Loan write-offs are on first of month             *
+* PAM  03172008 PM04 Added Paid by to AR description                   *
+* DRW 03/20/2008 DW5 Use 00:10 as time for ALOT-EZPAY M/E Trans -      *
+*                    later removed                                     *
+* DRW 03/29/2008 DW6 Stop creating CASH transactions                   *
+* DRW 04/09/2008 DW7 Chg WOFF to LWOF                                  *
+* DRW 06/25/2008 DW8 Remove CVIN and UPDI                              *
+* RSE 09/15/2009 RE1 Change PROCESS-IND logic                          *
+* vxt 08/06/2012 vt1 Change LWOF to SAWO /ticket 1158/                 *
+* YK1 02/25/2013 YK1 Add discount transaction/description for EZ Term  *
+*                    OI-1911                                           *
+* JNT 09/12/2013 JT1 Address normalization                             *
+* vxt 11/28/2016 vt2 Fix missing names on TA                           *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GONERLXX                        /* SAG RH1 11282005 SS
+LOCAL USING ADDA0001                        /* JT1
+LOCAL
+*
+1 #SUN-ACCT-NUM-IN  (A4) /* MUST BE BLANK
+1 #SG-TRAN    (A4)
+1 #SG-CAT-1   (A2)
+1 #SG-CAT-2   (A2)
+1 #SG-AMT     (N6.2)
+*
+1 #SUNGARD-OUT (A33)     /* EXTRACT RECORD OUTPUT
+1 REDEFINE #SUNGARD-OUT
+  2 #SUN-ACCT-NUM    (A4)
+  2 #SUN-CAT-1       (A2)
+  2 #SUN-CAT-2       (A2)
+  2 #SUN-STATE       (A2)
+  2 #SUN-AMT-SIGN    (A1)
+  2 #SUN-AMT-D-C     (A1)
+  2 #SUN-AMT         (N6.2)
+  2 #SUN-FILL        (A1)
+  2 #SUN-SOURCE      (A2)
+  2 #SUN-CN          (N6)
+  2 #SUN-TRAN        (A4)
+*
+/* EXTRACT RECORD FROM BATCH
+1 #SUNGARD-IN  (A44)                     /* PM02
+1 REDEFINE #SUNGARD-IN
+  2 #SUN-TRAN-IN     (A4)
+  2 #SUN-CAT-1-IN    (A2)
+  2 #SUN-CAT-2-IN    (A2)
+  2 #SUN-STATE-IN    (A2)
+  2 #SUN-AMT-SIGN-IN (A1)
+  2 #SUN-AMT-IN      (N6.2)
+  2 #SUN-FILL        (A1)
+  2 #SUN-SOURCE-IN   (A2)
+  2 #SUN-CN-IN       (N6)
+  2 #SUN-POLICY-NUM  (A16)                /* PM02
+*
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER        (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A     (A6)
+  2 PROCESS-IND
+  2 NAME             (A25)
+  2 TXN-CODE         (A4)
+  2 SEQUENCE-NUM     (N1)
+  2 CLERK-ID         (A3)
+  2 USER-COMPANY     (A1)               /* RE1
+  2 TRANSACTION-DATN (N9)
+  2 REDEFINE TRANSACTION-DATN
+    3 TD-FILL        (N1)
+    3 TD-YYYY        (N4)
+    3 TD-MM          (N2)
+    3 TD-DD          (N2)
+  2 TRANSACTION-TIMN (P7)                       /* PM02
+  2 DEBIT-AMOUNT     (N7.2)
+  2 CREDIT-AMOUNT    (N7.2)
+  2 DESCRIPTION      (A20)
+  2 REDEFINE DESCRIPTION                        /* PM02
+    3 DESCRIPTION-POL (A16)                      /* PM02
+    3 DESCRIPTION-HOW (A4)                       /* PM02
+  2 TXN-ACCT-NUMBER  (N3)                       /* PM02
+  2 ACCT-DATE        (N8)                       /* PM02
+  2 DATE-LAST-ACCT-UPDATE (N8)                  /* PM02
+
+  2 MONTH-END        (A1)                       /* PM02
+  2 POLICY-NUMBER    (A16)                      /* PM02
+  2 CASH-CODE        (A1)                       /* PM02
+  2 SG-CATEGORY-1    (A2/15)
+  2 SG-CATEGORY-2    (A2/15)
+  2 SG-AMOUNT        (N6.2/15)
+*
+1 ST-V VIEW OF A-STATUS
+  2 NAME                                         /* PM02
+  2 PROCESS-IND                                  /* PM02
+  2 MEMBER-CONTACT-ID                            /* JT1 start
+*
+1 #ABEND-CODE        (I4)  INIT<4095>
+1 #IN-CNT-ONLINE     (P9)  /* DW1
+1 #IN-CNT-BATCH      (P9)
+1 #OUT-CNT-ONLINE    (P9)
+1 #OUT-CNT-BATCH     (P9)  /* DW1
+1 #CNT-2             (P5)
+1 #CNT-3             (P6)
+1 #CNT-4             (P7)                       /* PM02
+1 #I1                (I2)
+1 #I2                (I2)
+1 #TRX               (I2)
+1 #FOUND-BREAKOUT    (L)
+1 #AR-AMT            (P6.2)
+1 #SG-DIFF           (P7.2)
+1 #TOT-SG-DIFF       (P7.2)
+1 #TOT-SG-AMT        (P6.2)
+1 #CN       (N6)
+1 REDEFINE #CN
+  2 #CN-A    (A6)
+1 #PROCESS-IND       (A1)                       /* PM02
+1 #NAME              (A25)                      /* PM02
+1 #TOT-CASH          (P7.2)                     /* PM02
+1 #HOLD-SOURCE       (A2)                       /* PM02
+*
+1 #DATN              (N8)
+1 REDEFINE #DATN
+  2 #YYYYMMDD        (N8)
+  2 REDEFINE #YYYYMMDD
+    3 #YYYY        (N4)
+    3 #MM          (N2)
+    3 #DD          (N2)
+1 REDEFINE #DATN
+  2 #DATN-YYYYMM   (N6)
+  2 #DATN-DAY      (N2)
+*
+1 #TIMN            (N7)
+1 REDEFINE #TIMN
+  2 #TIMN-A4       (A4)
+*
+1 #CUTOFF-YYYY    (N4)
+1 #CUTOFF-MM      (N2)
+1 #BATCH-PARM         (A10)
+1 REDEFINE #BATCH-PARM
+  2 #BATCH-PARM-MM     (N2)
+  2 #FILL-1            (A1)
+  2 #BATCH-PARM-DD     (N2)
+  2 #FILL-2            (A1)
+  2 #BATCH-PARM-YYYY   (N4)
+*
+1 #CONSTANTS                                   /* PM02
+  2 #LOAN-CAP-TIME     (N7)  INIT <2359000>
+* 2 #alot-ezpay-time   (n7)  init <0010000>     /* DW5
+  2 #EDS               (A3)  INIT <'EDS'>
+  2 #PREP              (A4)  INIT <'PREP'>
+  2 #RDCR              (A4)  INIT <'RDCR'>
+  2 #ADCR              (A4)  INIT <'ADCR'>
+  2 #BADJ              (A4)  INIT <'BADJ'>
+* 2 #UPDI              (A4)  INIT <'UPDI'>           /* DW8
+* 2 #CVIN              (A4)  INIT <'CVIN'>           /* DW8
+  2 #DISC              (A4)  INIT <'DISC'>           /* YK1
+  2 #ACCT-NUM          (N3)  INIT <999>
+  2 #DC                (A2)  INIT <'DC'>
+  2 #UN                (A2)  INIT <'UN'>
+  2 #ME                (A2)  INIT <'ME'>
+  2 #DEBIT             (A1)  INIT <'D'>
+  2 #CREDIT            (A1)  INIT <'C'>
+  2 #MONTH-END-IND     (A1)  INIT <'Y'>
+  2 #NEGATIVE          (A1)  INIT <'-'>
+  2 #SEQ-NUM           (N1)  INIT <1>
+  2 #SEQ-NUM-3         (N1)  INIT <3>
+*
+1 #GDATESXX-WORK-FIELDS
+  2 #TO-DATE           (N8)
+  2 #FROM-DATE         (N8)  INIT <00000001>
+  2 #RETURN-CALC       (N8)
+  2 #REQUEST           (A1)  INIT <'E'>
+*
+1 #EZ-TERM           (A2)  CONST <'EZ'>                       /* YK1
+1 #EZ-TERM-DISCOUNT  (A) DYNAMIC CONST <'EZTerm discount'>    /* YK1
+1 #EZ-DISCOUNT       (N3.2)CONST <1.00>                       /* YK1
+1 #AR-DESCRIPTION    (A) DYNAMIC                              /* YK1
+*
+END-DEFINE
+*****************************************************************
+*
+ON ERROR
+  #BATCH-LITERAL-1 := AR-V.ID-NUMBER
+  INCLUDE GABNDCX1                     /* SAG RH1 11282005 SS - END
+END-ERROR
+*
+FORMAT LS=133 PS=66
+WRITE TITLE LEFT 'PROGRAM:' *PROGRAM
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+*
+FORMAT (2) LS=133 PS=66
+WRITE  (2)TITLE LEFT 'PROGRAM:' *PROGRAM 5X 'SUNGARD ONLINE DETAIL'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+*
+FORMAT (3) LS=133 PS=66
+WRITE  (3)TITLE LEFT 'PROGRAM:' *PROGRAM 5X 'SUNGARD BATCH DETAIL'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+*
+READ WORK 1 ONCE RECORD #BATCH-PARM    /* DATE (10/01/1999)
+MOVE #BATCH-PARM-YYYY TO #CUTOFF-YYYY  /* DEVELOP 1ST DAY OF PREV MONTH
+MOVE #BATCH-PARM-MM   TO #CUTOFF-MM
+*
+#YYYY := #BATCH-PARM-YYYY              /* PM02
+#MM   := #BATCH-PARM-MM                /* PM02
+#DD   := #BATCH-PARM-DD                /* PM02
+*
+#TO-DATE := #DATN                      /* PM02
+CALLNAT 'GDATESXX'                     /* PM02
+  #TO-DATE                              /* PM02
+  #FROM-DATE                            /* PM02
+  #RETURN-CALC                          /* PM02
+  #REQUEST                              /* PM02
+
+SUBTRACT 1 FROM #CUTOFF-MM
+*
+IF #CUTOFF-MM LT 01
+  MOVE 12 TO #CUTOFF-MM
+  SUBTRACT 1 FROM #CUTOFF-YYYY
+END-IF
+*
+* READ AR-V PHYSICAL
+* * escape bottom /* Bypass Accounting                   /* <<<<<<<<<<<<<<<<<<<<<<< DW99
+*   ADD 1 TO #IN-CNT-ONLINE
+* *
+* IF  (TD-MM NE #CUTOFF-MM)            /* USING RUN DATE ONLY PROCESS LAST
+*       OR (TD-YYYY NE #CUTOFF-YYYY)        /* MONTHS TRANS
+* *   OR (PROCESS-IND = 'S' OR = 'C')    /* RE1
+*       OR (PROCESS-IND = 'C')              /* RE1
+*       OR (USER-COMPANY = 'S')   /* AFFL Accounting Trans     /* RE1
+*       OR (AR-V.MONTH-END = 'Y')           /* PM02
+*     ESCAPE TOP
+*   END-IF
+* *
+*   IF TXN-CODE = 'STOP' OR = 'STRT'
+*     ESCAPE TOP
+*   END-IF
+* *
+*   IF (TXN-CODE = 'ADDL') AND (SEQUENCE-NUM = 2)  /* INT PART OF ADDL
+*     MOVE 'INTV' TO TXN-CODE
+*   END-IF
+* *
+*   IF TXN-CODE = 'RIDP' OR = 'RIDR'
+*     MOVE 'RN' TO #SUN-CAT-1
+*     MOVE 'RD' TO #SUN-CAT-2   /*RIDER
+*   END-IF
+* *
+*   IF TXN-CODE = 'FPRP' OR = 'FPRR'
+*     MOVE '1Y' TO #SUN-CAT-1
+*     MOVE 'RD' TO #SUN-CAT-2   /*RIDER
+*   END-IF
+* *
+*   MOVE AR-V.ID-NUMBER TO #CN
+*   PERFORM FIND-STATE
+* *
+*   RESET #AR-AMT
+*   IF AR-V.DEBIT-AMOUNT NE 0
+*     SUBTRACT AR-V.DEBIT-AMOUNT FROM #AR-AMT
+*     IF AR-V.CREDIT-AMOUNT NE 0
+*       WRITE AR-V.ID-NUMBER 'BOTH DEBIT & CREDIT AMTS'
+*     END-IF
+*   ELSE
+*     ADD AR-V.CREDIT-AMOUNT TO #AR-AMT
+*   END-IF
+* *
+*   ADD 1 TO #CNT-2
+*   DISPLAY (2) NOTITLE GIVE SYSTEM FUNCTIONS
+*     #CNT-2
+*     'CN/NUMBER'     AR-V.ID-NUMBER
+*     'DATE'          TRANSACTION-DATN
+*     'TRAN'          AR-V.TXN-CODE
+*     'CR-AMT'        AR-V.CREDIT-AMOUNT
+*     'DB-AMT'        AR-V.DEBIT-AMOUNT
+*     'ST'            #SUN-STATE
+*     'USER'          AR-V.CLERK-ID
+*     'NAME'          NAME
+* *
+*   RESET #FOUND-BREAKOUT #TOT-SG-AMT
+*   FOR #I1 1 TO 15
+*     IF AR-V.SG-CATEGORY-1 (#I1) NE ' '
+* *
+*       IF (AR-V.TXN-CODE = 'PADV' OR = 'AIAV')
+*           AND (AR-V.SG-CATEGORY-1 (#I1) = 'CP')
+*         RESET AR-V.SG-CATEGORY-1 (#I1)
+*       END-IF
+* *
+*       MOVE TRUE TO #FOUND-BREAKOUT
+*       MOVE AR-V.TXN-CODE            TO #SUN-TRAN
+*       MOVE AR-V.SG-CATEGORY-1 (#I1) TO #SUN-CAT-1
+*       MOVE AR-V.SG-CATEGORY-2 (#I1) TO #SUN-CAT-2
+*       MOVE AR-V.SG-AMOUNT (#I1)     TO #SUN-AMT
+* *
+*       IF   (AR-V.TXN-CODE = 'FPDP' OR = 'FPDR' OR = 'DUEP'
+*           OR = 'DUER')
+*           AND (AR-V.DESCRIPTION = 'SO MBR')
+*         MOVE 'SO' TO #SUN-CAT-1
+*       END-IF
+* *
+*       IF TXN-CODE = 'RIDP' OR = 'RIDR'
+*         MOVE 'RN' TO #SUN-CAT-1
+*         MOVE 'RD' TO #SUN-CAT-2   /*RIDER
+*       END-IF
+* *
+*       IF TXN-CODE = 'FPRP' OR = 'FPRR'
+*         MOVE '1Y' TO #SUN-CAT-1
+*         MOVE 'RD' TO #SUN-CAT-2   /*RIDER
+*       END-IF
+* *
+*       IF AR-V.DEBIT-AMOUNT NE 0
+*         MOVE '-' TO #SUN-AMT-SIGN
+*         SUBTRACT AR-V.SG-AMOUNT (#I1) FROM #TOT-SG-AMT
+*       ELSE
+*         RESET #SUN-AMT-SIGN
+*         ADD AR-V.SG-AMOUNT (#I1) TO #TOT-SG-AMT
+*       END-IF
+* *
+*       IF #SUN-AMT LT 0
+*         COMPUTE #SUN-AMT = #SUN-AMT * -1
+* *
+*         IF #SUN-AMT-SIGN = '-'   /* REVERSE SIGN
+*           RESET #SUN-AMT-SIGN
+*         ELSE
+*           MOVE '-' TO #SUN-AMT-SIGN
+*         END-IF
+*       END-IF
+* *
+*       MOVE 'OL'           TO #SUN-SOURCE  /* ONLINE
+*       MOVE AR-V.ID-NUMBER TO #SUN-CN
+*       PERFORM DO-ACCT-NUM
+* *
+*       IF #SUN-AMT NE 0
+*         WRITE WORK 3 #SUNGARD-OUT
+*         WRITE WORK 4 #SUNGARD-OUT    /* output 4 is online trans
+*         ADD 1 TO #OUT-CNT-ONLINE
+*         WRITE (2) '  ****'
+*           ' CAT-1 =' #SUN-CAT-1
+*           ' CAT-2 =' #SUN-CAT-2
+*           ' SIGN ='  #SUN-AMT-SIGN
+*           ' AMT ='   #SUN-AMT
+*       END-IF
+*     END-IF
+*   END-FOR
+* *
+*   IF #FOUND-BREAKOUT
+*     IF #TOT-SG-AMT NE #AR-AMT
+*       COMPUTE #SG-DIFF = #AR-AMT - #TOT-SG-AMT
+*       ADD #SG-DIFF TO #TOT-SG-DIFF
+* *
+*       WRITE AR-V.ID-NUMBER 'TR/SG err'
+*         TRANSACTION-DATN
+*         AR-V.TXN-CODE
+*         'SG'  #TOT-SG-AMT  (EM=ZZZZ.99)
+*         'AR'  #AR-AMT      (EM=ZZZZ.99)
+*         'Df'  #SG-DIFF     (EM=-ZZZZ.99)
+*         'Tot' #TOT-SG-DIFF (EM=-ZZ,ZZZ.99)
+*     END-IF
+*   ELSE
+*     MOVE AR-V.TXN-CODE  TO #SUN-TRAN
+*     MOVE '**'    TO #SUN-CAT-1
+*     RESET           #SUN-CAT-2
+* *
+*     IF TXN-CODE = 'RIDP' OR = 'RIDR'
+*       MOVE 'RN' TO #SUN-CAT-1
+*     END-IF
+* *
+*     IF TXN-CODE = 'FPRP' OR = 'FPRR'
+*       MOVE '1Y' TO #SUN-CAT-1
+*     END-IF
+* *
+*     IF #AR-AMT LT 0
+*       MOVE '-' TO #SUN-AMT-SIGN
+*       COMPUTE #SUN-AMT = #AR-AMT * -1
+*     ELSE
+*       RESET #SUN-AMT-SIGN
+*       MOVE #AR-AMT TO #SUN-AMT
+*     END-IF
+* *
+*     MOVE 'OL'    TO  #SUN-SOURCE  /* ONLINE
+*     MOVE AR-V.ID-NUMBER TO #SUN-CN
+*     PERFORM DO-ACCT-NUM
+* *
+*     IF #SUN-AMT NE 0
+*       WRITE WORK 3 #SUNGARD-OUT
+*       WRITE WORK 4 #SUNGARD-OUT    /* output 4 is online trans
+*       ADD 1 TO #OUT-CNT-ONLINE
+*     END-IF
+*   END-IF
+* END-READ
+*
+NEWPAGE (2)
+WRITE (2) #IN-CNT-ONLINE  'ACCOUNTING RECS READ'
+WRITE (2) #IN-CNT-BATCH   'BATCH RECS READ'
+*
+* STOP    /* <<<<<<<<<<<<<<<   STOP Bypass Sungard Processing
+*
+RESET #CN #HOLD-SOURCE                              /* PM02
+READ WORK 2 RECORD #SUNGARD-IN
+  IF   (#SUN-TRAN-IN = 'DUEP')
+      AND (#SUN-AMT-IN = 7.50 OR = 8.50 OR = 9.50 OR = 10.50 OR = 12.50
+      OR = 15.50 OR = 22.50 OR = 1550.00)
+    MOVE 'SO' TO #SUN-CAT-1-IN
+  END-IF
+*
+  IF #SUN-TRAN-IN = 'RIDP' OR = 'RIDR'
+    MOVE 'RN' TO #SUN-CAT-1
+    MOVE 'RD' TO #SUN-CAT-2   /*RIDER
+  END-IF
+*
+  IF #SUN-TRAN-IN = 'FPRP' OR = 'FPRR'
+    MOVE '1Y' TO #SUN-CAT-1
+    MOVE 'RD' TO #SUN-CAT-2   /*RIDER
+  END-IF
+*
+  IF #SUN-TRAN-IN = 'PRNP'
+    MOVE 'PRNF' TO #SUN-TRAN-IN
+  END-IF
+*
+  IF #SUN-TRAN-IN = 'INTP'
+    MOVE 'INTF' TO #SUN-TRAN-IN
+  END-IF
+*  ABOVE IS ONLY FOR 10/1999 MONTH-END
+  ADD 1 TO #IN-CNT-BATCH
+*
+*  IF (#CN NE 0 AND #HOLD-SOURCE NE ' ')                      /* PM02  DW6
+*   AND (#SUN-CN-IN NE #CN OR #SUN-SOURCE-IN NE #HOLD-SOURCE) /* PM02
+*     PERFORM CREATE-CASH-ENTRY                               /* PM02
+*  END-IF                                                     /* PM02
+*
+  MOVE #SUN-CN-IN TO #CN
+  #HOLD-SOURCE := #SUN-SOURCE-IN                             /* PM02
+  PERFORM FIND-STATE                                         /* vt2 remove '*'
+*
+  MOVE #SUN-TRAN-IN   TO #SUN-TRAN
+  MOVE #SUN-CAT-1-IN  TO #SUN-CAT-1
+  MOVE #SUN-CAT-2-IN  TO #SUN-CAT-2
+  MOVE #SUN-AMT-SIGN-IN TO #SUN-AMT-SIGN
+  MOVE #SUN-AMT-IN    TO #SUN-AMT
+  MOVE #SUN-SOURCE-IN TO #SUN-SOURCE
+  MOVE #SUN-CN-IN     TO #SUN-CN
+*
+* IF #SUN-CAT-1 = 'CP'   /* NO SEPARATION FOR CAPS NOW
+*   MOVE '**' TO #SUN-CAT-1
+* END-IF
+*
+  ADD 1 TO #CNT-3
+  DISPLAY (3) NOTITLE GIVE SYSTEM FUNCTIONS
+    #CNT-3
+    'CN/NUMBER'     #SUN-CN
+    'TRAN'          #SUN-TRAN
+    'SIGN'          #SUN-AMT-SIGN
+    'AMT'           #SUN-AMT
+    'STATE'         #SUN-STATE
+    'SOURCE'        #SUN-SOURCE
+*
+  PERFORM DO-ACCT-NUM
+*
+*   IF #SUN-AMT NE 0
+*     WRITE WORK 3 #SUNGARD-OUT
+*     ADD 1 TO #OUT-CNT-BATCH
+* *
+*     IF #SUN-SOURCE = 'PA'
+*       WRITE WORK 5 #SUNGARD-OUT     /* output 5 is batch PA
+*     ELSE
+*       IF #SUN-SOURCE = 'P4'
+*         WRITE WORK 6 #SUNGARD-OUT   /* output 6 is batch P4
+*       ELSE                          /* must be from PN
+*        WRITE WORK 7 #SUNGARD-OUT   /* op7 is bat PN(APL/Capitalizations)
+*       END-IF
+*     END-IF
+*   END-IF
+*
+* YK1 Start
+  IF #SUN-TRAN-IN = 'PREP' AND (#SUN-SOURCE-IN = 'P4' OR = 'PA')
+      AND #SUN-CAT-2-IN = #EZ-TERM
+    #SUN-AMT-IN := #SUN-AMT-IN + #EZ-DISCOUNT
+    PERFORM CREATE-AR-RECORD
+    #SUN-AMT-IN  := #EZ-DISCOUNT
+    #SUN-AMT-D-C := #DEBIT
+    #SUN-TRAN-IN := #DISC
+    #AR-DESCRIPTION := #EZ-TERM-DISCOUNT
+    PERFORM CREATE-AR-RECORD
+    RESET #AR-DESCRIPTION
+  ELSE
+* YK1 end
+    PERFORM CREATE-AR-RECORD          /* PM02
+  END-IF
+*
+END-WORK
+*
+WRITE 'Total SG difference=' #TOT-SG-DIFF (EM=-ZZZ,ZZZ.99)
+*
+* * * * * * *   E O F   * * * * * * * * * * * * *
+WRITE (3) #OUT-CNT-ONLINE 'SUNGARD ONLINE RECS WRITTEN'
+WRITE (3) #OUT-CNT-BATCH  'SUNGARD BATCH  RECS WRITTEN'
+*
+********************************************************************
+DEFINE SUBROUTINE FIND-STATE
+********************************************************************
+*
+RESET #PROCESS-IND #NAME                      /* PM02
+FIND (1) ST-V WITH MEMBER-KEY = #CN-A
+  IF NO RECORDS FOUND
+    WRITE 'NO REC FOUND FOR' #CN-A
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  #PROCESS-IND := ST-V.PROCESS-IND            /* PM02
+  #NAME        := ST-V.NAME                   /* PM02
+*
+  RESET #PDA-ADDRESS                    /* JT1 start
+  MOVE 'P' TO #ADD-TYPE
+  #ADD-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+  IF #ADD-STATE NE ' '
+    MOVE #ADD-STATE TO #SUN-STATE
+  ELSE
+    MOVE '??' TO #SUN-STATE
+  END-IF
+*
+END-FIND
+*
+END-SUBROUTINE
+*
+********************************************************************
+DEFINE SUBROUTINE DO-ACCT-NUM
+********************************************************************
+*
+IF #SUN-CAT-1 = '**'
+  RESET #SUN-CAT-1
+END-IF
+*
+IF #SUN-CAT-2 = '**'
+  RESET #SUN-CAT-2
+END-IF
+*
+CALLNAT 'ATHS03P2'
+  #SUN-TRAN
+  #SUN-ACCT-NUM-IN  /* BLANK HERE
+  #SUN-CAT-1
+  #SUN-AMT-SIGN
+*
+  #SUN-ACCT-NUM
+  #SUN-AMT-D-C
+  #SUN-CN
+  #SUN-AMT
+  #SUN-SOURCE
+*
+END-SUBROUTINE
+*
+********************************************************************
+DEFINE SUBROUTINE CREATE-AR-RECORD                           /* PM02
+********************************************************************
+*
+RESET AR-V
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #SUN-TRAN-IN = #PREP AND #SUN-CAT-1-IN = #UN
+    AR-V.TXN-CODE          := #BADJ
+    IF  #SUN-AMT-SIGN-IN = #NEGATIVE
+      #SUN-AMT-D-C         := #DEBIT
+    ELSE
+      #SUN-AMT-D-C         := #CREDIT
+    END-IF
+  WHEN #SUN-TRAN-IN = #PREP AND #SUN-CAT-1-IN = #DC
+    IF  #SUN-AMT-SIGN-IN = #NEGATIVE
+      AR-V.TXN-CODE        := #RDCR
+      #SUN-AMT-D-C         := #DEBIT
+    ELSE
+      AR-V.TXN-CODE        := #ADCR
+      #SUN-AMT-D-C         := #CREDIT
+    END-IF
+  WHEN NONE
+    AR-V.TXN-CODE          := #SUN-TRAN-IN
+END-DECIDE
+*
+IF #SUN-AMT-D-C = #DEBIT
+  AR-V.DEBIT-AMOUNT        := #SUN-AMT-IN
+  SUBTRACT #SUN-AMT-IN FROM #TOT-CASH
+ELSE
+  AR-V.CREDIT-AMOUNT       := #SUN-AMT-IN
+  ADD #SUN-AMT-IN TO #TOT-CASH
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #SUN-SOURCE-IN = 'P4'
+    AR-V.CASH-CODE         := 'E'
+  WHEN #SUN-SOURCE-IN = 'PN'
+    AR-V.CASH-CODE         := 'A'
+  WHEN #SUN-SOURCE-IN = 'PA'
+    AR-V.CASH-CODE         := 'G'
+  WHEN NONE
+    COMPRESS '-' #SUN-SOURCE-IN INTO AR-V.DESCRIPTION-HOW LEAVING NO
+END-DECIDE
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #SUN-SOURCE-IN = 'PN'
+*    AND NOT #SUN-TRAN-IN = 'PADF' OR = 'LWOF'         /* PM03 DW7   /* vt1
+      AND NOT #SUN-TRAN-IN = 'PADF' OR = 'SAWO'                      /* vt1
+    AR-V.TRANSACTION-DATN      := #RETURN-CALC
+    AR-V.ACCT-DATE             := #RETURN-CALC
+    AR-V.DATE-LAST-ACCT-UPDATE := #RETURN-CALC
+    AR-V.TRANSACTION-TIMN      := #LOAN-CAP-TIME
+  WHEN NONE
+    AR-V.TRANSACTION-DATN      := #DATN
+    AR-V.ACCT-DATE             := #DATN
+    AR-V.DATE-LAST-ACCT-UPDATE := #DATN
+*   AR-V.TRANSACTION-TIMN      := #alot-ezpay-time   /* '0010000'  /* DW5
+* above was commented out so the ALOT/EZPAY trans have same time as NEWL for TA
+END-DECIDE
+*
+AR-V.ID-NUMBER             := #SUN-CN-IN
+AR-V.PROCESS-IND           := #PROCESS-IND
+AR-V.NAME                  := #NAME
+AR-V.SEQUENCE-NUM          := #SEQ-NUM
+AR-V.CLERK-ID              := #EDS
+AR-V.TXN-ACCT-NUMBER       := #ACCT-NUM
+AR-V.POLICY-NUMBER         := #SUN-POLICY-NUM
+AR-V.MONTH-END             := #MONTH-END-IND
+AR-V.SG-CATEGORY-1 (1)     := #SUN-CAT-1-IN
+AR-V.SG-CATEGORY-2 (1)     := #SUN-CAT-2-IN
+AR-V.SG-AMOUNT (1)         := #SUN-AMT-IN
+AR-V.DESCRIPTION           := #AR-DESCRIPTION
+*
+IF AR-V.TXN-CODE = 'ADDL'
+    AND AR-V.DEBIT-AMOUNT NE 0
+  AR-V.SEQUENCE-NUM       := #SEQ-NUM-3
+END-IF
+*
+ADD +1 TO #CNT-4
+WRITE (1) #CNT-4 1X AR-V.ID-NUMBER 1X 'STORING TRAN' 1X AR-V.TXN-CODE 1X
+  AR-V.DEBIT-AMOUNT 1X AR-V.CREDIT-AMOUNT
+*
+STORE AR-V
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+********************************************************************
+DEFINE SUBROUTINE CREATE-CASH-ENTRY                          /* PM02
+********************************************************************
+*
+RESET AR-V
+*
+IF #TOT-CASH = 0
+  ESCAPE ROUTINE
+END-IF
+*
+IF #TOT-CASH GT 0
+  AR-V.DEBIT-AMOUNT        := #TOT-CASH
+ELSE
+  AR-V.CREDIT-AMOUNT       := #TOT-CASH
+END-IF
+*
+AR-V.DESCRIPTION-POL       := 'TOTAL CASH'
+DECIDE FOR FIRST CONDITION
+  WHEN #HOLD-SOURCE = 'P4'
+    AR-V.CASH-CODE         := 'E'
+  WHEN #HOLD-SOURCE = 'PN'
+    AR-V.CASH-CODE         := 'A'
+  WHEN #HOLD-SOURCE = 'PA'
+    AR-V.CASH-CODE         := 'G'
+  WHEN NONE
+    COMPRESS '-' #HOLD-SOURCE INTO AR-V.DESCRIPTION-HOW LEAVING NO
+END-DECIDE
+*
+AR-V.TXN-CODE              := 'CASH'
+AR-V.TRANSACTION-DATN      := #DATN
+AR-V.ACCT-DATE             := #DATN
+AR-V.DATE-LAST-ACCT-UPDATE := #DATN
+AR-V.ID-NUMBER             := #CN
+AR-V.PROCESS-IND           := #PROCESS-IND
+AR-V.NAME                  := #NAME
+AR-V.SEQUENCE-NUM          := 1
+AR-V.CLERK-ID              := #EDS
+AR-V.TXN-ACCT-NUMBER       := #ACCT-NUM
+AR-V.MONTH-END             := #MONTH-END-IND
+AR-V.SG-CATEGORY-1 (1)     := '**'
+AR-V.SG-CATEGORY-2 (1)     := '**'
+AR-V.SG-AMOUNT (1)         := #TOT-CASH
+*
+ADD +1 TO #CNT-4
+WRITE (1) #CNT-4 1X AR-V.ID-NUMBER 1X 'STORING TRAN' 1X AR-V.TXN-CODE 1X
+  AR-V.DEBIT-AMOUNT 1X AR-V.CREDIT-AMOUNT
+*
+RESET #TOT-CASH
+*
+STORE AR-V
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+END

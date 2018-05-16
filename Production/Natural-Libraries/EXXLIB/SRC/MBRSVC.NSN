@@ -1,0 +1,206 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* CRM Admin interface
+************************************************************************
+* NAME         : MBRSVC                                                *
+* AUTHOR       : Copyright: MetrostarSystems AAFMAA                    *
+* DESCRIPTION  : Premier services                                      *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON
+* NGG    20111228      Initial Creation
+*
+DEFINE DATA PARAMETER
+1 XML_PARSER_INPUT             (A) DYNAMIC BY VALUE
+1 XML_SERIALZE_OUTPUT          (A) DYNAMIC        /* Out
+*
+LOCAL
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I4)
+LOCAL USING PARSER-X           /* parser internal data - do not change
+LOCAL USING MBRASVC            /* SERVICE REQUEST structure
+LOCAL USING OBJAMB01           /* SERVICE MEMBER structure
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 #MSG                         (A) DYNAMIC
+1 #ERROR-CODE                  (A2)
+1 #ERROR-DESCRIPTION           (A) DYNAMIC
+1 CONTACT VIEW OF A-CONTACTS
+  2 ID-NUMBER
+1 #GEN-KEY           (A4)
+1 GEN-TABLE-V VIEW OF A-GEN-TABLE
+  2 GEN-KEY (A4)
+  2 GEN-SUB-KEY (A3)
+  2 GEN-ALPHA-VALUE (A50)
+1 #len              (i4)
+1 #Timeout          (A2) CONST <'-2'>
+1 #Natural-error    (A2) CONST <'-3'>
+1 #Parse-error      (A2) CONST <'-7'>
+1 #DEL              (A1) CONST <':'>
+1 #ERROR-LOG        (I4) CONST <3>
+1 BLANK             (A1)  CONST <' '>
+*
+1 #CX                          (I4)
+END-DEFINE
+*
+ASSIGN #LEN := *LENGTH (XML_PARSER_INPUT)
+IF #LEN <= 0
+  #ERROR-CODE := #Parse-error
+  #ERROR-DESCRIPTION := 'Empty search data XML'
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-IF
+RESET #SVC-MEMBER
+ServiceRequest.C@Service := 1
+#CX := ServiceRequest.C@Service
+EXPAND ARRAY ServiceRequest.Service TO (1:#CX)
+*
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+DEFINE SUBROUTINE PARSER_ERROR
+/*                ============
+#ERROR-CODE := #Parse-error
+#ERROR-DESCRIPTION := XML_PARSER_ERROR_TEXT
+PERFORM FORMAT-ERROR
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE CALLBACK
+/*                ========
+IF XML_PARSER_CONTENT_IS_EMPTY THEN
+  IF XML_PARSER_XPATH = 'ServiceRequest/Service'
+    ADD 1 TO ServiceRequest.C@Service
+    #CX := ServiceRequest.C@Service
+    EXPAND ARRAY ServiceRequest.Service TO (1:#CX)
+  END-IF
+ELSE
+  XML_PARSER_CONTENT := *TRIM (XML_PARSER_CONTENT)
+  MOVE *TRANSLATE(XML_PARSER_CONTENT, UPPER) TO XML_PARSER_CONTENT
+  PERFORM PARSE-DOCUMENT
+END-IF
+END-SUBROUTINE
+*
+FIND (1) CONTACT WITH CONTACT-ID = ServiceRequest.ContactID
+END-FIND
+FOR #CX 1 TO ServiceRequest.C@Service
+  #SVC-MEMBER.SVC-PLAN := ServiceRequest.Plan ( #CX )
+  IF #SVC-MEMBER.SVC-PLAN = BLANK
+    #SVC-MEMBER.SVC-PLAN := 'PSM'
+  END-IF
+  #SVC-MEMBER.SVC-MODE := ServiceRequest.MODE ( #CX )
+  IF #SVC-MEMBER.SVC-MODE = BLANK
+    #SVC-MEMBER.SVC-MODE := 'Q'
+  END-IF
+  #SVC-MEMBER.SVC-ISSUE-DATE := *DATN
+  #SVC-MEMBER.SVC-PAID-TO-DATE := *DATN
+  #SVC-MEMBER.SVC-ID-NUMBER  := CONTACT.ID-NUMBER
+  #SVC-MEMBER.SVC-STATUS     := 'A'  /* Active
+  #SVC-MEMBER.LAST-UPD-USER  := #SVC-MEMBER.SVC-CREATED-BY
+  #SVC-MEMBER.SVC-AT-NUMBER  := ServiceRequest.TrackingID (#CX)
+  #SVC-MEMBER.CRM-SERVICE-ID := ServiceRequest.CRM-SERVICE-ID (#CX)
+  CALLNAT 'SVCNMB01' #SVC-MEMBER #MSG
+  IF #MSG NE BLANK
+    ESCAPE BOTTOM
+  ELSE
+    ServiceRequest.SERVICE-ID ( #CX ) := #SVC-MEMBER.SVC-CONTRACT-NUMBER
+  END-IF
+END-FOR
+IF #MSG = BLANK
+  XML_SERIALZE_OUTPUT := #SVC-MEMBER.SVC-CONTRACT-NUMBER
+  END TRANSACTION
+  CALLNAT 'MBRSVCY' #SVC-MEMBER.SVC-ID-NUMBER #MSG
+ELSE
+  XML_SERIALZE_OUTPUT := '-8'
+  BACKOUT TRANSACTION
+END-IF
+*
+* ------------------------------------------------- CALL THE PARSER
+DEFINE PARSE-DOCUMENT
+/*     ==============
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'ServiceRequest//'
+    IGNORE
+  VALUE 'ServiceRequest'
+    RESET INITIAL ServiceRequest
+  VALUE 'ServiceRequest/ContactId//'
+    IGNORE
+  VALUE 'ServiceRequest/ContactId'
+    IGNORE
+  VALUE 'ServiceRequest/ContactId/$'
+    ServiceRequest.ContactID := VAL(XML_PARSER_CONTENT)
+  VALUE 'ServiceRequest/User/$'
+    #GEN-KEY := 'WEBU'
+    FIND GEN-TABLE-V WITH GEN-KEY = #GEN-KEY
+      ACCEPT IF *TRANSLATE(GEN-ALPHA-VALUE,UPPER)= XML_PARSER_CONTENT
+      #SVC-MEMBER.SVC-CREATED-BY := GEN-SUB-KEY
+      ESCAPE BOTTOM
+    END-FIND
+  VALUE 'ServiceRequest//'
+    IGNORE
+  VALUE 'ServiceRequest/Plan//'
+    IGNORE
+  VALUE 'ServiceRequest/Plan'
+    IGNORE
+  VALUE 'ServiceRequest/Plan/$'
+    ServiceRequest.Plan(#CX) := XML_PARSER_CONTENT
+  VALUE 'ServiceRequest/PaymentMode/$'
+    ServiceRequest.Mode(#CX) := XML_PARSER_CONTENT
+  VALUE 'ServiceRequest/TrackingID//'
+    IGNORE
+  VALUE 'ServiceRequest/TrackingID'
+    IGNORE
+  VALUE 'ServiceRequest/TrackingID/$'
+    ServiceRequest.TrackingID (#CX) := VAL(XML_PARSER_CONTENT)
+  VALUE 'ServiceRequest/Id/$'
+    ServiceRequest.CRM-SERVICE-ID (#CX) := XML_PARSER_CONTENT
+  NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+DEFINE FORMAT-ERROR
+/*     ============
+COMPRESS '<?xml version="1.0" encoding="' *CODEPAGE '"?>'
+  INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ServiceRequest'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ErrorCode'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC XML_SERIALZE_OUTPUT
+  #ERROR-CODE
+  '</ErrorCode>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ErrorDescription'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC XML_SERIALZE_OUTPUT
+  #ERROR-DESCRIPTION
+  '</ErrorDescription>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '</ServiceRequest>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+END-SUBROUTINE
+*
+ON ERROR
+  RESET #ERROR-CODE #MSG
+  CALLNAT 'CRMLOG' #ERROR-CODE #ERROR-DESCRIPTION
+    #ERROR-LOG
+    #MSG
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

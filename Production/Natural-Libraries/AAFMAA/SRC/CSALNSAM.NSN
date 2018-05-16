@@ -1,0 +1,148 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*****************************************************************************************
+* Subprogram CSALNSAM
+* Called from program CSALPSAM
+* Checks if Payer has Bank Account to initiate EzPay CAP Loans issued to exisitng policy.
+* Copies bank account info from eCheck if payer does not have EZPay, but has eCheck account
+*****************************************************************************************
+*                MODIFICATION LOG
+* USER DATE      TAG  REASON
+* YAK 05/20/2017      Initial Creation for EB&P III (Payer)
+* YAK 01/17/2018      Add updating PAD-CODE on Payer/Insured record
+*****************************************************************************************
+DEFINE DATA
+PARAMETER
+1 #SCR-ID-SSN (N9)
+1 #SCR-ISS-DT (A8)
+1 #ERROR-MESSAGE (A72)
+LOCAL USING ERROR_LN
+LOCAL USING OBJLBA01
+LOCAL USING GPRATR06
+LOCAL
+1 #ISSUE-DATE (N8)
+1 #ISN_Ins (P9)
+1 #ISN_Payer (P9)
+1 #I (I2)
+1 #POLICY-NUMBER (A16)
+1 #PAYER (N2) CONST <8>
+1 #N (N1) CONST <5>
+1 #PAYER-CN (N6)
+1 #INSURED-CN (N6)
+1 #PAYER-CONTACT-ID (N8)
+1 #USER (A8)
+1 FUNCTION_CODE (A) DYNAMIC CONST <'EZPayInfo'>
+1 #PaymentInfo (A) DYNAMIC
+1 #value (A) DYNAMIC
+1 #ROUTING-NUMBER (A) DYNAMIC
+1 #ACCOUNT-NUMBER (A) DYNAMIC
+1 #ACCOUNT-TYPE   (A) DYNAMIC
+1 #PAD-CODE (A1/4) CONST <'E','D','L','P'>
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PAD-CODE
+  2 PAD-ABA-NBR
+  2 PAD-ACCT-NUM
+  2 PAD-CHECK-SAV
+  2 DATE-ACCT-UPDATE
+  2 C*ACTIVE-SEGMENTS
+  2 POLICY-ID  (9)
+  2 ISSUE-DATE (9)
+1 POS-V VIEW OF A-POLICY-CONTACTS
+  2 RELATION
+  2 REFERENCE-NUMBER
+  2 CONTACT-ID
+END-DEFINE
+*
+#ISSUE-DATE := VAL(#SCR-ISS-DT)
+#ISSUE-DATE := FUNCTION-DATE(<#ISSUE-DATE>)
+F1. FIND(1) ST-V WITH ID-NUMBER = #SCR-ID-SSN
+  #ISN_Ins := *ISN (F1.)                                  /* Insured record
+  FOR #I = 1 TO C*ACTIVE-SEGMENTS
+    IF ST-V.ISSUE-DATE(#I) = #ISSUE-DATE
+      #POLICY-NUMBER := ST-V.POLICY-ID(#I)
+      #INSURED-CN := ST-V.ID-NUMBER
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FIND
+*
+FIND POS-V WITH POLICY-NUMBER = #POLICY-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  ACCEPT IF RELATION = #PAYER
+  #PAYER-CN := POS-V.REFERENCE-NUMBER
+  #PAYER-CONTACT-ID := POS-V.CONTACT-ID
+END-FIND
+*
+IF #INSURED-CN <> #PAYER-CN
+* Update PAD-CODE on Insured record if Payer is different
+  G1. GET ST-V #ISN_Ins
+  ST-V.PAD-CODE := 'E'
+  UPDATE (G1.)
+END-IF
+*
+F2. FIND(1) ST-V WITH ID-NUMBER = #PAYER-CN
+  #ISN_Payer := *ISN (F2.)                                  /* Payer record
+  IF ST-V.PAD-ABA-NBR <> ' ' AND ST-V.PAD-ACCT-NUM <> ' ' AND ST-V.PAD-CODE = #PAD-CODE(*)
+* Account on file and PAD-CODE active
+    ESCAPE ROUTINE
+  ELSE
+* Update only PAD-CODE
+    #ROUTING-NUMBER := ST-V.PAD-ABA-NBR
+    #ACCOUNT-NUMBER := ST-V.PAD-ACCT-NUM
+    #ACCOUNT-TYPE   := ST-V.PAD-CHECK-SAV
+  END-IF
+END-FIND
+*
+* Get Bank Account from Bank account file if EZ-Pay not populated
+IF #ROUTING-NUMBER = ' ' OR #ACCOUNT-NUMBER = ' '
+  FIND(1) BA-INFO-V WITH ID-NUMBER = #PAYER-CN
+    IF NO RECORDS FOUND
+* Account does not exist on both files
+      #ERROR-MESSAGE := #NO-BA-ON-FILE
+      #ERROR-MESSAGE := F-ERROR-DESCRIPTION(<#ERROR-MESSAGE>)
+      ESCAPE ROUTINE
+    END-NOREC
+    #ROUTING-NUMBER := BA-INFO-V.ROUTING-NUMBER
+    #ACCOUNT-NUMBER := BA-INFO-V.ACCOUNT-NUMBER
+    #ACCOUNT-TYPE   := BA-INFO-V.ACCOUNT-TYPE
+  END-FIND
+END-IF
+*
+BEFORE_IMAGE.ROUTING-NUMBER := #ROUTING-NUMBER
+#value             := #ACCOUNT-NUMBER
+BEFORE_IMAGE.ACCOUNT-NUMBER := FUNCTION-MASK(<#value,'*',#N>)
+BEFORE_IMAGE.ACCOUNT-TYPE   := #ACCOUNT-TYPE
+*
+G2. GET ST-V #ISN_Payer
+BEFORE_IMAGE.DATE-LAST-UPDATE := ST-V.DATE-ACCT-UPDATE
+ST-V.PAD-CODE      := 'E'
+ST-V.PAD-ABA-NBR   := AFTER_IMAGE.ROUTING-NUMBER := #ROUTING-NUMBER
+ST-V.PAD-ACCT-NUM  := #ACCOUNT-NUMBER
+#value             := #ACCOUNT-NUMBER
+AFTER_IMAGE.ACCOUNT-NUMBER := FUNCTION-MASK(<#value,'*',#N>)
+ST-V.PAD-CHECK-SAV := AFTER_IMAGE.ACCOUNT-TYPE := #ACCOUNT-TYPE
+ST-V.DATE-ACCT-UPDATE := *DATN
+UPDATE (G2.)
+PERFORM WRITE-TRANSACTION-LOG
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+#USER := *USER
+TR_ID_NUMBER  := #PAYER-CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<#PAYER-CONTACT-ID>)
+TR_CLERK      := FUNCTION-CLERK(<#USER>)
+CALLNAT 'GPRNTR06' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+END
+

@@ -1,0 +1,367 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GRIDCSXX   ** CALC RIDER AMTS & LIMITS
+*  CALLNAT'D BY C1000PAT/C2000CNM/C2600PST/C2800PFA/E4004SDI/C2340PCI
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* DRW    10212004  DW1     stop considering no rec fnd an error        *
+* DRW    09132005  DW2     Enlarge size of #TOT-SPS-FACE to p7         *
+* DRW    01052007  DW3     Stop Display of SPS DB error if not new AT  *
+* RSE    10042009  RE1     Change PROCESS-IND logic for Unification    *
+* bz     11/19/2009 bz1    Remove Re1. Unification: Identify SAS Only
+* TMT    06/23/2014 TT2    Contact Normalization - DOB and Sex         *
+************************************************************************
+DEFINE DATA
+PARAMETER
+*
+* input below
+1 #ID      (N6) /* CN (ZERO IF "AT" FOR NEW RIDER ON A NEW MBR)
+1 REDEFINE #ID
+  2 #ID-A   (A6)
+* THE FOLLOWING INPUT IS PASSED ONLY ON AN "AT/NM/AI" FOR A NEW RIDER
+1 #AT-RID-ATTACH-FAC-AMT (N6.2) /* Only if attached to a new "AT"
+1 #AT-RID-ATTACH-PLAN    (A3)   /*    policy not yet created
+1 #AT-RID-PLAN   (A2/5)  /* New rider plan
+1 REDEFINE #AT-RID-PLAN
+  2 #AT-RID-PLAN-OCC  (5)
+    3 #AT-RID-PLN-1 (A1)
+    3 #AT-RID-PLN-2 (N1)
+1 #AT-RID-ATTACH-ISS-DT  (N8/5) /* Only if attached to an existing pol
+*
+* output below  (ex = existing)
+1 #AT-TOT-FBR-PREM        (N3.2)
+1 #EX-FBR-PREM-BY-LINE    (N3.2/9)
+1 #EX-SPS-DB-BY-LINE      (N6/9)
+1 #EX-DEP-DB-BY-LINE      (N6/9) /* TAKES INTO ACCOUNT UNDER 6 MONTHS
+1 #EX-EACH-DEP-DB-BY-LINE (N6/9) /* FOR OVER 6 MONTHS
+1 #NUM-ELIG-CHILDREN (N2)        /* INCLUDES UNDER 6 MONTHS
+1 #NUM-ELIG-CHILDREN-UNDER-6-MON  (N2) /* INCLUDED IN ABOVE
+1 #TOT-CHILD-DB      (N6)
+1 #TEXT              (A78)
+*
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+  2 NAME-SP
+  2 MEMBER-CONTACT-ID
+*  2 DATE-OF-BIRTH-SP              /* TT1
+  2 STATUS-CODE-SP
+  2 SSN-SP
+  2 STATUS         (9)
+  2 ISSUE-DATE     (9)
+  2 PLAN           (9)
+  2 FACE-AMOUNT    (9)
+  2 MONTH-ALLOC-AMT (9)
+  2 RID-PLAN        (9)
+  2 REDEFINE RID-PLAN
+    3 RID-PLAN-OCC (9)
+      4 RID-PLAN-1  (A1)
+      4 RID-PLAN-2  (N1)
+*
+1 SP-V VIEW OF A-STATUS   /* SPOUSE'S OWN RECORD
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 STATUS         (9)
+  2 ISSUE-DATE     (9)
+  2 PLAN           (9)
+  2 FACE-AMOUNT    (9)
+*
+1 FR-V VIEW OF A-FIRS
+  2 DEPN-DATE-OF-BIRTH  (14)
+  2 DEPN-STATUS-CD      (14)
+*
+1 #FBR-RATE-C     (N1.2) INIT <1.00>
+1 #FBR-RATE-F     (N1.2) INIT <1.50>
+1 #FBR-RATE-T     (N1.2) INIT <2.00>
+*
+1 #NO-SPOUSE (L)
+1 #I1  (I2)
+1 #I2  (I2)
+*
+1 #6-MON-AGO  (N8)
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY   (N4)
+  2 #MM     (N2)
+  2 #DD     (N2)
+*
+1 #ATTACH-FAC-AMT   (N6.2)
+1 #ATTACH-PLAN      (A3)
+1 #MAX-UNITS        (N2)
+1 #TOT-EX-UNITS     (P3)  /* existing units
+1 #SPS-COV-PER-UNIT (N6)
+1 #TOT-SPS-FACE     (P7)   /* DW2
+1 #TOT-AT-UNITS     (P3)
+1 #AT-SPS-DB        (P6)
+1 #TOT-AT-SPS-DB    (P6)
+1 #AT-RIDER         (L)
+1 #SPOUSE-CN           (N8.0)
+1 #DATE-OF-BIRTH-SP    (N8.0)         /* TT1
+END-DEFINE
+* * * * * * * * * * * * * * * *
+*
+RESET
+  #AT-TOT-FBR-PREM
+  #EX-FBR-PREM-BY-LINE (*)
+  #EX-SPS-DB-BY-LINE   (*)
+  #EX-DEP-DB-BY-LINE   (*)
+  #EX-EACH-DEP-DB-BY-LINE (*)
+  #NUM-ELIG-CHILDREN
+  #NUM-ELIG-CHILDREN-UNDER-6-MON
+  #TOT-CHILD-DB
+  #TEXT
+*
+IF #ID NE 0   /* calc existing rider amounts
+  MOVE *DATN TO #YYYYMMDD
+  SUBTRACT 6 FROM #MM
+*
+  IF #MM LT 1
+    ADD 12 TO #MM
+    SUBTRACT 1 FROM #YYYY
+  END-IF
+  MOVE #YYYYMMDD TO #6-MON-AGO
+*
+  FIND (1) FR-V WITH MEMBER-KEY = #ID-A
+    FOR #I1 1 TO 14
+      IF DEPN-DATE-OF-BIRTH (#I1) GT *DATN - 210000 /* UNDER AGE 21
+        ADD 1 TO #NUM-ELIG-CHILDREN
+      END-IF
+*
+      IF DEPN-DATE-OF-BIRTH (#I1) GE #6-MON-AGO /* UNDER 6 MON
+        ADD 1 TO #NUM-ELIG-CHILDREN-UNDER-6-MON
+      END-IF
+    END-FOR
+  END-FIND
+*
+  FIND (1) ST-V WITH MEMBER-KEY = #ID-A
+    IF NO RECORDS FOUND
+      FIND (1) ST-V WITH WIDOW-KEY = #ID-A
+        IF NO RECORDS FOUND
+*         COMPRESS #ID  'Member not found' TO #TEXT    /* DW1
+          ESCAPE ROUTINE
+        END-NOREC
+      END-FIND
+    END-NOREC
+  END-FIND
+*
+  RESET #DATE-OF-BIRTH-SP #SPOUSE-CN                                      /* TT1
+  #SPOUSE-CN          := FUNCTION-SPOUSE-CI(<ST-V.MEMBER-CONTACT-ID>)     /* TT1
+  #DATE-OF-BIRTH-SP   := GET-DATE-OF-BIRTH(<#SPOUSE-CN>)                  /* TT1
+
+  IF  (#DATE-OF-BIRTH-SP = 0)                                             /* TT1
+      OR (NAME-SP = ' ')
+      OR (STATUS-CODE-SP = 'D' OR = 'F')
+    RESET #SPS-COV-PER-UNIT
+  ELSE
+    IF #DATE-OF-BIRTH-SP GT *DATN - 350000  /* THRU 34                    /* TT1
+      MOVE 25000 TO #SPS-COV-PER-UNIT
+    ELSE
+      IF #DATE-OF-BIRTH-SP GT *DATN - 400000  /* THRU 39                  /* TT1
+        MOVE 15000 TO #SPS-COV-PER-UNIT
+      ELSE
+        IF #DATE-OF-BIRTH-SP GT *DATN - 450000  /* THRU 44                /* TT1
+          MOVE 12000 TO #SPS-COV-PER-UNIT
+        ELSE
+          IF #DATE-OF-BIRTH-SP GT *DATN - 500000  /* THRU 49              /* TT1
+            MOVE 7000 TO #SPS-COV-PER-UNIT
+          ELSE
+            IF #DATE-OF-BIRTH-SP GT *DATN - 550000  /* THRU 54      /* TT1
+              MOVE 5000 TO #SPS-COV-PER-UNIT
+            ELSE
+              IF #DATE-OF-BIRTH-SP GT *DATN - 600000  /* THRU 59    /* TT1
+                MOVE 3000 TO #SPS-COV-PER-UNIT
+              ELSE
+                RESET #SPS-COV-PER-UNIT              /* 60 & OVER
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  FOR #I1 1 TO 9
+    IF ST-V.STATUS (#I1) = 'D'
+      IF RID-PLAN (#I1) NE ' '
+        ADD RID-PLAN-2 (#I1) TO #TOT-EX-UNITS
+*
+        IF RID-PLAN (#I1) = MASK ('F')
+          COMPUTE #EX-SPS-DB-BY-LINE (#I1) =
+            (#SPS-COV-PER-UNIT * RID-PLAN-2 (#I1))
+          ADD #EX-SPS-DB-BY-LINE (#I1) TO #TOT-SPS-FACE
+          COMPUTE #EX-FBR-PREM-BY-LINE (#I1) =
+            #FBR-RATE-F * RID-PLAN-2 (#I1)
+        ELSE
+          IF RID-PLAN (#I1) = MASK ('T')
+            COMPUTE #EX-SPS-DB-BY-LINE (#I1) =
+              (#SPS-COV-PER-UNIT * RID-PLAN-2 (#I1))
+            ADD #EX-SPS-DB-BY-LINE (#I1) TO #TOT-SPS-FACE
+            COMPUTE #EX-FBR-PREM-BY-LINE (#I1) =
+              #FBR-RATE-T * RID-PLAN-2 (#I1)
+          ELSE
+            IF  (RID-PLAN (#I1) = MASK ('C'))
+              COMPUTE #EX-FBR-PREM-BY-LINE (#I1) =
+                #FBR-RATE-C * RID-PLAN-2 (#I1)
+            ELSE
+              MOVE 'PLAN must be F/T/C' TO #TEXT
+              ESCAPE ROUTINE
+            END-IF
+          END-IF
+        END-IF
+*
+        IF NOT RID-PLAN-2 (#I1) = 1 OR = 2 OR = 3 OR = 4 OR = 5
+          MOVE 'Units must be 1/2/3/4/5' TO #TEXT
+          ESCAPE ROUTINE
+        END-IF
+*
+        COMPUTE #EX-EACH-DEP-DB-BY-LINE (#I1) = 5000 * RID-PLAN-2 (#I1)
+        COMPUTE #EX-DEP-DB-BY-LINE (#I1) =
+          (((5000 * (#NUM-ELIG-CHILDREN - #NUM-ELIG-CHILDREN-UNDER-6-MON))
+          * RID-PLAN-2 (#I1))
+          +  ((1000 * #NUM-ELIG-CHILDREN-UNDER-6-MON) * RID-PLAN-2 (#I1)))
+      END-IF
+    END-IF
+  END-FOR
+*
+  COMPUTE #TOT-CHILD-DB =
+    (((5000 * (#NUM-ELIG-CHILDREN - #NUM-ELIG-CHILDREN-UNDER-6-MON))
+    * #TOT-EX-UNITS)
+    +  ((1000 * #NUM-ELIG-CHILDREN-UNDER-6-MON) * #TOT-EX-UNITS))
+*
+  FIND SP-V WITH SSN = ST-V.SSN-SP
+*    IF SP-V.PROCESS-IND = 'S'                 RE1
+*    IF AFFL-ONLY-CLIENT(<SP-V.ID-NUMBER>)   /* RE1
+*      ESCAPE TOP
+*    END-IF
+    IF ( PROCESS-IND <> "S" ) OR ( STATUS(*) <> " " ) IGNORE   /*  bz1
+    ELSE                                                       /*  bz1
+      IF INTRO-FLAG NE 'A'  ESCAPE TOP     END-IF              /*  bz1
+    END-IF                                                     /*  bz1
+*
+    FOR #I1 1 TO 9
+      IF SP-V.STATUS (#I1) = 'D'   /* ACTIVE LINE
+        ADD SP-V.FACE-AMOUNT (#I1) TO #TOT-SPS-FACE
+      END-IF
+    END-FOR
+  END-FIND
+END-IF
+*
+* calc new "AT" info
+*
+RESET #AT-RIDER #TOT-AT-UNITS #TOT-AT-SPS-DB #AT-TOT-FBR-PREM
+FOR #I1 1 TO 5
+  IF #AT-RID-PLAN (#I1) = ' '
+    ESCAPE TOP
+  END-IF
+*
+  IF NOT #AT-RID-PLN-1 (#I1) = 'F' OR = 'T' OR = 'C'
+    MOVE 'FBR plan must begin with F/T/C' TO #TEXT
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE TRUE TO #AT-RIDER
+  RESET #ATTACH-PLAN #ATTACH-FAC-AMT
+*
+  IF   (#I1 = 1)                           /* Rider with new policy
+      AND (#AT-RID-ATTACH-ISS-DT (#I1) = 0)
+    MOVE #AT-RID-ATTACH-PLAN    TO #ATTACH-PLAN
+    MOVE #AT-RID-ATTACH-FAC-AMT TO #ATTACH-FAC-AMT
+  ELSE
+    FOR #I2 1 TO 9
+      IF     (ST-V.ISSUE-DATE (#I2) = #AT-RID-ATTACH-ISS-DT (#I1))
+          AND  ((ST-V.ISSUE-DATE (#I2) GE 19970101)
+          AND (ST-V.MONTH-ALLOC-AMT (#I2) NE 999.99))
+          AND (NOT ST-V.PLAN (#I2) = 'SO' OR = 'FSO')
+        MOVE ST-V.FACE-AMOUNT (#I2) TO #ATTACH-FAC-AMT
+        MOVE ST-V.PLAN        (#I2) TO #ATTACH-PLAN
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    IF #I2 GT 9
+      MOVE 'Attached pol iss date not found' TO #TEXT
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+*
+  IF #ATTACH-PLAN = 'LT' OR = 'RT'
+    COMPUTE #MAX-UNITS = #ATTACH-FAC-AMT / 50000
+  ELSE
+    COMPUTE #MAX-UNITS = #ATTACH-FAC-AMT / 10000
+  END-IF
+*
+  IF #MAX-UNITS GT 5
+    MOVE 5 TO #MAX-UNITS
+  END-IF
+*
+  IF #AT-RID-PLN-2 (#I1) GT #MAX-UNITS
+    IF #AT-RID-ATTACH-ISS-DT (#I1) = 0
+      COMPRESS #AT-RID-PLN-2 (#I1) 'Units exceed MAX for new FBR pol'
+        INTO #TEXT
+    ELSE
+      COMPRESS 'Units exceed MAX for pol issued'
+        #AT-RID-ATTACH-ISS-DT (#I1) INTO #TEXT
+    END-IF
+    ESCAPE ROUTINE
+  END-IF
+*
+  ADD #AT-RID-PLN-2 (#I1) TO #TOT-AT-UNITS
+*
+  IF #AT-RID-PLN-1 (#I1) = 'F'
+    COMPUTE #AT-TOT-FBR-PREM = #AT-TOT-FBR-PREM
+      +  (#FBR-RATE-F * #AT-RID-PLN-2 (#I1))
+  END-IF
+*
+  IF #AT-RID-PLN-1 (#I1) = 'T'
+    COMPUTE #AT-TOT-FBR-PREM = #AT-TOT-FBR-PREM
+      +  (#FBR-RATE-T * #AT-RID-PLN-2 (#I1))
+  END-IF
+*
+  IF #AT-RID-PLN-1 (#I1) = 'C'
+    COMPUTE #AT-TOT-FBR-PREM = #AT-TOT-FBR-PREM
+      +  (#FBR-RATE-C * #AT-RID-PLN-2 (#I1))
+  END-IF
+*
+  IF   (#SPS-COV-PER-UNIT NE 0)  /* the existing mbr has a sps
+      AND (#AT-RID-PLN-1 (#I1) = 'F' OR = 'T')
+    COMPUTE #AT-SPS-DB = #SPS-COV-PER-UNIT * #AT-RID-PLN-2 (#I1)
+    ADD #AT-SPS-DB TO #TOT-AT-SPS-DB
+  END-IF
+END-FOR
+*
+IF #TOT-AT-UNITS GT 5
+  MOVE 'New "AT" Units exceed MAX' TO #TEXT
+  ESCAPE ROUTINE
+END-IF
+*
+IF (#TOT-AT-UNITS + #TOT-EX-UNITS) GT 5
+  MOVE 'New FBR(s) will make units exceed MAX' TO #TEXT
+  ESCAPE ROUTINE
+END-IF
+*
+IF   (#TOT-AT-SPS-DB NE 0)    /* DW3
+    AND ((#TOT-AT-SPS-DB + #TOT-SPS-FACE) GT 850000)
+  MOVE 'New FBR(s) will make Spouse exceed $850,000' TO #TEXT
+  ESCAPE ROUTINE
+END-IF
+*
+* DISPLAY
+*   'ID'             #ID
+*   'TOT/UNITS'      #TOT-AT-UNITS
+*   'TOT AT/SPS DB'  #TOT-AT-SPS-DB
+*   'PLN'            RID-PLAN        (*)
+*   'SPS/COV/PER'    #SPS-COV-PER-UNIT
+*   'TOT/SPS/FACE'   #TOT-SPS-FACE
+*   'SPS DB/BY LINE' #EX-SPS-DB-BY-LINE (*)
+*   'PREM/BY LINE'   #EX-FBR-PREM-BY-LINE (*)
+*   'EACH DEP/BY LINE' #EX-EACH-DEP-DB-BY-LINE (*)
+*   'NUM/DEPS'       #NUM-ELIG-CHILDREN
+*   'TOT-CHILD/DB'   #TOT-CHILD-DB
+*   'TOT-AT-PREM'    #AT-TOT-FBR-PREM
+*
+END

@@ -1,0 +1,162 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* --------------------------------------------------------------
+* PROGRAM-ID: ATHPTRPR
+*  THIS PROGRAM Extracts Premium Info from TR Accounting REg
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* DRW    12262006  ---     created
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX
+LOCAL
+*
+1 ACCT-REG VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER        (N6)
+  2 PROCESS-IND      (A1)
+  2 NAME             (A25)
+  2 REDEFINE NAME
+   3 NAME-SSN        (A9)
+   3 REDEFINE NAME-SSN
+    4 NAME-SSN-N     (N9)
+   3 NAME-REST       (A16)
+  2 TERMINAL-ID      (A8)
+  2 DATE-LAST-ACCT-UPDATE (N8)
+  2 CLERK-ID         (A3)
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 TXN-CODE         (A4)
+  2 SEQUENCE-NUM     (N1)
+  2 TXN-ACCT-NUMBER  (N3)
+  2 ACCT-DATE        (N8)
+  2 DEBIT-AMOUNT     (P7.2)
+  2 CREDIT-AMOUNT    (P7.2)
+  2 DESCRIPTION      (A20)
+  2 MESSAGE-CODE     (A1)
+  2 AALP-FLAG        (A1)
+  2 CASH-CODE        (A1)
+  2 SG-CATEGORY-1    (A2/15)
+  2 SG-CATEGORY-2    (A2/15)
+  2 SG-AMOUNT        (N6.2/15)
+*
+1 ST-V VIEW OF A-STATUS                                           /* PM4
+ 2 ID-NUMBER         (N6)
+ 2 SSN               (N9)
+ 2 PROCESS-IND       (A1)
+ 2 INTRO-FLAG        (A1)
+*
+1 #PREMS-BY-MONTH  (12)
+ 2 #PREMS-BY-TYPE     (4)  /* 1Y/RN/SP/UN
+  3 #PREMS-BY-DB-CR   (2)
+   4 #PREMS        (N9.2)
+*
+1 #DATE-YYYYMMDD     (N9)
+1 REDEFINE #DATE-YYYYMMDD
+ 2 #DATE-FILL        (A1)
+ 2 #DATE-YYYY        (N4)
+ 2 #DATE-MM          (N2)
+ 2 #DATE-DD          (N2)
+*
+1 #I1                (I2)
+1 #I2                (I2)
+1 #I3                (I2)
+1 #I5                (I2)
+1 #CAT-X             (I2)
+1 #MM-X              (I2)
+1 #DB-CR-X           (I2)
+1 #RECS-IN           (N9)
+*
+END-DEFINE
+* * * * * * * * * *
+INCLUDE GONERCXX
+* * * * * * * * * *
+*
+FORMAT      LS=133 PS=66
+* WRITE   (2) TITLE LEFT 'PROGRAM:' *PROGRAM
+*               8X 'MISMATCHED RETIRED PAY'
+*               5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+READ ACCT-REG BY TRANSACTION-DATN
+         FROM 20060101
+  IF  (NOT TXN-CODE = 'PREP' OR= 'PRER' OR = 'FPFP' OR = 'FPFR')
+   OR ((DEBIT-AMOUNT = 0) AND (CREDIT-AMOUNT =0))
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #RECS-IN
+  IF #RECS-IN GT 100
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE TRANSACTION-DATN TO #DATE-YYYYMMDD
+  MOVE #DATE-MM TO #MM-X
+*
+  FOR #I1 1 TO 15
+    IF SG-CATEGORY-1 (#I1) = ' '
+      IF #I1 = 1
+        WRITE ID-NUMBER TXN-CODE 'Missing SG Category'
+      END-IF
+*
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF SG-CATEGORY-1 (#I1) = '1Y'
+      MOVE 1 TO #CAT-X
+    ELSE
+      IF SG-CATEGORY-1 (#I1) = 'RN'
+        MOVE 2 TO #CAT-X
+      ELSE
+        IF SG-CATEGORY-1 (#I1) = 'SP'
+          MOVE 3 TO #CAT-X
+        ELSE
+          IF SG-CATEGORY-1 (#I1) = 'UN'
+            MOVE 4 TO #CAT-X
+          ELSE
+            MOVE 4 TO #CAT-X
+            WRITE ID-NUMBER TXN-CODE SG-CATEGORY-1 (#I1) 'Bad Category'
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+*
+    IF DEBIT-AMOUNT NE 0
+      MOVE 1 TO #DB-CR-X
+      ADD DEBIT-AMOUNT TO #PREMS (#MM-X, #CAT-X, #DB-CR-X)
+    ELSE
+      IF CREDIT-AMOUNT = 0
+        WRITE ID-NUMBER TXN-CODE SG-CATEGORY-1 (#I1) 'No Amount'
+      END-IF
+      MOVE 2 TO #DB-CR-X
+      ADD CREDIT-AMOUNT TO #PREMS (#MM-X, #CAT-X, #DB-CR-X)
+    END-IF
+*
+    DISPLAY ID-NUMBER
+        'DATE' TRANSACTION-DATN
+*       'TIME' TRANSACTION-TIMN
+        'TXN'  TXN-CODE
+        'SG-COD1'  SG-CATEGORY-1 (#I1)
+*       'SG-COD2'  SG-CATEGORY-2 (#i1)
+        'SG-AM'    SG-AMOUNT (1)
+        'NAME' NAME  (EM=XXXXXXXXXXXXXXXXXXXX)
+  END-FOR
+END-READ
+*
+FOR #I1 1 TO 12
+  FOR #I2 1 TO 4
+    IF   (#PREMS (#I1, #I2, 1) = 0)
+     AND (#PREMS (#I1, #I2, 2) = 0)
+      ESCAPE TOP
+    END-IF
+*
+    WRITE 'MON=' #I1 'cat=' #I2
+        'DB=' #PREMS (#I1, #I2, 1) 'CR=' #PREMS (#I1, #I2, 2)
+  END-FOR
+END-FOR
+*
+END

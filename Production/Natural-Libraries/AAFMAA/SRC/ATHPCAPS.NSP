@@ -1,0 +1,1464 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: ATHPCAPS - FIND POTENTIAL CAP STARTS
+* similar logic is in athp400a to send an nx to leticia after m/e
+*
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE      TAG  REASON
+* DRW  05162005  DW1  Add Sex for LTII Rates
+* DRW  09292005  DW2  Create FTP file for CAP Starts
+* DRW  10022006  DW3  Add Info To Cap FTP File
+* SAG  12012005  RH1  SS - Replaced the HEX constant '05' (Tab position)
+*                     EBCDIC to HEX code '09' ASCII
+* PAM  01162008  PM4  Changed processing for AT premium rating
+* DRW 01/18/2008 DW4  Add interface to FA to get Alottment amt
+* DRW 01/22/2008 DW5  Bypass Starts if CAP loan already exists or if ** (ACT to RET)
+* DRW 01/30/2008 DW6  Add indicator for AIL CAP Loan Only Cases
+* DRW 01/31/2008 DW7  Check AT for non CAP Status
+* DRW 03/27/2008 DW8  Reset Rating Ind to correct Premium Calc
+* DRW 03/27/2008 DW9  Chg Minimum CAP start amt from 120.00 to 107.00
+* DRW 04/02/2008 DW10 show needed amt on AIL if insuff and other CAPSTART file chges
+* PAM 02/26/2009 PM11 Added CAP by credit card
+* DRW 05/28/2009 DW12 Add Additional counts for CAP Starts
+* PAM 06/05/2009 PM13 Added 'PP' as valid CC CAP start
+* YAK 09/08/2009 YK1  Add file for automated e-mail process
+* RSE 09/21/2009 RE1  Change PROCESS-IND logic for Unification/SVC-FEE Chg
+* YAK 11/29/2009 YK2  Add e-mail template for credit card loan only
+* YAK 06/21/2010 YK3  Add e-mail template for allotment loan only
+*                     Add logic for restricted mail code
+* vxt 06/07/2011 vt1  Remove all e-mails sent out before.
+* YAK 10/09/2012 YK4  Use function to identify Level Term II plans
+* vxt 12/04/2012 vt2  Add CAP-LOAN-AMT to the report
+* vxt 11/07/2013 vt3  Add current-fpf and current-paid-to-date to the report /Ticket 1479/
+* TMT 05/13/2014 TT1  CONTACT NORMALIZATION  -  EMAILS
+* vxt 01/29/2015 vt4  /Ticket 3317/
+* vxt 10/01/2015 vt5  /Ticket 3890/
+* vxt 12/30/2015 vt6  /Ticket 4122/
+* vxt 11/21/2016 vt7 /Ticket 1924/                                    *
+***********************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK    /* DW4
+LOCAL USING CLASSLAI                       /* PM4
+* YK1
+LOCAL USING GPRA0005                       /* Fields to be passed to EmailCreator
+LOCAL USING GPRL0001                       /* Init properties
+
+LOCAL
+1 #ALOT-W-STATUS-ONLY   (N5)        /* DW12
+1 #ALOT-W-AT-OR-IM      (N5)        /* DW12
+1 #AT-CAP-TYPE-C        (N5)        /* DW12
+1 #STAT-ALP-C-LOAN-ONLY (N5)        /* DW12
+*
+1 #AMT-8               (A8)                /* DW10
+1 #AIL-AMT-NEEDED      (A8)                /* DW10
+1 #CAP-LOAN-EXISTS     (L)                 /* DW5
+1 #AIL-EXISTS          (L)                 /* DW6
+1 #CIL-EXISTS          (L)                 /* PM11
+1 #AIL-IND             (A1)
+1 #FOUND-AT-NOT-CAP    (L)                 /* DW7
+1 #MSG                 (A25)
+1 #CURR-ALOT-A    (A7)                     /* DW4
+1 REDEFINE #CURR-ALOT-A
+  2 #CURR-ALOT     (N5.2)
+1 #NEW-ALOT       (N5.2)
+*
+1 #CAP-STARTS     (A150)                   /* DW2
+* 1 #TAB     (A1) INIT <H'05'>             /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>             /* SAG RH1 12012005 SS
+1 #INTR-ADDR (A60)                         /* DW3
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID           /* TT1
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 LINKED-CN     (30)
+  2 REDEFINE LINKED-CN
+    3 LINKED-CN-A (A6/30)
+*  2 RANK                                               /* vt5
+  2 NAME
+*  2 INTERNET-ADDR                          /* TT1
+  2 DUES-ALL-PAID-IND
+  2 X-ALT-LP-IND  (9)                       /* DW6
+  2 X-LOAN-AMOUNT (9)                       /* DW5
+  2 CONV-DURATION (9)
+  2 ISSUE-DATE   (9)
+  2 redefine issue-date                /* vt4 \/
+    3 issue-date-yyyy (n4/9)
+    3 issue-date-mm   (n2/9)
+    3 issue-date-dd   (n2/9)           /* vt4 /\
+  2 PLAN         (9)
+  2 REDEFINE PLAN
+    3 PLAN-OCC   (9)
+      4 PLAN-A1    (A1)
+      4 PLAN-A2    (A2)
+  2 STATUS       (9)
+  2 PAY-STATUS   (9)
+  2 ANNUAL-PREM  (9)
+  2 MONTH-ALLOC-AMT (9)
+  2 SSN                                     /* PM11
+  2 MILITARY-SERVICE                        /* PM11
+*  2 INS-MAIL-CODE                           /* YK3  vt1
+  2 x-first-place-fee (9)                                            /* vt3 \/
+  2 paid-to-date      (9)
+*                                                                       /* vt3 /\
+*
+1 LK-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 INTRO-FLAG
+  2 STATUS       (9)
+  2 PAY-STATUS   (9)
+  2 ANNUAL-PREM  (9)
+*
+1 IM-V VIEW OF A-INTRO-MEMBER
+  2 ID-NUMBER
+  2 SSN
+  2 APPL-SOURCE
+  2 CAP-IND
+  2 RANK
+  2 NAME
+  2 ALLOT-STRT-AMT
+  2 INTERNET-ADDR
+  2 cap-loan-amt                                        /* vt2
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER
+  2 SSN
+  2 SEX                                   /* DW1
+  2 SMOKER-FLAG
+  2 ACTION-FLAG
+  2 FACE-AMT-UNITS
+  2 CAP-LOAN-AMT
+  2 CAP-TERM
+  2 CAP-IND
+  2 AT-STATUS
+  2 ST-NOTE-DATE   (50)
+  2 ST-NOTE-USER   (50)
+  2 ST-NOTE-STATUS (50)
+  2 ACTION-DATE
+  2 DATE-OF-BIRTH
+  2 INTRO-FLAG
+  2 APPL-SOURCE
+  2 PLAN
+  2 INTERNET-ADDR
+  2 RANK
+  2 NAME
+  2 REDEFINE NAME
+    3 NAME-15   (A15)
+  2 ALLOT-STRT-AMT
+  2 RATING-CODE                          /* PM4
+  2 CAP-TYPE                             /* PM11
+  2 MIL-SERVICE                          /* PM11
+*  2 MEMBER-CN                            /* YK1  vt1
+*
+1 #AAFMAA-LAST-NAME   (A25)             /* AAFMAA NAME
+1 #AAFMAA-FIRST-NAME  (A25)
+1 #REST-1             (A25)
+1 #REST-2             (A25)
+1 #REST-3             (A25)
+*
+1 #AT-NOTE-STATUS  (A2)
+1 #CLERK           (A3)
+1 #SERV      (A9)
+1 #ALOT-AMT  (A7)
+1 #LAST-SSN  (N9)
+1 #CAP-X     (I2)
+1 #IM-FND    (L)
+1 #AT-FND    (L)
+1 #AT-ISN    (P8)
+1 #STAT-FND  (L)
+1 #TEXT     (A60/21)
+1 #NOTE-NUM (N8)
+1 #CLK      (A3)
+*
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 NOTE-DATE      (3)
+  2 NOTE-CLERK-ID  (3)
+  2 NOTE-LINE-NUM  (3)
+  2 NOTE-TEXT   (A60/60)
+  2 REDEFINE NOTE-TEXT
+*
+    3 CAPS-CONV-BY-YEAR  (10)    /* 10 past years
+      4 CAPS-CONV-BY-ORIGIN (13)  /* 13th is for unknown
+        5 CAPS-CONV-ORIG   (N5)
+*
+    3 CAPS-CONV-BY-MON  (12)    /* 12 last months (jan thru dec)
+      4 CAPS-CONV-MON    (N5)
+*
+    3 ATS-CONV-BY-FU  (5)    /* 1 is 0/2 is 1 fu
+      4 ATS-CONV-FU      (N5)
+*
+    3 CAPS-AT-M-S (N5)
+    3 CAPS-AT-P1 (N5)
+    3 CAPS-AT-P2 (N5)
+    3 CAPS-AT-P3 (N5)
+    3 CAPS-AT-P4 (N5)
+    3 CAPS-AT-U  (N5)
+    3 CAPS-AT-W  (N5)
+    3 CAPS-AT-D  (N5)
+    3 CAPS-AT-A  (N5)
+    3 CAPS-AT-UNUSED-1 (N5)
+    3 CAPS-AT-UNUSED-2 (N5)
+    3 CAPS-AT-NCO (N5)
+    3 CAPS-AT-OFF (N5)
+*
+    3 CAPS-IM-S  (N5)
+    3 CAPS-IM-M  (N5)
+    3 CAPS-IM-I  (N5)
+    3 CAPS-IM-C  (N5)
+    3 CAPS-IM-P  (N5)
+    3 CAPS-IM-X  (N5)
+    3 CAPS-IM-Y  (N5)
+    3 CAPS-IM-Z  (N5)
+*
+    3 AT-M-S-0FU  (N5)
+    3 AT-M-S-1FU  (N5)
+    3 AT-M-S-2FU  (N5)
+    3 AT-M-S-3FU  (N5)
+    3 AT-M-S-4FU  (N5)
+    3 AT-P      (N5)
+    3 AT-U      (N5)
+    3 AT-W      (N5)
+    3 AT-A      (N5)
+*
+1 TRMS-V VIEW OF A-TERMINALS
+  2 CLERK-ID
+  2 MSG-JUST-SENT
+*
+1 #SVC-FEE    (N2.2)
+1 #SVC-FEE-2P (N2.2) INIT <18.50>
+1 #SVC-FEE-3P (N2.2) INIT <12.50>
+1 #SVC-FEE-4P (N1.2) INIT <9.50>
+1 #SVC-FEE-5P (N1.2) INIT <7.50>
+1 #SVC-FEE-6P (N1.2) INIT <6.50>
+1 #SVC-FEE-7P (N1.2) INIT <6.00>
+1 #SVC-FEE-10 (N1.2) INIT <4.50>
+1 #SVC-FEE-20 (N1.2) INIT <3.00>
+1 #SVC-FEE-30 (N1.2) INIT <2.50>
+1 #SVC-FEE-OL (N1.2) INIT <2.00>
+1 #SVC-FEE-TM (N1.2) INIT <2.00>
+*
+1 #ALOT-STARTS         (A100)  /* ENTERED IN CMWFW02
+1 REDEFINE #ALOT-STARTS
+  2 #EXTR-ID-NUMBER     (A06)
+  2 #EXTR-SERV          (A01)
+  2 #EXTR-SSN           (N09)
+  2 REDEFINE #EXTR-SSN
+    3 #EXTR-SSN-A        (A09)
+  2 #EXTR-START-STOP    (A01)
+  2 #EXTR-REASON        (A02)
+  2 #EXTR-ACTIVE-RET    (A01)
+  2 #EXTR-BLANKET-CODE  (A03)
+  2 #EXTR-EFF-DT        (A04)
+  2 #EXTR-STOP-DT       (A04)
+  2 #EXTR-ALOT-AMT      (P8.2)
+  2 #EXTR-NAME          (A25)
+  2 #EXTR-RP-DESCRIPTION (A35)
+  2 #EXTR-RP-CODE       (A01)
+  2 #EXTR-RP-DATE-DIFF  (A01)
+  2 #EXTR-FILL          (A01)
+*
+1 #DATE-MM-DD-YY-GR
+  2 #DATE-MM       (N2)
+  2 #DATE-SL1      (A1) INIT <'/'>
+  2 #DATE-DD       (N2)
+  2 #DATE-SL2      (A1) INIT <'/'>
+  2 #DATE-YY       (N2)
+1 REDEFINE #DATE-MM-DD-YY-GR
+  2 #DATE-MM-DD-YY (A8)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY    (N4)
+  2 REDEFINE #YYYY
+    3 #CENT   (N2)
+    3 #YY     (N2)
+  2 #MM      (N2)
+  2 #DD      (N2)
+*
+1 #REPORT-DATE-FROM  (A8)
+1 #REPORT-DATE-THRU  (A8)
+*
+1 #COUNTERS
+  2 #MEMBER-CNT     (P5)
+  2 #LETTER-CNT     (P5)
+  2 #CNT            (P5)
+  2 #CNT-2          (P5)
+  2 #CNT-3          (P5)
+  2 #CNT-5          (P5)
+  2 #CNT-6          (P5)
+  2 #TOT-MON-PREM   (P5.2)
+  2 #TOT-MON-PREM-LNK (P5.2)
+  2 #SUM-BOTH         (P5.2)
+  2 #ALOT-EQ-MODE   (L)
+  2 #I1             (I2)
+  2 #I2             (I2)
+  2 #WAS-AT-PI-PC  (P5)
+  2 #WAS-AT-PP     (P5)
+  2 #WILL-BE-AT-Y  (P5)
+  2 #NOT-NOT-BE-AT-Y (P5)
+*
+1 #HOLD-TEXT        (A60/120)
+1 #HI               (I2)
+1 #SCR-COMMAND  (A2)
+1 #SCR-ID       (N9)
+1 #SCR-SUFFIX   (A3)
+1 #ISS-AGE    (N2)
+1 REDEFINE #ISS-AGE
+  2 #ISS-AGE-A2 (A2)
+1 #APREM       (N6.2)
+1 #MON-PREM    (N4.2)
+1 #SMOKER-FLAG (A1)
+1 #FACE-9      (N7.2)
+1 #CALC-TOT-ALOT-AMT (N4.2)
+1 #LOAN-PMT     (N3.2)
+*
+1 #JCL-DATE           (A10)  /* PM11
+1 REDEFINE #JCL-DATE         /* PM11
+  2 #JCL-MM            (A2)   /* PM11
+  2 #JCL-X1            (A1)   /* PM11
+  2 #JCL-DD            (A2)   /* PM11
+  2 #JCL-X2            (A1)   /* PM11
+  2 #JCL-YYYY          (A4)   /* PM11
+*
+1 #PARM-YYYYMMDD      (N8)   /* PM11
+1 REDEFINE #PARM-YYYYMMDD    /* PM11
+  2 #PARM-YYYYMMDD-A   (A8)   /* PM11
+1 REDEFINE #PARM-YYYYMMDD    /* PM11
+  2 #PARM-YYYY         (N4)   /* PM11
+  2 #PARM-MM           (N2)   /* PM11
+  2 #PARM-DD           (N2)   /* PM11
+*
+** 1 #PRE-APPROVE-CAP-ALLOT            (A3) INIT <'PCA'>   /* YK1 vt1\/        vt1 \/
+** 1 #PRE-APPROVE-CAP-CCARD            (A3) INIT <'PCC'>   /* YK1
+** 1 #PRE-APPROVE-CCARD-LOAN           (A3) INIT <'PLC'>   /* YK2
+** 1 #PRE-APPROVE-ALLOT-LOAN           (A3) INIT <'PLL'>   /* YK3              vt1 /\
+* 1 #RESTRICTED-EMAIL                 (A3) CONST <'XXX'>  /* YK3
+* 1 #RESTRICTED-MAIL-CODE             (A1) CONST <'E'>    /* YK3
+* 1 #DAT-A                  (A8)                          /* YK1
+* 1 REDEFINE #DAT-A                                       /* YK1
+*   2 #DAT-N                (N8)                          /* YK1
+* 1 #EMAIL-FLAG             (A1)                          /* YK1
+* 1 #INS-MAIL-CODE          (A1)                          /* YK3  vt1 /\
+*
+1 #AFFL-ONLY (L) INIT <FALSE>
+1 #cap-amt                  (a11)                                             /* vt2 \/
+1 TA view of a-accounting-register
+  2 id-number
+  2 debit-amount
+  2 txn-code
+  2 sg-category-1 (15)
+1 #id-number (n6)                                                             /* vt2 /\
+1 #CURRENT-FPF               (N7.2)                                      /* VT3 \/
+1 #current-fpf-a              (a12)
+1 #CURRENT-PUD               (N8)
+1 redefine #current-pud
+  2 #current-pud-yyyy  (N4)
+  2 #current-pud-mm    (N2)
+  2 #current-pud-dd    (N2)
+1 #issue-date    (n8)
+1 redefine #issue-date
+  2 #issue-date-yyyy (n4)
+  2 #issue-date-mm   (n2)
+  2 #issue-date-dd   (n2)
+*
+1 EMAIL-ADDRESS      (A60)      /* TT1                                         /* vt3 /\
+1 #PDA-RANK                                                  /* vt5 \/
+  2 #PASS-COMMAND       (A2)
+  2 #RANK-PASS          (A3)
+  2 #MIL-ID-PASS        (A3)
+  2 #INVALID            (L)
+  2 #RANK-PAY-TBL-DISPL (P2)
+  2 #RANK-LITERAL-PASS  (A23)
+  2 #RANK-DISPLAY       (A5)
+*
+  2 #CONTACT-ID-R           (N8)
+  2 #RANK-ABBR            (A) DYNAMIC
+  2 #LETTER-ENV           (A) DYNAMIC
+  2 #SALUTATION           (A) DYNAMIC
+  2 #SALUTATION-WITH-NAME (A) DYNAMIC
+1 #rank                 (a25)                               /* vt5 /\
+
+END-DEFINE                                                                     /* vt2 /\
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+* Define e-mail information file                                  /* vt1
+* deFINE WORK FILE 6 #EMAIL-MONTHLY-FILE TYPE 'ASCII-COMPRESSED'  /* vt1
+write ' execute the changed program!!!!!'
+*
+FORMAT     LS=133 PS=66
+WRITE  TITLE LEFT 'PROGRAM:' *PROGRAM
+  8X 'Pgm Messages & CAP starts'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX 5X 'PAGE:' *PAGE-NUMBER (1)
+*
+FORMAT (2) LS=133 PS=66
+WRITE  (2) TITLE LEFT 'PROGRAM:' *PROGRAM
+  8X 'Potential C.A.P. Mbrs (Start Amt Over $120 or SSN not found)'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX 5X 'PAGE:' *PAGE-NUMBER (2)
+*
+FORMAT (3) LS=133 PS=66
+WRITE  (3) TITLE LEFT 'PROGRAM:' *PROGRAM
+  8X 'All remaining Starts'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX 5X 'PAGE:' *PAGE-NUMBER (3)
+*
+FORMAT (5) LS=133 PS=66
+WRITE  (5) TITLE LEFT 'PROGRAM:' *PROGRAM
+  8X 'C.A.P. STARTS NOT FOUND ON "IM/AT"'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX 5X 'PAGE:' *PAGE-NUMBER (5)
+*
+FORMAT (6) LS=133 PS=66
+WRITE  (6) TITLE LEFT 'PROGRAM:' *PROGRAM
+  8X 'Possible Starts combined with linked pols'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX 5X 'PAGE:' *PAGE-NUMBER (5)
+*
+COMPRESS 'SSN'                                               /* DW2
+  #TAB 'AT/CN'
+  #TAB 'ID #'
+  #tab 'Prior CAP Loan Amt'                                                    /* vt2   /* vt6
+  #TAB 'Alot Amt'
+  #TAB '#'
+  #TAB 'Amt Needed'
+  #TAB 'Rank'
+  #TAB 'Name'
+  #TAB 'Msg'
+  #TAB 'CN #'
+  #TAB 'Service'
+  #TAB 'E-Mail-Addr'
+  #tab 'Current FPF'                                                 /* vt3
+  #tab 'Current PTD'                                                 /* vt3
+  INTO #CAP-STARTS LEAVING NO
+WRITE WORK FILE 3 #CAP-STARTS                                /* DW2
+*
+READ WORK 1 ONCE RECORD #JCL-DATE                                    /* PM11
+COMPRESS #JCL-YYYY #JCL-MM #JCL-DD INTO #PARM-YYYYMMDD-A LEAVING NO  /* PM11
+SUBTRACT 1 FROM #PARM-MM                                             /* PM11
+IF #PARM-MM LT 1                                                     /* PM11
+  SUBTRACT 1 FROM #PARM-YYYY                                         /* PM11
+  ADD 12 TO #PARM-MM                                                 /* PM11
+END-IF                                                               /* PM11
+#PARM-DD := 20                                                       /* PM11
+* COMPRESS #JCL-YYYY #JCL-MM #JCL-DD INTO #DAT-A LEAVING NO     /* vt1  YK1
+*
+REPEAT
+  READ WORK 2 ONCE RECORD #ALOT-STARTS   /* READ ALLOTMENT starts/stops
+  AT END OF FILE
+    ESCAPE BOTTOM
+  END-ENDFILE
+  ADD 1 TO #MEMBER-CNT
+*
+  IF  ((#EXTR-START-STOP = '2')   /* START
+      AND (#EXTR-SSN NE #LAST-SSN))
+*  AND (#EXTR-SERV = 'A')   /* ONLY DO ARMY   <<<<< KEEP THIS LINE
+*  AND (#EXTR-SERV = 'F')   /* ONLY DO AIR FORCE<<< KEEP THIS LINE
+    IGNORE
+  ELSE
+    ESCAPE TOP
+  END-IF
+*
+  MOVE #EXTR-SSN TO #LAST-SSN
+END-ALL
+*
+SORT BY #EXTR-NAME
+    USING #EXTR-ID-NUMBER
+    #EXTR-SERV
+    #EXTR-SSN
+    #EXTR-ALOT-AMT
+*
+  RESET #TOT-MON-PREM #ALOT-EQ-MODE
+  RESET #STAT-FND
+  RESET #AIL-EXISTS                       /* DW6
+  RESET #CAP-LOAN-EXISTS                  /* DW5
+  RESET #FOUND-AT-NOT-CAP                 /* DW7
+*  RESET #INS-MAIL-CODE                    /* YK3  vt1
+*
+  FIND ST-V WITH SSN = #EXTR-SSN
+    PERFORM  CHECK-AFFL-ONLY                     /*   bz1
+*    IF ST-V.PROCESS-IND = 'S' OR = 'C'        /* RE1
+    IF ST-V.PROCESS-IND = 'C'                  /* RE1
+*      OR AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)   /* RE1   bz1
+        OR #AFFL-ONLY                            /* bz1
+*     WRITE ST-V.ID-NUMBER #EXTR-SSN 'BYPASSED AFSC ST RECORD'
+      ESCAPE TOP
+    END-IF
+*
+    MOVE TRUE TO #STAT-FND
+    MOVE *ISN TO #CGA-ISN                 /* DW4
+*   #INS-MAIL-CODE := INS-MAIL-CODE       /* YK3  vt1
+    ESCAPE BOTTOM
+  END-FIND
+*
+  IF NOT #STAT-FND
+    RESET ST-V
+  END-IF
+*
+  IF #STAT-FND
+    FOR #I1 1 TO 9      /* Does a CAP loan already exist?    /*DW5
+      IF   (ST-V.STATUS (#I1) = 'D') /* & is there a AIL Condition
+        IF (ST-V.CONV-DURATION (#I1) = 999)
+            AND (ST-V.X-LOAN-AMOUNT (#I1) NE 0)
+          MOVE TRUE TO #CAP-LOAN-EXISTS
+        END-IF
+*
+        IF ST-V.X-ALT-LP-IND (#I1) = 'L'     /* DW6
+          MOVE TRUE TO #AIL-EXISTS
+        END-IF
+      END-IF
+    END-FOR
+*
+
+*
+    IF #CAP-LOAN-EXISTS
+        OR (#EXTR-REASON = '**')  /* DW5 Active to Retired Stop/Start
+*     write st-v.id-number 'Possible CAP start bypassed due to existing CAP loan'
+      ESCAPE TOP
+    END-IF                                                     /* END DW5
+*
+    MOVE 'BTR' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX /* BTR returns amt from FA /* DW4
+*                   and gets 'Current" (not 2 months from now) alot amt needed
+*
+
+    MOVE 'FA' TO #CGA-SCR-COMMAND      #CGA-ORIG-COMMAND
+    MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID
+    RESET #CGA-MF-SCR-PARM-1-N
+    write '=' #cga-isn '=' st-v.id-number '=' #CGA-SCR-COMMAND /
+      '=' #cga-scr-id
+      '=' #cga-scr-suffix /
+      '=' #curr-alot /
+      '=' #extr-alot-amt
+    FETCH RETURN 'C2800PFA'           /* GET NEW ALOT
+*
+    COMPUTE #NEW-ALOT = #CGA-MF-SCR-PARM-1-N / 100
+    write '=' #new-alot
+    MOVE #CGA-MF-ORIG-PARM-1 TO #CURR-ALOT-A                             /* END DW4
+    write '=' #curr-alot-a
+*   if #extr-alot-amt gt 120.00
+*     write st-v.id-number 'FA-Curr-alot=' #curr-alot 'New Alot=' #new-alot
+*       'DFAS strt amt=' #extr-alot-amt
+*
+    if #curr-alot ne #extr-alot-amt /*New Alot Start Amt is different from curr Alot
+      write st-v.id-number 'FA Cur=' #curr-alot 'ALOT strt amt=' #EXTR-ALOT-AMt
+    else
+      write st-v.id-number 'FA Matches start amount' #curr-alot
+    end-if
+*  end-if
+*
+    RESET #SUM-BOTH
+    FOR #I1 1 TO 9
+      IF   (ST-V.STATUS (#I1) = 'D')
+          AND (ST-V.PAY-STATUS (#I1) LT '40')
+        COMPUTE #TOT-MON-PREM
+          = #TOT-MON-PREM + (ST-V.ANNUAL-PREM (#I1) / 12)
+        if st-v.x-first-place-fee(#i1) ne 0                                /* vt3 \/
+          move st-v.x-first-place-fee (#i1) to #current-fpf
+          move edited #current-fpf (em=zzzzzz9.99) to #current-fpf-a
+          move left #current-fpf-a to #current-fpf-a
+          compress '$' #current-fpf-a into #current-fpf-a leaving no
+        else
+          reset #current-fpf-a
+        end-if
+        move st-v.issue-date(#i1) to #issue-date
+        move st-v.paid-to-date(#i1) to #current-pud
+*
+        if (st-v.issue-date(#i1) lt 19970101) or (st-v.month-alloc-amt(#i1) = 999.99) or (st-v.issue-date-dd (#i1) = 1 )     /* vt4 \/
+          if #current-pud-mm = 02
+            move 28 to #current-pud-dd
+          else
+            if #current-pud-mm = 4 or = 6 or = 9 or = 11
+              move 30 to #current-pud-dd
+            else
+              move 31 to #current-pud-dd
+            end-if
+          end-if
+        else
+          if ((st-v.issue-date-mm (#i1) = 2) and (st-v.issue-date-dd(#i1) = 28 or = 29))
+              or ((st-v.issue-date-mm (#i1) = 4 or = 6 or = 9 or = 11) and (st-v.issue-date-dd(#i1) = 30))
+              or ((st-v.issue-date-mm (#i1) = 1 or = 3 or = 5 or = 7 or = 8 or = 10 or = 12 ) and (st-v.issue-date-dd(#i1) = 31))
+            if #current-pud-mm = 02
+              move 27 to #current-pud-dd
+            else
+              if #current-pud-mm = 4 or = 6 or = 9 or = 11
+                move 29 to #current-pud-dd
+              else
+                move 30 to #current-pud-dd
+              end-if
+            end-if
+          else
+            compute #current-pud-dd = #issue-date-dd - 1
+            if #current-pud-dd = 0                                 /* vt6   \/
+              if #current-pud-mm = 02
+                move 28 to #current-pud-dd
+              else
+                if #current-pud-mm = 4 or = 6 or = 9 or = 11
+                  move 30 to #current-pud-dd
+                else
+                  move 31 to #current-pud-dd
+                end-if
+              end-if
+            end-if                                                 /* vt6   /\
+            if #current-pud-mm = 2 and #current-pud-dd ge 27
+              move 26 to #current-pud-dd
+            end-if
+          end-if
+        end-if                                                                                          /* vt4 /\
+*
+*         compute #current-pud-dd = #issue-date-dd - 1
+*         if #current-pud-dd = 0
+*           if #current-pud-mm = 2
+*             move 28 to #current-pud-dd
+*           else
+*             if #current-pud-mm = 1 or = 3 or = 5 or = 7 or =8 or = 10 or = 12
+*               move 31 to #current-pud-dd
+*             else
+*               if #current-pud-mm = 4 or = 6 or = 9 or = 11
+*                 move 30 to #current-pud-dd
+*               end-if
+*             end-if
+*           end-if
+*         end-if      /* vt3 /\
+      END-IF
+    END-FOR
+*
+    FOR #I1 1 TO 9  /* find 1st active pol
+      IF ST-V.STATUS (#I1) = 'D'
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    IF #I1 GT 9
+      MOVE 1 TO #I1
+    END-IF
+*
+    RESET #SVC-FEE
+    IF (ST-V.ISSUE-DATE (#I1) GE 19970101)
+        AND (ST-V.MONTH-ALLOC-AMT (#I1) NE 999.99)
+        AND (NOT ST-V.PLAN (#I1) = 'SO' OR = 'FSO')
+        AND (NOT ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+        OR = 'O' OR = 'P' OR = 'Q')
+        AND (ST-V.PROCESS-IND = 'G')  /* Must be G/F                RE1
+      IF NOT ST-V.DUES-ALL-PAID-IND = 'Y'
+        IF ST-V.PAY-STATUS (#I1) LT '40'
+          DECIDE ON FIRST VALUE ST-V.PLAN (#I1)
+            VALUE '2PF' MOVE #SVC-FEE-2P TO #SVC-FEE
+            VALUE '3PF' MOVE #SVC-FEE-3P TO #SVC-FEE
+            VALUE '4PF' MOVE #SVC-FEE-4P TO #SVC-FEE
+            VALUE '5PF' MOVE #SVC-FEE-5P TO #SVC-FEE
+            VALUE '6PF' MOVE #SVC-FEE-6P TO #SVC-FEE
+            VALUE '7PF' MOVE #SVC-FEE-7P TO #SVC-FEE
+            VALUE '8PF' MOVE #SVC-FEE-7P TO #SVC-FEE
+            VALUE '9PF' MOVE #SVC-FEE-7P TO #SVC-FEE
+            VALUE '7P'  MOVE #SVC-FEE-7P TO #SVC-FEE
+            VALUE '20P' MOVE #SVC-FEE-20 TO #SVC-FEE
+            VALUE '30P' MOVE #SVC-FEE-30 TO #SVC-FEE
+            VALUE 'OL'  MOVE #SVC-FEE-OL TO #SVC-FEE
+*           VALUE 'RT'  MOVE #SVC-FEE-TM TO #SVC-FEE                       /* YK4
+*           VALUE 'LT'  MOVE #SVC-FEE-TM TO #SVC-FEE                       /* YK4
+            NONE        IGNORE
+          END-DECIDE
+*
+*         IF (ST-V.PLAN-A1 (#I1) GE 'U') AND (ST-V.PLAN-A1 (#I1) LE 'Z')   /* YK4
+          IF FUNCTION-TERM-POLICY(<ST-V.PLAN(#I1)>)                        /* YK4
+            MOVE #SVC-FEE-TM TO #SVC-FEE
+          END-IF
+*
+          IF ST-V.PLAN (#I1) = MASK (NN'F')
+            IF ST-V.PLAN (#I1) LE '19F' MOVE #SVC-FEE-10 TO #SVC-FEE ELSE
+              IF ST-V.PLAN (#I1) LE '29F' MOVE #SVC-FEE-20 TO #SVC-FEE ELSE
+                IF ST-V.PLAN (#I1) LE '34F' MOVE #SVC-FEE-30 TO #SVC-FEE ELSE
+                  MOVE #SVC-FEE-OL TO #SVC-FEE
+                END-IF END-IF END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+*
+    ADD #SVC-FEE TO #TOT-MON-PREM
+    IF #EXTR-ALOT-AMT = #TOT-MON-PREM
+      MOVE TRUE TO #ALOT-EQ-MODE
+    END-IF
+*
+    IF   (#EXTR-ALOT-AMT GT #TOT-MON-PREM) /* excess allot amt
+        AND (ST-V.LINKED-CN (1) NE 0)           /* is linked to another mbr
+        AND (NOT ST-V.INTRO-FLAG = 'B' OR = 'C'  /* NOT A CAP MBR
+        OR = 'P' OR = 'Q') /* NOT A CAP MBR
+      RESET #TOT-MON-PREM-LNK
+      FOR #I1 1 TO 30
+        FIND (1) LK-V WITH MEMBER-KEY = ST-V.LINKED-CN-A (#I1)
+          FOR #I2 1 TO 9
+            IF   (LK-V.STATUS (#I2) = 'D')
+                AND (LK-V.INTRO-FLAG = 'S' OR ='K' OR = 'G')
+                AND (LK-V.PAY-STATUS (#I2) LT '40')
+              move lk-v.id-number to #id-number                        /* vt2
+              perform get-cap-amt                                      /* vt2
+              COMPUTE #TOT-MON-PREM-LNK
+                = #TOT-MON-PREM-LNK + (LK-V.ANNUAL-PREM (#I2) / 12)
+            END-IF
+          END-FOR
+        END-FIND
+      END-FOR
+      COMPUTE #SUM-BOTH = #TOT-MON-PREM + #TOT-MON-PREM-LNK
+*
+      ADD 1 TO #CNT-6
+      DISPLAY (6) #CNT-6
+        'MBR'      ST-V.ID-NUMBER
+        'LNK/MBR'  ST-V.LINKED-CN (1)
+        'CAP Loan Amt ' #cap-amt                          /* vt2
+        'Alot amt' #EXTR-ALOT-AMT
+        'Sum of/MBR & LNK' #SUM-BOTH
+        'Mbr/mode/G' #TOT-MON-PREM
+        'Lnk/mode/G' #TOT-MON-PREM-LNK
+    END-IF
+  END-IF
+*
+  IF ((#STAT-FND)  /* IF SSN NOT FND IT COUND BE A CAP
+      AND (#EXTR-ALOT-AMT LT 107.00) /* NOT A PROBABLE CAP START /* Was 120.00  DW9
+      AND NOT #AIL-EXISTS               /* Always process AIL Cases        DW10
+      AND (#EXTR-SSN NE 164701174))   /* CAPS WANTING <$5K (START<$150)
+      OR (#ALOT-EQ-MODE)   /* alot amt = tot mode
+*
+    ADD 1 TO #CNT-3    /* all other starts
+    DISPLAY (3) NOTITLE GIVE SYSTEM FUNCTIONS
+      #CNT-3
+      #EXTR-SSN #EXTR-NAME #EXTR-ALOT-AMT #TOT-MON-PREM
+    ESCAPE TOP
+  END-IF
+*
+  IF #CAP-X GE 21
+    PERFORM SEND-NX
+  END-IF
+*
+* SEPARATE #EXTR-NAME LEFT INTO #FIN-LAST-NAME #FIN-FIRST-NAME #REST-1
+*                          #REST-2 #REST-3 WITH DELIMITER ' '
+  RESET #AT-FND
+  FIND AT-V WITH SSN = #EXTR-SSN
+    IF AT-V.INTRO-FLAG = 'V'
+      ESCAPE TOP
+    END-IF
+*
+*   IF AT-V.AT-STATUS = 'A'
+    IF NOT AT-V.AT-STATUS = 'PP' OR = 'PC'
+      IF AT-V.AT-STATUS NE 'A'       /* DW7
+        MOVE TRUE TO #FOUND-AT-NOT-CAP
+*         WRITE AT-V.ID-NUMBER 'found START for a non CAP (PP/PC) AT'
+      END-IF
+*
+      ESCAPE TOP
+    END-IF
+*
+    MOVE TRUE TO #AT-FND
+    MOVE *ISN TO #AT-ISN
+    ESCAPE BOTTOM
+  END-FIND
+*
+  IF NOT #AT-FND
+    RESET AT-V
+  END-IF
+*
+  MOVE TRUE TO #IM-FND
+  FIND (1) IM-V WITH SSN = #EXTR-SSN
+    IF NO RECORD FOUND
+      RESET #IM-FND
+    END-NOREC
+  END-FIND
+*
+  move edited im-v.cap-loan-amt (em=z,zzz.99) to #cap-amt                           /* vt2
+  if #cap-amt ne '0'
+    compress '$' #cap-amt into #cap-amt leaving no                                    /* vt2
+  end-if                                                                            /* vt2
+  ADD 1 TO #CAP-X
+  MOVE EDITED #EXTR-ALOT-AMT (EM=ZZZ.99) TO #ALOT-AMT
+  COMPRESS '$' #ALOT-AMT INTO #ALOT-AMT LEAVING NO
+*
+  IF #IM-FND
+    COMPRESS #EXTR-SSN-A 'IM' IM-V.ID-NUMBER #ALOT-AMT
+      INTO #TEXT (#CAP-X)
+*
+    IF #EXTR-ALOT-AMT NE IM-V.ALLOT-STRT-AMT
+      COMPRESS #TEXT (#CAP-X) IM-V.ALLOT-STRT-AMT INTO #TEXT (#CAP-X)
+    END-IF
+*
+    COMPRESS #TEXT (#CAP-X) IM-V.NAME INTO #TEXT (#CAP-X)
+*
+    COMPRESS #EXTR-SSN-A                              /* DW2
+      #TAB 'IM'
+      #TAB IM-V.ID-NUMBER
+      #tab #cap-amt                                               /* vt2
+      #TAB #ALOT-AMT
+      #TAB                 /* no '#'
+      #TAB IM-V.ALLOT-STRT-AMT
+      #TAB IM-V.RANK                  /* DW3
+      #TAB IM-V.NAME
+      INTO #CAP-STARTS LEAVING NO               /* DW2
+*    #Email-flag := ' '                               /* YK1 vt1
+*
+    IF IM-V.CAP-IND NE 'Y'
+      COMPRESS #TEXT (#CAP-X) 'not "CAP"' INTO #TEXT (#CAP-X)
+      COMPRESS #CAP-STARTS #TAB 'not CAP'             /* DW2
+        INTO #CAP-STARTS LEAVING NO    /* DW2
+    ELSE
+      COMPRESS #CAP-STARTS #TAB INTO #CAP-STARTS LEAVING NO  /* DW2
+    END-IF
+  ELSE
+    IF #AT-FND
+      COMPRESS #EXTR-SSN-A 'AT' AT-V.ID-NUMBER #ALOT-AMT
+        INTO #TEXT (#CAP-X)
+*
+      PERFORM PROCESS-AT                                   /* vt2
+*
+      COMPRESS #EXTR-SSN-A                              /* DW2
+        #TAB 'AT'
+        #TAB AT-V.ID-NUMBER
+        #tab #cap-amt                                           /* vt2
+        #TAB #ALOT-AMT
+        INTO #CAP-STARTS LEAVING NO               /* DW2
+*     new way to calc alot start amt
+*
+*      PERFORM PROCESS-AT                                /* PM11
+*
+      COMPUTE #CALC-TOT-ALOT-AMT
+        = #LOAN-PMT + #MON-PREM + AT-V.ALLOT-STRT-AMT
+*
+*     IF   (#EXTR-ALOT-AMT GT (AT-V.ALLOT-STRT-AMT * .80)) /*chg 7/2002
+      IF   (#EXTR-ALOT-AMT GE #CALC-TOT-ALOT-AMT)
+          AND (#CALC-TOT-ALOT-AMT NE 0)
+*      AND (AT-V.ACTION-FLAG = 'I' OR = 'C' OR = 'P')
+*      AND (AT-V.AT-STATUS = 'PI' OR = 'PC' OR = 'PP')
+          AND (AT-V.AT-STATUS = 'PP' OR = 'PC')
+*      and (at-v.cap-type ne 'C')                               /* DW99
+          AND (NOT #STAT-FND    /* added 4/30/2002 as per eac
+          OR  (#STAT-FND
+          AND (NOT ST-V.INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q')))
+*
+        COMPRESS #TEXT (#CAP-X) '#' INTO #TEXT (#CAP-X)
+        COMPRESS #CAP-STARTS #TAB '#' INTO #CAP-STARTS LEAVING NO /* DW2
+*       #Email-flag := '#'                                  /* YK1  vt1
+*
+        ADD 1 TO #WILL-BE-AT-Y
+*
+*       IF AT-V.ACTION-FLAG = 'I'
+        IF AT-V.AT-STATUS = 'PI' OR = 'PC'
+          ADD 1 TO #WAS-AT-PI-PC
+        ELSE
+          IF AT-V.AT-STATUS = 'PP'
+            ADD 1 TO #WAS-AT-PP
+          END-IF
+        END-IF
+*
+        GET AT-V #AT-ISN
+        MOVE 'P' TO AT-V.ACTION-FLAG
+        MOVE 'PY' TO AT-V.AT-STATUS
+        MOVE 'PY' TO #AT-NOTE-STATUS
+        MOVE 'EDS' TO #CLERK
+*
+        CALLNAT 'GADDNSXX' /* add a status note
+          #CLERK
+          #AT-NOTE-STATUS
+          ST-NOTE-DATE   (1:50)
+          ST-NOTE-USER   (1:50)
+          ST-NOTE-STATUS (1:50)
+          ACTION-DATE
+*
+        UPDATE (0853)
+        END TRANSACTION
+      ELSE
+        COMPRESS #CAP-STARTS #TAB INTO #CAP-STARTS LEAVING NO /* DW2
+      END-IF
+*
+      write '!!!' '=' #amt-8 '=' #extr-alot-amt / '=' #calc-tot-alot-amt
+      MOVE EDITED #CALC-TOT-ALOT-AMT (EM=Z,ZZZ.99) TO #AMT-8    /* DW10
+      IF #EXTR-ALOT-AMT NE #CALC-TOT-ALOT-AMT
+        COMPRESS #TEXT (#CAP-X) #AMT-8 INTO #TEXT(#CAP-X)       /* DW10
+        COMPRESS #CAP-STARTS #TAB #AMT-8       /* DW2              DW10
+          INTO #CAP-STARTS LEAVING NO     /* DW2
+      ELSE
+        COMPRESS #CAP-STARTS #TAB INTO #CAP-STARTS LEAVING NO /* DW2
+      END-IF
+*
+      COMPRESS #TEXT (#CAP-X) AT-V.NAME-15 INTO #TEXT (#CAP-X)
+      COMPRESS #CAP-STARTS #TAB AT-V.RANK           /* DW3
+        #TAB AT-V.NAME           /* DW2/DW3
+        INTO #CAP-STARTS LEAVING NO                 /* DW2
+*
+      IF AT-V.CAP-IND NE 'Y'
+        COMPRESS #TEXT (#CAP-X) 'not CAP' INTO #TEXT (#CAP-X)
+      ELSE
+        COMPRESS #CAP-STARTS #TAB INTO #CAP-STARTS LEAVING NO /* DW2
+      END-IF
+    ELSE
+      IF #STAT-FND
+        COMPRESS #EXTR-SSN-A ST-V.ID-NUMBER #ALOT-AMT
+          INTO #TEXT (#CAP-X)
+        COMPRESS #TEXT (#CAP-X) ST-V.NAME INTO #TEXT (#CAP-X)             /* vt1
+*
+        write '=' st-v.id-number '=' #AIL-EXISTS '=' #EXTR-ALOT-AMT /
+          '=' #NEW-ALOT   /* vt2
+        RESET #AIL-AMT-NEEDED                               /* DW10
+        IF #AIL-EXISTS        /* SALP-Code is 'L'           /* DW6
+          MOVE 'L' TO #AIL-IND
+          IF #EXTR-ALOT-AMT LT #NEW-ALOT                    /* DW10
+            MOVE EDITED #NEW-ALOT (EM=Z,ZZZ.99) TO #AIL-AMT-NEEDED
+          END-IF
+        ELSE
+          RESET #AIL-IND
+        END-IF
+*
+        RESET #MSG                                          /* DW10
+        move st-v.id-number to #id-number                               /* vt2
+        perform get-cap-amt                                             /* vt2
+*
+        reset #pda-rank #rank                                                                 /* vt5
+        move st-v.member-contact-id  to  #CONTACT-ID-R                                        /* vt5
+        callnat 'RANKN001' #pda-rank                                                          /* vt5
+        #rank := #rank-abbr                                                                   /* vt5
+*
+        COMPRESS #EXTR-SSN-A                                /* DW2
+          #TAB 'CN'                                          /* DW
+          #TAB ST-V.ID-NUMBER
+          #tab #cap-amt                                                  /* vt2
+          #TAB #ALOT-AMT
+          #TAB #AIL-IND                                      /* DW6
+          #TAB #AIL-AMT-NEEDED                               /* DW10
+*          #TAB ST-V.RANK                                     /* DW3                         /* vt5
+          #tab #rank                                                                         /* vt5
+          #TAB ST-V.NAME                                            /* vt1
+          #TAB #MSG                                          /* DW7
+          INTO #CAP-STARTS LEAVING NO                  /* DW2
+        COMPRESS #CAP-STARTS #TAB ST-V.ID-NUMBER            /* DW2
+          INTO #CAP-STARTS LEAVING NO                       /* DW2
+*        #Email-flag := #AIL-IND                            /* YK1 vt1
+*
+        IF #EXTR-SERV = 'A'
+          MOVE 'ARMY  ' TO #SERV
+        ELSE
+          IF #EXTR-SERV = 'F'
+            MOVE 'AIR-FORCE' TO #SERV
+          ELSE
+            MOVE 'NOT A OR F' TO #SERV
+          END-IF
+        END-IF
+*
+        RESET EMAIL-ADDRESS                                               /* TT1
+        EMAIL-ADDRESS := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)           /* TT1
+        COMPRESS #CAP-STARTS #TAB #SERV
+          #TAB EMAIL-ADDRESS                               /* DW3         /* TT1
+          INTO #CAP-STARTS LEAVING NO                     /* DW2
+*
+        compress #cap-starts #tab                                               /* vt3
+          #current-fpf-a #tab                                                   /* vt3
+          #current-PUD  into #cap-starts leaving no                             /* vt3
+*
+        WRITE WORK FILE 3 #CAP-STARTS                       /* DW2
+        ADD 1 TO #ALOT-W-STATUS-ONLY                        /* DW12
+*
+* E-mail flag (#AIL-IND) is "L" or " "                     /* YK1 vt1 \/
+*        IF #Email-flag NE ' '                               /* YK1
+*          RESET EMAIL-INFORMATION                           /* YK1
+*         TEMPLATE-TYPE  := #PRE-APPROVE-CAP-ALLOT          /* YK1
+*          TEMPLATE-TYPE  := #PRE-APPROVE-ALLOT-LOAN         /* YK3
+*          PENDING-CN     := ST-V.ID-NUMBER                  /* YK1
+*          INSURED-NAME   := ST-V.NAME                       /* YK1
+*          OWNER-EMAIL    := ST-V.INTERNET-ADDR              /* YK1
+*         PERFORM CREATE-EMAIL-INFO                         /* YK1
+*        END-IF                                            /* YK1 vt1 /\
+*
+        IF #HI GE 120
+          WRITE #EXTR-SSN-A 'MORE THAN 120 AT/IM MISMATCHES'
+        ELSE
+          ADD 1 TO #HI
+        END-IF
+*
+        MOVE #TEXT (#CAP-X) TO #HOLD-TEXT (#HI)
+        RESET #TEXT (#CAP-X)
+        SUBTRACT 1 FROM #CAP-X
+        ESCAPE TOP       /* PROCESS AT END
+      ELSE
+        IF #FOUND-AT-NOT-CAP                            /* DW7
+          reset #cap-amt                                              /* vt
+          MOVE 'AT SSN not a CAP AT' TO #MSG
+        ELSE
+          COMPRESS 'SSN not on IM/AT/CN' TO #MSG
+        END-IF
+*
+        COMPRESS #EXTR-SSN-A #ALOT-AMT #MSG #EXTR-NAME INTO #TEXT (#CAP-X)
+*
+        COMPRESS #EXTR-SSN-A                              /* DW2
+          #TAB '??'
+          #TAB '??'
+          #tab #cap-amt                                       /* vt2
+          #TAB #ALOT-AMT
+          #TAB
+          #TAB
+          #TAB                         /* DW3
+          #TAB '??'
+          #TAB #MSG                         /* DW7
+          #TAB
+          INTO #CAP-STARTS LEAVING NO               /* DW2
+*
+        IF #EXTR-SERV = 'A'
+          MOVE 'ARMY  ' TO #SERV
+        ELSE
+          IF #EXTR-SERV = 'F'
+            MOVE 'AIR-FORCE' TO #SERV
+          ELSE
+            MOVE 'NOT A OR F' TO #SERV
+          END-IF
+        END-IF
+*
+        COMPRESS #CAP-STARTS #TAB #SERV
+          #TAB        /* DW3
+          INTO #CAP-STARTS LEAVING NO  /* DW2
+        WRITE WORK FILE 3 #CAP-STARTS                   /* DW2
+*
+* E-mail flag (column after #ALOT-AMT) is " " - do not include in E-mail file
+*        RESET EMAIL-INFORMATION                           /* YK1
+*        TEMPLATE-TYPE  := #PRE-APPROVE-CAP-ALLOT          /* YK1
+*        PENDING-CN     := ST-V.ID-NUMBER                  /* YK1
+*        INSURED-NAME   := ST-V.NAME                       /* YK1
+*        OWNER-EMAIL    := ST-V.INTERNET-ADDR              /* YK1
+*        PERFORM CREATE-EMAIL-INFO                         /* YK1
+*
+        IF #HI GE 120
+          WRITE 'MORE THAN 120 AT/IM MISMATCHES'
+        ELSE
+          ADD 1 TO #HI
+        END-IF
+*
+        MOVE #TEXT (#CAP-X) TO #HOLD-TEXT (#HI)
+        RESET #TEXT (#CAP-X)
+        SUBTRACT 1 FROM #CAP-X
+        ESCAPE TOP       /* PROCESS AT END
+      END-IF
+    END-IF
+  END-IF
+*
+  IF (#IM-FND OR #AT-FND) AND #STAT-FND
+    COMPRESS #TEXT (#CAP-X) ST-V.ID-NUMBER
+      INTO #TEXT (#CAP-X)
+    COMPRESS #CAP-STARTS #TAB ST-V.ID-NUMBER        /* DW2
+      INTO #CAP-STARTS LEAVING NO              /* DW2
+  ELSE
+    COMPRESS #CAP-STARTS #TAB INTO #CAP-STARTS LEAVING NO  /* DW2
+  END-IF
+*
+  IF #EXTR-SERV = 'A'
+    MOVE 'ARMY  ' TO #SERV
+  ELSE
+    IF #EXTR-SERV = 'F'
+      MOVE 'AIR-FORCE' TO #SERV
+    ELSE
+      MOVE 'NOT A OR F' TO #SERV
+    END-IF
+  END-IF
+*
+  COMPRESS #CAP-STARTS #TAB #SERV INTO #CAP-STARTS LEAVING NO  /* DW2
+  IF #IM-FND
+    COMPRESS #CAP-STARTS #TAB IM-V.INTERNET-ADDR                /* DW3
+      INTO #CAP-STARTS LEAVING NO
+  ELSE
+    IF #AT-FND
+      COMPRESS #CAP-STARTS #TAB AT-V.INTERNET-ADDR              /* DW3
+        INTO #CAP-STARTS LEAVING NO
+    ELSE
+      COMPRESS #CAP-STARTS #TAB EMAIL-ADDRESS              /* DW3    /*TT1
+        INTO #CAP-STARTS LEAVING NO
+    END-IF
+  END-IF
+*
+  WRITE WORK FILE 3 #CAP-STARTS                                 /* DW2
+  ADD 1 TO #ALOT-W-AT-OR-IM                                     /* DW12
+*
+*  IF #Email-flag NE ' '                               /* YK1 vt1 \/
+*    RESET EMAIL-INFORMATION                           /* YK1
+*    TEMPLATE-TYPE  := #PRE-APPROVE-CAP-ALLOT          /* YK1
+*    decide for first condition                        /* YK1
+*      when #STAT-FND                                    /* YK1
+*        PENDING-CN     := ST-V.ID-NUMBER                 /* YK1
+*        INSURED-NAME   := ST-V.NAME                      /* YK1
+*        OWNER-EMAIL    := ST-V.INTERNET-ADDR             /* YK1
+*      when #AT-FND                                      /* YK1
+*        PENDING-CN     := AT-V.MEMBER-CN                 /* YK1
+*        INSURED-NAME   := AT-V.NAME                      /* YK1
+*        OWNER-EMAIL    := AT-V.INTERNET-ADDR             /* YK1
+*      when none                                         /* YK1
+*        ignore                                           /* YK1
+*    end-decide                                        /* YK1
+*    PERFORM CREATE-EMAIL-INFO                         /* YK1
+*  end-if                                              /* YK1 vt1 /\
+*
+  ADD 1 TO #CNT-2
+  DISPLAY (2) NOTITLE GIVE SYSTEM FUNCTIONS
+    #CNT-2
+    'DESCRIPTION'        #TEXT (#CAP-X)
+    'MIL-SERV'           #SERV
+END-SORT
+*
+PERFORM PROCESS-CREDIT-CARD-STARTS                              /* PM11
+*
+FIND (1) NT-V WITH ID-NUMBER = 800106   /* UPDATE "CAP" 800106 REC
+  IF NO RECORDS FOUND
+    WRITE 'NO "CAP" stats REC FOUND'
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  SUBTRACT #WAS-AT-PI-PC FROM CAPS-AT-P3
+  SUBTRACT #WAS-AT-PP    FROM CAPS-AT-P3
+  ADD      #WILL-BE-AT-Y TO CAPS-AT-P4
+  WRITE 'PI-PC-PP/PY' CAPS-AT-P3 CAPS-AT-P4
+*
+  UPDATE (1103)
+  END TRANSACTION
+END-FIND
+*
+IF #CAP-X GE 1
+  PERFORM SEND-NX
+END-IF
+*
+IF #HI NE 0
+  FOR #I1 1 TO #HI
+    IF #CAP-X GE 21
+      PERFORM SEND-NX
+    END-IF
+    ADD 1 TO #CAP-X
+    MOVE #HOLD-TEXT (#I1) TO #TEXT (#CAP-X)
+*
+    ADD 1 TO #CNT-5
+    DISPLAY (5) NOTITLE GIVE SYSTEM FUNCTIONS
+      #CNT-5 'DESCRIPTION'        #TEXT (#CAP-X)
+  END-FOR
+*
+  IF #CAP-X GT 1
+    PERFORM SEND-NX
+  END-IF
+END-IF
+*
+WRITE ////'total Automatic new CAP Members=' #WILL-BE-AT-Y
+WRITE #ALOT-W-STATUS-ONLY   'CAP Loan with no AT/IM - STATUS ONLY'    /* DW12
+WRITE #ALOT-W-AT-OR-IM      'CAP Loan with AT or IM - New Member'     /* DW12
+WRITE #AT-CAP-TYPE-C        'CAP Loan on AT with CAP TYPE = "C"'      /* DW12
+WRITE #STAT-ALP-C-LOAN-ONLY 'CAP Loan with no AT/IM ALP Code "C"'     /* DW12
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SEND-NX
+* * * * * * * * * * * * * * * * *
+*
+MOVE 950000 TO #NOTE-NUM
+* READ (1) NT-V BY ID-NUMBER FROM #NOTE-NUM /* FIND NEXT AVAIL NX NOTE       /* vt7 11/21/2016 \/
+*   MOVE NT-V.ID-NUMBER TO #NOTE-NUM
+* END-READ
+* *
+* IF  (#NOTE-NUM LE 950000)
+*     OR (#NOTE-NUM GT 980000)
+*   MOVE 980000 TO #NOTE-NUM
+* END-IF
+* *
+* SUBTRACT 1 FROM #NOTE-NUM
+*
+READ NT-V BY ID-NUMBER FROM #NOTE-NUM
+  IF #NOTE-NUM < NT-V.ID-NUMBER
+    ESCAPE BOTTOM
+  END-IF
+  IF NT-V.ID-NUMBER GE 980000
+    ESCAPE BOTTOM
+  END-IF
+  ADD 1 TO #NOTE-NUM
+END-READ                                                                    /* vt7 11/21/2016 /\
+*
+MOVE 'EAC' TO #CLK      /* SENd MSG TO EMMY (EAC)
+RESET NT-V
+MOVE #NOTE-NUM     TO NT-V.ID-NUMBER
+MOVE *DATN         TO NT-V.DTS-DATN
+MOVE *TIMN         TO NT-V.DTS-TIMN
+MOVE *DATN         TO NT-V.NOTE-DATE (1)
+MOVE 'EDS'         TO NT-V.NOTE-CLERK-ID (1)
+MOVE #CLK          TO NT-V.NOTE-CLERK-ID (2)
+MOVE 'UNV'         TO NT-V.NOTE-CLERK-ID (3)
+MOVE 'Allotment Start with Start Amt Over $150 or SSN not found'
+  TO NT-V.NOTE-TEXT (1)
+*
+FOR #CAP-X 1 TO 21
+  MOVE #TEXT (#CAP-X) TO NT-V.NOTE-TEXT (#CAP-X + 1)
+END-FOR
+*
+STORE NT-V
+PERFORM SET-MSG-SENT-INDICATOR
+*
+* SUBTRACT 1 FROM #NOTE-NUM
+* MOVE 'MBW' TO #CLK     /* SEND MSG TO maggie
+* MOVE #NOTE-NUM TO NT-V.ID-NUMBER
+* MOVE #CLK      TO NT-V.NOTE-CLERK-ID (2)
+* STORE NT-V
+* PERFORM SET-MSG-SENT-INDICATOR
+*
+* SUBTRACT 1 FROM #NOTE-NUM
+* MOVE 'LCM' TO #CLK     /* SEND MSG TO Lori
+* MOVE #NOTE-NUM TO NT-V.ID-NUMBER
+* MOVE #CLK      TO NT-V.NOTE-CLERK-ID (2)
+* STORE NT-V
+* PERFORM SET-MSG-SENT-INDICATOR
+END TRANSACTION
+*
+RESET #TEXT (*) #CAP-X
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SET-MSG-SENT-INDICATOR
+* * * * * * * * * * * * * * * * * * * *
+*
+FIND (1) TRMS-V WITH CLERK-ID = #CLK
+  MOVE 'Y' TO MSG-JUST-SENT
+  UPDATE (1214)
+END-FIND
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PROCESS-AT
+* * * * * * * * * * * * * * * * * * * *
+*
+COMPUTE #FACE-9 = AT-V.FACE-AMT-UNITS * 1000
+IF AT-V.CAP-LOAN-AMT = 0
+  MOVE 4000 TO AT-V.CAP-LOAN-AMT                                     /* vt2 was 5000
+END-IF
+*
+move edited  at-v.cap-loan-amt(em=z,zzz.99)  to #cap-amt                                              /* vt2
+if #cap-amt ne '0'
+  compress '$' #cap-amt into #cap-amt leaving no                                                        /* vt2
+end-if
+write '=' #cap-amt '=' st-v.id-number                                                /* vt2
+IF AT-V.CAP-TERM = 0
+  MOVE 48 TO AT-V.CAP-TERM
+END-IF
+*
+RESET #LOAN-PMT
+IF AT-V.CAP-IND = 'Y' AND (AT-V.CAP-LOAN-AMT NE 0)
+  DECIDE ON FIRST VALUE AT-V.CAP-LOAN-AMT                                          /* vt2
+    VALUE 5000
+      IF CAP-TERM = 48 MOVE 107.25 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 141.94 TO #LOAN-PMT END-IF
+    VALUE 4000
+      IF CAP-TERM = 48 MOVE  85.80 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 113.55 TO #LOAN-PMT END-IF
+    VALUE 3000
+      IF CAP-TERM = 48 MOVE 64.35 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 85.16 TO #LOAN-PMT END-IF
+    VALUE 2500
+      IF CAP-TERM = 48 MOVE 53.62 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 70.97 TO #LOAN-PMT END-IF
+    VALUE 2000
+      IF CAP-TERM = 48 MOVE 42.90 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 56.77 TO #LOAN-PMT END-IF
+    VALUE 1000
+      IF CAP-TERM = 48 MOVE 21.45 TO #LOAN-PMT END-IF
+      IF CAP-TERM = 36 MOVE 28.38 TO #LOAN-PMT END-IF
+    NONE IGNORE
+  END-DECIDE
+END-IF
+*
+IF AT-V.SMOKER-FLAG = 'N' OR = ' '
+  MOVE 'N' TO #SMOKER-FLAG
+ELSE
+  MOVE 'S' TO #SMOKER-FLAG
+END-IF
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT AT-V.DATE-OF-BIRTH FROM #YYYYMMDD
+MOVE #YY TO #ISS-AGE-A2
+MOVE *DATN TO #YYYYMMDD /* calc premium based on 1st of next month
+ADD 1 TO #MM            /* since CAP eff date will be then
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE 1 TO #DD
+*
+RESET #SCR-SUFFIX                                                 /* DW8
+*
+IF AT-V.RATING-CODE = #CLASS-1 MOVE 'SB1' TO #SCR-SUFFIX END-IF   /* PM4
+IF AT-V.RATING-CODE = #CLASS-2 MOVE 'SB2' TO #SCR-SUFFIX END-IF   /* PM4
+IF AT-V.RATING-CODE = #CLASS-3 MOVE 'SB3' TO #SCR-SUFFIX END-IF   /* PM4
+*
+CALLNAT 'GPREMSXX' #SCR-COMMAND #SCR-ID #SCR-SUFFIX
+  AT-V.PLAN #ISS-AGE #APREM #YYYYMMDD #SMOKER-FLAG #FACE-9
+  AT-V.SEX                                                        /* DW1
+*
+RESET #MON-PREM
+IF AT-V.PLAN NE 'SP'
+  COMPUTE #MON-PREM = #APREM / 12
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PROCESS-CREDIT-CARD-STARTS                      /* PM11
+* * * * * * * * * * * * * * * * * * * * * * *
+*
+READ AT-V BY NAME
+  IF AT-V.CAP-IND = 'Y'
+      AND AT-V.CAP-TYPE = 'C'
+      AND FUNCTION-CHECK-CC-CAP-ISSUE (<AT-V.ID-NUMBER,#PARM-YYYYMMDD>) = 'Y' /* PM13
+*   AND AT-V.AT-STATUS = 'PC'                                     /* PM13
+*   AND AT-V.ACTION-DATE LT #PARM-YYYYMMDD                        /* PM11 PM13
+
+    IGNORE
+  ELSE
+    ESCAPE TOP
+  END-IF
+*
+  IF #CAP-X GE 21
+    PERFORM SEND-NX
+  END-IF
+  ADD +1 TO #CAP-X
+*
+  COMPRESS AT-V.SSN 'AT' AT-V.ID-NUMBER '0' INTO #TEXT (#CAP-X)
+*
+  PERFORM PROCESS-AT                                                       /* vt2
+*
+  COMPRESS AT-V.SSN  #TAB
+    'AT'      #TAB
+    AT-V.ID-NUMBER #TAB
+    #cap-amt  #tab                                                       /* vt2
+    '0' INTO #CAP-STARTS LEAVING NO
+*
+*  PERFORM PROCESS-AT                                                    /* vt2
+*
+  COMPUTE #CALC-TOT-ALOT-AMT
+    = #LOAN-PMT + #MON-PREM + AT-V.ALLOT-STRT-AMT
+*
+  COMPRESS #TEXT (#CAP-X) 'C' INTO #TEXT (#CAP-X)
+  COMPRESS #CAP-STARTS #TAB 'C' INTO #CAP-STARTS LEAVING NO
+  ADD 1 TO #WILL-BE-AT-Y
+  MOVE EDITED #CALC-TOT-ALOT-AMT (EM=Z,ZZZ.99) TO #AMT-8
+  COMPRESS #CAP-STARTS #TAB INTO #CAP-STARTS LEAVING NO
+*
+  COMPRESS #TEXT (#CAP-X) AT-V.NAME-15 INTO #TEXT (#CAP-X)
+  COMPRESS #CAP-STARTS #TAB AT-V.RANK
+    #TAB AT-V.NAME INTO #CAP-STARTS LEAVING NO
+*
+  COMPRESS #CAP-STARTS #TAB #TAB INTO #CAP-STARTS LEAVING NO
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN AT-V.MIL-SERVICE = MASK ('A')
+      #SERV := 'ARMY  '
+    WHEN AT-V.MIL-SERVICE = MASK ('F')
+      #SERV := 'AIR-FORCE'
+    WHEN NONE
+      #SERV := 'NOT A OR F'
+  END-DECIDE
+*
+  COMPRESS #CAP-STARTS #TAB #SERV INTO #CAP-STARTS LEAVING NO
+  COMPRESS #CAP-STARTS #TAB AT-V.INTERNET-ADDR INTO #CAP-STARTS LEAVING NO
+*
+  WRITE WORK FILE 3 #CAP-STARTS
+  ADD 1 TO #AT-CAP-TYPE-C                           /* DW12
+  RESET #CAP-STARTS
+*
+  ADD 1 TO #CNT-2
+  DISPLAY (2)
+    #CNT-2
+    #TEXT (#CAP-X)
+    #SERV
+END-READ
+*
+READ ST-V BY MEMBER-KEY FROM '001900'
+  RESET #CIL-EXISTS
+  FOR #I1 1 TO 9
+    IF ST-V.X-ALT-LP-IND (#I1) = 'C'
+      MOVE TRUE TO #CIL-EXISTS
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF NOT #CIL-EXISTS
+    ESCAPE TOP
+  END-IF
+*
+  reset #pda-rank #rank                                                                 /* vt5
+  move st-v.member-contact-id  to  #CONTACT-ID-R                                        /* vt5
+  callnat 'RANKN001' #pda-rank                                                          /* vt5
+  #rank := #rank-abbr                                                                   /* vt5
+*
+  COMPRESS ST-V.SSN
+    #TAB 'CN'
+    #TAB ST-V.ID-NUMBER
+    #TAB '0'
+    #TAB 'C'
+    #TAB ' '
+*    #TAB ST-V.RANK                                         /* vt5
+    #tab #rank                                              /* vt5
+    #TAB ST-V.NAME
+    #TAB ' '
+    #TAB ST-V.ID-NUMBER INTO #CAP-STARTS LEAVING NO
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN ST-V.MILITARY-SERVICE = MASK ('A')
+      #SERV := 'ARMY  '
+    WHEN ST-V.MILITARY-SERVICE = MASK ('F')
+      #SERV := 'AIR-FORCE'
+    WHEN NONE
+      #SERV := 'NOT A OR F'
+  END-DECIDE
+*
+  RESET EMAIL-ADDRESS                                               /* TT1
+  EMAIL-ADDRESS := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)           /* TT1
+*
+  COMPRESS #CAP-STARTS #TAB #SERV #TAB EMAIL-ADDRESS
+    INTO #CAP-STARTS LEAVING NO
+  WRITE WORK FILE 3 #CAP-STARTS
+  ADD 1 TO #STAT-ALP-C-LOAN-ONLY                         /* DW12
+  RESET #CAP-STARTS
+*
+* E-mail flag is "C" ( after AT-V.ID-NUMBER and amount)  /* YK1  vt1\/
+*  RESET EMAIL-INFORMATION                                /* YK1
+*  TEMPLATE-TYPE  := #PRE-APPROVE-CCARD-LOAN              /* YK2
+*  PENDING-CN     := ST-V.ID-NUMBER                       /* YK1
+*  INSURED-NAME   := ST-V.NAME                            /* YK1
+*  OWNER-EMAIL    := ST-V.INTERNET-ADDR                   /* YK1
+*   PERFORM CREATE-EMAIL-INFO                              /* YK1 vt1/\
+END-READ
+*
+END-SUBROUTINE
+*
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - /*  bz1
+DEFINE SUBROUTINE CHECK-AFFL-ONLY                                       /*  bz1
+*  PERFORM  CHECK-AFFL-ONLY                                             /*  bz1
+* 1 #AFFL-ONLY (L) INIT <FALSE>                                         /*  bz1
+IF ( ST-V.PROCESS-IND <> "S" ) OR ( ST-V.STATUS(*) <> " " )            /*  bz1
+  #AFFL-ONLY := FALSE                                                  /*  bz1
+ELSE                                                                   /*  bz1
+  IF ST-V.INTRO-FLAG NE 'A'  #AFFL-ONLY := TRUE                        /*  bz1
+  ELSE #AFFL-ONLY := FALSE                                          /*  bz1
+  END-IF                                                               /*  bz1
+END-IF                                                                 /*  bz1
+END-SUBROUTINE                                                          /*  bz1
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - /*  bz1
+*
+*****************
+define subroutine get-cap-amt                                                               /* vt2 \/
+*****************
+*
+find ta with ta.id-number = #id-number
+    and ta.txn-code = 'NEWL'
+  if no
+    reset #cap-amt
+    escape bottom
+  end-norec
+  if   ta.sg-category-1 (1) = 'CP'
+      and ta.debit-amount ne 0
+    move edited ta.DEBIT-amount(em=zzz9.99) to #cap-amt
+    compress '$' #cap-amt into #cap-amt leaving no
+  else
+    reset #cap-amt
+  end-if
+  write 'CAP-LOAN-AMT from TA ' #cap-amt
+end-find
+*
+end-subroutine                                                                            /* vt2 /\
+*
+END

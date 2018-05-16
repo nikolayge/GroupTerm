@@ -1,0 +1,610 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************************
+* NAME         : INVP0001                                                *
+* AUTHOR       : Copyright: Electronic Data Systems                      *
+* DESCRIPTION  : Check Scanning Interface                                *
+*              : Applies scanned items to accounts                       *
+**************************************************************************
+*                       MODIFICATION LOG                                 *
+* USER  DATE       TAG     REASON                                        *
+* PAM  12/09/2010  None    Program Written                               *
+* PAM  12/29/2010  PM1     Expanded exception processing                 *
+* PAM  01/04/2011  PM2     Capitalizae policy number                     *
+* VXT  04/22/2011  vt1     Use the CMB3 trans code when the passed input *
+*                          transaction code is INPV,INTV or INTF         *
+* vxt  08/12/2011  vt2     Add undeliverable address report and check for*
+*                          empty file.                                   *
+* vxt  01/04/2012  vt3     Add automatic payment process whe the check amount
+*                          is not equal to the invoice amount.           *
+* vxt  11/12/2012  vt5     changes for AQ2     /Ticket 1550/
+* vxt  12/07/2012  vt6     Latest changes by Kathie's request            *
+* VXT  04/23/2013  vt7     Include logic to pay by CN when the amounts are equal /Ticket 1550/
+* vxt  08/05/2013  vt8     Fix the production error.
+* vxt  11/11/2013  vt9     Replace teh addr-chg-cd from status file with a function.
+**************************************************************************
+*
+DEFINE DATA
+LOCAL USING INVL0001      /* Invoice file layout from check scanning solution
+LOCAL USING SCNL0001      /* Scanline breakdown
+LOCAL USING WCCA0021      /* Transaction data to pass to IAS
+LOCAL USING OBJLSTAT      /* Check for record lock
+LOCAL
+1 #WORK-FIELDS
+  2 #INPUT-I                (I4)
+  2 #CMB3-I                 (I2)
+  2 #NEW-INVOICE-TOTAL      (N7.2)
+  2 #REMAINDER              (N7.2)
+  2 #RECS-READ              (N7)
+  2 #CMB3-CNT               (N2)
+  2 #RESET                  (L)
+  2 #ERROR-MESSAGE          (A100)
+  2 #RETURN-MESSAGE         (A100)
+  2 #REPORT-MESSAGE         (A100)
+  2 #RETURN-CODE            (A4)
+  2 #FATAL-ERROR            (A4) INIT <'1011'>
+  2 #TAB                    (A1) INIT <H'09'>
+*
+1 #CONSTANTS
+  2 #MAX-REC                (N7)  INIT <5000>
+*
+1 #INPUT-RECORD            (A1000)
+1 #ERROR-REPORT            (A1000)
+*
+1 #PROCESS-TABLE           (1:*)
+  2 #MEMBER-ID              (N6)
+  2 #POLICY-NUMBER          (A16)
+  2 #INVOICE-AMOUNT         (N7.2)
+  2 #CHECK-AMOUNT           (N7.2)
+  2 #CHECK-NUMBER           (A10)
+  2 #NUMBER-TRANS           (N2)
+  2 #POLICY-TRANSACTIONS    (10)
+    3 #TRANSACTION-CODE      (A4)
+    3 #TRANSACTION-AMOUNT    (N5.2)
+*
+1 stat view of A-status                      /* vt2 \/
+  2 id-number
+  2 member-contact-id
+*  2 address-chg-code                         /* vt9
+*
+1 Cont view of A-contacts
+  2 contact-id
+  2 first-name
+  2 middle-name
+  2 last-name
+  2 ssn
+*
+1 #name                       (a70)
+1 #cnt-undel                  (p7)       /* vt2 /\
+1 #out-rec                    (a100)                 /* vt3
+1 #diff                       (a1)                   /* vt3
+1 #cn-a                       (a6)                                  /* vt5 \/
+1 redefine #cn-a
+  2 #cn                         (n6)
+1 #inv-cn                   (a6)                                  /* vt5 /\
+1 #found                    (l)                                     /* vt6
+1 #pol-num                  (a16)                                   /* vt6
+1 stat1 view of A-status                                            /* vt6
+  2 id-number                                                       /* vt6
+  2 x-bill-dollar    (9)                                            /* vt6
+1 #x                         (i2)                                   /* vt6
+*
+END-DEFINE
+*
+************************************************************************
+*
+*    define work file 1 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/INVOICE-P/INVOICE.TXT'  TYPE 'ASCII'
+* * *
+*     define work file 2 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/error-report.TXT'  TYPE 'ASCII-COMPRESSED'
+* * *
+*    define work file 3 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/workfile.report.TXT'  TYPE 'ASCII'
+*
+******************************************************************************************************
+FORMAT (2) PS=61 LS=133                                        /* vt2 \/
+
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'LIST OF CNs WITH NO ADDRESS OR UNDELIVERABLE ADDR'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+write (2)/ / 'ID-NUMBER' 5x 'SSN' 8x 'NAME'    /
+  '---------' 3x '-----------' 2x '-'(70) /                  /* vt2 /\
+*
+compress 'CN Number' #tab                                     /* vt3 \/
+  'Transaction Code'  #tab
+  'Transaction Amount' #tab
+  'Transaction Date' #tab
+  into #out-rec leaving no
+write work 3 #out-rec                                         /* vt3 /\
+*
+DEFINE WORK FILE 2 TYPE 'ASCII-COMPRESSED'
+COMPRESS 'Member ID'        #TAB
+  'Transaction Code' #TAB
+  'Error Message' INTO #ERROR-REPORT LEAVING NO
+WRITE WORK 2 #ERROR-REPORT               /* just for testing
+RESET #ERROR-REPORT
+*
+EXPAND ARRAY #PROCESS-TABLE TO (*:#MAX-REC)
+*
+read work 1 once #input-record                      /* vt2 \/
+at end of file
+  terminate 40
+end-endfile                                         /* vt2 /\
+*
+READ WORK FILE 1 #INPUT-RECORD
+  IF #INPUT-RECORD = SCAN('Policy Number') ESCAPE TOP END-IF   /* bz
+  ADD +1 TO #RECS-READ
+*  write #input-record (AL=79)
+  IF #RECS-READ > #MAX-REC
+    #MAX-REC := #MAX-REC + 1000
+    RESIZE ARRAY #PROCESS-TABLE TO (*:#MAX-REC)
+  END-IF
+*
+  RESET #INV-INVOICE-LINE
+  SEPARATE #INPUT-RECORD INTO #INV-POL-NUM
+    #inv-cn                                                                /* vt5
+    #INV-PAYOR-NAME
+    #INV-SCAN-LINE
+    #INV-CHECK-NUMBER
+    #INV-CHECK-AMOUNT
+    #INV-TRANSACTION
+    #INV-AMOUNT
+  IGNORE
+    WITH DELIMITER #TAB
+*
+  write'='  #inv-scan-line  (al=78)
+  #SCAN-LINE := #INV-SCAN-LINE
+  write  '=' #scan-line
+*
+*  IF #SCAN-MEMBER-CN NE MASK (9)                                         /* vt5 \/
+*    ESCAPE TOP
+*  END-IF                                                                 /* vt5 /\
+* *
+  IF #INV-AMOUNT = ' '
+    #INV-AMOUNT := 0
+  END-IF
+*
+  IF #INV-CHECK-AMOUNT = ' '
+    #INV-CHECK-AMOUNT := 0
+  END-IF
+*
+  EXAMINE #INV-POL-NUM TRANSLATE INTO UPPER CASE                  /* PM2
+
+  ADD +1 TO #INPUT-I
+  write 'line 1660' '=' #inv-cn '=' #scan-member-cn
+  if #inv-cn = ' ' and #inv-pol-num ne ' '
+    if #scan-member-cn ne ' '                                        /* vt5
+      #MEMBER-ID (#INPUT-I)      := VAL(#SCAN-MEMBER-CN)
+    end-if
+    #POLICY-NUMBER (#INPUT-I)  := #INV-POL-NUM
+    reset #cn-a #cn
+  else                                                                               /* vt5 \/
+    if #inv-cn ne ' '
+      #cn-a := #inv-cn
+      move right #cn-a to #cn-a
+      #member-id(#input-i) := #cn
+    end-if
+    reset #POLICY-NUMBER (#INPUT-I)
+  end-if                                                                             /* vt5 /\
+*  write 'line 1780'  '=' #CN '=' #member-id (#input-i) '=' #policy-number (#input-i)
+  #CHECK-AMOUNT (#INPUT-I)   := VAL(#INV-CHECK-AMOUNT)
+  #CHECK-AMOUNT (#INPUT-I)   := #CHECK-AMOUNT (#INPUT-I) / 100
+  #CHECK-NUMBER (#INPUT-I)   := #INV-CHECK-NUMBER
+*
+* write '=' #member-id(#input-i) '='#check-amount (#input-i)
+  perform check-undeliverble                                /* vt2
+*
+  RESET #TRANSACTION-CODE (#INPUT-I,*) #TRANSACTION-AMOUNT (#INPUT-I,*)
+  FOR #INV-I 1 TO 10
+    IF #INV-TRAN-CODE (#INV-I) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    #TRANSACTION-CODE (#INPUT-I,#INV-I)   := #INV-TRAN-CODE (#INV-I)
+    #TRANSACTION-AMOUNT (#INPUT-I,#INV-I) := VAL(#INV-TRAN-AMOUNT(#INV-I))
+    ADD #TRANSACTION-AMOUNT (#INPUT-I,#INV-I) TO #INVOICE-AMOUNT (#INPUT-I)
+    ADD +1 TO #NUMBER-TRANS (#INPUT-I)
+  END-FOR
+*
+  at end of data                                             /* vt2  \/
+    if #cnt-undel = 0
+      write (2) / / / ' There are no CNs with undeliverable address.'
+    else
+      write (2)/ / 'Total number of CNs with undeliverable address:' #cnt-undel
+    end-if
+  end-enddata                                                 /* vt2  /\
+*
+END-WORK
+*
+PERFORM CHECK-FOR-RECORD-LOCK
+*
+FOR #INPUT-I 1 TO #RECS-READ
+*                                                                             /* vt7
+  if #MEMBER-ID (#INPUT-I) ne 0 and #POLICY-NUMBER (#INPUT-I) eq ' '
+    write'!!!!!pay by CN' '=' #cn '=' #MEMBER-ID (#INPUT-I)    '=' #check-amount(#input-i)
+    callnat 'PAYDRIV' #MEMBER-ID (#INPUT-I) #check-amount (#input-i)
+    #REPORT-MESSAGE := 'PAID BY CN. AMOUNT RECEIVED DOES NOT MATCH DUE AMOUNT BY POLICIES'
+    COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+      #TRANSACTION-CODE (#INPUT-I,1) #TAB
+      #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+    WRITE WORK FILE 2 #ERROR-REPORT
+    RESET #ERROR-REPORT
+    escape top
+  end-if                                                                      /* vt7
+*
+  IF #MEMBER-ID (#INPUT-I) = 0
+      AND #INVOICE-AMOUNT (#INPUT-I) = 0
+      AND #CHECK-AMOUNT (#INPUT-I) = 0
+    ESCAPE TOP
+  END-IF
+*
+  IF #CHECK-AMOUNT (#INPUT-I) NE #INVOICE-AMOUNT (#INPUT-I)
+    PERFORM AMOUNT-DIFFERENCE
+  else reset #diff
+  END-IF
+*
+  RESET CC-PAYMENT
+  if #diff eq ' '                                           /* vt3
+    CC-PAYMENT.ID-NUMBER     := #MEMBER-ID (#INPUT-I)
+    CC-PAYMENT.USER          := 'EDS'
+    CC-PAYMENT.CASH-CODE     := 'I'
+    C@PAY-POLICY             := 1
+*
+    CC-PAYMENT.POLICY-NBR(1) := #POLICY-NUMBER (#INPUT-I)
+    C@APPLIED-PAYMENT(1)     := #NUMBER-TRANS (#INPUT-I)
+*
+    FOR #INV-I 1 TO #NUMBER-TRANS (#INPUT-I)
+      CC-PAYMENT.TRAN-TYPE  (1,#INV-I) := #TRANSACTION-CODE (#INPUT-I,#INV-I)
+      CC-PAYMENT.DUE-AMOUNT (1,#INV-I) := #TRANSACTION-AMOUNT (#INPUT-I,#INV-I)
+    END-FOR
+*
+    DISPLAY (1) #MEMBER-ID (#INPUT-I)
+      #TRANSACTION-CODE (#INPUT-I,1)
+      #TRANSACTION-CODE (#INPUT-I,2)
+*
+    RESET #ERROR-MESSAGE
+    CALLNAT 'WCCNCC21' CC-PAYMENT #ERROR-MESSAGE        /* for test
+    IF SUBSTR(#ERROR-MESSAGE,1,4) = #FATAL-ERROR
+      #RETURN-CODE    := SUBSTR(#ERROR-MESSAGE,1,4)
+      #RETURN-MESSAGE := SUBSTR(#ERROR-MESSAGE,5)
+      WRITE (11) 'FATAL ERROR' 1X #RETURN-CODE 1X #RETURN-MESSAGE (EM=XXXXXXXXXX) #MEMBER-ID (#INPUT-I)
+      COMPRESS #MEMBER-ID (#INPUT-I)        #TAB
+        #TRANSACTION-CODE (1,#INV-I) #TAB
+        #ERROR-MESSAGE INTO #ERROR-REPORT LEAVING NO
+      WRITE WORK FILE 2 #ERROR-REPORT
+      RESET #ERROR-REPORT
+    END-IF
+  end-if                                                /* vt3
+*
+  FOR #INV-I 1 TO #NUMBER-TRANS (#INPUT-I)
+    IF CC-PAYMENT.RESULT-MESSAGE (1,#INV-I) NE ' '
+*
+      #REPORT-MESSAGE := CC-PAYMENT.RESULT-MESSAGE (1,#INV-I)
+      COMPRESS #MEMBER-ID (#INPUT-I)        #TAB
+        #TRANSACTION-CODE (1,#INV-I) #TAB
+        #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+      WRITE WORK FILE 2 #ERROR-REPORT
+      RESET #ERROR-REPORT
+    END-IF
+  END-FOR
+END-FOR
+*
+ON ERROR
+  BACKOUT TRANSACTION
+  PERFORM ERROR-ROUTINE
+END-ERROR
+*
+************************************************************************
+DEFINE SUBROUTINE AMOUNT-DIFFERENCE
+************************************************************************
+*
+* write 'we are in difference' /'=' #check-amount (#input-i) / '=' #INVOICE-AMOUNT (#INPUT-I)
+RESET #CMB3-CNT
+IF #CHECK-AMOUNT (#INPUT-I) GT #INVOICE-AMOUNT (#INPUT-I)
+  DECIDE FOR FIRST CONDITION
+***    WHEN #NUMBER-TRANS (#INPUT-I) GT 1 AND #POLICY-NUMBER (#INPUT-I) NE ' '   /* vt3 \/
+*
+***      EXAMINE #TRANSACTION-CODE (#INPUT-I,*) FOR 'CMB3' GIVING NUMBER #CMB3-CNT /* PM1
+***      IF #CMB3-CNT GT 0                                                         /* PM1
+***        PERFORM CAP-ERROR-LOGIC                                                 /* PM1
+***      ELSE                                                                      /* PM1
+***        RESET #TRANSACTION-CODE (#INPUT-I,*)
+***          #TRANSACTION-AMOUNT (#INPUT-I,*)
+***        #NUMBER-TRANS (#INPUT-I)         := 1
+***        #TRANSACTION-CODE (#INPUT-I,1)   := 'BADJ'
+***        #TRANSACTION-AMOUNT (#INPUT-I,1) := #CHECK-AMOUNT (#INPUT-I)
+*
+* * *         #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED AND MULTIPLE TRANSACTIONS - applied to BADJ'
+* * *         COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+* * *           #TRANSACTION-CODE (#INPUT-I,1) #TAB
+* * *           #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+* * *         WRITE WORK FILE 2 #ERROR-REPORT
+* * *         RESET #ERROR-REPORT
+* * *       END-IF                                                                     /* PM1
+* * * *
+* * *     WHEN #NUMBER-TRANS (#INPUT-I) GT 1 AND #POLICY-NUMBER (#INPUT-I) = ' '
+* * *       RESET #TRANSACTION-CODE (#INPUT-I,*)
+* * *         #TRANSACTION-AMOUNT (#INPUT-I,*)
+* * *       #NUMBER-TRANS (#INPUT-I)         := 1
+* * *       #TRANSACTION-CODE (#INPUT-I,1)   := 'ADCR'
+* * *       #TRANSACTION-AMOUNT (#INPUT-I,1) := #CHECK-AMOUNT (#INPUT-I)
+* * * *
+* * *       #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED AND MULTIPLE TRANSACTIONS - applied to ADCR'
+* * *       COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+* * *         #TRANSACTION-CODE (#INPUT-I,1) #TAB
+* * *         #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+* * *       WRITE WORK FILE 2 #ERROR-REPORT
+* * *       RESET #ERROR-REPORT
+* * * *
+* * *     WHEN #TRANSACTION-CODE (#INPUT-I,1) = 'PREP' OR = 'CMB3'
+* * *       #TRANSACTION-AMOUNT (#INPUT-I,1)   := #CHECK-AMOUNT (#INPUT-I)
+* * * *
+* * *       #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED - increasing payment amount'
+* * *       COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+* * *         #TRANSACTION-CODE (#INPUT-I,1) #TAB
+* * *         #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+* * *       WRITE WORK FILE 2 #ERROR-REPORT
+* * *       RESET #ERROR-REPORT
+* * * *                                                                          /* vt3 /\
+    WHEN (#TRANSACTION-CODE (#INPUT-I,1) = 'INPV' OR = 'INTV' OR = 'INPF' OR = 'INTF')
+        and #NUMBER-TRANS (#INPUT-I) eq 1
+      #TRANSACTION-CODE (#INPUT-I,1)   := 'CMB3'
+      #TRANSACTION-AMOUNT (#INPUT-I,1) := #CHECK-AMOUNT (#INPUT-I) /*  - #INVOICE-AMOUNT (#INPUT-I)  vt1
+*      ADD +1 TO #NUMBER-TRANS (#INPUT-I)                             /* vt1
+*
+      #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED - added CMB3 transaction for difference'
+      COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+        #TRANSACTION-CODE (#INPUT-I,1) #TAB
+        #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+      write #error-report (al=79)
+      WRITE WORK FILE 2 #ERROR-REPORT
+      RESET #ERROR-REPORT
+      reset #diff                        /* vt 05282012
+
+* * *     WHEN #INVOICE-AMOUNT (#INPUT-I) = 0                                    /* vt3 \/
+* * *       RESET #TRANSACTION-CODE (#INPUT-I,*)
+* * *         #TRANSACTION-AMOUNT (#INPUT-I,*)
+* * *       #TRANSACTION-AMOUNT (#INPUT-I,1) := #CHECK-AMOUNT (#INPUT-I)
+* * * *
+* * *       #REPORT-MESSAGE := 'NO TRANSACTIONS RECEIVED - NOT APPLIED'
+* * *       COMPRESS #MEMBER-ID (#INPUT-I)           #TAB
+* * *         #TRANSACTION-CODE (#INPUT-I,1)  #TAB
+* * *         #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+* * *       WRITE WORK FILE 2 #ERROR-REPORT
+* * *       RESET #ERROR-REPORT                                                  /* vt3 /\
+*
+    WHEN NONE
+      #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED - paying through new PGM'
+      COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+        #TRANSACTION-CODE (#INPUT-I,1) #TAB
+        #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+      WRITE WORK FILE 2 #ERROR-REPORT
+      RESET #ERROR-REPORT
+      reset #diff
+      if #inv-CN ne ' '                                                                                   /* vt5
+        perform find-match-amount                                                                         /* vt6
+        if #found                                                                                         /* vt6
+          callnat 'PAYDRIVP' #MEMBER-ID (#INPUT-I) #POLICY-NUMBER (#INPUT-I)  #check-amount (#input-i)    /* vt8 add #policy-number(#input-i)                                          /* vt6
+        else
+          callnat 'PAYDRIV' #MEMBER-ID (#INPUT-I) #check-amount (#input-i)
+        end-if                                                                                            /* vt6
+      else
+        callnat 'PAYDRIVP' #MEMBER-ID (#INPUT-I)
+          #POLICY-NUMBER (#INPUT-I)                                                                       /* vt5 \/
+          #check-amount (#input-i)
+*         #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED - paying through new PGM'
+*         COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+*           #TRANSACTION-CODE (#INPUT-I,1) #TAB
+*           #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+*         WRITE WORK FILE 2 #ERROR-REPORT
+*         RESET #ERROR-REPORT
+      end-if                                                                                              /* vt5 /\
+      #diff := 'Y'
+
+* * *       RESET #TRANSACTION-CODE (#INPUT-I,*)                                /* vt3 \/
+* * *         #TRANSACTION-AMOUNT (#INPUT-I,*)
+* * *       #TRANSACTION-CODE (#INPUT-I,1)   := 'ADCR'
+* * *       #TRANSACTION-AMOUNT (#INPUT-I,1) := #CHECK-AMOUNT (#INPUT-I)
+* * * *
+* * *       #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED - applied to ADCR'
+* * *       COMPRESS #MEMBER-ID (#INPUT-I)           #TAB
+* * *         #TRANSACTION-CODE (#INPUT-I,1)  #TAB
+* * *         #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+* * *       WRITE WORK FILE 2 #ERROR-REPORT
+* * *       RESET #ERROR-REPORT                                                 /* vt3 /\
+  END-DECIDE
+END-IF
+*
+IF #CHECK-AMOUNT (#INPUT-I) LT #INVOICE-AMOUNT (#INPUT-I)
+  DECIDE FOR FIRST CONDITION
+* * *     WHEN #NUMBER-TRANS (#INPUT-I) GT 1 AND #POLICY-NUMBER (#INPUT-I) NE ' ' /* vt3 \/
+* * * *
+* * *       EXAMINE #TRANSACTION-CODE (#INPUT-I,*) FOR 'CMB3' GIVING NUMBER #CMB3-CNT /* PM1
+* * *       IF #CMB3-CNT GT 0                                                         /* PM1
+* * *         PERFORM CAP-ERROR-LOGIC                                                 /* PM1
+* * *       ELSE                                                                      /* PM1
+* * *         RESET #TRANSACTION-CODE (#INPUT-I,*)
+* * *           #TRANSACTION-AMOUNT (#INPUT-I,*)
+* * *         #NUMBER-TRANS (#INPUT-I)         := 1
+* * *         #TRANSACTION-CODE (#INPUT-I,1)   := 'BADJ'
+* * *         #TRANSACTION-AMOUNT (#INPUT-I,1) := #CHECK-AMOUNT (#INPUT-I)
+* * * *
+* * *         #REPORT-MESSAGE := 'AMOUNT RECEIVED LESS THAN AMOUNT BILLED AND MULTIPLE TRANSACTIONS - applied to BADJ'
+* * *         COMPRESS #MEMBER-ID (#INPUT-I)           #TAB
+* * *           #TRANSACTION-CODE (#INPUT-I,1)  #TAB
+* * *           #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+* * *         WRITE WORK FILE 2 #ERROR-REPORT
+* * *         RESET #ERROR-REPORT
+* * *       END-IF                                                                     /* PM1
+* * * *
+* * *     WHEN #NUMBER-TRANS (#INPUT-I) GT 1 AND #POLICY-NUMBER (#INPUT-I) = ' '
+* * *       RESET #TRANSACTION-CODE (#INPUT-I,*)
+* * *         #TRANSACTION-AMOUNT (#INPUT-I,*)
+* * *       #NUMBER-TRANS (#INPUT-I)         := 1
+* * *       #TRANSACTION-CODE (#INPUT-I,1)   := 'ADCR'
+* * *       #TRANSACTION-AMOUNT (#INPUT-I,1) := #CHECK-AMOUNT (#INPUT-I)
+* * * *
+* * *       #REPORT-MESSAGE := 'AMOUNT RECEIVED LESS THAN AMOUNT BILLED AND MULTIPLE TRANSACTIONS - applied to ADCR'
+* * *       COMPRESS #MEMBER-ID (#INPUT-I)           #TAB
+* * *         #TRANSACTION-CODE (#INPUT-I,1)  #TAB
+* * *         #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+* * *       WRITE WORK FILE 2 #ERROR-REPORT
+* * *       RESET #ERROR-REPORT
+* * * *                                                                                    /* vt3 /\
+
+    WHEN (#TRANSACTION-CODE (#INPUT-I,1) = 'INPV' OR = 'INTV' OR = 'INPF' OR = 'INTF')  /* vt 05042012 \/
+        and #NUMBER-TRANS (#INPUT-I) eq 1
+      #TRANSACTION-AMOUNT (#INPUT-I,1)   := #CHECK-AMOUNT (#INPUT-I)
+      #REPORT-MESSAGE := 'AMOUNT RECEIVED LESS THAN AMOUNT BILLED - lowering payment amount'
+      COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+        #TRANSACTION-CODE (#INPUT-I,1) #TAB
+        #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+      WRITE WORK FILE 2 #ERROR-REPORT
+      RESET #ERROR-REPORT
+      reset #diff                        /* vt 05282012                               /* vt 05042012  /\
+    WHEN NONE
+      #REPORT-MESSAGE := 'AMOUNT RECEIVED LESS THAN AMOUNT BILLED - paying through new PGM'
+      COMPRESS #MEMBER-ID (#INPUT-I)           #TAB
+        #TRANSACTION-CODE (#INPUT-I,1)  #TAB
+        #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+      write #error-report (al=79)
+      WRITE WORK FILE 2 #ERROR-REPORT
+      reset #diff
+      if #inv-CN ne ' '                                                                                                     /* vt5
+        perform find-match-amount                                                                                 /* vt6
+        if #found
+          callnat 'PAYDRIVP' #member-id(#input-i) #policy-number (#input-i) #check-amount (#input-i)              /* vt6
+        else                                                                                                      /* vt6
+          callnat 'PAYDRIV ' #MEMBER-ID (#INPUT-I)  #check-amount (#input-i)
+        end-if
+      else                                                                                                               /* vt5
+        callnat 'PAYDRIVP' #MEMBER-ID (#INPUT-I) #POLICY-NUMBER (#INPUT-I) #check-amount (#input-i)                      /* vt5
+      end-if                                                                                                             /* vt5
+      #diff := 'Y'
+  END-DECIDE
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CAP-ERROR-LOGIC                                 /* PM1
+************************************************************************
+*
+RESET #RESET #REMAINDER
+IF #CHECK-AMOUNT (#INPUT-I) LT #INVOICE-AMOUNT (#INPUT-I)
+  #REMAINDER := #CHECK-AMOUNT (#INPUT-I)
+  FOR #CMB3-I 1 TO #NUMBER-TRANS (#INPUT-I)
+    IF #RESET
+      RESET #TRANSACTION-AMOUNT (#INPUT-I,#CMB3-I)
+    ELSE
+      SUBTRACT #TRANSACTION-AMOUNT (#INPUT-I,#CMB3-I) FROM #REMAINDER
+      IF #REMAINDER LT 0
+        ADD #REMAINDER TO #TRANSACTION-AMOUNT (#INPUT-I,#CMB3-I)
+        #RESET := TRUE
+      END-IF
+    END-IF
+  END-FOR
+*
+  #REPORT-MESSAGE := 'AMOUNT RECEIVED LESS THAN AMOUNT BILLED AND CMB3 (CAP) - amounts adjusted'
+  COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+    #TRANSACTION-CODE (#INPUT-I,1) #TAB
+    #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+  WRITE WORK FILE 2 #ERROR-REPORT
+  RESET #ERROR-REPORT
+END-IF
+*
+IF #CHECK-AMOUNT (#INPUT-I) GT #INVOICE-AMOUNT (#INPUT-I)
+  #REMAINDER := #CHECK-AMOUNT (#INPUT-I)
+  FOR #CMB3-I 1 TO #NUMBER-TRANS (#INPUT-I)
+    IF #TRANSACTION-CODE (#INPUT-I,#CMB3-I) = 'CMB3'
+      SUBTRACT #TRANSACTION-AMOUNT (#INPUT-I,#CMB3-I) FROM #REMAINDER
+      ADD #REMAINDER TO #TRANSACTION-AMOUNT (#INPUT-I,#CMB3-I)
+      ESCAPE BOTTOM
+    ELSE
+      SUBTRACT #TRANSACTION-AMOUNT (#INPUT-I,#CMB3-I) FROM #REMAINDER
+    END-IF
+  END-FOR
+*
+  #REPORT-MESSAGE := 'AMOUNT RECEIVED GREATER THAN AMOUNT BILLED AND CMB3 (CAP) - amounts adjusted'
+  COMPRESS #MEMBER-ID (#INPUT-I)          #TAB
+    #TRANSACTION-CODE (#INPUT-I,1) #TAB
+    #REPORT-MESSAGE INTO #ERROR-REPORT LEAVING NO
+  WRITE WORK FILE 2 #ERROR-REPORT
+  RESET #ERROR-REPORT
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CHECK-FOR-RECORD-LOCK
+************************************************************************
+*
+FOR #INPUT-I 1 TO #RECS-READ
+  ST01. FIND (1) ST-V WITH ST-V.ID-NUMBER = #MEMBER-ID (#INPUT-I)
+    UPDATE (ST01.)
+  END-FIND
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE ERROR-ROUTINE
+************************************************************************
+*
+PRINT #RECS-READ #INPUT-RECORD
+WRITE 'error - file will be processed later'
+ESCAPE ROUTINE
+*
+END-SUBROUTINE
+*
+*****************
+define subroutine check-undeliverble                           /* vt2 \/
+*****************
+*
+find stat with id-number = #MEMBER-ID (#INPUT-I)
+  if no
+    write 'No record on Status file for ' #MEMBER-ID (#INPUT-I)
+    escape bottom
+  end-norec
+*  if stat.address-chg-code = 'U' or = 'V'                               /* vt9
+  if f-undel-address(<stat.member-contact-id>)                          /* vt9
+    add 1 to #cnt-undel
+    find cont with cont.contact-id = stat.member-contact-id
+      if no
+        write 'No rec in Contact file for ' stat.member-contact-id
+        escape bottom
+      end-norec
+      compress cont.first-name cont.middle-name cont.last-name into #name
+      write (2) #MEMBER-ID (#INPUT-I)
+        5x    cont.SSN (EM=999-99-9999) 2x
+        #NAME
+    end-find
+  end-if
+end-find
+*
+end-subroutine                                                /* vt2 /\
+*
+*****************
+define subroutine find-match-amount                                                     /* vt6 \/
+*****************
+*
+reset #pol-num #found
+find STAT1 with stat1.id-number = #member-id (#input-i)
+  if no
+    escape bottom
+  end-norec
+*
+  for #x 1 9
+    if stat1.x-bill-dollar (#x) = #check-amount (#INPUT-I)
+      callnat 'gplnmsxx' #pol-num stat1.id-number #x
+      move #pol-num to #POLICY-NUMBER (#INPUT-I)
+      move true to #found
+      escape bottom
+    end-if
+  end-for
+*
+end-find
+end-subroutine                                                                          /* vt6 /\
+*
+END

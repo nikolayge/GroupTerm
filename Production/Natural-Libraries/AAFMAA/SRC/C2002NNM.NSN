@@ -1,0 +1,189 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2001NNM
+***********************************************************************************
+*                             MODIFICATION LOG                                    *
+* USER   DATE      TAG    REASON                                                  *
+* NGG  08/18/2011  None   CRM project - create Status record (CN) from CB  *
+***********************************************************************************
+DEFINE DATA
+PARAMETER
+1 #CONTACT-ID       (N8)
+1 #ID-NUMBER        (N6)
+1 #MSG              (A) DYNAMIC
+*
+LOCAL USING GOSTMA01
+LOCAL USING GOCOA001
+LOCAL USING GOEMA001
+LOCAL USING GPRA0004
+LOCAL USING ADDA0001
+LOCAL
+1 #CN-PARMS
+  2 CN                 (N6)
+  2 ERR                (N4)
+  2 ERR-DESC           (A78)
+  2 MOD                (A1)
+1 #TR-HOME-PH          (A20)
+1 #TR-WORK-PH          (A20)
+1 #TR-CELL-PH          (A20)
+1 #DATE               (A8) 1 REDEFINE #DATE
+  2 #DATE-N           (N8)
+1 P_PARMS
+  2 P_ERROR_NUM           (I4)
+  2 P_ERROR_LINE          (I4)
+  2 P_ERROR_PROGRAM       (A32)
+  2 P_ERROR_LIB           (A32)
+  2 P_ERROR_DBID          (I4)
+  2 P_ERROR_FNR           (I4)
+  2 P_ERROR_TIME          (T)
+  2 P_ERROR_PGM_TYPE      (A1)
+  2 P_ERROR_PGM_TYPE_LONG (A11)
+  2 P_ERROR_LANG          (I4)
+  2 P_ERROR_LEVEL         (I4)
+  2 P_ERROR_CLASS         (I1)
+  2 P_ERROR_TYPE          (I1)
+1 #ERROR-TIME             (A19)
+*
+1 CONTACT VIEW OF A-CONTACTS
+  2 ID-NUMBER (N6)
+*
+END-DEFINE
+*
+**   GET STATUS RECORD NUMBER ***
+*
+#CONTACT.CONTACT-ID := #CONTACT-ID
+CALLNAT 'GOCON002' #CONTACT #MSG
+CALLNAT 'GOST0N01'
+  #CN-PARMS
+*
+**   UPDATE STATUS FILE  ***
+*
+#STATUS.ID-NUMBER               := #CN-PARMS.CN
+#STATUS.MEMBER-CONTACT-ID       := #CONTACT-ID
+#STATUS.MEMBER-FLAG             := 'Y'
+#STATUS.INTRO-FLAG              := 'O'
+#STATUS.PROCESS-IND             := 'C'
+#STATUS.RANK                    := F-GET-RANK-IN-SAS (< #CONTACT.RANK-ID >)
+#STATUS.MILITARY-SERVICE        := F-GET-RANK-MILID (< #CONTACT.RANK-ID >)
+#STATUS.MILITARY-STATUS         := #CONTACT.MILITARY-STATUS
+*
+CALLNAT 'GOSTMN01'
+  #STATUS
+  #CN-PARMS.ERR
+  #CN-PARMS.ERR-DESC
+  #CN-PARMS.MOD
+*
+PERFORM SYNCH-STATUS-FILE
+PERFORM WRITE-TRLOG
+#ID-NUMBER := #CN-PARMS.CN
+FIND (1) CONTACT WITH CONTACT-ID = #CONTACT-ID
+  CONTACT.ID-NUMBER := #ID-NUMBER
+  UPDATE
+END-FIND
+*
+**********************************************************************************
+DEFINE SUBROUTINE SYNCH-STATUS-FILE
+**********************************************************************************
+*
+* CALLNAT 'GOSTAN01'                        /* Synch addresses
+*   #CN-PARMS
+*
+CALLNAT 'GOSTCN01'                        /* Synch contact information
+  #CN-PARMS
+*
+* CALLNAT 'GOSTPN01'                        /* Synch phone
+*   #CN-PARMS
+* *
+* IF #EMAIL.EMAIL-ADDRESS NE ' '
+*   CALLNAT 'GOSTEN01'                      /* Synch email
+*     #CN-PARMS
+* END-IF
+*
+END-SUBROUTINE
+*
+**********************************************************************************
+DEFINE SUBROUTINE WRITE-TRLOG
+**********************************************************************************
+*
+#TR-NAME                := FUNCTION-DISP-CT-NAME
+  (<#CONTACT.FIRST-NAME,#CONTACT.MIDDLE-NAME,#CONTACT.LAST-NAME,#CONTACT.SUFFIX>)
+#TR-ID-NUMBER           := #CN-PARMS.CN
+#LOG-DESCRIPTION        := 'NM-CON-NM'
+#TR-CLERK-ID            := 'EDS'
+#TR-DATE-LAST-UPDATE    := *DATN
+*
+#FIELD-DESCRIPTION (1)  := 'CONTACT'
+#FIELD-DESCRIPTION (2)  := 'ADDRESS 1'
+#FIELD-DESCRIPTION (3)  := 'ADDRESS 2'
+#FIELD-DESCRIPTION (4)  := 'ADDRESS 3'
+#FIELD-DESCRIPTION (5)  := 'ZIP CODE'
+#FIELD-DESCRIPTION (6)  := 'HOME PHONE'
+#FIELD-DESCRIPTION (7)  := 'WORK PHONE'
+#FIELD-DESCRIPTION (8)  := 'CELL PHONE'
+#FIELD-DESCRIPTION (9)  := 'EMAIL'
+*
+#SYNC-FIELD-TABLE  (2)  := 2
+#SYNC-FIELD-TABLE  (3)  := 3
+#SYNC-FIELD-TABLE  (4)  := 4
+#SYNC-FIELD-TABLE  (5)  := 5
+*
+RESET #OLD-DATA (*)
+*
+IF #CONTACT.CONTACT-TYPE = 'O'
+  #NEW-DATA (1)         := #CONTACT.FIRM-ORGANIZATION-NAME
+ELSE
+  COMPRESS #TR-NAME #CONTACT.GENDER-CD
+    #STATUS.MILITARY-SERVICE
+    F-GET-RANK-ABBR (< #CONTACT.RANK-ID >)
+    #CONTACT.MILITARY-STATUS
+    #CONTACT.PREFIX-TITLE INTO #NEW-DATA (1)
+END-IF
+*
+#ADD-CONTACT-ID         := #CONTACT.CONTACT-ID
+#ADD-TYPE               := 'P'
+CALLNAT 'ADDN0001'
+  #PDA-ADDRESS
+*
+#NEW-DATA(2)            := #ADD-LINE-1
+#NEW-DATA(3)            := #ADD-LINE-2-NO-ZIP
+#NEW-DATA(4)            := #ADD-LINE-3-NO-ZIP
+#NEW-DATA(5)            := #ADD-ZIP-CODE
+#NEW-DATA(6)            := #TR-HOME-PH
+#NEW-DATA(7)            := #TR-WORK-PH
+#NEW-DATA(8)            := #TR-CELL-PH
+#NEW-DATA(9)            := #EMAIL.EMAIL-ADDRESS
+*
+CALLNAT 'GPRN0004'
+  #TR-FIELDS #SYNC-FIELD-TABLE(*)
+  #OLD-DATA-TABLE(*) #NEW-DATA-TABLE(*)
+*
+END-SUBROUTINE
+*
+ON ERROR
+  RESET #ID-NUMBER
+  CALLNAT 'USR2001N' P_PARMS
+  MOVE EDITED P_ERROR_TIME (EM=YYYY'-'MM'-'DD' 'HH':'II':'SS)
+    TO #ERROR-TIME
+*
+  COMPRESS
+    'Error number:' P_ERROR_NUM
+    'Error class:' P_ERROR_CLASS
+    'Error line:' P_ERROR_LINE
+    'Error program:' P_ERROR_PROGRAM
+    'Error program type:' P_ERROR_PGM_TYPE
+    'Error program type long:' P_ERROR_PGM_TYPE_LONG
+    'Error program level:' P_ERROR_LEVEL
+    'Language at error time:' P_ERROR_LANG
+    'Error library:' P_ERROR_LIB
+    'DBID:' P_ERROR_DBID 'FNR:' P_ERROR_FNR
+    'Error type:'  P_ERROR_TYPE
+    'Error time:' #ERROR-TIME
+    INTO #MSG
+*
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

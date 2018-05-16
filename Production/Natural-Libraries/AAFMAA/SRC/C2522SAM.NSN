@@ -1,0 +1,400 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2522SAM     Create TR Acct & Maint transactions when BADJ
+*                      or DB/CR or FPF changes
+***************************
+*                MODIFICATION LOG
+* USER   DATE      TAG  REASON
+* DRW    07192005       Created
+* DRW    03302006  DW1  Use correct date & time on batch TR
+* DRW  03/30/2008  DW2  Create PREP/PREP TR Trans on selected Input (from C23MPCI)
+* DRW  04/05/2008  DW3  Do above for input from all other sources & add Timn Linkage
+* DRW  04/09/2008  DW4  CHG SUSR to SUSP and use #SCR-ADJ (1)
+* YK1  07/19/2013  YK1  Do not assign CASH-CODE = 'A' (adjustments) when create BADJ
+*                       for DEAD/CSV/RSGN transactions  (TA will create CASH line)
+* vxt  08/05/2014  vt1  Fix the not balancing BADJ transaction amount
+* vxt  09/04/2014  vt2   Add RTRC and ATRC transactions /Ticket 2939/
+* vxt  10/09/2014  vt3  Remove BADJ balance transaction for RSGN code( when the BADJ bucket is not zero).
+* vxt  04/06/2015  vt4  /Ticket 2973/ - add right segment in the passed parameters
+* YAK  02/02/2017  YK2  Add LTII+ to AR conversion program to the logic
+***************************
+*
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-COMMAND (A2)
+1 #CGA-SCR-ID      (N9)
+1 #CGA-SCR-SUFFIX  (A3)
+1 #CLERK           (A3)
+1 #CN              (N6)
+1 REDEFINE #CN
+  2 #CN-A           (A6)
+*
+1 #SOURCE-PROG     (A8)    /* Program sending info
+1 #EFF-DT          (N8)    /* Used for Eff DATE
+1 #TR-CD           (A4)
+1 #ADJ-AMT         (N5.2)
+1 #OLD-FPF         (N7.2)
+1 #NEW-FPF         (N7.2)
+1 #LAST-DATE-UPDATE (N8)
+1 #NEW-DATE-UPDATE  (N8)
+1 #ISSUE-DATE      (N8)   /* issue date of affected policy
+1 #SCR-TRAN-COD    (A4)   /* TRAN Code if from CI
+1 #CMBX            (A4)   /* Used to send indicator to C2520sam for Desc
+1 #TIMN            (N7)   /* So all trans have the same time
+1 #ifl             (i2)  optional    /* vt4
+*
+LOCAL USING C2500AAM
+LOCAL
+*
+1 #ILN1       (I2)
+1 #TR-AMT   (N5.2)
+1 #WORK   (N5.2)  /* DW1
+1 REDEFINE #WORK
+  2 #WORK-1 (N5)
+  2 #REM    (N2)
+*
+1 #TODA          (N8)
+1 REDEFINE #TODA
+  2 #TODA-CENT-A  (A2)
+  2 #TODA-YY-A    (A2)
+  2 #TODA-MM-A    (A2)
+  2 #TODA-DD-A    (A2)
+1 REDEFINE #TODA
+  2 #TODA-YYYY  (N4)
+  2 #TODA-MMDD  (N4)
+  2 REDEFINE #TODA-MMDD
+    3 #TODA-MM    (N2)
+    3 #TODA-DD    (N2)
+*
+* #LINKAGE TO C2520SAM below      /* DW5
+* 1 #DATE-OF-UPDATE    (N8)
+1 #TIME-OF-UPDATE    (N7)
+1 #EXTRA-STOP         (L)
+1 #BANKRUPT           (L)
+*
+1 #SG-TBL (15)
+  2 #SG-CAT1 (A2)
+  2 #SG-CAT2 (A2)
+  2 #SG-AMT  (N6.2)
+* #LINKAGE TO C2520SAM ABOVE
+*
+1 TR-REG-V VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 NAME
+  2 DATE-LAST-UPDATE
+  2 TERMINAL-ID
+  2 CLERK-ID
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 OLD-DATA          (1)
+  2 NEW-DATA          (1)
+*
+1 #TR-LOG-FIL-MNT-DESC  (A125)
+1 REDEFINE #TR-LOG-FIL-MNT-DESC
+  2 #TR-L-BADJ-LB1 (A12)
+  2 #TR-L-BADJ-AMT (A10)
+  2 #TR-L-APPD-DT  (A16)
+  2 #TR-L-BADJ     (A87)
+*
+1 ST-V VIEW OF A-STATUS
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 DEBIT-CREDIT-AMT
+  2 NAME
+  2 PLAN       (9)
+  2 X-FIRST-PLACE-FEE (9)
+  2 X-BILL-ADJUST    (9)
+*
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY    (N4)
+  2 #MM      (N2)
+  2 #DD      (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A  (A4)
+  2 #MM-A    (A2)
+  2 #DD-A    (A2)
+*
+1 #I1               (I2)
+1 #I2               (I2)
+1 #I3               (I2)
+1 #1-yr-ago         (n8)
+1 #ACTIVITY-TYPE         (A3)      /* vt4
+1 #STATUS-TYPE           (A2)      /* vt4
+1 #lx-passed             (i2)      /* vt4
+1 #datn (n8)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+* wrITE 'top C2522SAM' #CN #TR-CD 'ADJ amt=' #ADJ-AMT '=' #scr-tran-cod /* 'FPFs' #OLD-FPF #NEW-FPF /* kec
+* wrITE '      eff-dt=' #EFF-DT 'Iss Date=' #ISSUE-DATE
+*    'NEW-UPDT DT=' #NEW-DATE-UPDATE 'CMBX+' #CMBX
+* write   'Source-prog=' #source-prog
+* write *program '='#IFL
+*
+#datn := *datn
+move #datn to #yyyymmdd              /* DW2
+subtract 1 from #yyyy
+move #yyyymmdd to #1-yr-ago
+*
+IF *TIMN LT 1200000  /* midnite till 12 noon (normal job time)  DW1
+  MOVE #DATN TO #YYYYMMDD     /* *datn - 1 is considered today
+  SUBTRACT 1 FROM #DD
+*
+  IF #DD LT 1
+    SUBTRACT 1 FROM #MM
+    IF #MM LT 1
+      ADD 12 TO #MM
+      SUBTRACT 1 FROM #YYYY
+    END-IF
+*
+    IF #MM = 02
+      COMPUTE #WORK = #YYYY / 4  /* check leap year   /* DW22
+      IF #REM = 0
+        MOVE 29 TO #DD
+      ELSE
+        MOVE 28 TO #DD
+      END-IF
+    ELSE
+      IF #MM = 04 OR = 06 OR = 09 OR = 11
+        MOVE 30 TO #DD
+      ELSE
+        MOVE 31 TO #DD
+      END-IF
+    END-IF
+  END-IF
+*
+  MOVE #YYYYMMDD TO #TODA
+ELSE                  /* noon till midnite (if job is run early)
+  MOVE #DATN TO #TODA
+END-IF
+*
+FIND ST-V WITH MEMBER-KEY = #CN-A
+  IF NO RECORD FOUND
+    WRITE 'C2522SAM No Record Found for' #CN 'Call EDS'
+  END-NOREC
+END-FIND
+*
+RESET #SCR-ADJ (1) #SCR-CASH-CODE (1) #SCR-ALP-CODE (1) #SG-TBL (*)
+*
+IF   (#TR-CD = 'BADJ')
+    AND (#ADJ-AMT NE 0)
+  DECIDE ON FIRST VALUE #SOURCE-PROG                             /* YK1
+    VALUE 'C2301PCI'                                             /* YK1
+      MOVE 'D' TO #SCR-CASH-CODE (1)                             /* YK1
+    VALUE 'C2302PCI'                                             /* YK1
+      IF #CMBX <> 'CSVA'                                         /* YK1
+        MOVE 'B' TO #SCR-CASH-CODE (1)                           /* YK1
+      ELSE
+        MOVE 'A' TO #SCR-CASH-CODE (1)                           /* YK1
+        #CMBX := 'CSV'                                           /* YK1
+      END-IF
+    NONE VALUE                                                   /* YK1
+      MOVE 'A' TO #SCR-CASH-CODE (1)               /* (A)djust   /* DW2
+  END-DECIDE                                                     /* YK1
+  IF #ADJ-AMT GT 0
+    MOVE '+' TO #SCR-ADJ (1)
+    MOVE #ADJ-AMT TO #TR-AMT
+  ELSE
+    MOVE '-' TO #SCR-ADJ (1)
+    COMPUTE #TR-AMT = #ADJ-AMT * -1
+  END-IF
+*
+  PERFORM STORE-ACCT-REG
+*
+  if #source-prog ne 'ATHPIALA'          /* vt1
+      and #source-prog ne 'C230MPCI'
+      and not( #source-prog eq 'C2302PCI' and #TR-cd = 'BADJ')           /* vt3
+    if #adj-amt le 5.00  and  #adj-amt gt -5.00
+      #tr-cd := 'PWOF'
+      IF #ADJ-AMT GT 0
+        MOVE '-' TO #SCR-ADJ (1)
+        MOVE #ADJ-AMT TO #TR-AMT
+      ELSE
+        MOVE '+' TO #SCR-ADJ (1)
+        COMPUTE #TR-AMT = #ADJ-AMT * -1
+      END-IF
+      PERFORM STORE-ACCT-REG
+    END-IF
+  end-if                                 /* vt1
+end-if
+*
+IF   (#TR-CD = 'RDCR' OR = 'ADCR')
+    AND (#ADJ-AMT NE 0)
+  RESET #SCR-ADJ (1)
+  MOVE 'A' TO #SCR-CASH-CODE (1)  /* (A)djust     /* DW2
+*
+  IF #ADJ-AMT GT 0
+    MOVE 'RDCR' TO #TR-CD
+    MOVE #ADJ-AMT TO #TR-AMT
+  ELSE
+    MOVE 'ADCR' TO #TR-CD
+    COMPUTE #TR-AMT = #ADJ-AMT * -1
+  END-IF
+*
+  PERFORM STORE-ACCT-REG
+END-IF
+*
+if (#tr-cd = 'RTRC' or = 'ATRC')                     /* vt2 \/
+    AND (#SOURCE-PROG = 'ATHPIALA')
+  MOVE 'A' TO #SCR-CASH-CODE (1)
+  IF #ADJ-AMT GT 0
+    MOVE 'RTRC' TO #TR-CD
+    MOVE #ADJ-AMT TO #TR-AMT
+  ELSE
+    MOVE 'ATRC' TO #TR-CD
+    COMPUTE #TR-AMT = #ADJ-AMT * -1
+  END-IF
+  PERFORM STORE-ACCT-REG
+end-if                                              /* vt2 /\
+*
+IF   (#TR-CD = 'STOP' OR ='STRT')
+    AND (#SOURCE-PROG = 'ATHPIALA')
+  MOVE 'A' TO #SCR-CASH-CODE (1)  /* (A)djust
+*
+  IF #ADJ-AMT GT 0
+    MOVE '+' TO #SCR-ADJ (1)
+    MOVE #ADJ-AMT TO #TR-AMT
+  ELSE
+    MOVE '-' TO #SCR-ADJ (1)
+    COMPUTE #TR-AMT = #ADJ-AMT * -1
+  END-IF
+*
+  PERFORM STORE-ACCT-REG
+END-IF
+*
+IF #TR-CD = 'FPFC'    /* I do not think this will ever happen - FPF must be removed
+*                           before CI is done
+  RESET TR-REG-V
+  RESET #TR-LOG-FIL-MNT-DESC
+  MOVE 'FPF CORR'  TO #TR-L-BADJ-LB1
+  MOVE EDITED #OLD-FPF (EM=ZZ,ZZZ.99-) TO #TR-L-BADJ-AMT
+  MOVE #ISSUE-DATE TO #YYYYMMDD
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #TR-L-APPD-DT LEAVING NO
+  MOVE #TR-LOG-FIL-MNT-DESC TO TR-REG-V.OLD-DATA (1)
+  MOVE EDITED #NEW-FPF (EM=ZZ,ZZZ.99-) TO #TR-L-BADJ-AMT
+  MOVE #TR-LOG-FIL-MNT-DESC TO TR-REG-V.NEW-DATA (1)
+  MOVE #TIMN TO #TIME-OF-UPDATE                             /* DW3
+*
+  PERFORM STORE-TR-REG
+END-IF
+*
+RESET #SCR-ADJ (1) #SCR-CASH-CODE (1) #SCR-ALP-CODE (1) #SG-TBL (*)
+*
+if   (#TR-CD = 'BADJ' or = 'ADCR' or = 'RDCR')               /* DW2
+    and (not #CMBX = 'SPMM' or = 'SPMQ' or = 'STBA')  /* These adjs from ATHPIALA  DW3
+*  are already balanced  BADJ DB/CR transactions (#CMBX STBA is not balanced)
+  if #source-prog = 'C230MPCI'     /* CI MODE/MACV Paid-TO-Date Chg
+*  or = 'C2302PCI'                 /* CI RSGN for Term Policies              /* DW3   /* YK1
+      or = 'C2304PCI'                 /* CI CONV with DB/CR Chg                 /* DW3
+*  or = 'C2301PCI'                 /* Clear FPF and BADJ on Death            /* DW3   /* YK1
+      or = 'ATHPIALA'                 /* ALOT START START BADJ DB/CR Changes    /* DW3
+      or = 'ATHPTMCV'                 /* CONV LT to RT Prem Adjustments         /* DW3
+      or = 'GPBPTMCV'                 /* CONV LTII+ to AR                       /* YK2
+      or = 'ATHPRTCK'                 /* RT 5 yr Conv with Prem Adjustments     /* DW3
+      or = 'C2310PCI'                 /* CI RTAD with Prem Adjustments          /* DW3
+    MOVE 'A' TO #SCR-CASH-CODE (1)  /* (A)djust
+    MOVE #ADJ-AMT TO #TR-AMT
+*
+    if  ((#tr-cd = 'BADJ') and (#adj-amt lt 0)) /* PD-TO-dt moved forward NON Mode G
+        or  (#tr-cd = 'ADCR')                       /* PD-TO date moved forward Mode G
+      multiply #tr-amt by -1
+      move 'PRER' to #tr-cd
+    else
+      move 'PREP' to #tr-cd
+    end-if
+*
+    if #issue-date gt #1-yr-ago
+      move '1Y' to #SG-CAT1 (1)
+    else
+      move 'RN' to #sg-cat1 (1)
+    end-if
+    move #tr-amt to #sg-amt  (1)
+*
+    PERFORM STORE-ACCT-REG
+  end-if
+end-if
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE STORE-ACCT-REG
+* * * * * * * * * * * * * * * *
+*
+MOVE 1 TO #ILN1
+MOVE #CN TO #SCR-ID-SSN (1)
+MOVE #EFF-DT TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-EFF-DT (1) LEAVING NO
+*
+IF #ISSUE-DATE NE 0
+  MOVE #ISSUE-DATE TO #YYYYMMDD
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-ISS-DT (1) LEAVING NO
+END-IF
+*
+MOVE #TR-CD  TO #SCR-TRAN-CODE (1)
+MOVE #TR-AMT TO #SCR-TRAN-AMT  (1)
+*
+IF #SOURCE-PROG = 'ATHPIALA'                 /* DW1
+  MOVE #TODA TO #NEW-DATE-UPDATE
+  MOVE 2310000 TO #TIME-OF-UPDATE
+ELSE
+  IF #SOURCE-PROG = 'ATHPTMCV'               /* DW1
+    MOVE #TODA TO #NEW-DATE-UPDATE
+    MOVE 2314000 TO #TIME-OF-UPDATE
+  ELSE
+    MOVE #TIMN TO #TIME-OF-UPDATE
+  END-IF
+END-IF
+*
+IF #SCR-TRAN-COD = 'MACV'
+  MOVE 'Y' TO #SCR-ALP-CODE (1)
+END-IF
+*
+reset #lx-passed                                   /* vt4 \/
+if #ifl specified and #ifl ne 0
+  move #ifl to #lx-passed
+end-if                                             /* vt4 /\
+*
+CALLNAT 'C2520SAM' #SCR-LINES
+  #CN
+  ST-V.PROCESS-IND
+  ST-V.INTRO-FLAG
+  ST-V.NAME
+  ST-V.PLAN   (1:9)
+  ST-V.DEBIT-CREDIT-AMT
+  #NEW-DATE-UPDATE    /* acct updt date from file
+  #NEW-DATE-UPDATE    /* used for curr date
+  #TIME-OF-UPDATE
+  #ILN1
+  #LAST-DATE-UPDATE
+  #CLERK
+  #EXTRA-STOP
+  #SG-TBL (1:15)
+  #CMBX           /* DW9
+  #ACTIVITY-TYPE               /* vt4
+  #STATUS-TYPE
+  #lx-passed                   /* vt4
+
+RESET #EXTRA-STOP
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE STORE-TR-REG
+* * * * * * * * * * * * * * *
+*
+MOVE #CN                 TO TR-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND   TO TR-REG-V.PROCESS-IND
+MOVE ST-V.NAME          TO TR-REG-V.NAME
+MOVE #LAST-DATE-UPDATE TO TR-REG-V.DATE-LAST-UPDATE
+MOVE *INIT-ID            TO TR-REG-V.TERMINAL-ID
+MOVE #CLERK              TO TR-REG-V.CLERK-ID
+MOVE #NEW-DATE-UPDATE    TO TR-REG-V.TRANSACTION-DATN
+MOVE #TIME-OF-UPDATE     TO TR-REG-V.TRANSACTION-TIMN
+STORE TR-REG-V
+*
+END-SUBROUTINE
+*
+END

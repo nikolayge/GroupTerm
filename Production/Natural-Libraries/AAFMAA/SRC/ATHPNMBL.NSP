@@ -1,0 +1,177 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPNMBL - THIS PROGRAM PRODUCES THE ANNUAL NEW MEMBER
+*      LIST
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* DRW    01012005  DW1     use mbr-since to find current year          *
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII                     *
+* RSE  09302009 RE1  Change 600K logic for Unification                 *
+************************************************************************
+*
+DEFINE DATA
+LOCAL
+*
+* * * *   S T A T U S   F I L E   * * * * * * * * * * * * * * *
+*
+1 #JCL-PARM       (A17)    /* DW1
+1 REDEFINE #JCL-PARM
+ 2 #JCL-FIL-1        (A13)    /* 'PROCESS YEAR='
+ 2 #JCL-PROCESS-YYYY (N4)     /* '1988'
+*
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+1 #LAST-MIL  (A1)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 NAME           (A25)
+  2 MILITARY-SERVICE
+  2 INTRO-FLAG
+  2 ANNUAL-RPT-FLAG
+  2 NUMBER-MEMBERSHIPS
+  2 MBR-SINCE
+*
+1 #NAME-EXT   (A30)
+*
+1 #PRINT-TABLE
+  2 #PRINT-LINE (78)
+    3 #COLUMN-NAME (4)
+      4 #PC-NAME (A25)
+      4 #PG-FIL (A2)
+1 #COL   (I2)
+1 #ROW   (I4)
+1 #EOF   (L) INIT <FALSE>
+1 #MIL   (A1)
+1 #CNT   (P5)
+*
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM  (N6)
+ 2 REDEFINE #YYYYMM
+  3 #YYYY   (N4)
+  3 #MM     (N2)
+ 2 #DD      (N2)
+*
+END-DEFINE
+*
+INPUT #JCL-PARM    /* DW1
+*
+COMPRESS 'New AAFMAA Members In' #JCL-PROCESS-YYYY INTO #NAME-EXT
+WRITE WORK FILE 2 #NAME-EXT
+ADD 1 TO #CNT
+*
+RESET #NAME-EXT
+WRITE WORK FILE 2 #NAME-EXT
+ADD 1 TO #CNT
+*
+MOVE 'ARMY' TO #NAME-EXT
+WRITE WORK FILE 2 #NAME-EXT
+ADD 1 TO #CNT
+*
+RESET #NAME-EXT
+WRITE WORK FILE 2 #NAME-EXT
+ADD 1 TO #CNT
+*
+FORMAT(1)  PS=81
+           LS=133
+*
+ASSIGN #COL = 1
+ASSIGN #ROW = 1
+WRITE(1) #PRINT-LINE(1)
+* On 1/1/2005 below range would bypass the pending at's as of 1/1/2005
+*    but in the next year would by outside of the range cn's and missed
+* start from 1st pf prior year to get pending at's  2004   2003   2002
+READ ST-V BY MEMBER-KEY STARTING FROM '119770'  /* 125717 119770 113398
+* IF ID-NUMBER GT 133576  /* LAST MBR OF YEAR   /* 133576 125716 119669
+*  IF ID-NUMBER GE 600000  /* LAST MBR OF YEAR   /* 133576 125716 119669    RE1
+  IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                                  /* RE1 
+*    ESCAPE BOTTOM          /*  2001    2000                                RE1
+    ESCAPE TOP                                                           /* RE1
+  END-IF                   /* 108597  104236
+*                          /* 113397  198596
+  MOVE MBR-SINCE TO #YYYYMM
+  IF  (INTRO-FLAG = 'S' OR = 'K' OR = 'G' OR = 'C')
+   OR (#YYYY NE #JCL-PROCESS-YYYY)    /* only use curr year   /* DW1
+   OR (NUMBER-MEMBERSHIPS = 0)
+   OR (MILITARY-SERVICE = 'EMP')
+*  OR (ANNUAL-RPT-FLAG = '0')
+    ESCAPE TOP
+  END-IF
+*  WRITE ST-V.ID-NUMBER MBR-SINCE
+*
+  IF MILITARY-SERVICE = MASK ('F')
+    MOVE 'F' TO #MIL
+  ELSE
+    MOVE 'A' TO #MIL
+  END-IF
+END-ALL
+*
+SORT BY #MIL ST-V.NAME
+  USING KEYS
+*
+  AT BREAK #MIL
+*
+    IF #LAST-MIL NE 'F'   /* Put Nothing at end
+      RESET #NAME-EXT
+      WRITE WORK FILE 2 #NAME-EXT
+      ADD 1 TO #CNT
+*
+      MOVE 'AIR FORCE' TO #NAME-EXT
+      WRITE WORK FILE 2 #NAME-EXT
+      ADD 1 TO #CNT
+*
+      RESET #NAME-EXT
+      WRITE WORK FILE 2 #NAME-EXT
+      ADD 1 TO #CNT
+    END-IF
+*
+    PERFORM PRINT-PAGE
+    RESET #PRINT-TABLE
+    WRITE(1) #PRINT-LINE (1)
+    MOVE 1 TO #COL
+    MOVE 1 TO #ROW
+  END-BREAK
+*    below is for download file for list
+  MOVE #MIL TO #LAST-MIL
+  MOVE ST-V.NAME TO #NAME-EXT
+*
+  WRITE WORK FILE 2 #NAME-EXT
+  ADD 1 TO #CNT
+*
+  MOVE ST-V.NAME TO #PC-NAME(#ROW, #COL)
+  ADD 1 TO #ROW
+*
+  IF #ROW > 78
+    ADD 1 TO #COL
+    IF #COL > 4
+      PERFORM PRINT-PAGE
+      RESET #PRINT-TABLE
+      WRITE(1) #PRINT-LINE (1)
+      MOVE 1 TO #COL
+    END-IF
+*
+    MOVE 1 TO #ROW
+  END-IF
+END-SORT
+*
+WRITE 'num recs = ' #CNT
+*
+PERFORM PRINT-PAGE
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE PRINT-PAGE
+* * * * * * * * * * * * * *
+*
+FOR #ROW 1 TO 78
+  WRITE(1) 1T #PC-NAME(#ROW,1) 28T #PC-NAME (#ROW,2)
+         55T #PC-NAME(#ROW,3) 82T #PC-NAME (#ROW,4)
+END-FOR
+*
+END-SUBROUTINE
+*
+END

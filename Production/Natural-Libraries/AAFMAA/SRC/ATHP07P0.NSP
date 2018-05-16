@@ -1,0 +1,2528 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 2
+* <Natural Source Header
+* PROGRAM-ID: ATHP07P0    - SORT AND PRINT ATHP05P0 NOTICE EXTRACTS
+* does CFL/CAL/CFA/CAA I/IL/IFL/IR
+* <<<< CHECK GET BEING COMMENTED OUT FOR TESTING
+************************************************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* SAG  11282005 RH1  SS - Modified the custom coded ON ERROR stmt &
+*                    replaced it with copycode GABNDCX1
+* SAG-AB 20060426 made #RE-CN to #RE-CN-NUMBER
+* SAG-AB 20060825 corrected zip code suffix to right justify & add leading zeros
+* DRW  04042007 DW1  Bypass Suspend Note if no notice printed
+* PAM  20070425 PM2  Print allotment form for paid-up letters and create
+*                    second file if multiple pages
+* DRW  06272007 DW3  Chg Suppressed Bar Code Processing
+* DRW  06272007 DW4  Combine PREM MIP BILLPTRIn & BILLINTR
+* DRW  06272007 DW5  Put plan on LI/LO & Pol # etc on ALLOT Chg
+* DRW  06272007 DW6  Separate Name into First/MI/Last if non Insured Owner
+* DRW  06282007 DW7  Do Certified with new Format
+* DRW  07042007 DW8  Clear out Mult Bill & Old Notice Logic
+* DRW  07312007 DW9  Reset last day of month if exceeds max
+* DRW  08062007 DW10 Fix AS (CAP STOP Notice) missing Amount
+* DRW  08072007 DW11 Chg Loan-Bal from P + I to only P
+* DRW  08212007 DW12 Chg AD (Allot Chg & DB/CR needed) info
+* DRW  09122007 DW13 Allow Parm to indicate Only do XML file creation
+* To do DW13 use job T4CYXML7 This will only Create the XML file from the PRE-XML
+* DRW  10102007 DW14 Reinsert Zip Code logic for paid-up notices
+* DRW  10192007 DW15 MIP ONLY Bill processing and later all LC bill types if MIP
+* DRW 11/29/2007 DW16 Make Active Pd-up's work like Retired
+* YAK 11/29/2007 YK1 Adjust paid-up letter for acive duty and retirees.
+* DRW 01/04/2007 DW17 Add Linkage for AS RECS
+* DRW 02/23/2008 DW18 Make OLD/NEW 1st Delq notices not be Certified
+* DRW 07/17/2008 DW19 Create Pmt Due Date for Premium loans based on Pd To DT
+* DRW 08/11/2008 DW20 Add GEN-Plus processing
+* DRW 08/13/2008 DW21 Back out DW19
+* DRW 09/04 2008 DW22 Fix check for active policy on policy match
+* Drw 09/10/2008 DW23 Check Paid-up Notices for Ownership
+* DRW 03/02/2009 DW24 Incr Notes from 60 to 500
+* RSE 09/17/2009 RE1  Change 600K logic
+* YAK 03/10/2010 YK2  Do not create Bill Notice for 'Bill Payer' members
+*                     if they are less then 30 days past due.
+* YAK 04/12/2010 YK3  Reset Bill Payer flag if P2 is issued (write TR log)
+* vxt 10/19/2010 vt1  increased the size of address variables.
+* PAM 12/28/2010 PM25 Added check scanning solution
+* vxt 01/19/2011 vt2  Reset the PDA for calling of ADDN0001 program
+* vxt 03/18/2011 vt3  populate the Mode with A for LI type of records.
+* vxt 07/25/2011 vt4  Add population of city and state fields for owner info.
+* vxt 08/02/2011 vt5  Fix the missing Zip code for non insured members.
+* vxt 11/07/2011 vt6  Change the text of paidup letter.
+* VXT 01/22/2013 vt7  change the size of loan-field in #rept-extract   (ticket 1736/)
+* bz  06/12/2013 bz1  Text changes
+* JNT 09/13/2013 JT1  Address normalization
+* YAK 01/13/2014 YK4  Add GP2 plan
+* NGG 20141023   NG1  Annuity life products
+* NGG 20150909   NG2  Policy ownership
+* YF1 20171214   YF1  Paid-up notices
+************************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING G3500AAD
+LOCAL USING GONERLXX                        /* SAG RH1 11282005 SS
+LOCAL USING GPRL0004                        /* Transaction log field table LDA  YK3
+LOCAL USING GPRA0004                        /* PDA to pass data to TR log subprogram YK3
+LOCAL USING ADDA0001                        /* PDA for the addresses            vt1
+LOCAL USING INVL0001                        /* Invoice line for check scanning PM25
+LOCAL USING GPBACOMM                        /* Letter/Email parms              YF1
+LOCAL
+1 #DIR    (A) DYNAMIC CONST <'/usr/SAG/tmp/'> /* NG2
+1 #FNAME  (A) DYNAMIC
+*
+1 #PARM    (A13)    /* DW13
+1 REDEFINE #PARM
+  2 #PARM-X        (A1)
+  2 #PARM-FIL-1    (A1)
+  2 #PARM-NUM-REG  (N5)
+  2 #PARM-FIL-2    (A1)
+  2 #PARM-NUM-CERT (N5)
+*
+1 #NOTICE-INFO
+  2 #V-BILLTYPE    (A2)
+  2 #V-PMT-DUE-DT  (A10)    /*  var2
+  2 #V-ISS-DT      (A10)    /*  var3
+  2 #V-UNPD-BAL    (A10)    /*  var4
+  2 #V-AMT-DUE     (A12)    /*  var8                             /* vt7 was a10
+  2 #V-LAPSE-DT    (A10)    /*  var9
+  2 #V-LOAN-RATE   (A7)     /*  var10
+  2 #V-LOAN-CAP-DT (A10)    /*  var11
+  2 #V-LOAN-BAL    (A12)    /*  var16                            /* vt7 was a10
+  2 #V-PREM-DUE    (A10)    /*  var17
+  2 #V-DUES-PMT    (A10)    /*  var18
+  2 #V-RIDER-PMT   (A10)    /*  var19
+  2 #V-LOAN-PMT    (A10)    /*  var20
+  2 #V-INT-PMT     (A12)    /*  var21                            /* vt7 was a10
+  2 #V-BADJ-PMT    (A10)    /*  var22
+  2 #V-PLAN        (A3)     /*  var30
+  2 #V-LOAN-TYPE   (A8)     /*  var35
+  2 #V-LOAN-DATE   (A10)    /*  var36
+  2 #V-COLLECT-DT  (A10)    /*                      /* DW15
+*
+1 #PDUP-EFF-DT    (N8)         /* DW23
+1 #1ST-TIME-DELQ     (L)                           /* DW18
+1 #CAP-BILL-DATE (N8)                /* DW15
+1 #FUNCTION      (A1) /*  DW8
+1 #NUM-CERTS     (N5)
+1 #NUM-REGS      (N5)
+1 #NUM-AS        (N5)    /* DW17
+*
+1 #ISS-AGE       (N2)
+1 #INSURED-CN     (A6)     /* DW8
+1 REDEFINE #INSURED-CN
+  2 #INSURED-CN-N  (N6)
+1 #INSURED-NAME   (A70)                           /* vt1  was 35
+1 #PAYOR-CN       (A6)
+1 REDEFINE #PAYOR-CN
+  2 #PAYOR-CN-N    (N6)
+1 #PAYOR-NAME     (A70)         /* DW8               vt1 was 35
+*
+1 #ALOT-CHG-AUTH   (A1)                                          /* PM10
+1 #ALOT-AMT        (P5.2)                                        /* PM10
+1 #PDUP-PLAN          (A25)     /* YK4                           /* YF1
+1 #SUS-DATE-MM-DD-YY  (A10)
+1 #AS-OF-DT        (N8)
+1 #BYP-PD-TO   (L)
+1 #BYP-PRM-NOTC (L)
+1 #ISS-DT-YYYYMMDD   (N8)
+1 #BNK-CNT           (N5)
+1 #E-LST-MON   (N5)
+1 #ME-IND      (A2)  INIT <'~~'> /* Inds M/E notices for ATHPXML
+1 #POL-NUM     (A16)
+1 #LST-POL-NUM (A16)
+1 #ISS-DT     (N8)
+1 #ATHS07PX     (A8) /* either ATHS07p8 or ATHS07P9
+1 #TOT-AMT-DUE   (A11)
+1 #PRM-DUE-MM-DD-YYYY  (A11)
+1 #BNKQ   (L)
+1 #LAST-ISS-DT  (N8)
+1 #DUPL-ISS-DT  (L)
+1 #CURR-RE-CN-NUM-BILL (A6)
+1 #LAST-SEG            (I2)
+1 #NUM-NOTICES         (P5)
+1 #NUM-NOTICES-ACTUAL  (P5)
+1 #AAFM       (A4)
+1 #NOTC-REG-CNT  (P5)
+1 #NOTC-CERT-CNT (P5)
+1 #AAFM-BAR-CODE-1   (A32)
+1 #AAFM-BAR-CODE-2   (A32)
+1 #IS-OLD-NEW   (L)
+1 #SEND-CERTIFIED   (L)
+* 1 #CERT-NAME    (A25)
+1 #CERT-LABEL   (A40)
+1 #RID-DISP   (A12)
+1 #DISP-PRIN  (A7)
+1 #DISP-INTR  (A6)
+1 #FOUND-MD      (L)
+1 #HAS-ASQ       (L)
+1 #MBR-CNT       (N5)
+1 #PRM-TEXT      (A12)
+*
+1 #SCR-BAR-CD-SUPPRESSED-70   (A70)   /* DW3
+1 #SCR-BAR-CD-SUPPRESSED      (A48)
+*
+1 #SCR-ENT-BAR-CODE   (A38)
+1 #SCR-ENT-BAR-CODE-2 (A38)
+1 #SCR-CN-BAR-CODE   (A6)
+1 REDEFINE #SCR-CN-BAR-CODE
+  2 #SCR-CN-BAR-CODE-N (N6)
+1 #SCR-TRAN-BAR-CODE (A7)
+1 REDEFINE #SCR-TRAN-BAR-CODE
+  2 #SCR-TRAN-BAR-CODE-1ST-4    (A4)    /* DW3
+1 #SCR-TRAN-BAR-CODE-2 (A7)
+1 REDEFINE #SCR-TRAN-BAR-CODE-2
+  2 #SCR-TRAN-BAR-CODE-2-1ST-4  (A4)    /* DW3
+
+* 1 #SCR-TRAN-BAR-CODE-3 (A7)
+1 #SCR-TR-BR-CD (A2)
+1 #SCR-AMT-BAR-CODE  (A8)
+1 #SCR-AMT-BAR-CODE-2(A8)
+* 1 #SCR-AMT-BAR-CODE-3(A8)
+1 #SCR-ISS-DT        (A8)
+1 #SCR-ZIP-BAR-CODE  (A14)
+1 #ZIP-SUM           (N3)
+1 REDEFINE #ZIP-SUM
+  2 #ZIP-SUM-2     (N2)
+  2 #ZIP-SUM-1     (A1)
+1 #SCR-NOTC-NUM   (A6)
+1 #SCR-####-ENVL  (A6)
+1 #NOTC-NUM       (P5)
+1 #####-NUM       (P5)
+1 #LAST-####      (A6)
+1 #####-ENVL      (P5)
+1 #SCR-MBR-NAME   (A50)    /* ??????
+1 #SCR-MBR-NAME-FULL (A70)                        /* vt1 was 35
+1 #SCR-MBR-ADDR      (A70/3)                      /* vt1 was 35   \/
+1 #NOTC-ADDR-1   (A70)
+1 #NOTC-ADDR-2   (A70)
+1 #NOTC-ADDR-3   (A70)                           /* vt1 was 25    /\
+1 #NOTC-ZIP-5    (A5)
+1 #NOTC-ZIP-4    (A4)
+1 #NOTC-CN       (N6)
+1 #MODE     (A1)
+1 #SCR-CN-NUMBER     (A10)
+1 #SCR-TEXT          (A73/22)
+1 #SCR-DUE-TEXT      (A29/4)
+1 #SCR-TYPE-IND      (A14)
+1 REDEFINE #SCR-TYPE-IND
+  2 #SCR-TYPE-IND-3   (A3)
+*
+1 #SCR-DUE-LINE1     (A29)
+1 REDEFINE #SCR-DUE-LINE1
+  2 #SCR-DUE-LINE1A    (A18)
+  2 #SCR-DUE-LINE1B    (A11)
+*
+1 #SCR-DUE-LINE2     (A29)
+1 REDEFINE #SCR-DUE-LINE2
+  2 #SCR-DUE-LINE2A    (A18)
+  2 #SCR-DUE-LINE2B    (A11)
+*
+1 #SCR-DUE-LINE      (A38)
+1 REDEFINE #SCR-DUE-LINE
+  2 #SCR-DUE-LINEA    (A27)
+  2 #SCR-DUE-LINEB    (A11)
+*
+1 #SCR-ALLT-RQST-LN1 (A26)
+1 #SCR-ALLT-RQST-LN2 (A26)
+1 #SCR-ALLT-RQST-LN3 (A26)
+*
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 C*NOTE-TABLE                /* DW24
+  2 NOTE-TEXT     (A60/500)     /* DW24
+*
+1 ST-V VIEW OF A-STATUS  /* for CAP-BILL-DATE update
+  2 ID-NUMBER
+  2 CAP-BILL-DATE
+*
+1 ST-BILL-V VIEW OF A-STATUS  /* for bill info
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID                                /* vt1
+  2 INTRO-FLAG
+  2 NAME-SP
+  2 TITLE-SP
+  2 DEBIT-CREDIT-AMT
+  2 ALOT-CHG-AUTH
+  2 ALOT-AMT
+  2 DATE-ENTERED    (9)
+  2 PAD-CODE
+*  2 S-ADDRESS-1
+*  2 S-ADDRESS-2
+*  2 S-ADDRESS-3
+*  2 S-ZIP-CODE
+*  2 REDEFINE S-ZIP-CODE
+*    3 S-ZIP-5 (A5)
+*    3 S-ZIP-4 (A4)
+  2 LINKED-CN (1)
+  2 REDEFINE LINKED-CN
+    3 LINKED-CN-A (A6/1)
+  2 X-FIRST-PLACE-FEE (9)
+  2 MODE       (9)
+  2 STATUS     (9)
+  2 OWNERSHIP-FLAG (9)
+  2 PAY-STATUS (9)
+  2 ISSUE-AGE  (9)
+  2 REDEFINE ISSUE-AGE
+    3 ISS-AGE-OCC  (9)
+      4 ISSUE-AGE-N  (N2)
+  2 ISSUE-DATE (9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DATE-OCC (9)
+      4 ISS-DT-YYYY   (N4)
+      4 ISS-DT-MM     (N2)
+      4 ISS-DT-DD     (N2)
+  2 PAID-TO-DATE (9)
+  2 REDEFINE PAID-TO-DATE
+    3 PAID-TO-DATE-OCC   (9)
+      4 PAID-TO-DATE-YYYYMM (N6)
+      4 PAID-TO-DATE-DD     (N2)
+  2 MONTH-ALLOC-AMT (9)
+  2 PLAN    (9)
+  2 BILL-PAYER-FLAG (9)
+*
+1 ST-ADDR-V VIEW OF A-STATUS   /* for addr info
+  2 ID-NUMBER
+  2 SSN
+*   2 S-ADDRESS-1                                      /* JT1 start
+*   2 ADDRESS-1
+*   2 ADDRESS-2
+*   2 ADDRESS-3
+*   2 ZIP-CODE
+*   2 REDEFINE ZIP-CODE
+*     3 ZIP-CODE-5 (A5)
+*     3 ZIP-CODE-4 (A4)
+*   2 ZIP-CODE-DPB    (N2)
+*   2 REDEFINE ZIP-CODE-DPB
+*     3 ZIP-CODE-DPB-A   (A2)
+*   2 REDEFINE ZIP-CODE-DPB
+*     3 ZIP-CODE-DPB-TBL (N1/2)                       /* JT1 end
+  2 MILITARY-SERVICE   (A3)
+* 2 ADDRESS-CHG-CODE   (A1)                           /* JT1
+  2 MEMBER-CONTACT-ID      (N8)                        /* vt1
+*
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 REC-ISN
+  2 CODE
+*
+1 #JCL-PARM         (A32)
+1 REDEFINE #JCL-PARM
+  2 #PARM-DATE      (N8)
+  2 REDEFINE #PARM-DATE
+    3 #PARM-MM      (N2)
+    3 #PARM-DD      (N2)
+    3 #PARM-YYYY    (N4)
+  2 REDEFINE #PARM-DATE
+    3 #PARM-MM-A    (A2)
+    3 #PARM-DD-A    (A2)
+    3 #PARM-YYYY-A  (A4)
+  2 REDEFINE #PARM-DATE
+    3 #PARM-DATE-X  (A8)
+*
+1 #C-RUN-DT-YYYYMMDD (N8)
+1 REDEFINE #C-RUN-DT-YYYYMMDD
+  2 #C-RUN-DT-YYYY    (N4)
+  2 #C-RUN-DT-MM      (N2)
+  2 #C-RUN-DT-DD      (N2)
+*
+1 #HOLD-YYYYMMDD   (N8)
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A     (A8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM     (N6)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY           (N4)
+  2 REDEFINE  #YYYY
+    3 #YYYY-A        (A4)
+  2 REDEFINE  #YYYY
+    3 #CENT-N        (N2)
+    3 #YY            (N2)
+  2 #MM             (N2)
+  2 REDEFINE #MM
+    3 #MM-A          (A2)
+  2 #DD             (N2)
+  2 REDEFINE #DD
+    3 #DD-A          (A2)
+*
+1 #YYYY-X         (N4)
+1 #MM-DD-YY-1     (A10)
+1 #MM-DD-YY-2     (A10)
+1 #MM-DD-YY-4     (A10)
+1 #LAST-MONTH     (A10)
+1 #NEXT-NEXT-MON  (A10)
+1 #NEXT-MON-DUE-DT (A10)
+1 #NEXT-MON-NEXT-YEAR (A10)
+1 #LAPSE-DATE     (A10)
+1 #RUN-DT-MM-DD-YY (A10)
+*
+1 #2MONS-AGO          (N8)
+1 #NEXT-MON-DAY-15    (N8)
+1 REDEFINE #NEXT-MON-DAY-15
+  2 #NEXT-MON-YYYYMM   (N6)
+*
+1 #LAST-MON-YYYYMMDD   (N8)
+1 REDEFINE #LAST-MON-YYYYMMDD
+  2 #LAST-MON-YYYYMM (N6)
+1 #NEXT-NEXT-MON-DAY-15 (N8)
+1 #SUSPEND-DATE       (N8)
+1 #FUTURE-LAPSE-DT    (N8)
+*
+1 #NEXT-MONTH-NEXT-YR (N8)
+1 REDEFINE #NEXT-MONTH-NEXT-YR
+  2 #NEXT-MON-NX-MM-A  (A2)
+  2 #NEXT-MON-NX-DD-A  (A2)
+  2 #NEXT-MON-NX-YYYY  (N4)
+  2 REDEFINE #NEXT-MON-NX-YYYY
+    3 #NEXT-MON-NX-YYYY-A (A4)
+*
+1 #NEXT-MONTH         (N8)
+1 REDEFINE #NEXT-MONTH
+  2 #NEXT-MON-MM       (N2)
+  2 REDEFINE #NEXT-MON-MM
+    3 #NEXT-MON-MM-A    (A2)
+  2 #NEXT-MON-DD       (N2)
+  2 #NEXT-MON-YYYY     (N4)
+  2 REDEFINE #NEXT-MON-YYYY
+    3 #NEXT-MON-YYYY-A  (A4)
+1 #AMT-5-2-DUES       (A9)
+1 #AMT-5-2            (A9)
+1 #AMT-UNPAID         (A10)
+1 #AMT                (N5.2)
+1 #TOT-DUE-N          (P5.2)
+1 #TOT-DUE            (A9)
+1 #AMT-4-2            (A8)
+*
+1 #REPT-EXTRACT       (A549)                  /* vt1  was 250
+1 REDEFINE #REPT-EXTRACT
+  2 #RE-SORT-KEY       (A72)                 /* vt1  was 27
+  2 REDEFINE #RE-SORT-KEY
+    3 #RE-SECTION        (A1)
+    3 #RE-SUBSECTION     (A1)
+    3 #RE-NAME           (A70)
+  2 #RE-REMAINING-FIELDS  (A477)                /* vt1 vas 223
+  2 REDEFINE #RE-REMAINING-FIELDS
+    3 #RE-ADDR1     (A70)                       /* vt1  was 25  \/
+    3 #RE-ADDR2     (A70)
+    3 #RE-ADDR3     (A70)
+    3 #RE-ADDR4     (A70)                       /* vt1 was 25   /\
+    3 #RE-CITY      (A50)                      /* vt1
+    3 #RE-STATE     (A2)                       /* vt1
+    3 #RE-ZIP-5     (A5)
+    3 REDEFINE #RE-ZIP-5
+      4 #RE-ZIP-5-TBL (N1/5)
+    3 #RE-DASH      (A1)
+    3 #RE-ZIP-LST-4 (A4)
+    3 REDEFINE #RE-ZIP-LST-4
+      4 #RE-ZIP-4-TBL (N1/4)
+    3 #RE-RANK      (A25)                        /* vt1 was 3
+    3 #RE-STATUS    (A1)
+    3 #RE-CN        (A2)
+    3 #RE-CN-NUMBER (A6)
+    3 REDEFINE #RE-CN-NUMBER
+      4 #RE-CN-NUMBER-N  (N6)
+    3 REDEFINE #RE-CN-NUMBER
+      4 #RE-CN-NUM-0   (A1)
+      4 #RE-CN-NUM-5   (A5)
+    3 #RE-GEN-MODE    (A1)
+    3 #RE-OLD-SECT    (A1)
+    3 #RE-NON-MBR-FLAG      (A1)
+    3 #RE-REMAINING         (A98)
+    3 REDEFINE #RE-REMAINING           /* FPF-DELINQUENT
+      4 #RE-FPF-AMT          (N5.2)
+      4 #RE-FPF-ISS-DT       (N8)
+      4 REDEFINE #RE-FPF-ISS-DT
+        5 #RE-FPF-ISS-DT-YYYY (A4)
+        5 #RE-FPF-ISS-DT-MM   (A2)
+        5 #RE-FPF-ISS-DT-DD   (A2)
+      4 #RE-FPF-PDTO-DT-YYYY (A4)
+      4 #RE-FPF-PDTO-DT-MM   (A2)
+      4 #RE-FPF-PDTO-DT-DD   (A2)
+      4 #RE-FPF-DUE-DT-YYYY  (A4)
+      4 #RE-FPF-DUE-DT-MM    (A2)
+      4 #RE-FPF-DUE-DT-DD    (A2)
+      4 #RE-FPF-NEW-ADDL     (A1)
+      4 #RE-FPF-INTRO-FLAG   (A1)
+      4 #RE-FPF-SNG-PREM     (A1)
+      4 #RE-FPF-APL-LAPS     (A1)
+      4 #RE-FPF-SEG-NUM      (N1)
+    3 REDEFINE #RE-REMAINING           /* PREMIUM-INFO
+      4 #RE-PRM-DUE-YY    (N2)
+      4 #RE-PRM-DUE-MM    (N2)
+      4 #RE-PRM-MODE      (A1)
+      4 #RE-PRM-SVC-ONLY  (A1)
+      4 #RE-PRM-PREMADJ   (N4.2)
+      4 #RE-PRM-BILLPREM  (N5.2)
+      4 #RE-PRM-BILLPRIN  (N4.2)
+      4 #RE-PRM-BILLINTR  (N3.2)
+      4 #RE-PRM-APL-LAPS  (A1)
+      4 #RE-PRM-PUSW      (A1)
+      4 #RE-PRM-APL       (N2)
+      4 #RE-PRM-BILLDUES  (N4.2)
+      4 #RE-PRM-BILLRIDER (N4.2)
+      4 #RE-PRM-BILL-EXTRA (N5.2)
+      4 #RE-PRM-ISS-DT    (N8)
+      4 #RE-PRM-PLAN      (A3)
+      4 #RE-PRM-P-I       (N6.2)     /* DW15
+      4 #RE-PRM-FILL      (A26)      /* DW15
+    3 REDEFINE #RE-REMAINING   /* LOAN INTEREST DUE
+      4 #RE-INT-POL      (A5)
+      4 #RE-INT-TYPE     (A1)
+      4 #RE-INT-DUE-MM   (A2)
+      4 #RE-INT-DUE-DD   (A2)
+      4 #RE-INT-DUE-YY   (N2)
+      4 #RE-INT-LOAN-AMT (N7.2)                                   /* vt7 was n5.2
+      4 #RE-INT-TOT-INTR (N7.2)                                   /* vt7 was n5.2
+      4 #RE-INT-PREPAID-INTR (N7.2)                               /* vt7 was n5.2
+      4 #RE-INT-NET-INTR-DUE (N7.2)                               /* vt7 was n5.2
+      4 #RE-INT-OVER-CV-SW   (A1)
+      4 #RE-INT-LAPSE-MONS   (N2)
+      4 #RE-INT-ALP-AMT      (N4.2)
+      4 #RE-INT-F-V          (A1)
+      4 #RE-INT-NUM-LNS      (N1)
+      4 #RE-INT-LOAN-DT-YY   (N2)
+      4 #RE-INT-LOAN-DT-MM   (A2)
+      4 #RE-INT-LOAN-DT-DD   (N2)
+      4 #RE-INT-LOAN-RATE    (N2.3)
+      4 REDEFINE #RE-INT-LOAN-RATE
+        5 #RE-INT-LOAN-RATE-2   (N2)
+        5 #RE-INT-LOAN-RATE-3   (N3)
+      4 #RE-INT-ISS-DT       (N8)
+    3 REDEFINE #RE-REMAINING  /* ALLOTMENT STOP/START
+      4 #RE-ALLT-ALLT-AMT    (N5.2)
+      4 #RE-ALLT-DB-CR       (N5.2)
+      4 #RE-ALLT-QTR-PREM    (N5.2)  /* prem + dues + fbr)
+      4 #RE-ALLT-FIXED-LOAN  (N5.2)
+      4 #RE-ALLT-QTR-PRM     (N5.2)
+      4 #RE-ALLT-QTR-DUE     (N5.2)
+      4 #RE-ALLT-QTR-FBR     (N5.2)
+      4 #RE-ALLT-ISS-DT      (N8)
+    3 REDEFINE #RE-REMAINING           /* PAID-UP-INFO
+      4 #RE-PDUP-TYPE        (A1)
+      4 #RE-PDUP-MM          (A2)
+      4 #RE-PDUP-DD          (A2)
+      4 #RE-PDUP-YY          (N2)
+      4 #RE-PDUP-AMT-BEFORE  (N4.2)
+      4 #RE-PDUP-AMT-AFTER   (N4.2)
+      4 #RE-PDUP-PLAN        (A3)
+      4 #RE-PDUP-EFF-DT-TIME (N4)
+      4 #RE-PDUP-EFF-DT-DD   (A2)
+*
+1 #I1     (I2)
+1 #I2     (I2)
+1 #I3     (I2)
+1 #I4     (I2)
+1 #ISC    (I2)
+1 #ALLOT  (I2)
+1 #NOTICE-TYPE   (A30)
+1 #PRINT-NOTICE  (L)
+1 #FIRST-TIME    (L) INIT <TRUE>
+*
+1 #TOTALS
+  2 #IR-CNT          (N5)
+  2 #NUM-NO-ADDR     (N5)
+  2 #NUM-0-ZIP       (N5)
+  2 #CNT-BILL-PAYER  (N5)           /* YK2
+1 #I                 (I2)           /* YK3
+*
+1 #TOT-NOTICES       (N5)
+1 #NUM-UNDELIVERABLE (N5)
+1 #UNKNOWN           (N5)
+*
+1 #AMT-PEND-LAP      (N9.2)
+1 #AMT-INT-NOTC      (N9.2)
+1 #WORK-AMT          (N7.2)
+*
+1 #LAST            (A25)
+1 #FIRST-MID       (A25)
+1 REDEFINE #FIRST-MID
+  2 #FILL           (A1)
+  2 #FIRST-MID-R    (A24)
+1 #SUFF1           (A9)
+1 REDEFINE #SUFF1
+  2 #FILL           (A1)
+  2 #SUFF-R         (A8)
+1 #SUFF2          (A25)
+*
+1 #EDIT-INVALID (L)
+1 #RANK-LITERAL (A23)
+1 #RANK-DISPLAY (A5)
+1 #DISPL        (P2)
+1 #PASS-COMMAND (A2)   INIT <'AD'>
+*
+1 #ABEND-CODE       (I4)
+1 #SPS-GEN-NAME-X   (A70)                            /* vt1 was 25
+1 #SPS-GEN-CN-X     (A14)
+1 REDEFINE #SPS-GEN-CN-X
+  2 #FILL1        (A8)
+  2 #SPS-GEN-CN   (A6)
+1 #MIL-ID           (A3)
+1 #ZIP-CODE-9       (N9)
+1 REDEFINE #ZIP-CODE-9
+  2 #ZIP-5           (A5)
+  2 #ZIP-4           (A4)
+1 #SEND-PDUP-ALOT-FORM (L)                                               /* PM2
+1 #ISN              (P8)                                                 /* PM2
+1 #CAPLOAN         (N5.2)           /* DW4
+1 #ERR-MSG        (A60)
+1 #FIRST-20-INS   (A20)
+1 #MI-INS         (A1)
+1 #LAST-INS       (A25)
+1 #BYP-BILL-PAYER (L)                                            /* YK2
+1 #BILL-PAYER     (L)                                            /* YK3
+* For Bill Payer flag reset if P2 notice                         /* YK3
+1 ST-V-UPDATE VIEW OF A-STATUS                                   /* YK3
+  2 ID-NUMBER                                                    /* YK3
+  2 NAME                                                         /* YK3
+  2 DATE-OTHER-UPDATE
+  2 STATUS          (9)                                          /* YK3
+  2 ISSUE-DATE      (9)                                          /* YK3
+  2 PLAN            (9)                                          /* YK3
+  2 BILL-PAYER-FLAG (9)                                          /* YK3
+*
+1 #TR-CLERK       (A3) INIT <'EDS'>                              /* YK3
+* empty for this command - included in field label               /* YK3
+1 #TR-DESCRIPTION (A8)                                           /* YK3
+* 1 #W-OLD-NEW-DATA  (A125)                                                    /* vt1 \/
+* 1 REDEFINE #W-OLD-NEW-DATA
+*  2 #W-DESCRIPTION (A10)
+*  2 #W-DATA        (A115)                                         /* YK3 stop    vt1 /\
+*
+1 #CONTACT-ID     (N8)                                            /* vt1
+1 #S-ADDRESS-1    (A75)                                           /* vt1
+1 #MIDDLE-NAME    (A25)                                           /* vt1
+1 #CITY           (A50)                                           /* vt1
+1 #STATE          (A2)
+1 #SUFFIX         (A10)
+1 #NAME-F         (A70)                                          /* vt1
+*
+1 #PDA-RANK                                                   /* vt1 \/
+  2 #PASS-COMMAND-R       (A2)
+  2 #RANK-PASS-R          (A3)
+  2 #MIL-ID-PASS-R        (A3)
+  2 #INVALID-R            (L)
+  2 #RANK-PAY-TBL-DISPL-R (P2)
+  2 #RANK-LITERAL-PASS-R  (A23)
+  2 #RANK-DISPLAY-R       (A5)
+*
+  2 #CONTACT-ID-R         (N8)
+  2 #RANK-ABBR          (A) DYNAMIC
+  2 #LETTER-ENV         (A) DYNAMIC
+  2 #SALUTATION         (A) DYNAMIC
+  2 #SALUTATION-WITH-NAME (A) DYNAMIC
+*
+1 #RANK-W              (A25)                                  /* vt1 /\
+1 #REC-READ            (N8)             /* vt1 12/08/10
+*
+1 #INVOICE-RECORD      (A250)                                        /* PM25
+1 #TAB                 (A1)    INIT <H'09'>                          /* PM25
+1 #INVOICE-AMOUNT      (N7.2)                                        /* PM25
+*
+1 #PAID-UP             (A10) CONST <'PAID-UP'>                         /* YF1
+*
+END-DEFINE
+* * * * * * * * * * *
+*
+ON ERROR
+  #BATCH-LITERAL-1 := #RE-CN-NUMBER   /* SAG-AB 20060426
+  INCLUDE GABNDCX1                                        /* SAG RH1 11282005 SS - END
+END-ERROR
+*
+INPUT #PARM                /* DW13
+WRITE 'PARM=' #PARM
+*
+IF #PARM-X = 'X'  /* Can only be done if ASAP file has already been created    DW13
+*    To process this this use job T4CYXML7
+  MOVE 'X'            TO #FUNCTION
+  MOVE #PARM-NUM-REG  TO #NOTC-REG-CNT
+  MOVE #PARM-NUM-CERT TO #NOTC-CERT-CNT
+  PERFORM AAFM-NEW-FORMAT     /* To do XML File createion from the ASAP file
+  STOP
+END-IF
+*
+FORMAT  PS=62 LS=133
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'NEW NOTICE FORMATER '
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+*
+FORMAT (2) PS=62 LS=133
+**FORMAT (3) PS=62 LS=133               /* SAG-AB 20060915
+FORMAT (3) PS=61 LS=133                 /* SAG-AB 20060915
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'NOTICES WITH NO ADDRESS OR UNDELIVERABLE ADDR'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+FORMAT (4) PS=62 LS=133
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Other ATHP07P0 Exceptions'
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+FORMAT (9) PS=62 LS=121
+WRITE  (9) NOTITLE 5x *PROGRAM 5x 'Web Delivery - billing notices' 5x *DAT4U 5X  *TIMX
+*
+**DEFINE WORK FILE 4 TYPE 'ASCII-COMPRESSED'   /* PM25
+PERFORM INIT-FILES
+*
+COMPRESS 'Scanline'      #TAB                /* PM25
+  'Policy Number' #TAB                /* PM25
+  'Insured CN'    #TAB                /* PM25
+  'Payor Name'    #TAB                /* PM25
+  'Bill Type'     #TAB                /* PM25
+  'Bill Date'     #TAB                /* PM25
+  'Amount Due'    #TAB                /* PM25
+  'Check Amount'  #TAB                /* PM25
+  'Check Number'  #TAB                /* PM25
+  'Line Items' INTO #INVOICE-RECORD LEAVING NO /* PM25
+WRITE WORK 4 #INVOICE-RECORD                 /* PM25
+RESET #INVOICE-RECORD                        /* PM25
+*
+READ WORK 1 ONCE RECORD #JCL-PARM   /* PROGRAM CALL
+READ WORK 1 ONCE RECORD #JCL-PARM   /* DATE ETC (110189123456789NAB ETC)
+WRITE 'JCL PARM=' #JCL-PARM
+*
+MOVE #PARM-MM TO #C-RUN-DT-MM
+MOVE #PARM-DD TO #C-RUN-DT-DD
+MOVE #PARM-YYYY TO #C-RUN-DT-YYYY
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+SUBTRACT 2 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE 1 TO #DD
+MOVE #YYYYMMDD TO #2MONS-AGO
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+ADD 1 TO #MM
+IF #MM GT 12
+  MOVE 1 TO #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE 15 TO #DD
+MOVE #YYYYMMDD TO #NEXT-MON-DAY-15
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+ADD 2 TO #MM
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+MOVE 15 TO #DD
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+SUBTRACT 1 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+COMPRESS #MM-A #DD-A #YYYY INTO #LAST-MONTH WITH '/'
+MOVE #YYYYMMDD TO #LAST-MON-YYYYMMDD
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+ADD 2 TO #MM
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+*
+COMPRESS #MM-A #DD-A #YYYY INTO #NEXT-NEXT-MON WITH '/'
+*
+COMPUTE #NEXT-MON-MM = #PARM-MM + 1
+MOVE 1        TO #NEXT-MON-DD
+MOVE #C-RUN-DT-YYYY TO #NEXT-MON-YYYY
+IF #NEXT-MON-MM GT 12
+  MOVE 1 TO #NEXT-MON-MM
+  ADD 1  TO #NEXT-MON-YYYY
+END-IF
+*
+MOVE #NEXT-MONTH TO #NEXT-MONTH-NEXT-YR
+ADD 1 TO #NEXT-MON-NX-YYYY
+*
+COMPRESS #NEXT-MON-NX-MM-A '01' #NEXT-MON-NX-YYYY-A
+  INTO #NEXT-MON-NEXT-YEAR WITH '/'
+COMPRESS #NEXT-MON-MM-A '01' #NEXT-MON-YYYY-A
+  INTO #NEXT-MON-DUE-DT WITH '/'
+COMPRESS #PARM-MM-A '01' #C-RUN-DT-YYYY INTO #RUN-DT-MM-DD-YY WITH '/'
+*
+* REPEAT
+READ WORK 2 RECORD #REPT-EXTRACT
+*  if #re-old-sect ne 'M'     /* <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+*    escape top
+*  end-if
+
+***  WRITE  'just read' #RE-CN-NUMBER-N #RE-OLD-SECT #RE-PRM-ISS-DT            /* vt 11/22/2010
+  ADD 1 TO #REC-READ                           /* vt 12/08/2010
+*
+  IF #RE-ZIP-LST-4 EQ ' '                 /* SAG-AB 20060825 START
+    IGNORE
+  ELSE
+    MOVE RIGHT JUSTIFIED #RE-ZIP-LST-4 TO #RE-ZIP-LST-4
+    EXAMINE #RE-ZIP-LST-4 FOR ' ' REPLACE WITH '0'
+    IF #RE-ZIP-LST-4 EQ '0000'
+      RESET #RE-ZIP-LST-4
+    END-IF
+  END-IF                                  /* SAG-AB 20060825 END
+*
+* IF #RE-OLD-SECT = 'E' OR = 'P' OR = 'K'  /* added 1/2004
+  IF #RE-OLD-SECT = 'K'  /* chged 1/2/2007  KHB
+    RESET #BNKQ
+    FIND NT-V WITH ID-NUMBER = #RE-CN-NUMBER-N
+      FOR #I1 1 TO C*NOTE-TABLE                               /* DW24
+        IF   (NOTE-TEXT (#I1) = MASK ('*Mbr in bnk'))
+            OR  (NOTE-TEXT (#I1) = MASK ('*MBR IN BNK'))
+          MOVE TRUE TO #BNKQ
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-FIND
+*
+    IF #BNKQ
+      WRITE #RE-CN-NUMBER-N 'Notice bypassed -bankrupt' #RE-OLD-SECT
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  IF #RE-OLD-SECT = 'N'  /* ALLOT CHG - Setup Iss Dt for pol # calc    * DW5
+    FIND (1) ST-BILL-V WITH MEMBER-KEY = #RE-CN-NUMBER
+      FOR #I1 1 TO 9
+        IF   (ST-BILL-V.STATUS (#I1) = 'D')
+            AND (ST-BILL-V.MODE (#I1) = 'G')
+            AND (ST-BILL-V.PAY-STATUS (#I1) LT '40')
+          MOVE ST-BILL-V.ISSUE-DATE (#I1) TO #RE-ALLT-ISS-DT /* Used by ATHS07P3
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-FIND
+  END-IF
+*
+  RESET #INSURED-NAME                                     /* DW8
+  MOVE #RE-NAME      TO #PAYOR-NAME
+  MOVE #RE-CN-NUMBER TO #INSURED-CN   #PAYOR-CN           /* DW8
+*
+  CALLNAT 'ATHS07P3' #POL-NUM #REPT-EXTRACT
+*
+  RESET #CONTACT-SEG #BYP-PD-TO #BYP-PRM-NOTC
+    #BYP-BILL-PAYER #BILL-PAYER #INV-I                  /* YK2 PM25
+    #PDA-ADDRESS                  /* vt2 01192011
+*
+  FIND (1) ST-BILL-V WITH MEMBER-KEY = #RE-CN-NUMBER
+    MOVE ST-BILL-V.MEMBER-CONTACT-ID TO #CONTACT-ID  #ADD-CONTACT-ID                     /* vt1
+    #ISN := *ISN                                          /* PM2
+*
+    RESET #LAST-ISS-DT #DUPL-ISS-DT
+    FOR #I1 1 TO 9
+      IF  (ST-BILL-V.STATUS (#I1) NE  'D')
+          OR (ST-BILL-V.PAY-STATUS (#I1) GT '40')
+        ESCAPE TOP
+      END-IF
+*
+      IF ST-BILL-V.ISSUE-DATE (#I1) = #LAST-ISS-DT
+        MOVE TRUE TO #DUPL-ISS-DT
+      END-IF
+      MOVE ST-BILL-V.ISSUE-DATE (#I1) TO #LAST-ISS-DT
+    END-FOR
+*
+    IF #RE-OLD-SECT = 'Q'    /* Paid-up              /* DW23
+      COMPUTE #YYYY = (#RE-PDUP-EFF-DT-TIME - 1) / 12
+      IF #YYYY GT 50
+        ADD 1900 TO #YYYY
+      ELSE
+        ADD 2000 TO #YYYY
+      END-IF
+*
+      COMPUTE #MM = #RE-PDUP-EFF-DT-TIME - (#YY * 12)
+      MOVE #RE-PDUP-EFF-DT-DD TO #DD-A
+      MOVE #YYYYMMDD TO #PDUP-EFF-DT
+    END-IF                                        /* END DW23
+*
+    IF   (#RE-OLD-SECT = 'E' OR = 'P' OR = 'K'   /* added 9/2003
+        OR = 'Q'      /* Added 9/10/2008                /* DW23
+        OR = 'J')     /* added 2/2006
+      FOR #I1 1 TO 9
+        IF STATUS (#I1) NE 'D'
+          ESCAPE TOP
+        END-IF
+*
+        IF  ((#RE-OLD-SECT = 'E' OR = 'P')
+            AND (ST-BILL-V.ISSUE-DATE (#I1) = #RE-PRM-ISS-DT)
+            AND (ST-BILL-V.PLAN (#I1) = #RE-PRM-PLAN))
+*
+            OR  ((#RE-OLD-SECT = 'K')
+            AND (ST-BILL-V.ISSUE-DATE (#I1) = #RE-INT-ISS-DT))
+*
+            OR  ((#RE-OLD-SECT = 'Q')                               /* DW23
+            AND (ST-BILL-V.PLAN (#I1) = #RE-PDUP-PLAN)                                       /* DW23
+            AND (ST-BILL-V.ISSUE-DATE (#I1) = #PDUP-EFF-DT))        /* END DW23
+*
+            OR  ((#RE-OLD-SECT = 'K')
+            AND (ST-BILL-V.ISSUE-DATE (#I1) = #RE-INT-ISS-DT))
+*
+            OR  ((#RE-OLD-SECT = 'J') AND (#I1 = #RE-FPF-SEG-NUM))
+*
+          IF   (#RE-OLD-SECT = 'E')
+              AND (PAID-TO-DATE-YYYYMM (#I1) = #LAST-MON-YYYYMM)
+            ADD 1 TO #E-LST-MON
+            ADD 1 TO #RE-PRM-DUE-MM
+            IF #RE-PRM-DUE-MM GT 12
+              SUBTRACT 12 FROM #RE-PRM-DUE-MM
+              ADD 1 TO #RE-PRM-DUE-YY
+            END-IF
+          END-IF
+*
+          IF   (#RE-OLD-SECT = 'P') AND (ST-BILL-V.MODE (#I1) = 'Q')
+              AND (#RE-SUBSECTION NE '4')  /* CAP MIP ONLY           /* DW15
+              AND (ST-BILL-V.X-FIRST-PLACE-FEE (#I1) GT 0)
+            WRITE #RE-CN-NUMBER 'PREM Notc bypassed due to FPF for' #I1
+            MOVE TRUE TO #BYP-PRM-NOTC /* 6/2/2006
+          END-IF
+*
+          IF   (PAID-TO-DATE (#I1) LT #2MONS-AGO)
+              AND (#RE-OLD-SECT = 'E' OR = 'P')
+              AND (#RE-SUBSECTION NE '4')  /* CAP MIP ONLY           /* DW15
+            MOVE TRUE TO #BYP-PD-TO
+            WRITE #RE-CN-NUMBER 'OVR DU' #RE-OLD-SECT
+              ISSUE-DATE (#I1) PAID-TO-DATE(#I1) 'Notice bypassed'
+          END-IF
+*
+* Check if Bill Payer                                                  /* YK3
+          IF BILL-PAYER-FLAG(#I1) = 'Y'                                /* YK3
+            #BILL-PAYER := TRUE                                      /* YK3
+          END-IF                                                       /* YK3
+* Skip if "Bill payer" (automatic withdrawal from bank) and P1 notice  /* YK2 Start
+          IF #RE-OLD-SECT = 'P' AND #BILL-PAYER
+            MOVE TRUE TO #BYP-BILL-PAYER
+            #CNT-BILL-PAYER := #CNT-BILL-PAYER + 1
+            WRITE #RE-CN-NUMBER 'BILL PAYER' #RE-OLD-SECT
+              ISSUE-DATE (#I1) PAID-TO-DATE(#I1) 'Notice bypassed'
+            WRITE(2) #RE-CN-NUMBER 'BILL PAYER' #RE-OLD-SECT
+              ISSUE-DATE (#I1) PAID-TO-DATE(#I1) 'Notice bypassed'
+          END-IF                                                       /* YK2 End
+*
+          MOVE 'S' TO #ADD-TYPE                                       /* vt1 \/
+          CALLNAT 'addn0001' #PDA-ADDRESS
+          MOVE #ADD-LINE-1 TO #S-ADDRESS-1
+*                                                                     /* vt1 /\
+          MOVE #RE-CN-NUMBER-N TO #CGA-SCR-ID
+          RESET #USE-SEC-ADDR                      /* DW2
+          IF   (#RE-OLD-SECT = 'J')
+              AND (OWNERSHIP-FLAG (#I1) = 'N')
+*               AND (S-ADDRESS-1 NE ' ')                               /* vt1
+              AND (#S-ADDRESS-1 NE ' ' )                                          /* vt1
+            WRITE #RE-CN-NUMBER 'FPF USED 2ND ADDR for' #I1
+            MOVE TRUE TO #USE-SEC-ADDR
+            RESET #CONTACT-SEG
+          ELSE
+            MOVE #I1 TO #CONTACT-SEG
+          END-IF
+*
+          CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+            #POL-NUM
+*          IF #NUM-OWNERS NE 0
+          IF #MULT-OWNERS (8) NE 0
+              OR #USE-SEC-ADDR
+            IF #RE-OLD-SECT = 'Q'    /* Paid-up              /* DW23
+              WRITE #RE-CN-NUMBER-N 'Paid-up Notice sent to Owner'
+            END-IF
+*
+            WRITE (4) #RE-CN-NUMBER-N #RE-PRM-ISS-DT 'Non-ins ownr'
+              #NUM-OWNERS 'i-flg=' ST-BILL-V.INTRO-FLAG
+              #EXT-FORMATED-NAME #RE-NAME 'NOTC TYPE=' #RE-OLD-SECT
+*            IF   (ST-BILL-V.S-ADDRESS-1 NE ' ')                        /* vt1
+            IF (#S-ADDRESS-1 NE ' ')                                  /* vt1
+                AND (#RE-NON-MBR-FLAG = 'N')
+                AND (#RE-OLD-SECT = 'E' OR = 'P')
+              WRITE #RE-CN-NUMBER-N 'Owner bypassed for CG 2nd address'
+            ELSE
+*        Save Input name & CN as the Insured Info
+              RESET #INSURED-NAME                     /* vt1 120810
+*              RESET #LAST-INS #MI-INS #FIRST-20-INS                    /* vt1 \/
+*              CALLNAT 'GFMLNSXX' /* split name
+*                #RE-NAME
+*                #FIRST-20-INS
+*                #MI-INS
+*                #LAST-INS
+*                #ERR-MSG
+*              COMPRESS #FIRST-20-INS #MI-INS #LAST-INS
+*                INTO #INSURED-NAME
+*                 into #LST-SPS-GEN-NAME-X
+              MOVE #RE-NAME TO #INSURED-NAME
+*                                                                       /* vt1 /\
+              MOVE #RE-CN-NUMBER TO #INSURED-CN
+*
+*       Replace Input Name & CN with the Owner Info
+              MOVE #ID-NUM TO #RE-CN-NUMBER-N #PAYOR-CN-N   /* DW8
+*
+              MOVE #NAME   TO #RE-NAME #PAYOR-NAME         /* DW8
+              MOVE #RANK   TO #RE-RANK
+              MOVE #MIL-STATUS TO #RE-STATUS
+              MOVE #FIRST-ADDRESS TO #RE-ADDR1
+**              MOVE #ADDR-2 TO #RE-ADDR2              /* vt5 08022011 \/
+**              MOVE #ADDR-3 TO #RE-ADDR3
+              MOVE #SECOND-ADDRESS TO #RE-ADDR2
+              MOVE #THIRD-ADDRESS  TO #RE-ADDR3       /* vt5  08022011 /\
+              MOVE #ZIP-CODE TO #ZIP-CODE-9
+              RESET #RE-ZIP-LST-4 #RE-DASH
+              MOVE #ZIP-5   TO #RE-ZIP-5
+              IF #ZIP-4 NE ' '
+                MOVE '-'    TO #RE-DASH
+                MOVE #ZIP-4 TO #RE-ZIP-LST-4
+              END-IF
+              IF #COUNTRY-CODE = 'US'          /* vt5 07/312011
+                MOVE #EXT-CITY TO #RE-CITY             /* vt4 07252011
+                MOVE #EXT-STATE TO #RE-STATE           /* vt4 07252011
+              ELSE                             /* vt5 07312011  \/
+                MOVE #ADDR-3 TO #RE-CITY
+                RESET #RE-STATE
+              END-IF                           /* vt5 07312011   /\
+            END-IF
+          END-IF
+        END-IF
+      END-FOR
+    END-IF
+  END-FIND
+*
+  IF #BYP-PD-TO
+      OR #BYP-PRM-NOTC
+*     OR #BYP-BILL-PAYER                            /* YK2 PM25
+    ESCAPE TOP
+  END-IF
+*
+  FIND (1) ST-BILL-V WITH MEMBER-KEY = #INSURED-CN
+  END-FIND
+  FIND (1) ST-ADDR-V WITH MEMBER-KEY = #RE-CN-NUMBER
+    MOVE ST-ADDR-V.MEMBER-CONTACT-ID TO #CONTACT-ID   #CONTACT-ID-R                      /* vt1
+  END-FIND
+*
+  IF #RE-SECTION = 'A'
+    PERFORM MISSING-ADDRESS
+  END-IF
+*
+  IF F-UNDEL-ADDRESS (< ST-ADDR-V.MEMBER-CONTACT-ID >)         /* JT1
+*  IF ST-ADDR-V.ADDRESS-CHG-CODE = 'U' OR = 'V'
+      AND NOT #BYP-BILL-PAYER                                  /* PM25
+    PERFORM MISSING-ADDRESS
+    ADD 1 TO #NUM-UNDELIVERABLE
+  END-IF
+*
+  RESET #SCR-TEXT     (*)
+  RESET #SCR-DUE-TEXT (*)
+  RESET #SCR-ALLT-RQST-LN1
+  RESET #SCR-ALLT-RQST-LN2
+  RESET #SCR-ALLT-RQST-LN3
+  RESET #NOTICE-INFO
+  COMPRESS '"CN' ST-BILL-V.ID-NUMBER '"'INTO #SCR-CN-NUMBER LEAVING NO
+*                                                                             /* vt1 \/
+*  SEPARATE #RE-NAME INTO #LAST #FIRST-MID #SUFF1 #SUFF2
+*    WITH DELIMITER ','
+*
+  RESET #DISPL
+*
+  CALLNAT 'RANKn001' #PDA-RANK
+  #RANK-W := #RANK-ABBR
+*  CALLNAT 'GRANKSXX' #PASS-COMMAND #RE-RANK ST-ADDR-V.MILITARY-SERVICE
+*    #EDIT-INVALID #DISPL #RANK-LITERAL #RANK-DISPLAY
+*                                                                             /* vt1 /\
+  MOVE 'Policyowner' TO #SCR-MBR-NAME
+*
+  #EXT-FORMATED-NAME :=#LETTER-ENV
+*                                                              /* vt1 \/
+*  COMPRESS #RANK-DISPLAY #FIRST-MID-R #LAST #SUFF-R
+*    INTO #SCR-MBR-NAME-FULL
+  MOVE #EXT-FORMATED-NAME TO #SCR-MBR-NAME-FULL
+* compress #rank-w #formated-name into #scr-mbr-name-full      /* vt1 /\
+*
+*  IF   (#RE-STATUS = 'R')                                        /* vt1 \/
+*      AND (NOT #RE-RANK = 'MR' OR = 'MS' OR = 'MRS' OR = 'MIS'
+*      OR = 'REV' OR = 'DR')
+*    COMPRESS #SCR-MBR-NAME-FULL 'RET' INTO #SCR-MBR-NAME-FULL
+*  END-IF                                                          /* vt1 /\
+*
+  IF #INSURED-NAME = ' '            /* DW8
+    MOVE #SCR-MBR-NAME-FULL TO #INSURED-NAME
+  END-IF
+*
+  MOVE #SCR-MBR-NAME-FULL TO #PAYOR-NAME                     /* DW8
+  MOVE #RE-ADDR1 TO #SCR-MBR-ADDR (1) #NOTC-ADDR-1
+  MOVE #RE-ADDR2 TO #SCR-MBR-ADDR (2) #NOTC-ADDR-2
+  MOVE #RE-ADDR3 TO #SCR-MBR-ADDR (3) #NOTC-ADDR-3
+  MOVE #RE-ZIP-5 TO                   #NOTC-ZIP-5
+  MOVE #RE-ZIP-LST-4 TO               #NOTC-ZIP-4
+  MOVE #RE-CITY                 TO #CITY                        /* vt1
+  MOVE #RE-STATE                TO #STATE                       /* vt1
+  MOVE #RE-CN-NUMBER-N TO #NOTC-CN
+  MOVE #RE-PRM-MODE    TO #MODE
+*
+  COMPRESS 'Dear' #SCR-MBR-NAME INTO #SCR-TEXT  (1)    /* DW14
+  COMPRESS #SCR-TEXT (1) ':'    INTO #SCR-TEXT  (1) LEAVING NO
+  MOVE 3 TO #ISC
+*                                                                        /* vt1 \/
+*   FOR #I1 3 TO 1 STEP -1   /* FIND LAST ADDRESS LINE    /* DW14
+*     IF #SCR-MBR-ADDR (#I1) NE ' '
+*      COMPRESS #SCR-MBR-ADDR (#I1) #RE-ZIP-5 INTO #SCR-MBR-ADDR (#I1)
+*
+*      IF #RE-ZIP-LST-4 = ' ' OR = '0000'
+*        IGNORE
+*      ELSE
+*        COMPRESS #SCR-MBR-ADDR (#I1) '-' #RE-ZIP-LST-4
+*          INTO #SCR-MBR-ADDR (#I1) LEAVING NO
+*      END-IF
+*
+*      ESCAPE BOTTOM
+*    END-IF
+*  END-FOR
+*                                                                        / vt1 /\
+* * DETERMINE TYPE OF NOTICE
+*
+  IF #RE-OLD-SECT = 'P' OR = 'E'
+      AND (#RE-SUBSECTION NE '4')                   /* DW15
+    RESET #HAS-ASQ
+    FOR #I1 1 TO 9
+      IF    (MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M')
+          AND (ST-BILL-V.PAY-STATUS (#I1) LT '40')
+        MOVE TRUE TO #HAS-ASQ
+      END-IF
+    END-FOR
+*
+    IF NOT #HAS-ASQ
+*      WRITE ST-BILL-V.ID-NUMBER 'NOTICE BYPASSED DUE TO NO A/S/Q/M POLS'
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  RESET #IS-OLD-NEW #1ST-TIME-DELQ     /* DW18
+  FOR #I1 1 TO 9
+    IF (ST-BILL-V.STATUS (#I1) = 'D')
+        AND ((ST-BILL-V.ISSUE-DATE (#I1) LT 19970101)  /* old/new
+        OR (ST-BILL-V.MONTH-ALLOC-AMT (#I1) = 999.99))
+        AND (((#RE-OLD-SECT = 'E')
+        AND (ST-BILL-V.ISSUE-DATE (#I1) = #RE-PRM-ISS-DT)
+        AND (ST-BILL-V.MODE (#I1) = 'A' OR = 'S' OR = 'Q'))
+        OR ((#RE-OLD-SECT = 'F') AND (ST-BILL-V.MODE (#I1) = 'G')))
+      MOVE TRUE TO #IS-OLD-NEW
+*
+      IF   (#RE-OLD-SECT = 'E') /* 1st time Delq should not be CERT   /* DW18
+          AND (ST-BILL-V.PAID-TO-DATE-YYYYMM (#I1) = #LAST-MON-YYYYMM)
+        MOVE TRUE TO #1ST-TIME-DELQ      END-IF
+    END-IF
+  END-FOR
+*
+  RESET #SEND-CERTIFIED
+  IF NOT #RE-OLD-SECT = 'A' OR = 'C'  /* no addr or 0-zips
+    IF  ((#RE-OLD-SECT = 'E') AND #IS-OLD-NEW)        /* CPA/CPT/CPL
+        OR ((#RE-OLD-SECT = 'F') AND #IS-OLD-NEW)        /* CGS/CCS
+        OR ((#RE-OLD-SECT = 'K') AND (#RE-SUBSECTION = '5')) /* IR
+      MOVE TRUE TO #SEND-CERTIFIED
+    END-IF
+*                    Below added 2/23/2008       DW18
+    IF #1ST-TIME-DELQ    /* 1st time Delq should not be CERT
+      RESET #SEND-CERTIFIED
+    END-IF
+  END-IF
+*
+  RESET #SCR-ENT-BAR-CODE   /* a38
+  RESET #SCR-ENT-BAR-CODE-2 /* a38
+  RESET #SCR-CN-BAR-CODE    /* A09
+  RESET #SCR-TRAN-BAR-CODE  /* A04
+  RESET #SCR-AMT-BAR-CODE   /* A08
+  RESET #SCR-ZIP-BAR-CODE   /* A14
+  RESET #SCR-AMT-BAR-CODE-2
+  RESET #SCR-TRAN-BAR-CODE-2
+  RESET #SCR-ISS-DT
+  RESET #INV-TRANSACTION    /* PM25
+  MOVE TRUE TO #PRINT-NOTICE
+  DECIDE ON FIRST VALUE OF #RE-OLD-SECT
+*   VALUE 'D' PERFORM FPF-PENDING-LAPSE-OR-APL    /* No More
+    VALUE 'K' PERFORM INT-NOTICE
+    VALUE 'L' MOVE FALSE TO #PRINT-NOTICE /* PREM NOTICE MISSING ADDRESS
+*  below formerly in ATHP07P1
+    VALUE 'E' PERFORM PREM-PENDING-LAPSE-OR-APL
+    VALUE 'F' PERFORM STOP-ALLOTMENT-NOTICE
+    VALUE 'J' PERFORM FPF-REMINDER
+    VALUE 'M' PERFORM STOP-ALLOTMENT-NOTICE
+    VALUE 'N' PERFORM ALLOT-START-CHECK-NEEDED-NOTICE
+    VALUE 'P' PERFORM PREMIUM-DUE-NOTICE
+    VALUE 'Q' PERFORM PAID-UP-NOTICE
+    NONE      ADD 1 TO #UNKNOWN
+  END-DECIDE
+*
+  IF #SCR-TYPE-IND = MASK ('I')
+    COMPRESS 'INT' #RE-INT-F-V INTO #SCR-TRAN-BAR-CODE LEAVING NO
+    MOVE #RE-INT-NET-INTR-DUE TO #WORK-AMT
+    MOVE EDITED #WORK-AMT (EM=99999.99) TO #SCR-AMT-BAR-CODE
+    ADD +1 TO #INV-I                                                          /* PM25
+    #INV-TRAN-CODE (#INV-I) := #SCR-TRAN-BAR-CODE                             /* PM25
+    #INVOICE-AMOUNT         := #WORK-AMT                                      /* PM25
+    MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+  END-IF
+*
+  IF  (#SCR-TYPE-IND = MASK ('P'))
+      OR (#SCR-TYPE-IND = MASK ('CPL'))
+      OR (#SCR-TYPE-IND = MASK ('CPA'))
+      OR (#SCR-TYPE-IND = MASK ('CPT'))
+      OR (#SCR-TYPE-IND = MASK ('GS'))
+      OR ((#SCR-TYPE-IND = 'LC')                                   /* DW15
+      AND ((#RE-PRM-BILLPREM NE 0)  OR (#RE-PRM-PREMADJ NE 0)))   /* DW15
+    MOVE 'PREP' TO #SCR-TRAN-BAR-CODE
+*
+    IF #SCR-TYPE-IND = MASK ('GS')
+      MOVE #RE-ALLT-QTR-PRM TO #WORK-AMT
+    ELSE
+      MOVE #RE-PRM-BILLPREM TO #WORK-AMT
+      ADD  #RE-PRM-PREMADJ  TO #WORK-AMT
+    END-IF
+    MOVE EDITED #WORK-AMT (EM=99999.99) TO #SCR-AMT-BAR-CODE
+    ADD +1 TO #INV-I                                                          /* PM25
+    #INV-TRAN-CODE (#INV-I)  := #SCR-TRAN-BAR-CODE                            /* PM25
+    #INVOICE-AMOUNT := #WORK-AMT                                              /* PM25
+    MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+  END-IF
+*
+  IF  (#SCR-TYPE-IND = MASK ('F'))
+      OR (#SCR-TYPE-IND = MASK ('CFL'))
+      OR (#SCR-TYPE-IND = MASK ('CFA'))
+    MOVE 'FPFP' TO #SCR-TRAN-BAR-CODE
+    MOVE #RE-FPF-AMT TO #WORK-AMT
+    MOVE EDITED #WORK-AMT (EM=99999.99) TO #SCR-AMT-BAR-CODE
+    ADD +1 TO #INV-I                                                          /* PM25
+    #INV-TRAN-CODE (#INV-I) := #SCR-TRAN-BAR-CODE                             /* PM25
+    #INVOICE-AMOUNT         := #WORK-AMT                                      /* PM25
+    MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+  END-IF
+*
+  MOVE '??' TO #SCR-TR-BR-CD
+  DECIDE ON FIRST #SCR-TRAN-BAR-CODE
+    VALUE 'PREP' MOVE '11' TO #SCR-TR-BR-CD
+      COMPRESS #SCR-TRAN-BAR-CODE '-11' INTO #SCR-TRAN-BAR-CODE LEAVING NO
+    VALUE 'FEEP' MOVE '12' TO #SCR-TR-BR-CD
+      COMPRESS #SCR-TRAN-BAR-CODE '-12' INTO #SCR-TRAN-BAR-CODE LEAVING NO
+    VALUE 'FPFP' MOVE '22' TO #SCR-TR-BR-CD
+      COMPRESS #SCR-TRAN-BAR-CODE '-22' INTO #SCR-TRAN-BAR-CODE LEAVING NO
+    VALUE 'INTF' MOVE '33' TO #SCR-TR-BR-CD
+      COMPRESS #SCR-TRAN-BAR-CODE '-33' INTO #SCR-TRAN-BAR-CODE LEAVING NO
+    VALUE 'INTV' MOVE '44' TO #SCR-TR-BR-CD
+      COMPRESS #SCR-TRAN-BAR-CODE '-44' INTO #SCR-TRAN-BAR-CODE LEAVING NO
+    NONE IGNORE
+  END-DECIDE
+*
+  IF #PRINT-NOTICE
+    RESET #RID-DISP #SCR-BAR-CD-SUPPRESSED-70
+    RESET #AAFM-BAR-CODE-1 #AAFM-BAR-CODE-2
+    IF #SCR-TRAN-BAR-CODE NE ' '
+      MOVE ST-BILL-V.ID-NUMBER TO #SCR-CN-BAR-CODE-N
+*
+      IF #SCR-TRAN-BAR-CODE = 'INTF-33' OR = 'INTV-44'
+        MOVE #RE-INT-ISS-DT TO #YYYYMMDD
+        COMPRESS #MM-A #DD-A #YYYY INTO #SCR-ISS-DT LEAVING NO
+        COMPRESS '!!*' #SCR-CN-BAR-CODE #SCR-TR-BR-CD #SCR-AMT-BAR-CODE
+          #MM-A #DD-A #YYYY '*' INTO #SCR-ENT-BAR-CODE LEAVING NO
+        COMPRESS '!' #SCR-CN-BAR-CODE #SCR-TR-BR-CD   /* For AAFMAA
+          #SCR-AMT-BAR-CODE #MM-A #DD-A #YYYY
+          '!'  INTO #AAFM-BAR-CODE-1 LEAVING NO
+      ELSE
+        IF #SCR-TRAN-BAR-CODE = 'PREP-11' OR = 'FPFP-22'
+          IF #SCR-TRAN-BAR-CODE = 'FPFP-22'
+            MOVE #RE-FPF-ISS-DT TO #YYYYMMDD
+          ELSE
+            IF #SCR-TYPE-IND = MASK ('GS')
+              MOVE #RE-ALLT-ISS-DT TO #YYYYMMDD
+            ELSE
+              MOVE #RE-PRM-ISS-DT TO #YYYYMMDD
+            END-IF
+          END-IF
+*
+          COMPRESS #MM-A #DD-A #YYYY INTO #SCR-ISS-DT LEAVING NO
+          COMPRESS '!!*' #SCR-CN-BAR-CODE #SCR-TR-BR-CD
+            #SCR-AMT-BAR-CODE #MM-A #DD-A #YYYY '*'
+            INTO #SCR-ENT-BAR-CODE LEAVING NO
+          COMPRESS '!' #SCR-CN-BAR-CODE #SCR-TR-BR-CD   /* For AAFMAA
+            #SCR-AMT-BAR-CODE #MM-A #DD-A #YYYY
+            '!'  INTO #AAFM-BAR-CODE-1 LEAVING NO
+        ELSE
+          COMPRESS '!!*' #SCR-CN-BAR-CODE #SCR-TR-BR-CD
+            #SCR-AMT-BAR-CODE '*' INTO #SCR-ENT-BAR-CODE LEAVING NO
+          COMPRESS '!' #SCR-CN-BAR-CODE #SCR-TR-BR-CD   /* For AAFMAA
+            #SCR-AMT-BAR-CODE '!'  INTO #AAFM-BAR-CODE-1 LEAVING NO
+        END-IF
+      END-IF
+    END-IF
+*
+    IF ((#SCR-TYPE-IND = MASK ('P'))
+        OR (#SCR-TYPE-IND = MASK ('CPL'))
+        OR (#SCR-TYPE-IND = MASK ('CPA'))
+        OR (#SCR-TYPE-IND = MASK ('CPT')))
+        OR (#SCR-TYPE-IND = MASK ('GS'))
+        OR (#SCR-TYPE-IND = 'LC')                           /* DW15
+      IF  ((#SCR-TYPE-IND = MASK ('GS'))  AND (#RE-ALLT-QTR-DUE NE 0))
+          OR ((#SCR-TYPE-IND NE MASK ('GS')) AND (#RE-PRM-BILLDUES NE 0))
+        MOVE 'DUEP' TO #SCR-TRAN-BAR-CODE-2
+        IF #SCR-TYPE-IND = MASK ('GS')
+          MOVE #RE-ALLT-QTR-DUE TO #WORK-AMT
+        ELSE
+          MOVE #RE-PRM-BILLDUES TO #WORK-AMT
+        END-IF
+        MOVE EDITED #WORK-AMT (EM=99999.99) TO #SCR-AMT-BAR-CODE-2
+        ADD +1 TO #INV-I                                                          /* PM25
+        #INV-TRAN-CODE (#INV-I) := #SCR-TRAN-BAR-CODE-2                           /* PM25
+        #INVOICE-AMOUNT         := #WORK-AMT                                      /* PM25
+        MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+*
+        IF #SCR-TYPE-IND = MASK ('GS')
+          IF #RE-ALLT-QTR-FBR NE 0 /* so lee can easily see the 3rd amt
+            MOVE EDITED #RE-ALLT-QTR-FBR (EM=ZZZZ.99) TO #RID-DISP
+            COMPRESS 'RIDP' #RID-DISP INTO #RID-DISP
+            ADD +1 TO #INV-I                                                          /* PM25
+            #INV-TRAN-CODE (#INV-I) := 'RIDP'                                         /* PM25
+            #INVOICE-AMOUNT         := #RE-ALLT-QTR-FBR                               /* PM25
+            MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+          END-IF
+        ELSE
+          IF #RE-PRM-BILLRIDER NE 0 /* so lee can easily see the 3rd amt
+            MOVE EDITED #RE-PRM-BILLRIDER (EM=ZZZZ.99) TO #RID-DISP
+            COMPRESS 'RIDP' #RID-DISP INTO #RID-DISP
+*            MOVE 'BARCODES SUPPRESSED DUE TO 3 AMTS TO BE ENTERED'
+*              TO #SCR-BAR-CD-SUPPRESSED
+            COMPRESS #SCR-TRAN-BAR-CODE-1ST-4 #SCR-AMT-BAR-CODE /*DW3
+              #SCR-TRAN-BAR-CODE-2-1ST-4 #SCR-AMT-BAR-CODE-2 #RID-DISP
+              INTO #SCR-BAR-CD-SUPPRESSED-70
+            ADD +1 TO #INV-I                                                          /* PM25
+            #INV-TRAN-CODE (#INV-I) := 'RIDP'                                         /* PM25
+            #INVOICE-AMOUNT         := #RE-PRM-BILLRIDER                              /* PM25
+            MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+          END-IF
+        END-IF
+      ELSE
+        IF  ((#SCR-TYPE-IND = MASK ('GS')) AND (#RE-ALLT-QTR-FBR NE 0))
+            OR ((#SCR-TYPE-IND NE MASK ('GS')) AND (#RE-PRM-BILLRIDER NE 0))
+          MOVE 'RIDP' TO #SCR-TRAN-BAR-CODE-2
+          IF #SCR-TYPE-IND = MASK ('GS')
+            MOVE #RE-ALLT-QTR-FBR TO #WORK-AMT /* was -QTR-DUE
+          ELSE
+            MOVE #RE-PRM-BILLRIDER TO #WORK-AMT
+          END-IF
+          MOVE EDITED #WORK-AMT (EM=99999.99) TO #SCR-AMT-BAR-CODE-2
+          ADD +1 TO #INV-I                                                          /* PM25
+          #INV-TRAN-CODE (#INV-I) := #SCR-TRAN-BAR-CODE-2                           /* PM25
+          #INVOICE-AMOUNT         := #WORK-AMT                                      /* PM25
+          MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+        END-IF
+      END-IF
+*
+      IF   (#SCR-TYPE-IND NE MASK ('GS'))  /* all prem pmts
+          AND ((#RE-PRM-BILLPRIN NE 0) OR (#RE-PRM-BILLINTR NE 0))
+        MOVE EDITED #RE-PRM-BILLPRIN (EM=ZZZZ.99) TO #DISP-PRIN
+        MOVE EDITED #RE-PRM-BILLINTR (EM=ZZZ.99) TO #DISP-INTR
+*       COMPRESS 'BARCODES SUPPRESSED - PRNF' #DISP-PRIN
+*         'INTF' #DISP-INTR INTO #SCR-BAR-CD-SUPPRESSED
+        COMPUTE #CAPLOAN = #RE-PRM-BILLPRIN + #RE-PRM-BILLINTR   /* DW4
+        MOVE EDITED #CAPLOAN (EM=ZZZZ.99) TO #DISP-PRIN
+        COMPRESS #SCR-TRAN-BAR-CODE-1ST-4 #SCR-AMT-BAR-CODE /* DW3
+          'CMB3' #DISP-PRIN
+          INTO #SCR-BAR-CD-SUPPRESSED-70
+        ADD +1 TO #INV-I                                                           /* PM25
+        #INV-TRAN-CODE (#INV-I) := 'CMB3'                                          /* PM25
+        #INVOICE-AMOUNT         := #CAPLOAN                                        /* PM25
+        MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I)  /* PM25
+      END-IF
+    END-IF
+*
+    MOVE '??' TO #SCR-TR-BR-CD
+    DECIDE ON FIRST #SCR-TRAN-BAR-CODE-2
+      VALUE 'DUEP' MOVE '55' TO #SCR-TR-BR-CD
+        COMPRESS #SCR-TRAN-BAR-CODE-2 '-55'
+          INTO #SCR-TRAN-BAR-CODE-2 LEAVING NO
+      VALUE 'RIDP' MOVE '88' TO #SCR-TR-BR-CD
+        COMPRESS #SCR-TRAN-BAR-CODE-2 '-88'
+          INTO #SCR-TRAN-BAR-CODE-2 LEAVING NO
+      NONE IGNORE
+    END-DECIDE
+*
+    IF #SCR-TRAN-BAR-CODE-2 NE ' '
+      IF   (#SCR-TYPE-IND NE MASK ('GS')) /* DUEP & RIDP w any prem pmts
+        MOVE #RE-PRM-ISS-DT TO #YYYYMMDD
+        COMPRESS #MM-A #DD-A #YYYY INTO #SCR-ISS-DT LEAVING NO
+        COMPRESS
+          '!!*' #SCR-CN-BAR-CODE #SCR-TR-BR-CD #SCR-AMT-BAR-CODE-2
+          #MM-A #DD-A #YYYY '*'
+          INTO #SCR-ENT-BAR-CODE-2 LEAVING NO
+        COMPRESS '!' #SCR-CN-BAR-CODE #SCR-TR-BR-CD    /* for AAFMAA
+          #SCR-AMT-BAR-CODE-2 #MM-A #DD-A #YYYY
+          '!'         INTO #AAFM-BAR-CODE-2 LEAVING NO
+      ELSE
+        COMPRESS
+          '!!!!!*' #SCR-CN-BAR-CODE #SCR-TR-BR-CD #SCR-AMT-BAR-CODE-2 '*'
+          INTO #SCR-ENT-BAR-CODE-2 LEAVING NO
+        COMPRESS '!' #SCR-CN-BAR-CODE #SCR-TR-BR-CD    /* for AAFMAA
+          #SCR-AMT-BAR-CODE-2 '!' INTO #AAFM-BAR-CODE-2 LEAVING NO
+      END-IF
+    END-IF
+*
+    IF #DUPL-ISS-DT
+        AND (#SCR-BAR-CD-SUPPRESSED-70 = ' ')
+      WRITE (4) #RE-CN-NUMBER 'dupl iss-dt - barcode suppresses'
+*     MOVE 'BARCODES SUPPRESSED-DUPL ISS-DTS' TO #SCR-BAR-CD-SUPPRESSED
+      COMPRESS #SCR-TRAN-BAR-CODE-1ST-4 #SCR-AMT-BAR-CODE /* DW3
+        #SCR-TRAN-BAR-CODE-2-1ST-4 #SCR-AMT-BAR-CODE-2 #RID-DISP
+        INTO #SCR-BAR-CD-SUPPRESSED-70
+    END-IF
+*
+    IF #SCR-BAR-CD-SUPPRESSED-70 NE ' '
+      RESET #SCR-ENT-BAR-CODE #SCR-ENT-BAR-CODE-2
+        #AAFM-BAR-CODE-1 #AAFM-BAR-CODE-2
+    END-IF
+*
+    MOVE #SCR-BAR-CD-SUPPRESSED-70 TO #SCR-BAR-CD-SUPPRESSED   /* DW3
+*     IF #RE-ZIP-5 NE ' '                                                        /* JT1 start
+*       RESET #ZIP-SUM
+*       FOR #I1 1 TO 5
+*         ADD #RE-ZIP-5-TBL (#I1) TO #ZIP-SUM
+*       END-FOR
+* *
+*       IF #RE-ZIP-LST-4 NE ' '
+*         FOR #I1 1 TO 4
+*           ADD #RE-ZIP-4-TBL (#I1) TO #ZIP-SUM
+*         END-FOR
+* *
+*         FOR #I1 1 TO 2
+*           ADD ZIP-CODE-DPB-TBL (#I1) TO #ZIP-SUM
+*         END-FOR
+*       END-IF
+* *
+*       DIVIDE 10 INTO #ZIP-SUM REMAINDER #ZIP-SUM
+*       COMPUTE #ZIP-SUM = 10 - #ZIP-SUM
+* *
+*       IF #RE-ZIP-LST-4 = ' '
+*         COMPRESS '!' #RE-ZIP-5 #ZIP-SUM-1 '!'
+*           INTO #SCR-ZIP-BAR-CODE LEAVING NO
+*       ELSE
+*         COMPRESS '!' #RE-ZIP-5 #RE-ZIP-LST-4 ST-ADDR-V.ZIP-CODE-DPB-A
+*           #ZIP-SUM-1 '!' INTO #SCR-ZIP-BAR-CODE LEAVING NO
+*       END-IF
+*     END-IF                                                                     /* JT1 end
+*
+*    IF  (#RE-CN-NUMBER GE '600000')                         /* RE1
+*        OR #SEND-CERTIFIED                                  /* RE1
+    IF NOT #BYP-BILL-PAYER                                   /* PM25
+      IF #SEND-CERTIFIED
+        RESET #SCR-NOTC-NUM
+      ELSE
+        ADD 1 TO #NOTC-NUM
+        COMPRESS 'N' #NOTC-NUM INTO #SCR-NOTC-NUM LEAVING NO
+      END-IF
+*
+      ADD 1 TO #NUM-NOTICES
+    END-IF                                                    /* PM25
+  END-IF
+*
+  IF #PRINT-NOTICE
+    PERFORM WRITE-FORMS
+  END-IF
+END-WORK
+*
+MOVE 'F' TO #FUNCTION     /* DW8
+PERFORM AAFM-NEW-FORMAT     /* To do Final Processing
+*
+* COMPUTE #TOT-NOTICES = #NUM-WES + #NUM-AAFMAA
+WRITE  #TOT-NOTICES   ' Total notices'
+WRITE  #NUM-0-ZIP     ' FOREIGN ADDR/0 ZIPS (INCLUDED IN AAFMAA CNTS)'
+WRITE  #NUM-NO-ADDR   ' NO ADDRESS NOTICES (NOTICES NOT PRODUCED)'
+WRITE  #NUM-UNDELIVERABLE ' UNDELIVERABLE ADDRESSES (NOT PRINTED)'
+WRITE  #NUM-NOTICES   ' Number of notices at processing'
+WRITE  #NUM-NOTICES-ACTUAL   ' Number of notices at actual printing'
+WRITE  #E-LST-MON  ' DELQ Notices w lst mon-pd-to-dt'
+WRITE  #CNT-BILL-PAYER    'Bill Payer P1 NOTICES (NOTICES NOT PRODUCED)'  /* YK2
+WRITE #REC-READ 'Total records read'    /* vt1 12/08/10
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE WRITE-FORMS
+* * * * * * * * * * * * * * * *
+*
+ADD 1 TO #NUM-NOTICES-ACTUAL
+RESET #AAFM
+IF #SEND-CERTIFIED
+  IF #PRINT-NOTICE
+    IF #RE-OLD-SECT = 'E' /* FTP to AAFMAA CERT DELQ Notices
+      ADD 1 TO #NOTC-CERT-CNT
+      PERFORM AAFM-NEW-FORMAT
+    ELSE
+      WRITE #RE-CN-NUMBER 'SECT=' #RE-OLD-SECT '*** should not be any Call EDS'
+    END-IF
+  END-IF
+ELSE
+  IF #RE-OLD-SECT = 'Q'     /* Paid-UP
+    IF #SEND-PDUP-ALOT-FORM                                       /* PM2
+      NEWPAGE (8)
+      WRITE (8) NOTITLE USING FORM 'ATHF07P1'
+*
+      #CGA-SCR-COMMAND  := 'FA'
+      #CGA-ORIG-COMMAND := 'FA'
+      #CGA-ORIG-SUFFIX  := 'CLD'
+      #CGA-SCR-ID       := #RE-CN-NUMBER-N
+      #CGA-ORIG-ID      := #RE-CN-NUMBER-N
+      #CGA-ISN          := #ISN
+*
+      FETCH RETURN 'C2800PFA'
+    ELSE
+      NEWPAGE (7)
+      WRITE   (7) NOTITLE USING FORM 'ATHF07P1'
+    END-IF                                                        /* PM2
+  ELSE
+    ADD 1 TO #NOTC-REG-CNT
+    PERFORM AAFM-NEW-FORMAT
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE AAFM-NEW-FORMAT
+* * * * * * * * * * * * * * * *
+*
+IF #RE-OLD-SECT = 'K' OR = 'F' OR = 'M' /* INT or stop allot
+  MOVE #SCR-DUE-LINE2B TO #TOT-AMT-DUE
+  MOVE #SCR-DUE-LINE1B TO #PRM-DUE-MM-DD-YYYY
+ELSE
+  MOVE #SCR-DUE-LINE1B TO #TOT-AMT-DUE
+  MOVE #SCR-DUE-LINE2B TO #PRM-DUE-MM-DD-YYYY
+END-IF
+*
+CALLNAT 'POSN0019'
+  #POL-NUM
+  #PAYOR-CN
+  #PAYOR-NAME
+  #NOTC-ADDR-1
+  #NOTC-ADDR-2
+  #NOTC-ADDR-3
+  #CITY
+  #STATE
+  #NOTC-ZIP-5
+  #NOTC-ZIP-4
+*
+CALLNAT 'ATHS07P6' /* 2007 notice format
+  #FUNCTION                       /* DW8
+  #NOTC-REG-CNT
+  #NOTC-CERT-CNT                  /* DW7
+  #PAYOR-CN                       /* DW8
+  #PAYOR-NAME                     /* DW8
+  #INSURED-CN                     /* DW8
+  #INSURED-NAME                /* DW8
+  #MODE
+  #RUN-DT-MM-DD-YY
+  #AAFM-BAR-CODE-1
+  #AAFM-BAR-CODE-2
+  #SCR-BAR-CD-SUPPRESSED-70    /* DW3
+  #SCR-TYPE-IND
+  #NOTC-ADDR-1
+  #NOTC-ADDR-2
+  #NOTC-ADDR-3
+  #CITY                                                /* VT1
+  #STATE                                               /* VT1
+  #NOTC-ZIP-5
+  #NOTC-ZIP-4
+  #LAST-SEG
+  #POL-NUM
+  #NOTICE-INFO
+  #SEND-CERTIFIED       /* DW7
+  #NUM-CERTS
+  #NUM-REGS
+  #NUM-AS               /* DW17
+  #CONTACT-ID                       /* vt1
+  #INV-TRANSACTION      /* PM25
+  #BYP-BILL-PAYER       /* PM25
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE MISSING-ADDRESS
+* * * * * * * * * * * * * * * *
+*
+ADD 1 TO #NUM-NO-ADDR
+*
+DECIDE ON FIRST VALUE OF #RE-OLD-SECT
+  VALUE 'D' MOVE 'FPF PENDING LAPSE OR APL'   TO #NOTICE-TYPE
+  VALUE 'E' MOVE 'PREM PENDING LAPSE OR APL'  TO #NOTICE-TYPE
+  VALUE 'F' MOVE 'CERT STOP ALLOTMENT NOTICE' TO #NOTICE-TYPE
+  VALUE 'J' MOVE 'FPF REMINDER'               TO #NOTICE-TYPE
+  VALUE 'K' MOVE 'LOAN-INT DUE NOTICE'        TO #NOTICE-TYPE
+  VALUE 'M' MOVE 'STOP ALLOTMENT NOTICE'      TO #NOTICE-TYPE
+  VALUE 'N' MOVE 'START ALLOTMENT NOTICE'     TO #NOTICE-TYPE
+  VALUE 'P' MOVE 'PREMIUM NOTICE'             TO #NOTICE-TYPE
+  VALUE 'Q' MOVE 'PAID-UP NOTICE'             TO #NOTICE-TYPE
+  NONE      MOVE 'UNKNOWN'                    TO #NOTICE-TYPE
+END-DECIDE
+*
+DISPLAY (3) 'ID NUMBER'   #RE-CN-NUMBER
+  'SSN'         SSN (EM=999-99-9999)
+  'MODE'        #RE-GEN-MODE
+  'NAME     '   #RE-NAME
+  'NOTICE-TYPE' #NOTICE-TYPE
+*
+IF *LINE-COUNT (3) LT 61    /* SAG-AB 20060915
+  WRITE (3) ' '
+END-IF                      /* SAG-AB 20060915
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE INT-NOTICE    /**IR/IL/IFL/I**    LI/LO
+* * * * * * * * * * * * * * *
+*
+FOR #I1 1 TO 9                                           /* DW5
+  IF ST-BILL-V.ISSUE-DATE (#I1) = #RE-INT-ISS-DT
+    MOVE ST-BILL-V.PLAN (#I1) TO #V-PLAN
+*
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF  (#RE-SECTION = 'A')      /* MISSING ADDRESS
+    OR F-UNDEL-ADDRESS (< ST-ADDR-V.MEMBER-CONTACT-ID >)                                /* JT1
+*    OR (ST-ADDR-V.ADDRESS-CHG-CODE = 'U' OR = 'V') /* undeliverable addr               /* JT1
+  MOVE FALSE TO #PRINT-NOTICE
+ELSE
+  IF #RE-SECTION = 'C'      /* 0 ZIPS
+    ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+    ADD 1 TO #NUM-0-ZIP
+  ELSE
+    IF #RE-SUBSECTION = '5'
+      ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+    ELSE
+      ADD 1 TO #TOT-NOTICES  /*   #NUM-WES
+    END-IF
+  END-IF
+END-IF
+*
+MOVE #RE-INT-ISS-DT TO #YYYYMMDD
+COMPRESS #MM-A '/' #DD-A '/' #YYYY INTO #V-ISS-DT LEAVING NO
+MOVE #RE-INT-DUE-YY TO #YYYY-X
+*
+IF #YYYY-X GT 50
+  ADD 1900 TO #YYYY-X
+ELSE
+  ADD 2000 TO #YYYY-X
+END-IF
+*
+COMPRESS #RE-INT-DUE-MM #RE-INT-DUE-DD #YYYY-X
+  INTO #V-PMT-DUE-DT WITH '/'
+*
+MOVE EDITED #RE-INT-LOAN-RATE (EM=ZZ.999) TO #V-LOAN-RATE
+COMPRESS #V-LOAN-RATE '%.' INTO #V-LOAN-RATE LEAVING NO
+*
+MOVE #RE-INT-LOAN-DT-YY TO #YYYY-X
+IF #YYYY-X GT 50
+  ADD 1900 TO #YYYY-X
+ELSE
+  ADD 2000 TO #YYYY-X
+END-IF
+*
+COMPRESS #RE-INT-LOAN-DT-MM #RE-INT-LOAN-DT-DD #YYYY-X
+  INTO #V-LOAN-DATE WITH '/'
+*
+IF #RE-INT-F-V = 'F'      /* Moved from below
+  MOVE 'fixed' TO #V-LOAN-TYPE
+ELSE
+  MOVE 'variable' TO #V-LOAN-TYPE
+END-IF
+*
+IF #RE-SUBSECTION = '5'        /* CURRENTLY OVERDUE
+  MOVE #RE-INT-DUE-MM TO #MM-A
+  SUBTRACT 1 FROM #MM
+  IF #MM = 0
+    MOVE 12 TO #MM
+  END-IF
+*
+  IF #MM LT #C-RUN-DT-MM
+    MOVE #C-RUN-DT-YYYY TO #YYYY-X
+  ELSE
+    COMPUTE #YYYY-X = #C-RUN-DT-YYYY - 1
+  END-IF
+*
+  COMPRESS #MM-A '01' #YYYY-X INTO #MM-DD-YY-4 WITH '/'
+END-IF
+*
+IF #RE-SUBSECTION NE '5'
+  MOVE #NEXT-NEXT-MON TO #V-LOAN-CAP-DT
+*
+  IF #RE-SUBSECTION = '1'        /* INTR DUE PENDING LAPSE
+    IF #RE-INT-LAPSE-MONS LT 1 /* AFTER 2/94 SHOULD VERY SELDOM HAPPEN
+      MOVE #NEXT-NEXT-MON-DAY-15 TO #FUTURE-LAPSE-DT
+    END-IF
+  END-IF
+END-IF
+*
+MOVE EDITED #RE-INT-NET-INTR-DUE (EM=Z,ZZZ,ZZZ.99) TO #V-AMT-DUE                         /* vt7 was em=z,zzz,zzz.99
+MOVE EDITED #RE-INT-NET-INTR-DUE (EM=Z,ZZZ,ZZZ.99) TO #V-INT-PMT                         /* vt7 was em=z,zzz,zzz.99
+*
+IF #RE-SUBSECTION NE '5'
+  IF #RE-SUBSECTION = '1'        /* INTR DUE PENDING LAPSE
+    MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+    ADD #RE-INT-LAPSE-MONS TO #MM
+*
+    FOR #I1 1 TO 2 /* to handle mm gt 24
+      IF #MM GT 12
+        SUBTRACT 12 FROM #MM
+        ADD 1 TO #YYYY
+      END-IF
+    END-FOR
+    MOVE #YYYYMMDD TO #FUTURE-LAPSE-DT
+*
+    COMPRESS #MM-A #DD-A #YYYY INTO #LAPSE-DATE WITH '/'
+*   MOVE #LAPSE-DATE TO #V-lapse-dt    /* Removed 6/25/2007
+  END-IF
+*
+*  COMPUTE #WORK-AMT = #RE-INT-NET-INTR-DUE + #RE-INT-LOAN-AMT    /* DW11
+*  MOVE EDITED #WORK-AMT (EM=ZZ,ZZZ.99) TO #V-LOAN-BAL
+  MOVE EDITED #RE-INT-LOAN-AMT (EM=Z,ZZZ,ZZZ.99) TO #V-LOAN-BAL     /* DW11      /* vt7 was EM=zz,zzz.99
+END-IF
+*
+MOVE #RE-INT-ISS-DT TO #ISS-DT
+IF #RE-SUBSECTION = '1'  /* INTR DUE PENDING ESTIMATED FUTURE LAPSE
+  IF #RE-INT-LAPSE-MONS LT 1 /* AFTER 2/94 SHOULD VERY SELDOM HAPPEN
+    MOVE '5' TO #RE-SUBSECTION    /* TO USE PROPER NOTE MSG
+  END-IF
+*
+  MOVE #FUTURE-LAPSE-DT TO #SUSPEND-DATE
+*
+  IF #PRINT-NOTICE    /* DW1
+    PERFORM UPDATE-SUSPEND-DATE
+  END-IF
+*
+  MOVE '1' TO #RE-SUBSECTION
+END-IF
+*
+IF #RE-SUBSECTION = '5'           /* INTR DUE PENDING LAPSE
+  MOVE #NEXT-MON-DAY-15 TO #SUSPEND-DATE
+*
+  IF #PRINT-NOTICE    /* DW1
+    PERFORM UPDATE-SUSPEND-DATE
+  END-IF
+*
+  IF #SUSPEND-DATE = 99999999
+    WRITE 'BYPASSED NOTICE FOR ' #RE-CN-NUMBER
+    MOVE FALSE TO #PRINT-NOTICE
+*
+    IF #RE-SECTION = 'A'
+      IGNORE
+    ELSE
+      IF #RE-SECTION = 'C'
+        SUBTRACT 1 FROM #TOT-NOTICES  /* #NUM-AAFMAA
+        SUBTRACT 1 FROM #NUM-0-ZIP
+      ELSE
+        IF #RE-SUBSECTION = '5'
+          SUBTRACT 1 FROM #TOT-NOTICES  /* #NUM-AAFMAA
+        ELSE
+          SUBTRACT 1 FROM #TOT-NOTICES  /* #NUM-WES
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+IF #RE-SUBSECTION = '5'        /* INTR DUE PENDING LAPSE
+  MOVE 'IR' TO #SCR-TYPE-IND
+  MOVE 'LI' TO #V-BILLTYPE
+  MOVE 'A'  TO #MODE                                             /* vt3
+ELSE                           /* REGULAR-INTR-DUE
+  IF #RE-SUBSECTION = '1'        /* INTR DUE PENDING LAPSE
+    IF #RE-INT-LAPSE-MONS LT 1 /* AFTER 2/94 SHOULD VERY SELDOM HAPPEN
+      MOVE 'IL' TO #SCR-TYPE-IND
+      MOVE 'LI' TO #V-BILLTYPE
+      MOVE 'A'  TO #MODE                                         /* vt3
+    ELSE                        /* FUTURE LAPSE
+      MOVE 'IFL' TO #SCR-TYPE-IND
+      MOVE 'LO' TO #V-BILLTYPE
+      MOVE 'G'  TO #MODE                            /* vt4
+    END-IF
+  ELSE                           /* REGULAR-INTR-DUE
+    MOVE 'I' TO #SCR-TYPE-IND
+    MOVE 'LI' TO #V-BILLTYPE
+    MOVE 'A'  TO #MODE                                          /* vt3
+  END-IF
+END-IF
+
+END-SUBROUTINE     /*  INT-NOTICE    /**IR/IL/IFL/I**    LI/LO
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PREM-PENDING-LAPSE-OR-APL  /**CPA/CPT/CPL** PL/P2
+* * * * * * * * * * * * * * * *
+*
+IF #RE-SECTION = 'A'      /* MISSING ADDRESS
+  MOVE FALSE TO #PRINT-NOTICE
+ELSE
+  IF #RE-SECTION = 'C'     /* 0 ZIPS
+    ADD 1 TO #NUM-0-ZIP
+    ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+  ELSE
+    IF #IS-OLD-NEW   /* a/o 2/1/2002 all cpas goes to aafmaa
+*                      /* a/o 5/27/2005 NXT cpas go to WES
+      ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+    ELSE
+      ADD 1 TO #TOT-NOTICES  /* #NUM-WES
+    END-IF
+  END-IF
+END-IF
+*
+COMPUTE #TOT-DUE-N = #RE-PRM-BILLPREM + #RE-PRM-BILLDUES
+  + #RE-PRM-BILLRIDER
+  + #RE-PRM-PREMADJ
+  + #RE-PRM-BILLPRIN
+  + #RE-PRM-BILLINTR
+MOVE EDITED #TOT-DUE-N (EM=ZZ,ZZZ.99) TO #V-AMT-DUE
+*
+MOVE #RE-PRM-DUE-YY TO #YYYY-X
+IF #YYYY-X GT 50
+  ADD 1900 TO #YYYY-X
+ELSE
+  ADD 2000 TO #YYYY-X
+END-IF
+*
+COMPRESS #RE-PRM-DUE-MM '01' #YYYY-X /* Will be created in   /* DW19 DW21
+  INTO #MM-DD-YY-1 WITH '/'          /* in GET-ISS-DTS-AND-PREMS
+MOVE #MM-DD-YY-1 TO #V-PMT-DUE-DT                     /* END DW19  DW21
+*
+RESET #PRM-TEXT
+IF #RE-PRM-SVC-ONLY = 'Y'
+  RESET #PRM-TEXT
+ELSE
+  MOVE 'premiums and' TO #PRM-TEXT
+END-IF
+*
+MOVE #RE-PRM-PLAN TO #V-PLAN   /* DW8
+*
+PERFORM GET-ISS-DTS-AND-PREMS
+*
+IF #RE-PRM-APL-LAPS = 'A'  /* PREM DUE PENDING APL
+  IGNORE
+ELSE                            /* PREM DUE PENDING LAPSE
+  MOVE #NEXT-MON-DAY-15 TO #SUSPEND-DATE
+  MOVE #RE-PRM-ISS-DT TO #ISS-DT
+*
+  IF #PRINT-NOTICE
+    PERFORM UPDATE-SUSPEND-DATE
+  END-IF
+END-IF
+*
+IF #RE-PRM-APL-LAPS = 'A'        /* PREM DUE PENDING APL
+  MOVE 'CPA' TO #SCR-TYPE-IND
+  MOVE 'PL' TO #V-BILLTYPE
+ELSE                           /* PREM DUE PENDING LAPSE
+  MOVE 'CPL' TO #SCR-TYPE-IND
+  MOVE 'P2' TO #V-BILLTYPE
+END-IF
+IF #BILL-PAYER AND NOT #BYP-BILL-PAYER            /* YK3 PM25
+  PERFORM RESET-BILL-PAYER-FLAG                   /* YK3
+END-IF                                            /* YK3
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PREMIUM-DUE-NOTICE   /**PE/PA/P**   PB/RE/RR/PU/P1
+*         This is also MIP Only Bill Processing
+* * * * * * * * * * * * * * * * * * *
+*
+IF  (#RE-SECTION = 'A')      /* MISSING ADDRESS
+    OR F-UNDEL-ADDRESS (< ST-ADDR-V.MEMBER-CONTACT-ID >)                            /* JT1
+*    OR (ST-ADDR-V.ADDRESS-CHG-CODE = 'U' OR = 'V') /* undeliverable addr           /* JT1
+  MOVE FALSE TO #PRINT-NOTICE
+ELSE
+  IF #RE-SECTION = 'C'      /* 0 ZIPS
+    ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+    ADD 1 TO #NUM-0-ZIP
+  ELSE
+    ADD 1 TO #TOT-NOTICES  /* #NUM-WES
+  END-IF
+END-IF
+*
+COMPUTE #TOT-DUE-N = #RE-PRM-BILLPREM + #RE-PRM-BILLDUES
+  + #RE-PRM-BILLRIDER
+  + #RE-PRM-PREMADJ
+  + #RE-PRM-BILLPRIN
+  + #RE-PRM-BILLINTR
+MOVE EDITED #TOT-DUE-N (EM=ZZ,ZZZ.99) TO #V-AMT-DUE
+*
+MOVE #RE-PRM-DUE-YY TO #YYYY-X
+IF #YYYY-X GT 50
+  ADD 1900 TO #YYYY-X
+ELSE
+  ADD 2000 TO #YYYY-X
+END-IF
+*
+COMPRESS #RE-PRM-DUE-MM '01' #YYYY-X     /* Will be created      /* DW19 DW21
+  INTO #V-PMT-DUE-DT WITH '/'  /* in GET-ISS-DTS-AND-PREMS
+*                                                           /* END DW19 DW21
+MOVE #RE-PRM-PLAN TO #V-PLAN   /* DW8
+*
+PERFORM GET-ISS-DTS-AND-PREMS
+*
+IF  (#RE-SUBSECTION = '4')   /* CAP MIP Only bill                         /* DW15
+    OR (#RE-PRM-BILLPRIN NE 0)  /* All MIP Bills including LC bills          /* DW15
+  RESET #CAP-BILL-DATE
+  FIND (1) ST-V WITH MEMBER-KEY = #RE-CN-NUMBER   /* RESET CAP-BILL-DATE
+    IF CAP-BILL-DATE = 0
+      MOVE #C-RUN-DT-YYYYMMDD TO CAP-BILL-DATE
+      UPDATE (1859)
+      END TRANSACTION
+    END-IF
+*
+    MOVE CAP-BILL-DATE TO #CAP-BILL-DATE
+*   write id-number 'ATHP07P0 ST MIP info record CAP-BILL-DATE=' #CAP-BILL-DATE
+  END-FIND
+*
+  MOVE 'LC' TO #V-BILLTYPE
+  MOVE EDITED #RE-PRM-P-I (EM=ZZ,ZZZ.99) TO #V-LOAN-BAL
+*
+  IF #RE-PRM-BILL-EXTRA NE 0   /* Should never happen if Collection process occurs
+    MOVE EDITED #RE-PRM-BILL-EXTRA (EM=ZZ,ZZZ.99) TO #V-UNPD-BAL
+  END-IF
+*
+  MOVE #CAP-BILL-DATE TO #YYYYMMDD
+  ADD 1 TO #MM
+  IF #MM GT 12
+    SUBTRACT 12 FROM #MM
+    ADD 1 TO #YYYY
+  END-IF
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #V-COLLECT-DT WITH '/'
+*
+  IF #RE-PRM-BILLPREM = 0  /* MIP Alone do not have LAPSE-DT
+    RESET #V-LAPSE-DT
+  END-IF
+ELSE
+  IF #RE-PRM-BILL-EXTRA NE 0
+    MOVE EDITED #RE-PRM-BILL-EXTRA (EM=ZZ,ZZZ.99) TO #V-UNPD-BAL
+    MOVE 'PB' TO #V-BILLTYPE
+  ELSE
+    IF #RE-PRM-PUSW = '1' OR = 'R' /* R = has at least 1 RT pol
+      IF #RE-PRM-PUSW = 'R'
+        IF #ISS-AGE GE 66
+          MOVE 'RE' TO #V-BILLTYPE
+        ELSE
+          MOVE 'RR' TO #V-BILLTYPE
+        END-IF
+      ELSE
+        MOVE 'PU' TO #V-BILLTYPE
+      END-IF
+    ELSE
+      MOVE 'P1' TO #V-BILLTYPE
+    END-IF
+  END-IF
+END-IF
+*
+IF  (#RE-SUBSECTION = '4')   /* CAP MIP Only bill                         /* DW15
+    OR (#RE-PRM-BILLPRIN NE 0)  /* All MIP Bills including LC bills          /* DW15
+  MOVE 'LC' TO #SCR-TYPE-IND
+ELSE
+  IF #RE-SUBSECTION = '1'
+    MOVE 'PE' TO #SCR-TYPE-IND
+  ELSE
+    IF #RE-SUBSECTION = '2'
+      MOVE 'PA' TO #SCR-TYPE-IND
+    ELSE
+      MOVE 'P' TO #SCR-TYPE-IND
+    END-IF
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PAID-UP-NOTICE   /**Q**
+*
+* MOVE 1 TO #ISC                                                 /* DW14
+RESET #ALOT-CHG-AUTH #SEND-PDUP-ALOT-FORM PARM-LETTERS           /* PM10              /* YF1
+FIND (1) ST-BILL-V WITH MEMBER-KEY = #INSURED-CN                 /* PM10
+  #ALOT-CHG-AUTH := ST-BILL-V.ALOT-CHG-AUTH                           /* PM10
+  #ALOT-AMT      := ST-BILL-V.ALOT-AMT                                /* PM10
+END-FIND                                                         /* PM10
+*
+IF  (#RE-SECTION = 'A')      /* MISSING ADDRESS
+    OR F-UNDEL-ADDRESS (< ST-ADDR-V.MEMBER-CONTACT-ID >)                              /* JT1
+*   OR (ST-ADDR-V.ADDRESS-CHG-CODE = 'U' OR = 'V') /* undeliverable addr              /* JT1
+  MOVE FALSE TO #PRINT-NOTICE
+END-IF
+*
+IF #RE-PDUP-PLAN = '20P'
+  MOVE '20-Pay Value-Added Whole' TO #PDUP-PLAN                /* YF1
+ELSE
+  IF #RE-PDUP-PLAN = '30P'
+    MOVE '30-Pay Value-Added Whole' TO #PDUP-PLAN              /* YF1
+  ELSE
+    IF #RE-PDUP-PLAN = '7P' OR = '7PF'
+      MOVE '7-Pay Value-Added Whole' TO #PDUP-PLAN             /* YF1
+    ELSE
+      IF #RE-PDUP-PLAN = 'OL'
+        MOVE 'Value-Added Whole' TO #PDUP-PLAN                 /* YF1
+      ELSE
+        IF #RE-PDUP-PLAN = 'GPL' OR = 'GP2'          /* DW20   /* YF1
+          MOVE 'Generations Plus' TO #PDUP-PLAN                /* YF1
+        ELSE
+          MOVE 'Value-Added Whole' TO #PDUP-PLAN   /* all flex plans  (2pf/31f/etc)  /* YF1
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+PARM-LETTERS.PLAN := #PDUP-PLAN                                          /* YF1
+*
+IF #RE-PDUP-EFF-DT-TIME LT 0
+  ADD 1200 TO #RE-PDUP-EFF-DT-TIME
+END-IF
+*
+COMPUTE #YYYY = (#RE-PDUP-EFF-DT-TIME - 1) / 12
+IF #YYYY GT 50
+  ADD 1900 TO #YYYY
+ELSE
+  ADD 2000 TO #YYYY
+END-IF
+*
+COMPUTE #MM = #RE-PDUP-EFF-DT-TIME - (#YY * 12)
+COMPRESS #MM-A #RE-PDUP-EFF-DT-DD #YYYY INTO PARM-LETTERS.EVENT-DATE-A WITH '/'     /* YF1
+MOVE #RE-PDUP-YY TO #YYYY-X
+ADD 2000 TO #YYYY-X
+COMPRESS #RE-PDUP-MM #RE-PDUP-DD #YYYY-X INTO PARM-LETTERS.EVENT-DATE-B WITH '/'    /* YF1
+PARM-LETTERS.PROCESS-TYPE := #PAID-UP                                               /* YF1
+PARM-LETTERS.PROCESS-SUBTYPE := 'A'                                                 /* YF1
+*
+IF #RE-PDUP-TYPE = '5' OR = '6'
+  IF #RE-PDUP-TYPE = '5'
+    IF #RE-PDUP-AMT-AFTER NE 0
+      MOVE EDITED #RE-PDUP-AMT-AFTER (EM=ZZ,ZZZ.99) TO PARM-LETTERS.OTHER-AMOUNT    /* YF1
+      PARM-LETTERS.PROCESS-SUBTYPE := 'B'                                           /* YF1
+    END-IF
+  ELSE                /* CASES WHERE AN ALP EXISTS
+    MOVE EDITED #RE-PDUP-AMT-BEFORE (EM=Z,ZZZ.99) TO PARM-LETTERS.AMOUNT            /* YF1
+    MOVE EDITED #RE-PDUP-AMT-AFTER (EM=Z,ZZZ.99) TO PARM-LETTERS.OTHER-AMOUNT       /* YF1
+    PARM-LETTERS.PROCESS-SUBTYPE := 'C'                                             /* YF1
+  END-IF
+ELSE
+*   IF NOT #ALOT-CHG-AUTH = 'Y' OR = 'S'                          /* PM10 /* YK1    /* YF1
+*       AND #RE-PDUP-AMT-AFTER NE #ALOT-AMT                         /* PM10 /* YK1  /* YF1
+*     #SEND-PDUP-ALOT-FORM  :=  TRUE                              /* PM10           /* YF1 PROBABLY DELETE THIS?
+*   END-IF                                                        /* PM10           /* YF1
+  PARM-LETTERS.PROCESS-SUBTYPE := 'D'                                               /* YF1
+*
+  IF #RE-PDUP-AMT-AFTER NE 0
+    MOVE EDITED #RE-PDUP-AMT-BEFORE (EM=Z,ZZZ.99) TO PARM-LETTERS.AMOUNT            /* YF1
+    MOVE EDITED #RE-PDUP-AMT-AFTER (EM=Z,ZZZ.99) TO PARM-LETTERS.OTHER-AMOUNT       /* YF1
+  ELSE
+    MOVE EDITED #RE-PDUP-AMT-BEFORE (EM=Z,ZZZ.99) TO PARM-LETTERS.AMOUNT            /* YF1
+    PARM-LETTERS.PROCESS-SUBTYPE := 'E'                                             /* YF1
+  END-IF
+*
+END-IF
+*
+ADD 3 TO #ISC
+MOVE 'INSURANCE PAID-UP NOTICE' TO #SCR-TEXT (#ISC)
+*
+COMPRESS 'Q-' #RUN-DT-MM-DD-YY INTO #SCR-TYPE-IND LEAVING NO
+PERFORM CREATE-LETTER-INFO
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ALLOT-START-CHECK-NEEDED-NOTICE   /**ASC/ACC**   AD
+* * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+MOVE ST-BILL-V.DEBIT-CREDIT-AMT TO #RE-ALLT-DB-CR
+*
+* below removed 8/21/2007 since the actual pol cause can't be determined
+* fOR #I1 1 TO 9                                          /* DW12
+*  IF   (ST-BILL-V.STATUS (#I1) = 'D')
+*   AND (ST-BILL-V.MODE (#I1) = 'G')
+*   AND (ST-BILL-V.PAY-STATUS (#I1) LE '40')
+*    MOVE ST-BILL-V.MODE (#I1) TO #MODE
+*    MOVE ST-BILL-V.PLAN (#I1) TO #V-PLAN
+*    MOVE ST-BILL-V.ISSUE-DATE (#I1) TO #YYYYMMDD
+*    COMPRESS #MM-A #DD-A #YYYY-A INTO #V-ISS-DT WITH '/'
+*    ESCAPE BOTTOM
+*  END-IF
+* END-FOR
+*
+IF  (#RE-SECTION = 'A')      /* MISSING ADDRESS
+    OR F-UNDEL-ADDRESS (< ST-ADDR-V.MEMBER-CONTACT-ID >)                             /* JT1
+*   OR (ST-ADDR-V.ADDRESS-CHG-CODE = 'U' OR = 'V') /* undeliverable addr             /* JT1
+    OR (ST-BILL-V.DEBIT-CREDIT-AMT LT .99)   /* DW5
+  MOVE FALSE TO #PRINT-NOTICE
+  IF ST-BILL-V.DEBIT-CREDIT-AMT LT .99   /* DW5
+    WRITE ST-BILL-V.ID-NUMBER 'Allot chg Notice bypassed due to DB/CR < .99'
+  END-IF
+ELSE
+  IF #RE-SECTION = 'C'      /* 0 ZIPS
+    ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+    ADD 1 TO #NUM-0-ZIP
+  ELSE
+    ADD 1 TO #TOT-NOTICES  /* #NUM-WES
+  END-IF
+END-IF
+*
+ADD +1 TO #INV-I                                                          /* PM25
+#INV-TRAN-CODE (#INV-I) := 'ADCR'                                         /* PM25
+#INVOICE-AMOUNT         := #RE-ALLT-DB-CR                                 /* PM25
+MOVE EDITED #INVOICE-AMOUNT (EM=99999999.99) TO #INV-TRAN-AMOUNT (#INV-I) /* PM25
+*
+MOVE EDITED #RE-ALLT-DB-CR    (EM=ZZ,ZZZ.99) TO #V-UNPD-BAL
+MOVE #V-UNPD-BAL TO #V-AMT-DUE
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+ADD 2 TO #MM
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+*
+MOVE #YYYYMMDD TO #SUSPEND-DATE
+COMPRESS #MM-A #DD-A #YYYY INTO #SUS-DATE-MM-DD-YY WITH '/'
+RESET #ISS-DT
+*
+IF #PRINT-NOTICE
+  PERFORM UPDATE-SUSPEND-DATE
+END-IF
+*
+MOVE #SUS-DATE-MM-DD-YY TO #MM-DD-YY-1
+MOVE #MM-DD-YY-1 TO #V-PMT-DUE-DT                              /* DW8
+*
+MOVE 'AD' TO #V-BILLTYPE
+*
+IF #RE-SUBSECTION = '1'
+  MOVE 'ASC' TO #SCR-TYPE-IND
+ELSE
+  MOVE 'ACC' TO #SCR-TYPE-IND
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FPF-REMINDER   /**F/A**        DD
+* * * * * * * * * * * * * * * *
+*
+* WRITE #RE-CN-NUMBER 'FPF-REMINDER'
+*
+IF  (#RE-SECTION = 'A')      /* MISSING ADDRESS
+    OR F-UNDEL-ADDRESS (< ST-ADDR-V.MEMBER-CONTACT-ID >)                               /* JT1
+*   OR (ST-ADDR-V.ADDRESS-CHG-CODE = 'U' OR = 'V') /* undeliverable addr               /* JT1
+  MOVE FALSE TO #PRINT-NOTICE
+ELSE
+  IF #RE-SECTION = 'C'      /* 0 ZIPS
+    ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+    ADD 1 TO #NUM-0-ZIP
+  ELSE
+    ADD 1 TO #TOT-NOTICES  /* #NUM-WES           /* DW2
+  END-IF
+END-IF
+*
+COMPRESS #RE-FPF-ISS-DT-YYYY #RE-FPF-ISS-DT-MM
+  #RE-FPF-ISS-DT-DD INTO #YYYYMMDD-A LEAVING NO
+MOVE #YYYYMMDD TO #ISS-DT-YYYYMMDD
+*
+RESET #YYYYMMDD
+MOVE ST-BILL-V.DATE-ENTERED (#RE-FPF-SEG-NUM) TO #YYYYMMDD
+MOVE ST-BILL-V.MODE         (#RE-FPF-SEG-NUM) TO #MODE
+MOVE ST-BILL-V.PLAN         (#RE-FPF-SEG-NUM) TO #V-PLAN
+*
+IF ST-BILL-V.PLAN(#RE-FPF-SEG-NUM) = 'OL' AND              /* vt4  07262011   \/
+    ST-BILL-V.PAY-STATUS(#RE-FPF-SEG-NUM) = '47'
+  MOVE 'SP' TO #V-PLAN
+END-IF
+**IF #V-PLAN = 'SP' OR = 'SPF' OR = 'AL'
+IF #V-PLAN = 'SP' OR = 'SPF' OR IS-ANNUITY-LIFE (< #V-PLAN >)  /* NG1
+  RESET #MODE
+END-IF                                                      /* vt4 07262011 /\
+*
+IF #YYYYMMDD = 0                                  /* DW4
+  WRITE #RE-CN-NUMBER 'FPF seg num/Date Ent/Iss Dt not fnd-Used Iss Dt'
+  MOVE #ISS-DT-YYYYMMDD TO #YYYYMMDD
+END-IF
+*
+IF (#YYYYMM = #LAST-MON-YYYYMM)     /* DW4
+    AND (#DD GT 15)
+*  WRITE #RE-CN-NUMBER 'FPF Notice bypassed due to Date Ent Day gtr 15'
+*     #YYYYMMDD
+  MOVE FALSE TO #PRINT-NOTICE
+END-IF
+*
+IF ((ST-BILL-V.PAD-CODE = 'P' OR = 'V')        /* DW4
+    OR ((ST-BILL-V.PAD-CODE = 'D' OR = 'X')
+    AND (ST-BILL-V.OWNERSHIP-FLAG (#RE-FPF-SEG-NUM) = 'D')))
+    AND #PRINT-NOTICE
+  WRITE #RE-CN-NUMBER 'FPF Notice bypassed due to Pending EZ-PAY'
+    'pad-code =' ST-BILL-V.PAD-CODE
+  MOVE FALSE TO #PRINT-NOTICE
+END-IF
+*
+* IF (#RE-FPF-AMT LT #CSV (#RE-FPF-SEG-NUM))   /* DW7
+*   AND #PRINT-NOTICE
+*   WRITE #RE-CN-NUMBER 'CSV is > FPF so Notice is bypassed'
+*       'CSV =' #CSV (#RE-FPF-SEG-NUM)
+*   MOVE FALSE TO #PRINT-NOTICE
+* END-IF
+*
+ADD 2 TO #MM
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+*
+PERFORM #CHECK-LAST-DAY-OF-MONTH               /* DW9
+*
+COMPRESS #MM-A #DD-A #YYYY INTO #V-LAPSE-DT WITH '/'
+MOVE #V-LAPSE-DT TO #V-PMT-DUE-DT
+*
+COMPRESS #RE-FPF-ISS-DT-MM #RE-FPF-ISS-DT-DD #RE-FPF-ISS-DT-YYYY
+  INTO #V-ISS-DT WITH '/'
+MOVE EDITED #RE-FPF-AMT (EM=ZZ,ZZZ.99) TO #V-AMT-DUE
+MOVE #V-AMT-DUE TO #V-PREM-DUE
+*
+MOVE 'F' TO #SCR-TYPE-IND
+MOVE 'DD' TO #V-BILLTYPE
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE STOP-ALLOTMENT-NOTICE  /**CCS/CGS/CS/GS**   AS/AC
+* * * * * * * * * * * * * * * * * * * *
+*
+FIND NT-V WITH ID-NUMBER = #RE-CN-NUMBER-N
+  FOR #I1 1 TO C*NOTE-TABLE                             /* DW24
+    IF NOTE-TEXT (#I1) = MASK ('*Mbr in bnkrptcy')
+      MOVE FALSE TO #PRINT-NOTICE
+      ADD 1 TO #BNK-CNT
+      WRITE 'Stop notice bypassed for bnkrptcy' #RE-CN-NUMBER-N
+        'count =' #BNK-CNT
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FIND
+*
+IF #RE-OLD-SECT = 'F'      /* CERTIFIED NOTICEs (cgs/ccs)
+  IF #RE-SUBSECTION = '2'   /* NOT ENOUGH AVAIL LOAN VALUE(NO NOTICE)
+    WRITE #RE-CN-NUMBER ' STOP ALLOTMENT NO LOAN VALUE'
+  END-IF
+END-IF
+*
+FOR #I1 1 TO 9
+  IF ST-BILL-V.ISSUE-DATE (#I1) = #RE-ALLT-ISS-DT
+    MOVE ST-BILL-V.MODE (#I1) TO #MODE
+    MOVE ST-BILL-V.PLAN (#I1) TO #V-PLAN
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF ST-BILL-V.PLAN(#I1) = 'OL' AND                             /* vt4 07262011 \/
+    ST-BILL-V.PAY-STATUS(#I1) = '47'
+  #V-PLAN := 'SP'
+END-IF
+**IF #V-PLAN = 'SP' OR = 'SPF' OR = 'AL'
+IF #V-PLAN = 'SP' OR = 'SPF' OR IS-ANNUITY-LIFE (< #V-PLAN >)  /* NG1
+  RESET #MODE
+END-IF
+*
+MOVE #RUN-DT-MM-DD-YY TO #V-PMT-DUE-DT
+
+*
+IF #RE-SUBSECTION NE '2'   /* NOT ENOUGH AVAIL LOAN VALUE(NO NOTICE)
+  IF  (#RE-SECTION = 'A')      /* MISSING ADDRESS
+      OR F-UNDEL-ADDRESS (< ST-ADDR-V.MEMBER-CONTACT-ID >)                             /* JT1
+*     OR (ST-ADDR-V.ADDRESS-CHG-CODE = 'U' OR = 'V') /* undeliverable addr             /* JT1
+      OR (NOT #PRINT-NOTICE)
+    MOVE FALSE TO #PRINT-NOTICE
+  ELSE
+    IF #RE-SECTION= 'C'
+      ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA
+      ADD 1 TO #NUM-0-ZIP
+    ELSE
+      IF   (#RE-OLD-SECT = 'F')
+          AND (#IS-OLD-NEW)
+        ADD 1 TO #TOT-NOTICES  /* #NUM-AAFMAA    /* (CGS/CCS - old/new)
+      ELSE
+        ADD 1 TO #TOT-NOTICES  /* #NUM-WES      /* (CS/GS) & (CGS/CCS - nxt)
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+IF #RE-OLD-SECT = 'F'      /* ONLY FOR CERTIFIEDS
+  MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD  /* COMPUTE SUSPEND-DATE
+*
+  IF #RE-SUBSECTION NE '2'   /* NOT ENOUGH AVAIL LOAN VALUE(NO NOTICE)
+    PERFORM FIND-LAST-DAY-OF-MONTH
+  END-IF
+*
+  MOVE #YYYYMMDD TO #SUSPEND-DATE
+  COMPRESS #MM-A #DD-A #YYYY INTO #SUS-DATE-MM-DD-YY WITH '/'
+  RESET #ISS-DT
+*
+  IF #PRINT-NOTICE     /* DW9
+    PERFORM UPDATE-SUSPEND-DATE
+  END-IF
+*
+  IF #RE-SUBSECTION = '2'   /* NOT ENOUGH AVAIL LOAN VALUE(NO NOTICE)
+    MOVE FALSE TO #PRINT-NOTICE   /* BYPASS NOTICE
+  END-IF
+END-IF
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+IF #RE-OLD-SECT = 'F'        /* CERTIFIED NOTICE
+  SUBTRACT 2 FROM #MM
+ELSE
+  SUBTRACT 1 FROM #MM
+END-IF
+*
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD
+IF #RE-OLD-SECT = 'F'        /* CERTIFIED NOTICE
+  ADD 1 TO #MM
+ELSE
+  ADD 2 TO #MM
+END-IF
+*
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+*
+PERFORM FIND-LAST-DAY-OF-MONTH
+COMPRESS #MM-A #DD-A #YYYY  INTO #MM-DD-YY-2 WITH '/'
+*
+MOVE EDITED #RE-ALLT-DB-CR    (EM=ZZ,ZZZ.99) TO #AMT-5-2
+*
+COMPUTE #AMT = #RE-ALLT-QTR-PREM / 3
+MOVE EDITED #AMT (EM=Z,ZZZ.99)  TO #AMT-4-2
+*
+MOVE #RE-ALLT-ISS-DT TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #V-ISS-DT WITH '/'
+*
+IF #RE-OLD-SECT = 'F'        /* CERTIFIED NOTICE
+  IGNORE
+ELSE                         /* REMINDER NOTICE
+  MOVE #RUN-DT-MM-DD-YY TO #SCR-DUE-LINE1B
+*
+*  IF #RE-SUBSECTION = '3'    /* CAP member   ** CS **     DW10
+*    IGNORE
+*  ELSE                                                 /** GS **
+  MOVE EDITED #RE-ALLT-QTR-PREM (EM=Z,ZZZ.99) TO #V-AMT-DUE
+  MOVE #V-AMT-DUE TO #V-UNPD-BAL
+*  END-IF
+END-IF
+*
+IF #RE-OLD-SECT =  'F'        /* CERTIFIED NOTICE
+  MOVE 'AS' TO #V-BILLTYPE
+*
+  IF #RE-SUBSECTION = '3'        /* cap mbr
+    MOVE 'CCS' TO #SCR-TYPE-IND
+  ELSE
+    MOVE 'CGS' TO #SCR-TYPE-IND
+  END-IF
+ELSE
+  IF #RE-SUBSECTION = '3'        /* cap mbr
+    MOVE 'CS' TO #SCR-TYPE-IND
+    MOVE 'AC' TO #V-BILLTYPE
+  ELSE
+    MOVE 'GS' TO #SCR-TYPE-IND
+    MOVE 'AS' TO #V-BILLTYPE
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE UPDATE-SUSPEND-DATE
+* * * * * * * * * * * * * * * * * * *
+*
+IF #RE-SECTION GT 'J'
+  CALLNAT 'ATHP07P5' #INSURED-CN
+    #RE-OLD-SECT
+    #RE-SUBSECTION
+    #SUSPEND-DATE
+    #ISS-DT
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-LAST-DAY-OF-MONTH
+* * * * * * * * * * * * * * * * * * * * *
+*
+IF #MM = 02
+  MOVE '28' TO #DD-A
+ELSE
+  IF #MM = 09 OR = 04 OR = 06 OR = 11
+    MOVE '30' TO #DD-A
+  ELSE
+    MOVE '31' TO #DD-A
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE GET-ISS-DTS-AND-PREMS
+* * * * * * * * * * * * * * * * * * * *
+*
+IF #RE-PRM-ISS-DT = 0  /* should never happen
+  ESCAPE ROUTINE
+END-IF
+*
+FOR #I2 1 TO 9
+  IF  (#RE-PRM-ISS-DT NE ST-BILL-V.ISSUE-DATE (#I2))
+      OR (#RE-PRM-PLAN   NE ST-BILL-V.PLAN (#I2))
+      OR (ST-BILL-V.STATUS (#I2) NE 'D')                 /* DW22
+    ESCAPE TOP
+  END-IF
+*
+  IF   (#RE-OLD-SECT = 'P')
+      AND (ST-BILL-V.X-FIRST-PLACE-FEE (#I2) NE 0)
+    WRITE (4) ST-BILL-V.ID-NUMBER ST-BILL-V.ISSUE-DATE (#I2)
+      'Prem Notice with existing FPF'
+  END-IF
+*
+  ESCAPE BOTTOM
+END-FOR
+*
+IF #I2 GT 9
+  WRITE #INSURED-CN 'Prem Due iss date not found'
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE ST-BILL-V.ISSUE-AGE-N (#I2) TO #ISS-AGE
+CALLNAT 'GPDTOSXX'
+  ST-BILL-V.ISSUE-DATE (#I2)
+  ST-BILL-V.MONTH-ALLOC-AMT (#I2)
+  ST-BILL-V.PAID-TO-DATE (#I2)
+  #YYYYMMDD
+*
+MOVE #YYYYMMDD TO #HOLD-YYYYMMDD
+* ADD 1 TO #MM             /* Develop Pmt Due Date     /* DW19  DW21
+* IF #MM GT 12
+*   SUBTRACT 12 FROM #MM
+*   ADD 1 TO #YYYY
+* END-IF
+* PERFORM #CHECK-LAST-DAY-OF-MONTH
+* COMPRESS #MM-A #DD-A #YYYY INTO #V-PMT-DUE-DT WITH '/' /* 1 mon from PD TO DT
+*
+MOVE #HOLD-YYYYMMDD TO #YYYYMMDD
+ADD 2 TO #MM                               /* Lapse Date      /* END DW19 DW21
+IF #MM GT 12
+  SUBTRACT 12 FROM #MM
+  ADD 1 TO #YYYY
+END-IF
+PERFORM #CHECK-LAST-DAY-OF-MONTH
+*
+COMPRESS #MM-A #DD-A #YYYY INTO #V-LAPSE-DT WITH '/' /* 2 months from PD TO DT
+MOVE #RE-PRM-ISS-DT TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY INTO #V-ISS-DT WITH '/'
+*
+IF #RE-PRM-BILLPREM NE 0                                            /* DW15
+  MOVE EDITED #RE-PRM-BILLPREM (EM=ZZ,ZZZ.99) TO #V-PREM-DUE
+END-IF
+*
+IF #RE-PRM-BILLDUES NE 0
+  MOVE EDITED #RE-PRM-BILLDUES (EM=-ZZ,ZZZ.99) TO #V-DUES-PMT
+END-IF
+*
+IF #RE-PRM-BILLRIDER NE 0
+  MOVE EDITED #RE-PRM-BILLRIDER (EM=-ZZ,ZZZ.99) TO #V-RIDER-PMT   /*
+END-IF
+*
+COMPUTE #CAPLOAN = #RE-PRM-BILLPRIN + #RE-PRM-BILLINTR    /* DW11
+IF #CAPLOAN NE 0
+  MOVE EDITED #CAPLOAN (EM=-ZZ,ZZZ.99) TO #V-LOAN-PMT
+END-IF
+*
+IF #RE-PRM-PREMADJ NE 0
+  MOVE EDITED #RE-PRM-PREMADJ (EM=-ZZ,ZZZ.99) TO #V-BADJ-PMT
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE #CHECK-LAST-DAY-OF-MONTH    /* DW9
+* * * * * * * * * * * * * * * * * * * * * *
+*
+IF   (#MM = 4 OR = 6 OR = 9)
+    AND (#DD GT 30)
+  MOVE 30 TO #DD
+ELSE
+  IF (#MM = 2)
+      AND (#DD GT 28)
+    MOVE 28 TO #DD
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE RESET-BILL-PAYER-FLAG      /* YK3
+***************************************
+*
+#I := #I + 1
+GT1. GET ST-V-UPDATE #ISN
+FOR #I2 1 TO 9
+  IF ST-V-UPDATE.BILL-PAYER-FLAG(#I2) = 'Y'
+      AND #RE-PRM-ISS-DT = ST-V-UPDATE.ISSUE-DATE(#I2)
+      AND #RE-PRM-PLAN = ST-V-UPDATE.PLAN (#I2)
+      AND ST-V-UPDATE.STATUS(#I2) = 'D'
+*
+    #FIELD-DESCRIPTION(#I) := #BILL-PAYER-FLAG-LABEL
+    COMPRESS 'Issue-Date:' ST-V-UPDATE.ISSUE-DATE(#I2)
+      'Bill Payer Flag:' ST-V-UPDATE.BILL-PAYER-FLAG(#I2) INTO #OLD-DATA(#I)
+    RESET ST-V-UPDATE.BILL-PAYER-FLAG(#I2) #NEW-DATA(#I)
+    COMPRESS 'Issue-Date:' ST-V-UPDATE.ISSUE-DATE(#I2)
+      'Bill Payer Flag:' ST-V-UPDATE.BILL-PAYER-FLAG(#I2) INTO #NEW-DATA(#I)
+    WRITE (2) 'Bill payer flag was reset for '
+      ST-V-UPDATE.ID-NUMBER ST-V-UPDATE.PLAN(#I2) ST-V-UPDATE.ISSUE-DATE(#I2)
+    #TR-NAME               := ST-V-UPDATE.NAME
+    #TR-ID-NUMBER          := ST-V-UPDATE.ID-NUMBER
+    #LOG-DESCRIPTION       := #TR-DESCRIPTION
+    #TR-CLERK-ID           := #TR-CLERK
+    #TR-DATE-LAST-UPDATE   := ST-V-UPDATE.DATE-OTHER-UPDATE := *DATN
+    CALLNAT 'GPRN0004'
+      #TR-FIELDS #SYNC-FIELD-TABLE(*)
+      #OLD-DATA-TABLE(*) #NEW-DATA-TABLE(*)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+UPDATE (GT1.)
+END TRANSACTION
+END-SUBROUTINE
+*
+DEFINE INIT-FILES
+/*     ==========
+IF *SERVER-TYPE = 'DEVELOP'
+  COMPRESS #DIR '01.txt' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 1 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '02.txt' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 2 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '03' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 3 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '04' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 4 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '05' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 5 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '06' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 6 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '07' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 7 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '08' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 8 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '09' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 9 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '10' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 10 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '11' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 11 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '12' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 12 #FNAME TYPE 'ASCII-COMPRESSED'
+END-IF
+END-SUBROUTINE
+************************************
+DEFINE SUBROUTINE CREATE-LETTER-INFO                          /* YF1
+************************************
+*
+PARM-LETTERS.ID-NUMBER := #PAYOR-CN-N
+PARM-LETTERS.POLICY-NUMBER := #POL-NUM
+CALLNAT 'GPBNCOMM' PARM-LETTERS
+END-SUBROUTINE
+*
+END

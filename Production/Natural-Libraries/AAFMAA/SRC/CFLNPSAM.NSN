@@ -1,0 +1,369 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID : CFLNPSAM
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE      TAG  REASON                                           *
+* DRW  12272004  DW1  Increase variable loan to handle 999,999.99.     *
+* YAK  04/29/2009 YK1  Fix error processing for BATCH                  *
+* TMT  01/23/2017 TT1 Multiple cap policies
+************************************************************************
+*
+* UPDATER FOR AM FLNP TRAN (FINAL LOAN PAYMENT - OLD TRAN CODE 437)
+*
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #CURR-VAR-INT-RATE      (P2.3)
+1 #ST-V-INTEREST-RATE     (P2.3)
+1 #ST-V-LOAN-DATE         (N8)
+1 REDEFINE #ST-V-LOAN-DATE
+  2 #ST-V-LOAN-DATE-YYYY   (N4)
+  2 #ST-V-LOAN-DATE-MM     (N2)
+  2 #ST-V-LOAN-DATE-DD     (N2)
+1 #ST-V-LOAN-AMOUNT       (P5.2)
+1 #ST-V-ACCUM-INTEREST    (P5.2)
+1 #ST-V-NXT-YR-ACCUM-INT  (P5.2)
+1 #ST-V-OLD-LOAN-AMT      (P5.2)
+1 #ST-V-CAP-AMT           (P5.2)
+1 #ST-V-BILL-INTEREST-AMT (P5.2)
+1 #ST-V-INTEREST-RECEIVED (P5.2)
+1 #ST-V-PRINCIPAL-CHG-CODE (A1)
+1 #ST-V-LOAN-DATE-2       (N8)
+1 REDEFINE #ST-V-LOAN-DATE-2
+  2 #ST-V-LOAN-DATE-YYYY-2 (N4)
+  2 #ST-V-LOAN-DATE-MM-2   (N2)
+  2 #ST-V-LOAN-DATE-DD-2   (N2)
+1 #ST-V-LOAN-AMOUNT-2     (P7.2)   /* DW1
+1 #ST-V-ACCUM-INTEREST-2  (P5.2)
+1 #ST-V-NXT-YR-ACCUM-INT-2 (P5.2)
+1 #ST-V-OLD-LOAN-AMT-2    (P7.2)   /* DW1
+1 #ST-V-CAP-AMT-2         (P5.2)
+1 #ST-V-BILL-INTEREST-AMT-2 (P5.2)
+1 #ST-V-INTEREST-RECEIVED-2 (P5.2)
+1 #ST-V-INTRO-FLAG          (A1)
+1 #ST-V-ALT-LP-IND          (A1)
+1 #ST-V-ALT-LP-AMT          (P5.2)
+1 #ST-V-ALT-LP-IND-2        (A1)
+1 #ST-V-ALT-LP-AMT-2        (P5.2)
+1 #ST-V-LPO-PMT-RCVD        (P5.2)
+1 #ST-V-LPO-PMT-RCVD-2      (P5.2)
+1 #ST-V-LPO-PRIOR-LOAN-BAL  (P5.2)
+1 #ST-V-LPO-PRIOR-LOAN-BAL-2(P7.2) /* DW1
+1 #ST-V-LPO-PRIOR-ACC-INT   (P5.2)
+1 #ST-V-LPO-PRIOR-ACC-INT-2 (P5.2)
+1 #ST-V-DATE-ACCT-UPDATE    (N8)
+1 #ST-V-DTS-TIMN            (P7)
+1 #ST-V-POLICY-NUMBER       (A16)  /* TT1
+1 #DATE-OF-UPDATE           (N8)
+1 #TIME-OF-UPDATE           (N7)
+*
+1 #ILN1       (I2)
+1 #ILN2       (I2)
+1 #UPDATE-MODE (L)
+1 #ERROR-MESSAGE (A75) OPTIONAL     /* YK1
+*
+LOCAL USING CAPA0001               /* TT1
+LOCAL
+1 #ID-NUMBER (N6)                  /* TT1
+1 #I1                    (I2)
+1 #TODAY-YYYYMMDD
+  2 #TODAY-YYYY           (N4)
+  2 #TODAY-MM             (N2)
+  2 #TODAY-DD             (N2)
+1 REDEFINE #TODAY-YYYYMMDD
+  2 #TODAY-YYYYMMDD-N     (N8)
+1 #TOTAL-AMT-DISP        (A11)
+1 #DISP-MSG              (A75)
+1 #SCR-DAILY-INT         (P3.7)
+1 #SCR-ACC-INT           (P5.2)
+*
+1 #TR-CD      (A4)
+1 REDEFINE #TR-CD
+  2 #TR-CD-3   (A3)
+  2 #TR-CD-4   (A1)
+*
+1 #CAP-NUM (N2)              /* TT1
+1 #CAP-STATUS (A1)           /* TT1
+1 #UPDATE (I4) CONSTANT <2>  /* TT1
+END-DEFINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+MOVE *DATN TO #TODAY-YYYYMMDD-N
+MOVE #SCR-TRAN-CODE (#ILN1) TO #TR-CD
+*
+IF  ((#SCR-EFF-DT-YYYY (#ILN1) = #TODAY-YYYY)
+    AND (#SCR-EFF-DT-MM (#ILN1) = #TODAY-MM))
+    OR (*DEVICE = 'BATCH')
+  IGNORE
+ELSE
+  REINPUT 'TRANS DATE MUST BE CURRENT MONTH AND YEAR'
+    MARK *#SCR-TRAN-CODE (#ILN1)
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'FLNV'
+  IF   (#ST-V-ALT-LP-IND-2 = '3' OR = '4')
+      AND (#ST-V-ALT-LP-AMT-2 NE 0)
+    #DISP-MSG := 'EIP/ELP must be removed to pay off loan' /* YK1
+    IF *DEVICE = 'BATCH'                         /* YK1
+      #ERROR-MESSAGE := #DISP-MSG              /* YK1
+      ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE                                         /* YK1
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF                                       /* YK1
+  END-IF
+*
+  IF #ST-V-LOAN-DATE-2 = 0
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    #DISP-MSG := 'LOAN MUST EXIST - LOAN DATE CANNOT EQUAL ZERO'
+    IF *DEVICE = 'BATCH'                         /* YK1
+      #ERROR-MESSAGE := #DISP-MSG              /* YK1
+      ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE                                         /* YK1
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF                                       /* YK1
+  END-IF
+*
+  IF #ST-V-LOAN-AMOUNT-2 NE 0
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    MOVE EDITED #ST-V-LOAN-AMOUNT-2 (EM=ZZZZZ.99) TO #TOTAL-AMT-DISP
+    COMPRESS 'LOAN AMT MUST BE 0 - IT IS STILL'
+      #TOTAL-AMT-DISP INTO #DISP-MSG
+    IF *DEVICE = 'BATCH'                         /* YK1
+      #ERROR-MESSAGE := #DISP-MSG              /* YK1
+      ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF                                       /* YK1
+  END-IF
+*
+  IF #ST-V-LOAN-AMOUNT-2 = 0
+    MOVE #ST-V-ACCUM-INTEREST-2 TO #SCR-ACC-INT
+  ELSE
+    COMPUTE ROUNDED #SCR-DAILY-INT =
+      #ST-V-LOAN-AMOUNT-2 * (#CURR-VAR-INT-RATE / 365) / 100
+    IF   (#ST-V-LOAN-DATE-MM-2 = #TODAY-MM)
+        AND (#ST-V-LOAN-DATE-YYYY-2 = #TODAY-YYYY)
+      COMPUTE ROUNDED #SCR-ACC-INT =
+        ((#TODAY-DD - #ST-V-LOAN-DATE-DD-2) * #SCR-DAILY-INT)
+        + #ST-V-ACCUM-INTEREST-2 + #ST-V-NXT-YR-ACCUM-INT-2
+    ELSE
+      COMPUTE ROUNDED #SCR-ACC-INT =
+        ((#TODAY-DD - 1) * #SCR-DAILY-INT)
+        + #ST-V-ACCUM-INTEREST-2 + #ST-V-NXT-YR-ACCUM-INT-2
+    END-IF
+  END-IF
+*
+  IF #SCR-TRAN-AMT (#ILN1) NE 0 /* PUT IN 9/92 AS PER LCC FOR INTERNAL
+*                             /* PAYOFFS (PADJ/AIAJ/FLNP)
+    IF #SCR-ACC-INT LT #SCR-TRAN-AMT (#ILN1)
+      IF #SCR-ACC-INT + 1.00 LE #SCR-TRAN-AMT (#ILN1)
+        IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+          BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+        END-IF                           /* *********************
+        MOVE EDITED #SCR-ACC-INT (EM=ZZZ.99) TO #TOTAL-AMT-DISP
+        COMPRESS 'TRANS AMT MUST BE WITHIN $1 OF CUR ACCR INTR OF'
+          #TOTAL-AMT-DISP 'ON "FLNP"' INTO #DISP-MSG
+        IF *DEVICE = 'BATCH'                       /* YK1
+          #ERROR-MESSAGE := #DISP-MSG              /* YK1
+          ESCAPE ROUTINE IMMEDIATE                 /* YK1
+        ELSE
+          REINPUT #DISP-MSG
+            MARK *#SCR-TRAN-CODE (#ILN1)
+        END-IF                                     /* YK1
+      ELSE
+        MOVE '+' TO #SCR-AMT-FLAG (#ILN1)
+      END-IF
+    ELSE
+      IF #SCR-ACC-INT - 1.00 GE #SCR-TRAN-AMT (#ILN1)
+        IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+          BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+        END-IF                           /* *********************
+        MOVE EDITED #SCR-ACC-INT (EM=ZZZ.99) TO #TOTAL-AMT-DISP
+        COMPRESS 'TRANS AMT MUST BE WITHIN $1 OF CUR ACCR INTR OF'
+          #TOTAL-AMT-DISP 'ON "FLNP"' INTO #DISP-MSG
+        IF *DEVICE = 'BATCH'                       /* YK1
+          #ERROR-MESSAGE := #DISP-MSG              /* YK1
+          ESCAPE ROUTINE IMMEDIATE                 /* YK1
+        ELSE
+          REINPUT #DISP-MSG
+            MARK *#SCR-TRAN-CODE (#ILN1)
+        END-IF                                     /* YK1
+      ELSE
+        MOVE '-' TO #SCR-AMT-FLAG (#ILN1)
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #UPDATE-MODE AND (#SCR-TRAN-AMT (#ILN1) NE 0)
+    ADD  #SCR-TRAN-AMT (#ILN1) TO #ST-V-LPO-PMT-RCVD-2
+    MOVE #SCR-TRAN-AMT (#ILN1) TO #ST-V-LPO-PRIOR-ACC-INT-2
+*                                                       /* balance it
+    IF #ST-V-LPO-PRIOR-LOAN-BAL-2= 0
+      MOVE #ST-V-LOAN-AMOUNT-2 TO #ST-V-LPO-PRIOR-LOAN-BAL-2
+    END-IF
+  END-IF
+*
+  RESET #ST-V-LOAN-AMOUNT-2
+    #ST-V-ACCUM-INTEREST-2
+    #ST-V-NXT-YR-ACCUM-INT-2
+    #ST-V-BILL-INTEREST-AMT-2
+    #ST-V-INTEREST-RECEIVED-2
+    #ST-V-LOAN-DATE-2
+    #ST-V-CAP-AMT-2
+    #ST-V-OLD-LOAN-AMT-2
+ELSE
+  IF   (#ST-V-ALT-LP-IND = '3' OR = '4')
+      AND (#ST-V-ALT-LP-AMT NE 0)
+    #DISP-MSG := 'EIP/ELP must be removed to pay off loan'
+    IF *DEVICE = 'BATCH'                         /* YK1
+      #ERROR-MESSAGE := #DISP-MSG              /* YK1
+      ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE
+      REINPUT #DISP-MSG                          /* YK1
+        MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF                                       /* YK1
+  END-IF
+*
+  IF #ST-V-LOAN-DATE = 0
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    #DISP-MSG := 'LOAN MUST EXIST - LOAN DATE CANNOT EQUAL ZERO'
+    IF *DEVICE = 'BATCH'                         /* YK1
+      #ERROR-MESSAGE := #DISP-MSG              /* YK1
+      ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF                                       /* YK1
+  END-IF
+*
+  IF #ST-V-LOAN-AMOUNT NE 0
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    MOVE EDITED #ST-V-LOAN-AMOUNT (EM=ZZZZZ.99) TO #TOTAL-AMT-DISP
+    COMPRESS 'LOAN AMT MUST BE 0 - IT IS STILL'
+      #TOTAL-AMT-DISP INTO #DISP-MSG
+    IF *DEVICE = 'BATCH'                       /* YK1
+      #ERROR-MESSAGE := #DISP-MSG              /* YK1
+      ESCAPE ROUTINE IMMEDIATE                 /* YK1
+    ELSE
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF                                     /* YK1
+  END-IF
+*
+  IF #ST-V-LOAN-AMOUNT = 0
+    MOVE #ST-V-ACCUM-INTEREST TO #SCR-ACC-INT
+  ELSE
+    COMPUTE ROUNDED #SCR-DAILY-INT =
+      #ST-V-LOAN-AMOUNT * (#ST-V-INTEREST-RATE / 365) / 100
+    IF   (#ST-V-LOAN-DATE-MM = #TODAY-MM)
+        AND (#ST-V-LOAN-DATE-YYYY = #TODAY-YYYY)
+      COMPUTE ROUNDED #SCR-ACC-INT =
+        ((#TODAY-DD - #ST-V-LOAN-DATE-DD) * #SCR-DAILY-INT)
+        + #ST-V-ACCUM-INTEREST + #ST-V-NXT-YR-ACCUM-INT
+    ELSE
+      COMPUTE ROUNDED #SCR-ACC-INT =
+        ((#TODAY-DD - 1) * #SCR-DAILY-INT)
+        + #ST-V-ACCUM-INTEREST + #ST-V-NXT-YR-ACCUM-INT
+    END-IF
+  END-IF
+*
+  IF #SCR-TRAN-AMT (#ILN1) NE 0 /* PUT IN 9/92 AS PER LCC FOR INTERNAL
+*                             /* PAYOFFS (PADJ/AIAJ/FLNP)
+    IF #SCR-ACC-INT LT #SCR-TRAN-AMT (#ILN1)
+      IF #SCR-ACC-INT + 1.00 LE #SCR-TRAN-AMT (#ILN1)
+        IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+          BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+        END-IF                           /* *********************
+        MOVE EDITED #SCR-ACC-INT (EM=ZZZ.99) TO #TOTAL-AMT-DISP
+        COMPRESS 'TRANS AMT MUST BE WITHIN $1 OF CUR ACCR INTR OF'
+          #TOTAL-AMT-DISP 'ON "FLNP"' INTO #DISP-MSG
+        IF *DEVICE = 'BATCH'                        /* YK1
+          #ERROR-MESSAGE := #DISP-MSG              /* YK1
+          ESCAPE ROUTINE IMMEDIATE                 /* YK1
+        ELSE
+          REINPUT #DISP-MSG
+            MARK *#SCR-TRAN-CODE (#ILN1)
+        END-IF                                      /* YK1
+      ELSE
+        MOVE '+' TO #SCR-AMT-FLAG (#ILN1)
+      END-IF
+    ELSE
+      IF #SCR-ACC-INT - 1.00 GE #SCR-TRAN-AMT (#ILN1)
+        IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+          BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+        END-IF                           /* *********************
+        MOVE EDITED #SCR-ACC-INT (EM=ZZZ.99) TO #TOTAL-AMT-DISP
+        COMPRESS 'TRANS AMT MUST BE WITHIN $1 OF CUR ACCR INTR OF'
+          #TOTAL-AMT-DISP 'ON "FLNP"' INTO #DISP-MSG
+        IF *DEVICE = 'BATCH'                       /* YK1
+          #ERROR-MESSAGE := #DISP-MSG              /* YK1
+          ESCAPE ROUTINE IMMEDIATE                 /* YK1
+        ELSE
+          REINPUT #DISP-MSG
+            MARK *#SCR-TRAN-CODE (#ILN1)
+        END-IF                                     /* YK1
+      ELSE
+        MOVE '-' TO #SCR-AMT-FLAG (#ILN1)
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #UPDATE-MODE AND (#SCR-TRAN-AMT (#ILN1) NE 0)
+    ADD  #SCR-TRAN-AMT (#ILN1) TO #ST-V-LPO-PMT-RCVD
+    MOVE #SCR-TRAN-AMT (#ILN1) TO #ST-V-LPO-PRIOR-ACC-INT /* to
+*                                                       /* balance it
+    IF #ST-V-LPO-PRIOR-LOAN-BAL = 0
+      MOVE #ST-V-LOAN-AMOUNT TO #ST-V-LPO-PRIOR-LOAN-BAL
+    END-IF
+  END-IF
+*
+  IF #UPDATE-MODE                                             /* TT1 Begin
+    #ID-NUMBER                := #SCR-ID-SSN(1)
+    #LOAN.LOAN-POLICY-NUMBER  := #ST-V-POLICY-NUMBER
+    #LOAN.LOAN-STATUS         := 'Q'
+    #LOAN.ID-NUMBER           := #SCR-ID-SSN(1)
+    #LOAN.CONTACT-ID          := F-GET-CONTACT-ID(<#LOAN.ID-NUMBER>)
+    #LOAN.LOAN-PAYOFF-DATE    := *DATN
+*
+    CALLNAT 'CAPN0001'
+      #UPDATE
+      #LOAN
+      #RETURN-MSG
+  END-IF                                                      /* TT1 End
+*
+  RESET #ST-V-LOAN-AMOUNT
+    #ST-V-ACCUM-INTEREST
+    #ST-V-NXT-YR-ACCUM-INT
+    #ST-V-BILL-INTEREST-AMT
+    #ST-V-INTEREST-RECEIVED
+    #ST-V-CAP-AMT
+    #ST-V-OLD-LOAN-AMT
+    #ST-V-PRINCIPAL-CHG-CODE
+    #ST-V-INTEREST-RATE                     /* TT1
+*   MOVE 12.000 TO #ST-V-INTEREST-RATE      /* TT1
+*
+  IF NOT #ST-V-INTRO-FLAG = 'C' OR = 'B'  /* LOAN DT (PAYOFF DT) OF CAPS
+      OR = 'P' OR = 'Q'  /* LOAN DT (PAYOFF DT) OF CAPS
+    #ST-V-INTRO-FLAG := 'O'                 /* TT1
+    RESET #ST-V-LOAN-DATE            /* CAN NOT BE REMOVED FOR 10 YRS
+  END-IF
+END-IF
+*
+END

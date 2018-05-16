@@ -1,0 +1,357 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPDUES - calculate dues
+*
+* * * * * * * * * * **
+* Modification Log
+*
+* DRW 02/05/2008 DRW1 Fix Dues policy Index
+* DRW 08/27/2008 DW2 Gen Plus Processing
+* DRW 09/24/2008 DW3 Modify Dues file criteria
+* DRW 09/22/2009 DW4 SVC-FEE CALC  /  PROCESS-IND / Number-memberships /600000
+* YAK 10/09/2012 YK1 Use function to identify Level Term II plans
+* * * * * * * *
+DEFINE DATA
+LOCAL
+*
+* * * *   S T A T U S   F I L E   * * * * * * * * * * * * * * *
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER      (N6)
+ 2 REDEFINE ID-NUMBER
+  3 ID-NBR       (A6)
+ 2 INTRO-FLAG
+ 2 PROCESS-IND                    /* DW4
+ 2 X-FIRST-PLACE-FEE   (9)
+ 2 DUES-FPF
+ 2 DUES-BALANCE
+ 2 DUES-TOT-PAID
+*
+ 2 STATUS          (9)
+ 2 MODE            (9)
+ 2 PLAN            (9)
+ 2 REDEFINE PLAN
+  3 PLAN-OCC   (9)
+   4 PLAN-A1    (A1)
+   4 PLAN-A2    (A2)
+ 2 ISSUE-DATE      (9)
+ 2 ANNUAL-PREM     (9)
+ 2 MONTH-ALLOC-AMT (9)
+ 2 PAID-TO-DATE    (9)
+ 2 PAY-STATUS      (9)
+*
+1 #SVC-FEE-SP (N3.2) INIT <450.00>
+1 #SVC-FEE-2P (N2.2) INIT <18.50>
+1 #SVC-FEE-3P (N2.2) INIT <12.50>
+1 #SVC-FEE-4P (N1.2) INIT <9.50>
+1 #SVC-FEE-5P (N1.2) INIT <7.50>
+1 #SVC-FEE-6P (N1.2) INIT <6.50>
+1 #SVC-FEE-7P (N1.2) INIT <6.00>
+1 #SVC-FEE-10 (N1.2) INIT <4.50>
+1 #SVC-FEE-20 (N1.2) INIT <3.00>
+1 #SVC-FEE-30 (N1.2) INIT <2.50>
+1 #SVC-FEE-OL (N1.2) INIT <2.00>
+1 #SVC-FEE-TM (N1.2) INIT <2.00>
+*
+1 #MODEL-DUES   (N5.2)     /* Dw3
+1 #CNT              (P5)
+1 #CNT-2            (P5)
+1 #CNT-3            (P5)
+1 #I1               (I2)
+1 #I2               (I2)
+1 #FST-X            (I2)
+1 #RECS-READ         (P9)
+*
+1 #ISS-DATE    (N8)
+1 REDEFINE #ISS-DATE
+ 2 #ID-YYYY  (N4)
+ 2 #ID-MM    (N2)
+ 2 #ID-DD    (N2)
+*
+1 #PD-TO-DATE    (N8)
+1 REDEFINE #PD-TO-DATE
+ 2 #PT-YYYY  (N4)
+ 2 #PT-MM    (N2)
+ 2 #PT-DD    (N2)
+*
+1 #NUM-MONTHS   (P5)
+1 #1998-NUM-MONTHS   (P5)
+1 #DUES     (P3.2)
+1 #TOT-DUES     (P5.2)
+1 #TOT-DUES-SO  (P5.2)
+1 #1998-TOT-DUES     (P5.2)
+1 #1998-TOT-DUES-SO  (P5.2)
+1 #GRAND-TOT-DUES  (P9.2)
+1 #GRAND-TOT-DUES-SO  (P9.2)
+1 #1998-GRAND-TOT-DUES  (P9.2)
+1 #1998-GRAND-TOT-DUES-SO  (P9.2)
+1 #PAYS-DUES    (L)
+1 #TAB       (A1) INIT <H'09'>
+1 #AMT1-X     (A10)
+1 #AMT2-X     (A10)
+1 #AMT3-X     (A10)
+1 #AMT4-X     (A10)
+1 #EXTRACT   (A100)
+1 #DUES-X    (I2)
+*
+END-DEFINE
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'MBRS Paying dues'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'MBRS Paying dues and having a Dues Balance'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+COMPRESS 'CN'
+  #TAB 'Dues-Balance'
+  #TAB 'Dues-FPF'
+  #TAB 'Monthly-dues'
+  #TAB 'Dues-tot-paid'
+  #TAB 'Mode'
+  #TAB 'Pd-to-date'
+    INTO #EXTRACT LEAVING NO
+WRITE WORK FILE 2 #EXTRACT
+*
+* READ ST-V BY MEMBER-KEY FROM '001900'
+READ ST-V BY MEMBER-KEY FROM '031642'
+  ADD 1 TO #RECS-READ
+*
+  FOR #FST-X 1 TO 9   /* get 1st active pol
+    IF ST-V.STATUS (#FST-X) = 'D'
+      ESCAPE BOTTOM
+   END-IF
+ END-FOR
+*
+  IF #FST-X GT 9
+    MOVE 1 TO #FST-X
+  END-IF
+
+  RESET #PAYS-DUES
+*
+  FOR #I1 1 TO 9
+    IF  (STATUS (#I1) NE 'D')
+     OR (ISSUE-DATE (#I1) LT 19970101)
+     OR (MONTH-ALLOC-AMT (#I1) = 999.99)
+     OR (#I1 NE #FST-X)       /* Only look at teh fst active pol  /* DW3
+      ESCAPE TOP
+    END-IF
+*
+    PERFORM CALC-DUES
+*
+    IF (#DUES = 0) AND (DUES-BALANCE = 0) AND (DUES-FPF = 0)
+*     AND (PLAN (#I1) NE 'SO')
+      ESCAPE TOP
+    END-IF
+*
+    MOVE TRUE TO #PAYS-DUES
+*
+    RESET #TOT-DUES #TOT-DUES-SO
+    RESET #1998-TOT-DUES #1998-TOT-DUES-SO
+    IF PAY-STATUS (#I1) = '47'
+      IF PLAN (#I1) = 'SO'
+        MOVE 1550 TO #TOT-DUES-SO
+        ADD  1550 TO #GRAND-TOT-DUES-SO
+      ELSE
+        SUBTRACT DUES-BALANCE FROM #DUES
+        SUBTRACT DUES-FPF     FROM #DUES
+        MOVE #DUES TO #TOT-DUES
+        ADD #TOT-DUES TO #GRAND-TOT-DUES
+      END-IF
+    ELSE
+      MOVE ISSUE-DATE   (#I1) TO #ISS-DATE
+      IF #ID-DD = 01   /* to calc num months correctly
+        SUBTRACT 1 FROM #ID-MM
+        IF #ID-MM LT 1
+          MOVE 12 TO #ID-MM
+          SUBTRACT 1 FROM #ID-YYYY
+        END-IF
+      END-IF
+*
+      MOVE PAID-TO-DATE (#I1) TO #PD-TO-DATE
+*
+      IF #PT-MM LT #ID-MM
+        ADD 12 TO #PT-MM
+        SUBTRACT 1 FROM #PT-YYYY
+      END-IF
+*
+      COMPUTE #NUM-MONTHS = ((#PT-YYYY - #ID-YYYY) * 12)
+                          + (#PT-MM - #ID-MM )
+      IF PLAN (#I1) = 'SO'
+        COMPUTE #TOT-DUES-SO = (ANNUAL-PREM (#I1) /12) * #NUM-MONTHS
+        SUBTRACT X-FIRST-PLACE-FEE (#I1) FROM #TOT-DUES-SO
+        ADD #TOT-DUES-SO TO #GRAND-TOT-DUES-SO
+      ELSE
+        COMPUTE #TOT-DUES = #DUES * #NUM-MONTHS
+        SUBTRACT DUES-BALANCE FROM #TOT-DUES
+        SUBTRACT DUES-FPF     FROM #TOT-DUES
+        ADD #TOT-DUES TO #GRAND-TOT-DUES
+      END-IF
+    END-IF
+*
+    IF   (PAY-STATUS (#I1) = '47')
+      IF (ISSUE-DATE (#I1) GE 19980101)
+        IF PLAN (#I1) = 'SO'
+          MOVE 1550 TO #1998-TOT-DUES-SO
+          ADD  1550 TO #1998-GRAND-TOT-DUES-SO
+        ELSE
+          ADD #DUES TO #1998-GRAND-TOT-DUES
+        END-IF
+      END-IF
+    ELSE
+      IF ISSUE-DATE (#I1) LT 19980101
+        MOVE 19971231 TO #ISS-DATE
+      END-IF
+*
+      IF #PT-MM LT #ID-MM
+        ADD 12 TO #PT-MM
+        SUBTRACT 1 FROM #PT-YYYY
+      END-IF
+*
+      COMPUTE #1998-NUM-MONTHS = ((#PT-YYYY - #ID-YYYY) * 12)
+                          + (#PT-MM - #ID-MM )
+      IF PLAN (#I1) = 'SO'
+        COMPUTE #1998-TOT-DUES-SO = ANNUAL-PREM(#I1) / 12
+         * #1998-NUM-MONTHS
+        SUBTRACT X-FIRST-PLACE-FEE (#I1) FROM #1998-TOT-DUES-SO
+        ADD #1998-TOT-DUES-SO TO #1998-GRAND-TOT-DUES-SO
+      ELSE
+        COMPUTE #1998-TOT-DUES = #DUES * #1998-NUM-MONTHS
+        SUBTRACT DUES-BALANCE FROM #1998-TOT-DUES
+        SUBTRACT DUES-FPF     FROM #1998-TOT-DUES
+        ADD #1998-TOT-DUES TO #1998-GRAND-TOT-DUES
+      END-IF
+    END-IF
+*
+    ADD 1 TO #CNT-2
+    DISPLAY (2) #CNT-2 ID-NUMBER
+      'Int/fl'      INTRO-FLAG
+      'PLN'          PLAN (#I1)
+      'ISS/DATE'      ISSUE-DATE (#I1)
+      'PAID/TO DATE'  PAID-TO-DATE (#I1)
+      'Pay/stat'    PAY-STATUS (#I1)
+      'MONS' #NUM-MONTHS
+      'FILE/Dues/Bal' DUES-BALANCE
+      'FILE/Dues/FPF' DUES-FPF
+       #DUES
+       #TOT-DUES
+       'Tot/Dues-SO' #TOT-DUES-SO
+       '1998/tot/dues' #1998-TOT-DUES
+       '1998/tot/dues/SO' #1998-TOT-DUES-SO
+       'FILE/DUES/PAID' DUES-TOT-PAID
+  END-FOR
+*
+  IF    #PAYS-DUES
+   AND (#DUES-X NE 0)
+    IF MODE (#DUES-X) = 'A' OR = '1'                  /* DW3
+        COMPUTE #MODEL-DUES = #DUES * 12
+    ELSE
+      IF MODE (#DUES-X) = 'S' OR = '2'
+        COMPUTE #MODEL-DUES = #DUES * 6
+      ELSE
+        IF MODE (#DUES-X) = 'Q' OR = '4'
+          COMPUTE #MODEL-DUES = #DUES * 3
+        ELSE
+          COMPUTE #MODEL-DUES = #DUES * 1
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #PAYS-DUES
+   AND (#DUES-X NE 0)
+   AND (DUES-BALANCE NE 0)
+   AND (DUES-BALANCE NE #MODEL-DUES)   /* Mismatched balance     DW3
+    MOVE EDITED DUES-BALANCE (EM=-ZZZZ.99) TO #AMT1-X
+    MOVE LEFT #AMT1-X TO #AMT1-X
+    MOVE EDITED DUES-FPF (EM=-ZZZZ.99) TO #AMT2-X
+    MOVE LEFT #AMT2-X TO #AMT2-X
+    MOVE EDITED #DUES (EM=-ZZZZ.99) TO #AMT3-X
+    MOVE LEFT #AMT3-X TO #AMT3-X
+    MOVE EDITED DUES-TOT-PAID (EM=-ZZZZ.99) TO #AMT4-X
+    MOVE LEFT #AMT4-X TO #AMT4-X
+*
+    COMPRESS ST-V.ID-NUMBER
+       #TAB #AMT1-X
+       #TAB #AMT2-X
+       #TAB #AMT3-X
+       #TAB #AMT4-X
+       #TAB ST-V.MODE (#DUES-X)
+       #TAB ST-V.PAID-TO-DATE (#DUES-X)
+         INTO #EXTRACT LEAVING NO
+    WRITE WORK FILE 2 #EXTRACT
+*
+    ADD 1 TO #CNT-3
+    DISPLAY (3) #CNT-3 ID-NUMBER
+      'Int/fl'      INTRO-FLAG
+      'Monthly-Dues' #DUES
+      'FILE/Dues/Bal' DUES-BALANCE
+      'FILE/Dues/FPF' DUES-FPF
+      'FILE/DUES/PAID' DUES-TOT-PAID
+  END-IF
+END-READ
+*
+WRITE (2) 'TOT-RECS-READ        = ' #RECS-READ
+WRITE (2) 'TOT-dues             = ' #GRAND-TOT-DUES
+WRITE (2) 'TOT-dues-so          = ' #GRAND-TOT-DUES-SO
+WRITE (2) '1998 TOT-dues        = ' #1998-GRAND-TOT-DUES
+WRITE (2) '1998 TOT-dues-so     = ' #1998-GRAND-TOT-DUES-SO
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-DUES
+* * * * * * * * * * * * * * *
+*
+RESET #DUES
+IF  (INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+             OR = 'O' OR = 'P' OR = 'Q')
+ OR (PLAN (#I1) = 'SO' OR = 'FSO')
+ OR (#I1 NE #FST-X)    /* DW1
+ OR (PROCESS-IND NE 'G')           /* MUST BE G/F         DW4
+  ESCAPE ROUTINE
+END-IF
+*
+IF PAY-STATUS (#I1) = '47'
+  MOVE #SVC-FEE-SP TO #DUES
+  ESCAPE ROUTINE
+END-IF
+*         /* GPL not needed since GPL are gen Policies and never have dues  DW2
+DECIDE ON FIRST VALUE PLAN (#I1)
+  VALUE '2P' MOVE #SVC-FEE-2P TO #DUES
+  VALUE '3P' MOVE #SVC-FEE-3P TO #DUES
+  VALUE '4P' MOVE #SVC-FEE-4P TO #DUES
+  VALUE '5P' MOVE #SVC-FEE-5P TO #DUES
+  VALUE '6P' MOVE #SVC-FEE-6P TO #DUES
+  VALUE '7P' MOVE #SVC-FEE-7P TO #DUES
+  VALUE '8P' MOVE #SVC-FEE-7P TO #DUES
+  VALUE '9P' MOVE #SVC-FEE-7P TO #DUES
+  VALUE '20P' MOVE #SVC-FEE-20 TO #DUES
+  VALUE '30P' MOVE #SVC-FEE-30 TO #DUES
+  VALUE 'OL' MOVE #SVC-FEE-OL TO #DUES
+* VALUE 'RT' MOVE #SVC-FEE-TM TO #DUES                       /* YK1
+* VALUE 'LT' MOVE #SVC-FEE-TM TO #DUES                       /* YK1
+  NONE        IGNORE
+END-DECIDE
+*
+* IF (PLAN-A1 (#I1) GE 'U') AND (PLAN-A1 (#I1) LE 'Z')       /* YK1
+IF FUNCTION-TERM-POLICY(<PLAN(#I1)>)                         /* YK1 
+  MOVE #SVC-FEE-TM TO #DUES
+END-IF
+*
+IF (PLAN (#I1) = MASK (NN)) AND (#DUES = 0)
+  IF PLAN (#I1) LE '19' MOVE #SVC-FEE-10 TO #DUES ELSE
+  IF PLAN (#I1) LE '29' MOVE #SVC-FEE-20 TO #DUES ELSE
+  IF PLAN (#I1) LE '34' MOVE #SVC-FEE-30 TO #DUES ELSE
+                        MOVE #SVC-FEE-OL TO #DUES
+  END-IF END-IF END-IF
+END-IF
+*
+MOVE #I1 TO #DUES-X                                           /* DW1
+*
+END-SUBROUTINE
+*
+END

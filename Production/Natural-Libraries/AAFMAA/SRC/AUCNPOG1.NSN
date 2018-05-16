@@ -1,0 +1,266 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+****** MODIFICATIONS ***********************************************
+* NAME     DATE   TAG   DESCRIPTION
+* NGG  20170519 NG1 Letter writing
+* YAK  20170619 YK1 Change payment month calculation
+*                   (changed in FUNCTION-PAYMENT-MODE)
+* vxt 04182018  vt1 /Ticket HD-8629/
+********************************************************************
+DEFINE DATA
+PARAMETER USING AUCAPOLS
+PARAMETER
+1   #CONTACT-ID (N8)
+1   #POLICY-SEGMENT (I2)
+1 #CVALUSXX-PARMS
+  2 #SUFFIX                    (A3)
+  2 #AS-OF-YYYYMMDD            (N8)
+  2 #LOAN-BAL                  (N7.2/9)
+  2 #LOAN-BAL-2                (N7.2/9)
+  2 #ACC-INT                   (N7.2/9)
+  2 #ACC-INT-2                 (N7.2/9)
+  2 #CSV                       (N7.2/9)
+  2 #CVALUE                    (N7.2/9)
+  2 #LVALUE                    (N7.2/9)
+  2 #MCSV                      (N7.2/9)
+  2 #DB                        (N7.2/9)
+  2 #ANN-PREM                  (N7.2/9)
+  2 #FACE-AMT                  (N7.2/9)
+  2 #TPP                       (N7.2/9)
+1 #INSURED-ISN                 (P10)
+LOCAL USING OBJLGENT
+LOCAL USING LWSLUID            /* NG1
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 ACTIVE-SEGMENTS (9)
+    3 PLAN
+    3 STATUS
+    3 PAID-UP-DATE
+    3 PAID-TO-DATE
+    3 ISSUE-DATE
+    3 BILL-TO-DATE
+    3 ISSUE-AGE
+    3 FACE-AMOUNT
+    3 DEATH-BENEFIT
+    3 PREM-RATING
+    3 MODE
+    3 SMOKER-FLAG
+    3 LAST-DURATION
+    3 ACC-CASH-VALUE
+    3 CASH-VALUE
+    3 ANNUAL-PREM
+    3 X-FIRST-PLACE-FEE
+    3 X-BILL-DOLLAR
+    3 X-BILL-ADJUST
+    3 COST-BASIS
+    3 TOT-PREMIUMS-PAID
+    3 PAY-STATUS
+    3 X-LOAN-AMOUNT
+    3 X-LOAN-AMOUNT-2
+    3 MONTH-ALLOC-AMT
+    3 X-ALT-LP-AMT
+    3 X-ALT-LP-AMT-2
+    3 policy-id                          /* vt1
+*
+1 J                 (I2)
+1 #CN-STRING        (A6)
+1 #COST-BASIS       (N7.2)
+1 #SEC-KEY          (A7) INIT <'MODE'>
+1 #ERR-MSG          (A60)
+1 #SVC-DUES         (N3.2)
+1 #PAID-TO-DATE     (N8)
+1 #MODAL-PREMIUM    (N7.2)
+1 #SMOKER           (A) DYNAMIC
+1 #HAS-LINKED-LOAN  (L)
+* 1 #MONTHS           (I4)
+1 #MONTHS           (N2)     /* YK1
+*
+* below is linkage to GRIDCSXX
+1 #ID         (N6)
+1 REDEFINE #ID
+  2 #ID-A      (A6)
+* THE FOLLOWING INPUT IS PASSED ONLY ON AN "AT" FOR A NEW RIDER
+1 #AT-RID-ATTACH-FAC-AMT (N6.2) /* Only if attached to the new "AT"
+1 #AT-RID-ATTACH-PLAN    (A3)   /*    policy not yet created
+1 #AT-RID-PLAN           (A2/5) /* New rider plan
+1 #AT-RID-ATTACH-ISS-DT  (N8/5) /* Only if attached to an existing pol
+* output below  (ex = existing)
+1 #AT-TOT-FBR-PREM        (N3.2)
+1 #EX-FBR-PREM-BY-LINE    (N3.2/9)
+1 #EX-SPS-DB-BY-LINE      (N6/9)
+1 #EX-DEP-DB-BY-LINE      (N6/9)
+1 #EX-EACH-DEP-DB-BY-LINE (N6/9)
+1 #NUM-ELIG-CHILDREN      (N2)
+1 #NUM-ELIG-CHILDREN-UNDER-6-MON (N2)
+1 #TOT-CHILD-DB      (N6)
+1 #RID-TEXT          (A78)
+*  Interface to CRUD GUIDs LWSNGUID    NG1
+1 #DESIGNATION-ID    (N8)
+1 #POLICY-ROLE-GUID  (A50/1:1)
+1 #POLICY-ROLE-CODE  (N2/1:1)
+1 #DESIGNATION-GUID  (A50)
+1 ErrorMsg           (A) DYNAMIC
+1 #idx               (i2)               /* vt
+END-DEFINE
+*
+INS.
+***** FIND(1) ST-V WITH MEMBER-CONTACT-ID = #CONTACT-ID                        /* vt1
+find st-v with member-contact-id = #contact-id                                 /* vt1
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  examine full st-v.policy-id(*) for full PolicyNumber giving index #idx       /* vt1
+  if #idx > 0                                                                  /* vt1
+    j := #idx                                                                  /* vt1
+    #INSURED-ISN := *ISN(INS.)
+    escape bottom                                                              /* vt1 
+  end-if                                                                       /* vt1
+END-FIND
+
+
+* To determine policy segment
+* #CN-STRING      := ST-V.ID-NUMBER                                           /* vt1
+* J := F_POLICY_SEGMENT(<PolicyNumber,#CN-STRING>)                            /* vt1
+#POLICY-SEGMENT := J
+
+PERFORM DETERMINE-POLICY-INFO
+PERFORM POPULATE-POL-DATA
+
+
+DEFINE SUBROUTINE DETERMINE-POLICY-INFO
+* -------------------------------------
+* Calculate TPP, Face amount, Death Benefit, Cost Basis, etc...
+CALLNAT 'CVALUSXX'
+  ST-V.ID-NUMBER
+  #SUFFIX
+  #AS-OF-YYYYMMDD
+  #LOAN-BAL   (*)
+  #LOAN-BAL-2 (*)
+  #ACC-INT    (*)
+  #ACC-INT-2  (*)
+  #CSV        (*)
+  #CVALUE     (*)
+  #LVALUE     (*)
+  #MCSV       (*)
+  #DB         (*)
+  #ANN-PREM   (*)
+  #FACE-AMT   (*)
+  #TPP        (*)
+
+* Determines which Face Amount to use
+IF #FACE-AMT(J) = 0
+  #FACE-AMT(J) := ST-V.FACE-AMOUNT(J)
+END-IF
+
+* Determines Smoker Status
+DECIDE ON FIRST VALUE OF SMOKER-FLAG(J)
+  VALUE 'S'
+    #SMOKER := 'Yes'
+  VALUE 'C'
+    #SMOKER := 'N/A'
+  NONE VALUE
+    #SMOKER := 'No'
+END-DECIDE
+
+* Determines Linked Policy Loans/Cap Loans
+IF X-LOAN-AMOUNT(J) > 0 OR X-LOAN-AMOUNT-2(J) > 0
+  #HAS-LINKED-LOAN        := TRUE
+ELSE
+  #HAS-LINKED-LOAN        := FALSE
+END-IF
+
+* Determines Paid to date
+RESET #PAID-TO-DATE
+CALLNAT 'GPDTOSXX' ST-V.ISSUE-DATE(J) MONTH-ALLOC-AMT(J) ST-V.PAID-TO-DATE(J) #PAID-TO-DATE
+
+* Calculates Dues
+RESET #SVC-DUES
+CALLNAT 'GDUESSXX' ST-V.ID-NUMBER J #SVC-DUES
+
+* Calculates May Months
+* #MONTHS := 12 / (VAL(FUNCTION-PAYMENT-MODE(<ST-V.MODE(J)>)(5)) * .0001)
+#MONTHS := 12 / (VAL(FUNCTION-PAYMENT-MODE(<ST-V.MODE(J)>)(5)))                    /* YK1
+
+* Gets Rider info
+CALLNAT 'GRIDCSXX'
+  ST-V.ID-NUMBER
+  #AT-RID-ATTACH-FAC-AMT
+  #AT-RID-ATTACH-PLAN
+  #AT-RID-PLAN(*)
+  #AT-RID-ATTACH-ISS-DT(*)
+  #AT-TOT-FBR-PREM
+  #EX-FBR-PREM-BY-LINE(*)
+  #EX-SPS-DB-BY-LINE(*)
+  #EX-DEP-DB-BY-LINE(*)
+  #EX-EACH-DEP-DB-BY-LINE(*)
+  #NUM-ELIG-CHILDREN
+  #NUM-ELIG-CHILDREN-UNDER-6-MON
+  #TOT-CHILD-DB
+  #RID-TEXT
+
+* Calculate Cost Basis
+IF ST-V.COST-BASIS (J) = 0
+  #COST-BASIS := #TPP(J)
+ELSE
+  COMPUTE #COST-BASIS = COST-BASIS (J) + (#TPP (J) - TOT-PREMIUMS-PAID (J))
+END-IF
+
+* Determine Available Loan Amount
+IF CASH-VALUE(J) > 0
+    POLICY.AvailableLoanAmount
+    := #LVALUE(J) - X-LOAN-AMOUNT(J) - X-LOAN-AMOUNT-2(J) - #ACC-INT(J) - #ACC-INT-2(J)
+  IF POLICY.AvailableLoanAmount < 0
+    POLICY.AvailableLoanAmount := 0
+  END-IF
+END-IF
+END-SUBROUTINE
+* ----------------
+
+
+DEFINE SUBROUTINE POPULATE-POL-DATA
+* ---------------------------------
+Policy.Status               := *TRIM(TRANSLATE-POL-STATUS(<ST-V.STATUS(J)>))
+Policy.PolicyName           := *TRIM(F-PLAN-DESCRIPTION(<ST-V.PLAN(J)>)(1))
+Policy.IssueDate            := ISSUE-DATE(J)
+Policy.IssueAge             := VAL(ISSUE-AGE (J))
+Policy.PaymentMethod        := FUNCTION-PAYMENT-MODE(<ST-V.MODE(J)>)(1)
+* Policy.ModalPremium       := ST-V.ANNUAL-PREM(J) / (VAL(FUNCTION-PAYMENT-MODE(<ST-V.MODE(J)>)(5)) * .0001)
+Policy.ModalPremium         := ST-V.ANNUAL-PREM(J) / (VAL(FUNCTION-PAYMENT-MODE(<ST-V.MODE(J)>)(5)))
+Policy.IsSmoker             := *TRIM(#SMOKER)
+Policy.HasLinkedLoan        := #HAS-LINKED-LOAN
+Policy.Rating               := ST-V.PREM-RATING(J)
+Policy.LastDuration         := ST-V.LAST-DURATION(J)
+Policy.AccumCashValue       := ST-V.ACC-CASH-VALUE(J)
+Policy.SurrenderCashValue   := #CSV(J)
+Policy.FaceAmount           := #FACE-AMT(J)
+Policy.DeathBenefit         := #DB(J)
+Policy.CostBasis            := #COST-BASIS
+Policy.PaymentStatus        := *TRIM(FUNCTION-PAYMENT-STATUS(<PAY-STATUS(J)>))
+Policy.LastBilledDate       := ST-V.BILL-TO-DATE(J) /* need to modify this one
+Policy.LastBilledAmount     := X-BILL-DOLLAR(J)
+Policy.BillingAdjustment    := ST-V.X-BILL-ADJUST(J)
+Policy.Rider                := #EX-FBR-PREM-BY-LINE(J) * #MONTHS
+Policy.Dues                 := #SVC-DUES
+Policy.FPF                  := ST-V.X-FIRST-PLACE-FEE(J)
+Policy.AnnualPremium        := ST-V.ANNUAL-PREM(J)
+Policy.TotalPremiumPaid     := #TPP(J)
+Policy.PaidUpDate           := PAID-UP-DATE(J)
+Policy.PaidToDate           := #PAID-TO-DATE
+Policy.Loans                := X-ALT-LP-AMT(J) + X-ALT-LP-AMT-2(J)
+Policy.Balance              := 0
+Policy.TotalDue             := BillingAdjustment + Rider + Dues + FPF + Loans + BillingAdjustment + ModalPremium
+CALLNAT 'LWSNGUID' GET-PO-GUID  /* NG1
+  Policy.PolicyNumber
+  #DESIGNATION-ID
+  Policy.Policy-GUID
+  #POLICY-ROLE-GUID (*)
+  #POLICY-ROLE-CODE (*)
+  #DESIGNATION-GUID
+  ErrorMsg
+END-SUBROUTINE
+* ------------
+END

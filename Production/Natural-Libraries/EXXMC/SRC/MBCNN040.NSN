@@ -1,0 +1,276 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Phone Information
+* Main program: MBCNN040
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09072010       Initial Creation for MC II
+*                       (cloned & changed from MBCN0040)
+* YAK    09252015  YK3  Correct formatting phone numbers
+*                       with leading zeros (OI-3887)
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING MBCA0004
+LOCAL USING OBJACPHN
+LOCAL USING ERROR_L
+LOCAL
+*
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #MC               (A) DYNAMIC INIT <'MC'>
+1 #TRUE             (A) DYNAMIC CONST <'true'>
+1 #FALSE            (A) DYNAMIC CONST <'false'>
+1 FUNCTION_CODE     (A) DYNAMIC CONST <'PHONE'>
+1 #GET              (A) DYNAMIC CONST <'0'>
+1 #UserName         (A) DYNAMIC
+1 #TAB              (A1) CONST <H'09'>
+1 #NO               (A1) CONST <'N'>
+1 #YES              (A1) CONST <'Y'>
+1 #International    (A) DYNAMIC CONST <'I'>
+1 #Domestic         (A) DYNAMIC CONST <'D'>
+1 #FIR-REQUEST      (A50)
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #I                (I2)
+1 #AREA-CODE        (A3)
+1 #DIAL-NUMBER      (A) DYNAMIC      /* YK3
+1 #value            (A) DYNAMIC
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+DECIDE FOR EVERY CONDITION
+  WHEN Phone.SystemSource = ' '
+    Phone.SystemSource := #MC
+  WHEN Phone.ActionType = '0'
+    PERFORM PROCESS-GET-REQUEST
+  WHEN Phone.ActionType <> '0'
+    PERFORM PROCESS-UPDATE-REQUEST
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+PERFORM COMPOSE-XML
+*
+**************************
+DEFINE PROCESS-GET-REQUEST
+**************************
+*
+Phone.ErrorCode := '0'
+CALLNAT 'MBCN0041' Phone
+IF Phone.ErrorCode = '0'
+  PERFORM COMPOSE-GET-XML
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE PROCESS-UPDATE-REQUEST
+*****************************
+*
+EXPAND ARRAY PhoneInfo TO (*:1)
+Phone.ActionType_s(1) := Phone.ActionType
+Phone.ErrorCode := '0'
+CALLNAT 'MBCN0042' Phone
+IF Phone.ErrorCode = '0'
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+END-SUBROUTINE
+*
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberPhones/CN/$'
+    Phone.CN := VAL(XML_PARSER_CONTENT)
+  VALUE 'MemberPhones/UserID/$'
+    Phone.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberPhones/SystemSource/$'
+    Phone.SystemSource := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberPhones/ActionType/$'
+    Phone.ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberPhones/Phones'
+    ADD 1 TO Phone.C@PhoneInfo
+    EXPAND ARRAY Phone.PhoneInfo TO (1:Phone.C@PhoneInfo)
+    IGNORE
+  VALUE 'MemberPhones/Phones/Phone/PhoneID/$'
+    Phone.PhoneID(C@PhoneInfo) := VAL(XML_PARSER_CONTENT)
+  VALUE 'MemberPhones/Phones/Phone/PhoneType/$'
+    Phone.PhoneType(C@PhoneInfo) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberPhones/Phones/Phone/International/$'
+     #value := *TRIM(XML_PARSER_CONTENT)
+     IF #value = #true
+       Phone.Type(C@PhoneInfo) := #International
+     ELSE
+       Phone.Type(C@PhoneInfo) := #Domestic
+     END-IF  
+  VALUE 'MemberPhones/Phones/Phone/AreaCode/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N3) THEN
+      Phone.AreaCode(C@PhoneInfo) := VAL(#value)
+    END-IF
+  VALUE 'MemberPhones/Phones/Phone/DialNumber/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N20) THEN
+      Phone.DialNumber(C@PhoneInfo) := VAL(#value)
+    END-IF
+  VALUE 'MemberPhones/Phones/Phone/Extension/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      Phone.Extension(C@PhoneInfo) := VAL(#value)
+    END-IF
+  VALUE 'MemberPhones/Phones/Phone/Preferred/$'
+    Phone.PreferredInd(C@PhoneInfo) := *TRIM(XML_PARSER_CONTENT)
+    IF Phone.PreferredInd(C@PhoneInfo) = #TRUE
+      Phone.PreferredInd(C@PhoneInfo) := #YES
+    ELSE
+      Phone.PreferredInd(C@PhoneInfo) := #NO
+    END-IF
+  VALUE 'MemberPhones/Phones/Phone/InvalidInd/$'
+    Phone.InvalidInd(C@PhoneInfo) := #NO
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-GET-XML
+*********************************
+*
+RESET XML
+IF C@PhoneInfo <> 0 
+  EXAMINE Phone.PreferredInd(*) FOR #YES INDEX #I
+  IF #I = 0
+    Phone.PreferredInd(1) := #YES    
+  END-IF
+END-IF  
+FOR #I = 1 TO C@PhoneInfo
+  IF Phone.PreferredInd(#I) = 'Y'
+    Phone.PreferredInd(#I) := #TRUE
+  ELSE
+    Phone.PreferredInd(#I) := #FALSE
+  END-IF
+  IF Phone.InvalidInd(#I) = 'Y'
+    Phone.InvalidInd(#I) := #TRUE
+  ELSE
+    Phone.InvalidInd(#I) := #FALSE
+  END-IF
+* YK3 >  
+  IF Phone.Type(#I) = #International    
+    Phone.Type(#I) := #true
+    #DIAL-NUMBER := Phone.DialNumber(#I)
+    #DIAL-NUMBER := *TRIM(#DIAL-NUMBER)
+  ELSE
+    Phone.Type(#I) := #false
+    MOVE EDITED Phone.DialNumber(#I) (EM=9999999) TO #DIAL-NUMBER
+  END-IF  
+* < YK3  
+  MOVE EDITED Phone.AreaCode(#I) (EM=999) TO #AREA-CODE  
+  COMPRESS  XML
+    '<Phone>'
+    '<PhoneID>' Phone.PhoneID(#I) '</PhoneID>'
+    '<PhoneType>' Phone.PhoneType(#I) '</PhoneType>'
+    '<International>' Phone.Type(#I) '</International>'
+    '<AreaCode>' #AREA-CODE '</AreaCode>'
+    '<DialNumber>' #DIAL-NUMBER '</DialNumber>'
+    '<Extension>' Phone.Extension(#I) '</Extension>'
+    '<BestCallTime>' Phone.BestCallTime(#I) '</BestCallTime>'
+    '<Preferred>' Phone.PreferredInd(#I) '</Preferred>'
+    '<InvalidInd>' Phone.InvalidInd(#I) '</InvalidInd>'
+    '</Phone>' INTO XML LEAVING NO
+END-FOR
+COMPRESS '<Phones>' XML '</Phones>' INTO XML LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN Phone.ErrorCode <> '0'
+    Phone.ErrorDescription := F-ERROR-DESCRIPTION(<Phone.ErrorCode>)
+  WHEN Phone.ActionType <> #GET
+    PERFORM LOG-REQUESTS
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+DECIDE FOR FIRST CONDITION
+  WHEN Phone.ActionType = '0'
+    COMPRESS '<MemberPhones>'
+      '<SystemSource>' Phone.SystemSource '</SystemSource>'
+      '<CN>' Phone.CN '</CN>'
+      XML
+      '<ErrorCode>' Phone.ErrorCode '</ErrorCode>'
+      '<ErrorDescription>' Phone.ErrorDescription '</ErrorDescription>'
+      '</MemberPhones>'
+      INTO RESPONSE-DATA LEAVING NO
+  WHEN Phone.ActionType = '1' OR  = '2' OR = '3'
+    COMPRESS '<MemberPhones>'
+      '<SystemSource>' Phone.SystemSource '</SystemSource>'
+      '<CN>' Phone.CN '</CN>'
+      '<ErrorCode>' Phone.ErrorCode '</ErrorCode>'
+      '<ErrorDescription>' Phone.ErrorDescription '</ErrorDescription>'
+      '</MemberPhones>'
+      INTO RESPONSE-DATA LEAVING NO
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE LOG-REQUESTS
+******************************
+* save FIR request
+WRITE WORK FILE 2 Phone.CN
+CLOSE WORK FILE 2
+* Update "Profile Update Date" on Web User File
+F-PROFILE-UPDATE-DATE(<Phone.CN>)
+* Log CRM request
+CALLNAT 'MBRCRC' Phone.ContactID FUNCTION_CODE
+END-SUBROUTINE
+*
+END

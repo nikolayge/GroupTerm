@@ -1,0 +1,290 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2303PCI
+* CI SCREEN 'ACDB' transaction
+* Accelerated Death Benefit processing
+* Accounting transaction 8012
+*************************************************
+* MODIFICATION LOG
+* USER DATE      TAG   REASON
+* YAK 02192012         Initial Creation (EZ Term)
+* TMT 06192014   TT1   Contact Normalization
+*************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.CI-BLOCK
+LOCAL USING C2500AAM
+LOCAL
+1 #PASSED-INFO-G3
+  2 #ACC-DEATH-BENEFIT  (N6.2)
+  2 #PREM-REFUND        (N6.2)
+  2 #PREM-DUE           (N6.2)
+  2 #DB-ADJ             (N6.2)
+1 REDEFINE #PASSED-INFO-G3
+  2 #PASSED-INFO-3 (A32)
+*
+1 #PREM-DISPLAY     (N6.2)
+1 #TR-CD            (A4)
+1 #LAST-DATE-UPDATE (N8)
+1 #NEW-DATE-UPDATE  (N8)
+1 #ISSUE-DATE       (N8)   /* issue date of affected policy
+1 #CMBX             (A4)   /* Used to send indicator to C2522sam for Desc
+1 #TIMN             (N7)
+1 #DATN             (N8)
+1 #DATE    (N8)
+1 REDEFINE #DATE
+  2 #DATE-YYYY (N4)
+  2 #DATE-MM   (N2)
+  2 #DATE-DD   (N2)
+1 REDEFINE #DATE
+  2 #DATE-A (A8)
+*
+* #LINKAGE TO C2520SAM below      /* DW5
+1 #ILN1       (I2)
+1 #TR-AMT   (N5.2)
+1 #TIME-OF-UPDATE    (N7)
+1 #EXTRA-STOP         (L)
+1 #BANKRUPT           (L)
+*
+1 #SG-TBL (15)
+  2 #SG-CAT1 (A2)
+  2 #SG-CAT2 (A2)
+  2 #SG-AMT  (N6.2)
+* #LINKAGE TO C2520SAM ABOVE
+*
+1 ST-V VIEW OF A-STATUS
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 X-BILL-ADJUST  (9)
+  2 X-FIRST-PLACE-FEE (9)
+1 #REF-MM              (N2)
+1 #DUE-MM              (N2)
+1 #NEW-ISSUE-AGE       (N2)
+1 #NEW-PREM            (N6.2)
+1 #FACE-AMOUNT         (N7.2)
+1 #NEW-FPF             (N6.2)
+*
+1 #TR-REG-ACDB-GR
+  2 #TR-REG-ACDB-LBL-1         (A18) INIT <'CI-ACDB ISSUE-DT '>
+  2 #TR-REG-ACDB-ISSUE-DATE    (N08)
+  2 #TR-REG-ACDB-LBL-2         (A07) INIT <'  PLAN '>
+  2 #TR-REG-ACDB-PLAN          (A02)
+  2 #TR-REG-ACDB-LBL-3         (A11) INIT <'  FACE-AMT '>
+  2 #TR-REG-ACDB-FAC-AMT       (A09)
+1 REDEFINE #TR-REG-ACDB-GR
+  2 #TR-REG-ACDB               (A55)
+*
+1 #TR-LOG-FIL-MNT-DESC  (A125)
+1 REDEFINE #TR-LOG-FIL-MNT-DESC
+  2 #TR-L-BADJ-LB1 (A12)
+  2 #TR-L-BADJ-AMT (A10)
+  2 #TR-L-APPD-DT  (A16)
+  2 #TR-L-BADJ     (A87)
+1 #SEX             (A1)                  /* TT1
+*
+END-DEFINE
+*
+#TIMN := *TIMN
+#DATN := *DATN
+INPUT #PASSED-INFO-3
+*
+GT. GET ST-V #CGA-ISN
+MOVE TRUE TO #REC-CHGD                                /* Indicate record changed
+#ACC-DEATH-BENEFIT := CI-V.FACE-AMOUNT(#IFL) - #SCR-FACE-AMT(#ISC)
+*
+IF  (CI-V.ONLINE-ACTION-GN = '2')
+    OR (CI-V.ONLINE-ACTION (#IFL) = '1')
+  MOVE 'U' TO CI-V.ONLINE-ACTION (#IFL)            /* new & acdb
+ELSE
+  MOVE 'W' TO CI-V.ONLINE-ACTION (#IFL)
+END-IF
+*
+IF CI-V.ONLINE-ACTION-GN = '1' OR = '2' OR = '3'     /* ALREADY FLAGGED
+  IGNORE
+ELSE
+  MOVE  '4' TO CI-V.ONLINE-ACTION-GN     /* INDICATE ACTION THIS MONTH
+END-IF
+*
+MOVE #TODAY-YYYYMMDD-N TO CI-V.ONLINE-DATE (#IFL)
+PERFORM CALCULATE-NEW-PREMIUM
+* Create premium refund transaction
+IF #PREM-REFUND <> 0 OR #PREM-DUE <> 0
+  IF #PREM-REFUND <> 0
+    #TR-AMT := #PREM-REFUND
+    #TR-CD  := 'PRER'
+  ELSE
+    #TR-AMT := #PREM-DUE *(-1)
+    #TR-CD  := 'PREP'
+  END-IF
+END-IF
+#DATE := #DATN
+#DATE-YYYY := #DATE-YYYY - 1
+IF CI-V.ISSUE-DATE(#IFL) > #DATE-YYYY
+  #SG-CAT1(1) := '1Y'
+ELSE
+  #SG-CAT1(1) := 'RN'
+END-IF
+#SG-AMT(1) := #TR-AMT
+RESET #CMBX
+PERFORM STORE-ACCT-REG
+RESET #SG-TBL(*)
+* Create payoff transaction
+#TR-CD := 'ACDB'
+#TR-AMT := CI-V.FACE-AMOUNT(#IFL) - #SCR-FACE-AMT(#ISC)
+#SG-AMT(1) := #TR-AMT * (-1)
+#CMBX      := 'ACDB'
+PERFORM STORE-ACCT-REG
+RESET #SG-TBL(*)
+*
+* Create transaction register
+#TR-REG-ACDB-ISSUE-DATE := CI-V.ISSUE-DATE(#IFL)      /* Transaction register date/time
+#TR-REG-ACDB-PLAN       := CI-V.PLAN(#IFL)
+MOVE EDITED CI-V.FACE-AMOUNT(#IFL) (EM=ZZZZZZ.99) TO #TR-REG-ACDB-FAC-AMT
+TR-REG-V.OLD-DATA(#ITR1):= #TR-REG-ACDB
+#TR-REG-ACDB-ISSUE-DATE := CI-V.ISSUE-DATE(#IFL)      /* Transaction register date/time
+#TR-REG-ACDB-PLAN       := CI-V.PLAN(#IFL)
+MOVE EDITED #SCR-FACE-AMT(#IFL) (EM=ZZZZZZ.99) TO #TR-REG-ACDB-FAC-AMT
+TR-REG-V.NEW-DATA(#ITR1):= #TR-REG-ACDB
+#ITR1 := #ITR1 + 1
+*
+IF X-FIRST-PLACE-FEE(#IFL) NE 0
+  RESET #NEW-FPF #TR-LOG-FIL-MNT-DESC
+  #TR-L-BADJ-LB1 := 'FPF CORR'
+  MOVE EDITED X-FIRST-PLACE-FEE(#IFL)(EM=ZZ,ZZZ.99-) TO #TR-L-BADJ-AMT
+  #TR-L-APPD-DT := #TR-REG-ACDB-ISSUE-DATE
+  TR-REG-V.OLD-DATA(#ITR1) := #TR-LOG-FIL-MNT-DESC
+  MOVE EDITED #NEW-FPF (EM=ZZ,ZZZ.99-) TO #TR-L-BADJ-AMT
+  TR-REG-V.NEW-DATA(#ITR1) := #TR-LOG-FIL-MNT-DESC
+  #ITR1 := #ITR1 + 1
+END-IF
+*
+* Create billing adjustment transaction if applicable
+#DB-ADJ := X-BILL-ADJUST(#IFL) * (-1) - X-FIRST-PLACE-FEE(#IFL)
+IF #DB-ADJ <> 0
+  #TR-CD := 'BADJ'
+  MOVE 'A' TO #SCR-CASH-CODE(1)  /* (A)djust
+  IF #DB-ADJ GT 0
+    MOVE '+' TO #SCR-ADJ (1)
+    MOVE #DB-ADJ TO #TR-AMT
+  ELSE
+    MOVE '-' TO #SCR-ADJ (1)
+    COMPUTE #TR-AMT = #DB-ADJ * -1
+  END-IF
+  RESET #CMBX
+  PERFORM STORE-ACCT-REG
+END-IF
+*
+RESET X-BILL-ADJUST     (#IFL)
+RESET X-FIRST-PLACE-FEE (#IFL)
+UPDATE (GT.)
+*
+DECIDE FOR FIRST CONDITION
+ WHEN #PREM-REFUND <> 0
+  #PREM-DISPLAY := #PREM-REFUND * (-1)
+  WRITE // 'This Termination has caused the following adjustment:'
+  WRITE /  'Debit  (Premium) ledger account for adjusted premium refund' #PREM-DISPLAY
+  WRITE /  'Credit (Cash) ledger for amount of Premium refund          ' #PREM-DISPLAY
+  WRITE // 'Press ENTER to proceed'
+ WHEN #PREM-DUE <> 0
+  #PREM-DISPLAY := #PREM-DUE * (-1)
+  WRITE // 'This Termination has caused the following adjustment:'
+  WRITE /  'Debit  (Cash) ledger for amount of Premium due             ' #PREM-DISPLAY
+  WRITE /  'Credit (Premium) ledger account for adjusted premium due   ' #PREM-DISPLAY
+  WRITE // 'Press ENTER to proceed'
+ WHEN NONE
+  IGNORE 
+END-DECIDE
+*
+CI-V.FACE-AMOUNT(#IFL)  := #SCR-FACE-AMT(#ISC)
+CI-V.DEATH-BENEFIT(#IFL):= #SCR-DB(#ISC)
+CI-V.ANNUAL-PREM(#IFL)  := #SCR-ANN-PRM(#ISC)
+CI-V.ONLINE-DATE (#IFL) := #DATN
+*
+STACK TOP DATA #PASSED-INFO-3
+*
+***************************************
+DEFINE SUBROUTINE CALCULATE-NEW-PREMIUM
+***************************************
+*
+* Calculate new premium based of new FACE-AMOUNT
+* Calculate premium amount due
+* calculate premium refund
+* Calculate new age
+#NEW-ISSUE-AGE := VAL(CI-V.ISSUE-AGE(#IFL))
+#FACE-AMOUNT   := #SCR-FACE-AMT(#ISC)
+RESET #NEW-PREM #SEX
+#SEX := GET-GENDER(<CI-V.MEMBER-CONTACT-ID>)
+CALLNAT 'GPRNNMT1' #NEW-ISSUE-AGE #SEX #FACE-AMOUNT #NEW-PREM          /* TT1
+* Calculate number of months to refund
+#DATE := *DATN
+DECIDE FOR FIRST CONDITION
+  WHEN PAID-TO-DATE-YYYY(#IFL) = #DATE-YYYY AND PAID-TO-DATE-MM(#IFL) = #DATE-MM
+    IGNORE
+  WHEN PAID-TO-DATE-YYYY(#IFL) = #DATE-YYYY AND PAID-TO-DATE-MM(#IFL) > #DATE-MM
+    #REF-MM := PAID-TO-DATE-MM(#IFL) - #DATE-MM - 1
+  WHEN PAID-TO-DATE-YYYY(#IFL) = #DATE-YYYY AND PAID-TO-DATE-MM(#IFL) < #DATE-MM
+    #DUE-MM := #DATE-MM - PAID-TO-DATE-MM(#IFL)
+  WHEN PAID-TO-DATE-YYYY(#IFL) < #DATE-YYYY
+    #DUE-MM := (#DATE-YYYY - PAID-TO-DATE-YYYY(#IFL)) * 12 + (#DATE-MM - PAID-TO-DATE-MM(#IFL))
+  WHEN PAID-TO-DATE-YYYY(#IFL) > #DATE-YYYY
+    #REF-MM := (PAID-TO-DATE-YYYY(#IFL) - #DATE-YYYY) * 12 + (PAID-TO-DATE-MM(#IFL) - #DATE-MM) - 1    
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF #DUE-MM <> 0
+  CI-V.PAID-TO-DATE-MM(#IFL)   := #DATE-MM
+  CI-V.PAID-TO-DATE-YYYY(#IFL) := #DATE-YYYY
+END-IF
+#PREM-DUE              := CI-V.ANNUAL-PREM(#IFL) / 12 * #DUE-MM * (-1)
+#PREM-REFUND           := (CI-V.ANNUAL-PREM(#IFL) - #NEW-PREM) / 12 * #REF-MM
+#SCR-DB(#ISC)          := #SCR-FACE-AMT(#ISC)
+#SCR-ANN-PRM(#ISC)     := #NEW-PREM
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE STORE-ACCT-REG
+********************************
+*
+MOVE 1 TO #ILN1
+MOVE CI-V.ID-NUMBER TO #SCR-ID-SSN (1)
+#DATE          := FUNCTION-DATE(<#DATN>)
+#SCR-EFF-DT(1) := #DATE-A
+*
+IF CI-V.ISSUE-DATE(#IFL) NE 0
+  #DATE          := FUNCTION-DATE(<CI-V.ISSUE-DATE(#IFL)>)
+  #SCR-ISS-DT(1) := #DATE-A
+END-IF
+*
+#SCR-TRAN-CODE(1) := #TR-CD
+#SCR-TRAN-AMT(1)  := #TR-AMT
+#SCR-CASH-CODE(1) := 'F'
+*
+MOVE #DATN TO #NEW-DATE-UPDATE
+MOVE #TIMN TO #TIME-OF-UPDATE
+*
+CALLNAT 'C2520SAM' #SCR-LINES
+  CI-V.ID-NUMBER
+  ST-V.PROCESS-IND
+  ST-V.INTRO-FLAG
+  CI-V.NAME
+  CI-V.PLAN   (1:9)
+  CI-V.DEBIT-CREDIT-AMT
+  #NEW-DATE-UPDATE    /* acct updt date from file
+  #NEW-DATE-UPDATE    /* used for curr date
+  #TIME-OF-UPDATE
+  #ILN1
+  #LAST-DATE-UPDATE
+  #CGA-CLERK
+  #EXTRA-STOP
+  #SG-TBL (1:15)
+  #CMBX           /* DW9
+RESET #EXTRA-STOP
+*
+END-SUBROUTINE
+*
+END

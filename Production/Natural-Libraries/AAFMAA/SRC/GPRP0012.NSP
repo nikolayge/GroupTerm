@@ -1,0 +1,211 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPRP0012                                              *
+* DESCRIPTION  : Create daily reports for the member services (AFA)    *
+*                1. Nightly report of the delinquent accounts          *
+*                2. Create an input file for e-mail driver/automated   *
+*                   e-mail processing                                  *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE        TAG     REASON                                    *
+* YAK    02/01/2012  None    Inital Creation                           *
+* TMT    03/26/2014  TT1     Added SAS Deliquency and Termination      *
+*                            letters for Membership Expansion Project  *
+* bz-Name 07/07/2017     Fine Names
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLMB01       /* Accounting Register
+LOCAL USING GPRA0005       /* E-mail Information
+LOCAL USING SVCA0003
+*
+LOCAL
+1 SVC-UPDATE VIEW OF A-SVC-MEMBER
+  2 SVC-TERMINATION-DATE
+  2 SVC-STATUS
+*
+1 #OUTPUT-RECORD            (A500)
+1 #REPORT-FIELDS
+  2 #SVC-ID-NUMBER          (A6)
+  2 #SVC-CONTRACT-NUMBER    (A) DYNAMIC
+  2 #SVC-PAID-TO-DATE       (A) DYNAMIC
+  2 #SVC-AMOUNT-DUE         (A15)
+*
+1 #DATX                     (D)
+1 #DATN              (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY (N4)
+  2 #DATN-MM   (N2)
+  2 #DATN-DD   (N2)
+1 REDEFINE #DATN
+  2 #DATN-CC       (N2)
+  2 #DATN-YYMM     (N4)
+1 REDEFINE #DATN
+  2 #DATN-YYYYMM   (N6)
+1 #TERM-DATE                (N8)
+1 REDEFINE #TERM-DATE
+  2 #DATE-T                 (A8)
+1 #DELQ-DATE                (N8)
+1 REDEFINE #DELQ-DATE
+  2 #DATE-D                 (A8)
+1 #DATE              (N8)
+1 REDEFINE #DATE
+  2 #DATE-N6         (N6)
+1 REDEFINE #DATE
+  2 #DATE-YYYY       (N4)
+  2 #DATE-MM         (N2)
+  2 #DATE-DD         (N2)
+1 #ISN                      (N9)
+1 #MM                       (N2)
+1 #TAB                      (A1) INIT <H'09'>
+1 #AMOUNT                   (N7.2)
+1 #REPORT-OUTPUT            (A150)
+1 #MSG                      (A) DYNAMIC
+1 #Dynamic_Name             (A) DYNAMIC
+1 #CONTACT-ID               (N8)
+1 #TERMINATE                (A) DYNAMIC CONST <'T'>
+1 #EMPTY-FILE-CMD           (A) DYNAMIC CONST <'>'>
+1 #GET-ARREARS              (A) DYNAMIC CONST <'ARREARS'>
+1 #TERM                     (L)
+1 #TEMPLATE-TYPE            (A3)
+1 #DELINQUENT-SERVICE-TEMPLATE         (A3) CONST <'DSV'>
+1 #TERMINATION-SERVICE-TEMPLATE        (A3) CONST <'TSV'>
+1 #SAS-DELINQUENT-SERVICE-TEMPLATE     (A3) CONST <'SDT'>
+1 #SAS-TERMINATION-SERVICE-TEMPLATE    (A3) CONST <'STT'>
+1 #DAILY-SERVICE-TERM-FILE (A) DYNAMIC CONST
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/DailyServiceTermination.txt'>
+1 #EMAIL-DAILY-FILE (A) DYNAMIC CONST
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/EmailDailyFile.txt'>
+END-DEFINE
+*
+WRITE 'process started'
+DEFINE WORK FILE 1 #DAILY-SERVICE-TERM-FILE TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 #EMAIL-DAILY-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+*
+* Delete old file
+CALLNAT 'GPRN0002' #EMPTY-FILE-CMD #DAILY-SERVICE-TERM-FILE
+*
+#DATN      := *DATN
+* #datn      := 20140619                         /* vt 06192014
+#TERM-DATE := #DELQ-DATE := *DATN
+* #term-date := #delq-date := 20140619           /* vt 06192014
+*
+* Calculate Delinquency Date
+MOVE EDITED #DATE-D TO #DATX (EM=YYYYMMDD)
+#DATX := #DATX - 31
+MOVE EDITED #DATX (EM=YYYYMMDD) TO #DATE-D
+WRITE #DELQ-DATE
+*
+* Calculate Termination Date
+MOVE EDITED #DATE-T TO #DATX (EM=YYYYMMDD)
+#DATX := #DATX - 61
+MOVE EDITED #DATX (EM=YYYYMMDD) TO #DATE-T
+WRITE #TERM-DATE
+*
+READ SVC-MEMBER-V BY SVC-ID-NUMBER
+  ACCEPT IF  ( SVC-MEMBER-V.SVC-PLAN = 'PSM' AND SVC-MEMBER-V.SVC-STATUS = 'A')  OR
+      (SVC-MEMBER-V.SVC-PLAN = 'SAS' AND SVC-MEMBER-V.SVC-STATUS = 'F')
+*  ACCEPT IF SVC-MEMBER-V.SVC-PLAN = 'SAS' AND SVC-MEMBER-V.SVC-STATUS = 'F'           /* TT1
+  RESET EMAIL-INFORMATION #REPORT-FIELDS #Dynamic_Name #CONTACT-ID #TERM #ISN #TEMPLATE-TYPE
+  DECIDE FOR FIRST CONDITION
+* Check Termination
+    WHEN SVC-MEMBER-V.SVC-PAID-TO-DATE = #TERM-DATE
+      #ISN := *ISN
+      #TERM := TRUE
+      DECIDE FOR FIRST CONDITION                                 /* TT1 BEGIN
+        WHEN SVC-MEMBER-V.SVC-PLAN = 'PSM'
+          #TEMPLATE-TYPE := #TERMINATION-SERVICE-TEMPLATE
+        WHEN SVC-MEMBER-V.SVC-PLAN = 'SAS'
+          #TEMPLATE-TYPE := #SAS-TERMINATION-SERVICE-TEMPLATE
+        WHEN NONE
+          IGNORE
+      END-DECIDE                                                 /* TT1 END
+      PERFORM CALCULATE-ARREARS
+      #SVC-ID-NUMBER       := SVC-MEMBER-V.SVC-ID-NUMBER
+      #SVC-CONTRACT-NUMBER := SVC-MEMBER-V.SVC-CONTRACT-NUMBER
+      #SVC-PAID-TO-DATE    := SVC-MEMBER-V.SVC-PAID-TO-DATE
+      COMPRESS #SVC-ID-NUMBER
+        #SVC-CONTRACT-NUMBER
+        #SVC-PAID-TO-DATE
+        #SVC-AMOUNT-DUE  INTO #OUTPUT-RECORD
+        WITH DELIMITER #TAB
+      WRITE WORK FILE 1 VARIABLE #OUTPUT-RECORD
+      PERFORM WRITE-EMAIL-INFO
+* Terminate record
+      GT.
+      GET SVC-UPDATE #ISN
+      SVC-UPDATE.SVC-STATUS           := #TERMINATE
+      SVC-UPDATE.SVC-TERMINATION-DATE := #DATN
+      UPDATE (GT.)
+      END TRANSACTION
+* Check delinquency
+    WHEN SVC-MEMBER-V.SVC-PAID-TO-DATE = #DELQ-DATE
+      DECIDE FOR FIRST CONDITION                                 /* TT1 BEGIN
+        WHEN SVC-MEMBER-V.SVC-PLAN = 'PSM'
+          #TEMPLATE-TYPE := #DELINQUENT-SERVICE-TEMPLATE
+        WHEN SVC-MEMBER-V.SVC-PLAN = 'SAS'
+          #TEMPLATE-TYPE := #SAS-DELINQUENT-SERVICE-TEMPLATE
+        WHEN NONE
+          IGNORE
+      END-DECIDE                                                 /* TT1 END
+*
+      #SVC-ID-NUMBER := SVC-MEMBER-V.SVC-ID-NUMBER
+      PERFORM CALCULATE-ARREARS
+      PERFORM WRITE-EMAIL-INFO
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+END-READ
+*
+***********************************
+DEFINE SUBROUTINE CALCULATE-ARREARS
+***********************************
+*
+RESET PARM-SVC
+PARM-SVC.ACTION         := #GET-ARREARS
+PARM-SVC.SVC-MEMBER-ID  := SVC-MEMBER-V.SVC-ID-NUMBER
+PARM-SVC.SVC-PLAN       := SVC-MEMBER-V.SVC-PLAN
+CALLNAT 'SVCN0003' PARM-SVC #MSG
+* MOVE EDITED PARM-SVC.SVC-ARREARS-FEE (EM=ZZZZZZ9.99) TO #SVC-AMOUNT-DUE   /* TT1
+MOVE EDITED PARM-SVC.SVC-TOTAL-DUE (EM=ZZZZZZ9.99) TO #SVC-AMOUNT-DUE       /* TT1
+* MOVE LEFT #SVC-AMOUNT-DUE TO #SVC-AMOUNT-DUE
+COMPRESS '$' *TRIM(#SVC-AMOUNT-DUE) TO #SVC-AMOUNT-DUE LEAVING NO
+*
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE WRITE-EMAIL-INFO
+**********************************
+*
+#CONTACT-ID := F-GET-CONTACT-ID(<SVC-MEMBER-V.SVC-ID-NUMBER>)
+#Dynamic_Name := 'S1'
+CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name
+* #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >) /* bz-Name
+EMAIL-INFORMATION.SALUTATION   := #Dynamic_Name
+#Dynamic_Name := '!L'
+CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name
+EMAIL-INFORMATION.MEMBER-NAME  := #Dynamic_Name
+IF #TERM
+  EMAIL-INFORMATION.DUE-DATE         := #DATN
+  EMAIL-INFORMATION.ISSUE-DATE       := SVC-MEMBER-V.SVC-ISSUE-DATE
+ELSE
+  EMAIL-INFORMATION.DUE-DATE         := VAL(FUNCTION-CALENDAR(<SVC-MEMBER-V.SVC-PAID-TO-DATE,'T'>))
+  EMAIL-INFORMATION.NEXT-MONTH       := FUNCTION-CALENDAR(<SVC-MEMBER-V.SVC-PAID-TO-DATE,'R'>)
+  EMAIL-INFORMATION.TOTAL-AMOUNT-DUE := #SVC-AMOUNT-DUE
+END-IF
+*
+EMAIL-INFORMATION.TEMPLATE-TYPE    := #TEMPLATE-TYPE
+EMAIL-INFORMATION.PENDING-CN       := EMAIL-INFORMATION.DAL-CN  := #SVC-ID-NUMBER
+EMAIL-INFORMATION.POLICY-NUMBER    := #SVC-ID-NUMBER
+EMAIL-INFORMATION.OWNER-EMAIL      := FUNCTION-PREFFERED-EMAIL(<#CONTACT-ID>)
+WRITE WORK FILE 2 EMAIL-INFORMATION
+*
+END-SUBROUTINE
+*
+END

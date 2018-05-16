@@ -1,0 +1,132 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPDAL - LOAD INSURED INFORMATION TO DAL
+*
+************************************************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* PAM  07142004 PM1  Never use TPP for RPU policies as per Rick Browett
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)
+*                    EBCDIC to HEX code '09' ASCII
+* DRW  05072006 DW2  Remove ALOT-SW logic
+* DRW  05082006 DW3  Build search logic for new mbrs & CHGES to Name etc
+* RSE  09212009 RE1  Change PROCESS-IND/600k logic for Unification
+* YAK  09222011 YK1  Re-written for the new DB structure/new AT process 
+* vxt  05152012 vt1  change the parm to get the previous , not the next day. 
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLCONT
+LOCAL
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER
+  2 CONTACT-ID
+  2 AGING-KEY
+*
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER
+  2 ENTRY-DATE
+  2 CODE
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 MEMBER-CONTACT-ID
+*
+1 #TAB       (A1) INIT <H'09'>
+1 #EXTRACT-RECORD    (A150)
+*
+1 #SSN               (A) DYNAMIC
+1 #DOB               (A) DYNAMIC
+1 #DATE              (A) DYNAMIC
+1 #ContactID         (N8)
+1 #STATUS            (A2)
+1 #AGING-KEY         (A10)
+1 #MI                (A1)
+*
+1 #NOT-FND           (L)
+1 #INVERSE-DATE      (N8)
+1 #I1                (I2)
+1 #DATN          (N8)
+1 #START-DT      (N8)
+1 #END-DT        (N8)
+*
+END-DEFINE
+*
+* define work file 1 "/usr/SAG/AAFMAA/batch/workfiles/TEMP/dalextract.txt" TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+*
+IF *TIMN LT 1200000    /* Midnite till 12 noon (late job run)
+  #DATN := *DATN
+  #DATE := FUNCTION-CALENDAR(<#DATN,'H'>)      /* vt1 was 'G'
+  #DATN := VAL(#DATE)
+ELSE                   /* Noon till midnite (normal run)
+  #DATN := *DATN
+END-IF
+*
+COMPRESS  'CN' #TAB
+  'FIRST NAME' #TAB
+  'MI' #TAB
+  'LAST NAME' #TAB
+  'SSN' #TAB
+  'DOB' INTO #EXTRACT-RECORD LEAVING NO
+*
+WRITE WORK 1 #EXTRACT-RECORD
+RESET #EXTRACT-RECORD
+*
+COMPUTE #INVERSE-DATE = 99999999 - #DATN
+READ MD-V BY ENTRY-DATE FROM #INVERSE-DATE
+*
+  IF ENTRY-DATE  GT #INVERSE-DATE
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF CODE = 'N' OR = 'A'
+    RESET #NOT-FND
+    FIND ST-V WITH ID-NUMBER = MD-V.ID-NUMBER
+      IF NO RECORDS FOUND
+        MOVE TRUE TO #NOT-FND
+      END-NOREC
+      #ContactID := ST-V.MEMBER-CONTACT-ID
+    END-FIND
+    IF #NOT-FND OR ((ST-V.PROCESS-IND = 'C') AND (ST-V.INTRO-FLAG NE 'A')) /* Bypass Contact
+        OR (ST-V.ID-NUMBER LT 1900)                                /* Bypass Samples
+      ESCAPE TOP
+    END-IF
+    PERFORM WRITE-EXTRACT-FILE
+  END-IF
+END-READ
+*
+#STATUS := 'P'
+COMPRESS #STATUS #DATN INTO #AGING-KEY LEAVING NO
+FIND AT-V WITH AGING-KEY = #AGING-KEY
+  #ContactID := AT-V.CONTACT-ID
+  PERFORM WRITE-EXTRACT-FILE
+END-FIND
+*
+#STATUS := 'U'
+COMPRESS #STATUS #DATN INTO #AGING-KEY LEAVING NO
+FIND AT-V WITH AGING-KEY = #AGING-KEY
+  #ContactID := AT-V.CONTACT-ID
+  PERFORM WRITE-EXTRACT-FILE
+END-FIND
+*
+************************************
+DEFINE SUBROUTINE WRITE-EXTRACT-FILE
+************************************
+*
+FIND(1) CT-V WITH CONTACT-ID = #ContactID
+  MOVE EDITED CT-V.SSN(EM=999-99-9999) to #SSN
+  #DOB := FUNCTION-CALENDAR(<CT-V.DATE-OF-BIRTH,'D'>)
+  #MI  := CT-V.MIDDLE-NAME
+  COMPRESS  CT-V.ID-NUMBER #TAB CT-V.FIRST-NAME #TAB
+    #MI #TAB CT-V.LAST-NAME #TAB #SSN #TAB #DOB INTO #EXTRACT-RECORD LEAVING NO
+  WRITE WORK 1 #EXTRACT-RECORD
+END-FIND
+END-SUBROUTINE
+*
+END

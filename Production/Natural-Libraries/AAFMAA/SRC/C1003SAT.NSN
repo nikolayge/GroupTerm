@@ -1,0 +1,435 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C1003SAT   ** AT xxxxxx SPS/GEN/MBR processing
+*                 MBR = Multiple AT's
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06112004  PM1     Enable ability to create sps/gen at's for   *
+*                          pending members per Clifton Brown.          *
+* PAM    09022004  PM2     When creating a linked MBR application, use *
+*                          member-cn instead of linked-cn (if avail)   *
+* PAM    10182004  PM3     Allow SPS and GEN records to have duplicate *
+*                          apps created.                               *
+* PAM  12/24/2009  PM4     Added new generational insured requirements *
+* PAM  03/29/2010  PM5     Added new contact file                      *
+* PAM  06/14/2010  PM6     Do not include deceased children / spouse   *
+* PAM  05/26/2011  PM7     Remove contact info - CRM project           *
+* NGG  20121002    NG1     CN Expansion Project -                      *
+*                          New beneficiary database file               *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-COMMAND      (A2)
+1 #CGA-SCR-ID           (N9)
+1 #CGA-ID-G             (A6)
+1 REDEFINE #CGA-ID-G
+  2 #CGA-ID              (N6)
+1 #CGA-SCR-SUFFIX       (A3)
+1 #CGA-ORIG-SUFFIX      (A3)
+1 #TEXT                 (A78)
+*   output below
+1 #AT-V-INTRO-FLAG      (A1)
+1 #AT-V-CONTACT-ID      (N8)                 /* PM5
+1 #AT-V-REFERING-ID-NUMBER (N6/9)
+1 #AT-V-MEMBER-CN        (A6)                 /* PM2
+*
+LOCAL
+1 #DPND-LIST#            (A2/14)              /* NG1
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 INTRO-FLAG
+  2 MEMBER-CN             (A6)
+  2 REDEFINE MEMBER-CN                        /* PM1
+    3 MEMBER-CN-N          (N6)               /* PM1
+  2 REFERING-ID-NUMBER    (N6/9)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER                                 /* PM6
+  2 NAME-SP
+  2 SSN-SP
+  2 STATUS-CODE-SP
+  2 PROCESS-IND                               /* PM1
+  2 INTRO-FLAG                                /* PM1
+  2 MEMBER-CONTACT-ID                         /* PM5
+*
+1 FR-V VIEW OF A-FIRS
+  2 DEPN-NAME     (100)
+  2 DEPN-DATE-OF-BIRTH (100)
+  2 DEPN-SSN           (100)
+  2 DEPN-STATUS-CD     (100)
+  2 DEPN-CONTACT-ID    (100)                  /* PM6
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS        /* PM5
+  2 CONTACT-1-ID                              /* PM5
+  2 ROLE-1-CD                                 /* PM5
+  2 CONTACT-2-ID                              /* PM5
+  2 ROLE-2-CD                                 /* PM5
+*
+1 CT-V VIEW OF A-CONTACTS                     /* PM5
+  2 ID-NUMBER                                 /* PM5
+  2 CONTACT-ID                                /* PM5
+  2 FIRST-NAME                                /* PM5
+  2 MIDDLE-NAME                               /* PM5
+  2 LAST-NAME                                 /* PM5
+  2 SUFFIX                                    /* PM5
+  2 GENDER-CD                                 /* PM5
+  2 DATE-OF-BIRTH                             /* PM5
+  2 SSN                                       /* PM5
+  2 DELETE-FLAG                               /* PM5
+*
+1 #NON-MBR-SEL  (A1/14)
+1 #NON-MBR-SEL-CV  (C/14)
+1 #NON-MBR-NAME (A25/14)
+1 #NON-MBR-DISP-NAME (A40/14)                /* PM5
+1 #NON-MBR-DOB  (A8/14)
+1 #NON-MBR-SSN  (N9/14)
+1 #NON-MBR-STAT (A1/14)                      /* PM5
+1 #NON-MBR-STAT-DISP (A10/14)                /* PM5
+1 #NON-MBR-CONTACT-ID (N8/14)                /* PM5
+1 #ADD-GEN-SEL (A1)
+1 #ADD-GEN-SEL-CV (C)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY    (A4)
+  2 #MM      (A2)
+  2 #DD      (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A  (A8)
+*
+1 #MMDDYYYY   (N8)
+1 REDEFINE #MMDDYYYY
+  2 #MM-X    (A2)
+  2 #DD-X    (A2)
+  2 #YYYY-X  (A4)
+1 REDEFINE #MMDDYYYY
+  2 #MMDDYYYY-A  (A8)
+*
+1 #COMMA    (A1) INIT <','>
+*
+1 #I1  (I2)
+1 #I2  (I2)
+1 #LAST         (A25)
+1 #FIRST-MID    (A25)
+1 #EXTRA-1     (A25)
+1 #EXTRA-2     (A25)
+1 #EXTRA-3     (A25)
+1 #EXTRA-4     (A25)
+1 #EXTRA-5     (A25)
+1 #EXTRA-6     (A25)
+1 #GEN         (A1)
+*
+1 #PARENT-CID       (N8)                   /* PM5
+1 #REL-CID          (N8)                   /* PM5
+1 #MODE             (A1)                   /* PM5
+1 #MSG              (A72)                  /* PM5
+1 #CGA-USER-COMPANY (A1)                   /* PM5
+1 #CGA-CLERK        (A3)                   /* PM5
+*
+1 #DEP-I            (I4)                   /* PM6
+1 #DECEASED         (L)                    /* PM6
+*
+END-DEFINE
+*
+************************************************************************
+*
+RESET #TEXT
+*
+IF #CGA-SCR-SUFFIX = 'MBR'
+  IF  (#CGA-SCR-ID LT 500000)
+      OR (#CGA-SCR-ID GT 600000)
+    MOVE 'AT Number must be used for AT "MBR"' TO #TEXT
+    ESCAPE ROUTINE
+  END-IF
+ELSE
+  IF (#CGA-SCR-ID GT 999999) OR (#CGA-SCR-ID = 0)
+    MOVE 'Linked CN/AT must be used for New "AT" SPS/GEN' TO #TEXT
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF #CGA-SCR-ID GE 500000
+  PERFORM COPY-AT
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE #CGA-SCR-ID TO #CGA-ID
+FIND (1) ST-V WITH MEMBER-KEY = #CGA-ID-G
+  IF NO RECORDS FOUND
+    FIND (1) ST-V WITH WIDOW-KEY = #CGA-ID-G
+      IF NO RECORDS FOUND
+        MOVE 'Linked MBR CN not found for New "SPS" OR "GEN" Coverage'
+          TO #TEXT
+        ESCAPE ROUTINE
+      END-NOREC
+    END-FIND
+  END-NOREC
+END-FIND
+*
+RESET #I2
+MOVE (AD=P) TO #NON-MBR-SEL-CV (*) #ADD-GEN-SEL-CV
+IF #CGA-ORIG-SUFFIX = 'SPS'
+  FIND CR-V WITH CR-V.CONTACT-1-ID = ST-V.MEMBER-CONTACT-ID   /* PM5
+    IF CR-V.ROLE-2-CD = 'S'                                   /* PM5
+      FIND (1) CT-V WITH CT-V.CONTACT-ID = CR-V.CONTACT-2-ID  /* PM5
+        IF CT-V.DELETE-FLAG NE 'Y'                            /* PM5
+            AND CT-V.DATE-OF-BIRTH NE 0                          /* PM5
+            AND ST-V.STATUS-CODE-SP NE 'D'                       /* PM6
+          ADD 1 TO #I2
+          RESET #NON-MBR-SEL-CV(#I2)
+          #NON-MBR-NAME (#I2) := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME, /* PM5
+            CT-V.LAST-NAME,CT-V.SUFFIX>)      /* PM5
+          #NON-MBR-DISP-NAME (#I2) := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME, /* PM5
+            CT-V.LAST-NAME,CT-V.SUFFIX>)      /* PM5
+          #NON-MBR-SSN (#I2) := CT-V.SSN                                                  /* PM5
+          #NON-MBR-CONTACT-ID (#I2) := CT-V.CONTACT-ID                                    /* PM5
+          #YYYYMMDD := CT-V.DATE-OF-BIRTH                                                 /* PM5
+          COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+          MOVE #MMDDYYYY-A TO #NON-MBR-DOB (#I2)
+        END-IF                                                 /* PM5
+      END-FIND                                                 /* PM5
+    END-IF                                                     /* PM5
+  END-FIND                                                     /* PM5
+ELSE
+  RESET #ADD-GEN-SEL-CV
+  FIND CR-V WITH CR-V.CONTACT-1-ID = ST-V.MEMBER-CONTACT-ID    /* PM5
+    IF CR-V.ROLE-2-CD = 'K' OR = 'G' OR = 'D'                  /* PM5
+      FIND (1) CT-V WITH CT-V.CONTACT-ID = CR-V.CONTACT-2-ID   /* PM5
+        RESET #DECEASED                                        /* PM6
+        FIND (1) FR-V WITH FR-V.ID-NUMBER = ST-V.ID-NUMBER     /* PM6
+          FOR #DEP-I 1 TO 100                                  /* PM6
+            IF FR-V.DEPN-CONTACT-ID (#DEP-I) = CT-V.CONTACT-ID /* PM6
+              IF FR-V.DEPN-STATUS-CD (#DEP-I) = 'D'            /* PM6
+                #DECEASED := TRUE                              /* PM6
+              END-IF                                           /* PM6
+              ESCAPE BOTTOM
+            END-IF                                             /* PM6
+          END-FOR                                              /* PM6
+        END-FIND                                               /* PM6
+*
+        IF #DECEASED                                           /* PM6
+          ESCAPE TOP                                           /* PM6
+        END-IF                                                 /* PM6
+*
+        ADD 1 TO #I2
+        RESET #NON-MBR-SEL-CV (#I2)
+        #NON-MBR-NAME (#I2) := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME, /* PM5
+          CT-V.LAST-NAME,CT-V.SUFFIX>)     /* PM5
+        #NON-MBR-DISP-NAME (#I2) := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME, /* PM5
+          CT-V.LAST-NAME,CT-V.SUFFIX>)     /* PM5
+        #NON-MBR-SSN (#I2)        := CT-V.SSN                                           /* PM5
+        #NON-MBR-STAT (#I2)       := CR-V.ROLE-2-CD                                     /* PM5
+        #NON-MBR-STAT-DISP (#I2)  := FUNCTION-DISP-RL-DESC(<CR-V.ROLE-2-CD>)            /* PM5
+        #NON-MBR-CONTACT-ID (#I2) := CT-V.CONTACT-ID                                    /* PM5
+        #YYYYMMDD := CT-V.DATE-OF-BIRTH                                                 /* PM5
+        COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+        MOVE #MMDDYYYY-A TO #NON-MBR-DOB (#I2)
+      END-FIND
+    END-IF
+  END-FIND
+END-IF
+*
+IF #I2 = 0 AND (#CGA-ORIG-SUFFIX = 'SPS')
+  MOVE 'No Current Spouse available with DOB' TO #TEXT
+  ESCAPE ROUTINE
+END-IF
+*
+IF #I2 = 1 AND (#CGA-ORIG-SUFFIX = 'SPS')
+  MOVE 'X' TO #NON-MBR-SEL (1)
+END-IF
+*
+REPEAT                                                     /* PM5
+  SET KEY PF4 NAMED 'Dtl'                                  /* PM5
+  RESET #DPND-LIST# (*)
+  FOR #I1 1 TO 14
+    IF #NON-MBR-NAME (#I1) EQ ' '
+      ESCAPE BOTTOM
+    ELSE
+      MOVE EDITED #I1 (EM=Z9) TO #DPND-LIST# (#I1)
+    END-IF
+  END-FOR
+*
+  INPUT MARK *#NON-MBR-SEL (1) USING MAP 'C1010MAT'
+*
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+*
+  IF *PF-KEY = 'PF4'                                       /* PM5
+    PERFORM CHECK-FOR-DETAIL                               /* PM5
+    ESCAPE TOP                                             /* PM5
+  END-IF                                                   /* PM5
+*
+  RESET #I2
+  FOR #I2 1 TO 14
+    IF #NON-MBR-SEL (#I2) NE ' '
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF #I2 = 15 AND (#ADD-GEN-SEL = ' ')
+    REINPUT 'A selection must be made'
+      MARK *#NON-MBR-SEL (1)
+  END-IF
+*
+  SET KEY OFF                                              /* PM5
+  ESCAPE BOTTOM                                            /* PM5
+END-REPEAT                                                 /* PM5
+*
+IF #ADD-GEN-SEL NE ' '
+  MOVE 'G' TO #AT-V-INTRO-FLAG
+*  RESET #AT-V-NAME                                        /* PM6
+*    #AT-V-SSN                                             /* PM6
+*    #AT-V-DATE-OF-BIRTH                                   /* PM6
+ELSE
+  IF #CGA-ORIG-SUFFIX = 'SPS'
+    MOVE 'S' TO #AT-V-INTRO-FLAG
+*   MOVE #NON-MBR-NAME (#I2) TO #AT-V-NAME                 /* PM6
+  ELSE
+    IF #NON-MBR-STAT (#I2) = 'D'                                 /* PM5
+      #AT-V-INTRO-FLAG := 'K'                                    /* PM5
+    ELSE                                                         /* PM5
+      #AT-V-INTRO-FLAG := #NON-MBR-STAT (#I2)                    /* PM5
+    END-IF                                                       /* PM5
+*   MOVE 'K' TO #AT-V-INTRO-FLAG                                 /* PM5
+*    SEPARATE ST-V.NAME LEFT INTO #LAST #FIRST-MID #EXTRA-1      /* PM6
+*      #EXTRA-2 #EXTRA-3 WITH DELIMITER #COMMA                   /* PM6
+*    COMPRESS #LAST ',' INTO #AT-V-NAME LEAVING NO               /* PM6
+*    COMPRESS #AT-V-NAME #NON-MBR-NAME (#I2)                     /* PM6
+*      INTO #AT-V-NAME                                           /* PM6
+  END-IF
+*
+  #AT-V-CONTACT-ID := #NON-MBR-CONTACT-ID (#I2)                  /* PM5
+*  MOVE #NON-MBR-SSN (#I2) TO #AT-V-SSN                          /* PM6
+*  MOVE #NON-MBR-DOB (#I2) TO #MMDDYYYY-A                        /* PM6
+*  COMPRESS #YYYY-X #MM-X #DD-X INTO #YYYYMMDD-A LEAVING NO      /* PM6
+*  MOVE #YYYYMMDD TO #AT-V-DATE-OF-BIRTH                         /* PM6
+END-IF
+*
+MOVE #CGA-SCR-ID TO #AT-V-REFERING-ID-NUMBER (1)
+*
+RESET #CGA-SCR-ID #CGA-ID
+*
+IF #I2 LT 15
+  MOVE #NON-MBR-SSN (#I2) TO #CGA-SCR-ID
+END-IF
+*
+************************************************************************
+DEFINE SUBROUTINE COPY-AT
+************************************************************************
+*
+FIND (1) AT-V WITH ID-NUMBER = #CGA-SCR-ID
+* IF   (#CGA-ORIG-SUFFIX = 'MBR')                                 /* PM3
+*  AND (AT-V.INTRO-FLAG NE ' ')                                   /* PM3
+*   MOVE '"MBR" can only be used for members' TO #TEXT            /* PM3
+*   ESCAPE ROUTINE                                                /* PM3
+* END-IF                                                          /* PM3
+*
+* IF (AT-V.MEMBER-CN NE ' ') AND (AT-V.MEMBER-CN LT '200000')
+  IF (AT-V.MEMBER-CN NE ' ') AND (AT-V.MEMBER-CN LT '500000')     /* ng1
+    FIND ST-V WITH MEMBER-KEY = MEMBER-CN                         /* PM1
+      IF ST-V.PROCESS-IND = 'C'                                   /* PM1
+          AND ST-V.INTRO-FLAG = 'A'                               /* PM1
+        MOVE MEMBER-CN-N TO #CGA-SCR-ID                           /* PM1
+      ELSE                                                        /* PM1
+        COMPRESS 'This AT# is already linked to member' MEMBER-CN
+          INTO #TEXT
+        ESCAPE ROUTINE
+      END-IF                                                      /* PM1
+    END-FIND                                                      /* PM1
+  END-IF
+*
+  IF   (AT-V.REFERING-ID-NUMBER (1) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (2) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (3) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (4) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (5) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (6) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (7) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (8) NE 0)
+      AND (AT-V.REFERING-ID-NUMBER (9) NE 0)
+    MOVE 'This AT# already has 9 linked SPS/GEN/MBR AT records' TO #TEXT
+  END-IF
+*
+* SEPARATE AT-V.NAME INTO #LAST #FIRST-MID #EXTRA-1 #EXTRA-2 #EXTRA-3  /* PM6
+*   WITH DELIMITER ','                                                 /* PM6
+END-FIND
+*
+IF #CGA-ORIG-SUFFIX = 'MBR'
+  MOVE AT-V.INTRO-FLAG    TO #AT-V-INTRO-FLAG
+*  MOVE AT-V.NAME          TO #AT-V-NAME                          /* PM6
+*  MOVE AT-V.SSN           TO #AT-V-SSN                           /* PM6
+*  MOVE AT-V.DATE-OF-BIRTH TO #AT-V-DATE-OF-BIRTH                 /* PM6
+*  MOVE AT-V.RANK          TO #AT-V-RANK                          /* PM6
+*  MOVE AT-V.SEX           TO #AT-V-SEX                           /* PM6
+*  MOVE AT-V.MIL-STATUS    TO #AT-V-MIL-STATUS                    /* PM6
+*  MOVE AT-V.MIL-SERVICE   TO #AT-V-MIL-SERVICE                   /* PM6
+  IF #AT-V-INTRO-FLAG NE ' '                                      /* PM3
+    MOVE AT-V.REFERING-ID-NUMBER (*)                              /* PM3
+      TO #AT-V-REFERING-ID-NUMBER (*)                             /* PM3
+  END-IF                                                          /* PM3
+ELSE
+  IF #CGA-ORIG-SUFFIX = 'SPS'
+    MOVE 'S' TO #AT-V-INTRO-FLAG
+*   COMPRESS #LAST ', SPOUSE' INTO #AT-V-NAME LEAVING NO          /* PM6
+  ELSE
+    INPUT MARK *#GEN USING MAP 'C1011MAT'
+*
+    IF #CGA-SCR-COMMAND NE '*'
+      FETCH 'G1000PXX'
+    END-IF
+*
+    IF NOT #GEN = 'K' OR = 'G'
+      REINPUT 'Must be "K" or "G"'
+        MARK *#GEN
+    END-IF
+*
+    IF #GEN = 'K'
+      MOVE 'K' TO #AT-V-INTRO-FLAG
+*     COMPRESS #LAST ', CHILD' INTO #AT-V-NAME LEAVING NO        /* PM6
+    ELSE
+      MOVE 'G' TO #AT-V-INTRO-FLAG
+*     COMPRESS #LAST ', GRANDCHILD' INTO #AT-V-NAME LEAVING NO   /* PM6
+    END-IF
+*
+*    RESET #AT-V-SSN                                             /* PM6
+*          #AT-V-DATE-OF-BIRTH                                   /* PM6
+  END-IF
+END-IF
+*
+IF #CGA-ORIG-SUFFIX = 'MBR'                                       /* PM2
+    AND AT-V.MEMBER-CN NE ' '                                        /* PM2
+  MOVE AT-V.MEMBER-CN TO #AT-V-MEMBER-CN                          /* PM2
+ELSE                                                              /* PM2
+  MOVE #CGA-SCR-ID TO #AT-V-REFERING-ID-NUMBER (1)
+END-IF                                                            /* PM2
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CHECK-FOR-DETAIL                                /* PM5
+************************************************************************
+*
+RESET #REL-CID
+#PARENT-CID := ST-V.MEMBER-CONTACT-ID
+*
+IF *CURS-LINE GT 3
+    AND *CURS-LINE LT 18
+  #I2 := *CURS-LINE - 3
+  #REL-CID    := #NON-MBR-CONTACT-ID (#I2)
+END-IF
+*
+IF #REL-CID NE 0
+  #MODE  := 'V'
+  CALLNAT 'GUPCISXX' #PARENT-CID #REL-CID #CGA-SCR-COMMAND #CGA-ID #CGA-USER-COMPANY #CGA-CLERK #MODE #MSG
+END-IF
+*
+END-SUBROUTINE
+*
+
+END

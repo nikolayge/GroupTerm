@@ -1,0 +1,592 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2350PVA      ** ADJUST ACV **
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    04262004  PM1     Added processing to calculate adjustments   *
+*                          for missed premiums - formula supplied      *
+*                          by Crooks.                                  *
+* PAM    05042004  PM2     Made COI and ACV not mandatory.  Only need  *
+*                          Death Benefit for calculations.             *
+* PAM    05062004  PM3     Removed Term Insurance from VA processing.  *
+* PAM    05272004  PM4     Adjusted size of prior premiums paid.       *
+* PAM    08112004  PM5     Added ability to remove payments as well    *
+*                          as apply missed payments.  Formula the same *
+*                          per Crooks.                                 *
+* DRW    05042005  DW6     Allow adj to TPP but not to CSV             *
+* DRW    06172005  DW7     Bypass non Whole Life Pols                  *
+* DRW    05072006  DW8     Remove ALOT-SW logic                        * 
+* DRW   03/10/2008 DW9     Add TR Accounting Trans for ACV adjust      *
+* PAM   03/17/2009 PM10    Replaced RLB with CEB                       *
+* YAK   10/15/2012 YK1     Use function to identify Level Term II plans*
+* TMT   12/04/2013 TT1     1 MILLION DOLLAR STABILITY PROJECT          *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.BENEFIT-ANALYSIS-BLOCK
+LOCAL  USING GONERLXX
+LOCAL  USING C2350LVA
+LOCAL
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER    /* DW9
+ 2 ID-NUMBER             (N6)
+ 2 PROCESS-IND           (A1)
+ 2 TRANSACTION-DATN      (P9)
+ 2 TRANSACTION-TIMN      (P7)
+ 2 TXN-CODE              (A4)
+ 2 SEQUENCE-NUM          (N1)
+ 2 NAME                  (A25)
+ 2 TXN-ACCT-NUMBER       (N3)
+ 2 ACCT-DATE             (N8)
+ 2 DATE-LAST-ACCT-UPDATE (N8)
+ 2 DEBIT-AMOUNT          (P7.2)
+ 2 CREDIT-AMOUNT         (P7.2)
+ 2 DESCRIPTION           (A20)
+ 2 MESSAGE-CODE          (A1)
+ 2 POLICY-NUMBER                      /* DW12
+ 2 AALP-FLAG             (A1)
+ 2 CLERK-ID              (A3)
+ 2 TERMINAL-ID           (A8)
+ 2 CASH-CODE             (A1)
+ 2 SG-CATEGORY-1         (A2/15)
+ 2 SG-CATEGORY-2         (A2/15)
+ 2 SG-AMOUNT             (N6.2/15)
+*
+1 #TPP-CHGED    (L)
+1 #SUBTYPE     (A1)
+1 #SCR-CV                 (C)
+1 #SCR-ISSUE-DATE         (A8)
+1 REDEFINE #SCR-ISSUE-DATE                                        /* PM1
+ 2 #SCR-ISSUE-DATE-MM     (A2)                                    /* PM1
+ 2 #SCR-ISSUE-DATE-DD     (A2)                                    /* PM1
+ 2 #SCR-ISSUE-DATE-YYYY   (A4)                                    /* PM1
+1 #SCR-FILE-ISSUE-DATES   (A8/9)
+1 #SCR-FILE-TOT-PR-PD     (P7.2/9)
+1 #SCR-ACV-PREM-ADJ-S     (A1)
+1 #SCR-ACV-PREM-ADJ       (N7.2)                                  /* TT1
+1 #SCR-ACV-INT-ADJ-S      (A1)
+1 #SCR-ACV-INT-ADJ        (N5.2)
+1 #SCR-ACV-COI-ADJ-S      (A1)
+1 #SCR-ACV-COI-ADJ        (N3.2)
+1 #SCR-ACV-TOT-ADJ        (N7.2)                                  /* TT1
+1 #SCR-PREM-SHORTAGE      (N7.2)                                  /* TT1  /* PM1
+1 #SCR-DATE-PAID          (N8)                                    /* PM1
+1 REDEFINE #SCR-DATE-PAID                                         /* PM1
+ 2 #DATE-PAID-MM          (N2)                                    /* PM1
+ 2 #DATE-PAID-DD          (N2)                                    /* PM1
+ 2 #DATE-PAID-YYYY        (N4)                                    /* PM1
+1 #SCR-DB-DATE-PAID       (N7.2)                                  /* PM1
+1 #SCR-ACV-DATE-PAID      (N7.2)                                  /* PM1
+1 #SCR-COI-DATE-PAID      (N6.2)                                  /* PM1
+1 #SCR-OVR-DATE           (N8)                                    /* PM1
+1 #HISTORY-KEY            (N15)                                   /* PM1
+1 REDEFINE #HISTORY-KEY                                           /* PM1
+ 2 #HISTORY-KEY-A         (A15)                                   /* PM1
+1 #SCR-MISS-OVER          (A1)                                    /* PM5
+*
+1 #WYYYYMMDD
+ 2 #WYYYY    (N4)
+ 2 REDEFINE #WYYYY
+  3 #WCENT    (N2)
+  3 #WYY      (N2)
+ 2 #WMM      (N2)
+ 2 #WDD      (N2)
+1 REDEFINE #WYYYYMMDD
+ 2 #WYYYYMMDD-N (N8)
+*
+1 #WMMDDYYYY
+ 2 #WMM      (N2)
+ 2 #WDD      (N2)
+ 2 #WCENT    (N2)
+ 2 #WYY      (N2)
+1 REDEFINE #WMMDDYYYY
+ 2 #WMMDDYYYY-A (A8)
+1 REDEFINE #WMMDDYYYY
+ 2 #WMMDDYYYY-N (N8)
+*
+1 #I1              (I2)
+1 #I2              (I2)
+1 #I3              (I2)
+1 #TOT-ADJ         (A7)
+1 #TOT-PREM        (A12)        /*TT1
+1 #TOT-INT         (A9)
+1 #TOT-COI         (A6)
+1 #TOT-PREM-W-SIGN (A11)
+1 #TOT-INT-W-SIGN  (A11)
+1 #TOT-COI-W-SIGN  (A8)
+1 #PRIOR-PREM-ADJ  (P7.2)
+1 #PRIOR-INT-ADJ   (P5.2)
+1 #PRIOR-COI-ADJ   (P5.2)
+* #PRIOR-TOT-PREMS-PD (P5.2)
+1 #PRIOR-TOT-PREMS-PD (P7.2)                                      /* TT1
+1 #T-PRM-SGN       (A1)                                           /* PM1
+1 #T-INT-SGN       (A1)                                           /* PM1
+1 #T-COI-SGN       (A1)                                           /* PM1
+*
+1 #INT         (I2)
+1 #NOTE-TEXT   (A60/10)
+1 #MSG-TEXT    (A60)                                              /* PM1
+1 #DATN        (N8)                                               /* PM1
+1 REDEFINE #DATN                                                  /* PM1
+ 2 #DATN-YYYY  (N4)                                               /* PM1
+ 2 #DATN-MM    (N2)                                               /* PM1
+ 2 #DATN-DD    (N2)                                               /* PM1
+*
+1 #POL-NUM    (A16)
+1 #TIMN       (N7)
+1 #1-YR-AGO   (N8)
+*
+END-DEFINE
+* * * * * * * * *
+INCLUDE GONERCXX
+* * * * * * * * *
+*
+GET ST-V #CGA-ISN
+*
+FOR #I1 1 TO 9
+  IF  (ST-V.STATUS (#I1) NE 'D')
+*    OR (PLAN-A1 (#I1) = 'LT' OR = 'RT')                      /* DW7  /* YK1
+*    OR ((PLAN-A1 (#I1) GE 'U') AND (PLAN-A1 (#I1) LE 'Z'))   /* DW7  /* YK1 
+    OR FUNCTION-TERM-POLICY(<ST-V.PLAN(#I1)>)                         /* YK1
+    ESCAPE TOP
+  END-IF
+*
+  MOVE ST-V.ISSUE-DATE (#I1) TO #WYYYYMMDD-N
+  PERFORM FLIP-DATE
+  MOVE #WMMDDYYYY-A TO #SCR-FILE-ISSUE-DATES (#I1)
+  MOVE ST-V.TOT-PREMIUMS-PAID (#I1) TO #SCR-FILE-TOT-PR-PD (#I1)
+END-FOR
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+*
+INPUT MARK *#SCR-ISSUE-DATE USING MAP 'C2350MVA'
+*
+IF #CGA-SCR-COMMAND NE '*'
+  END TRANSACTION
+  FETCH 'G1000PXX'
+END-IF
+*
+IF #CGA-CLERK = 'VXT'   OR = 'KHB' OR = 'CEB'   /* PM10 vt 06/19/2013  vt removed 'MBW'
+    OR = 'BMG' OR = 'YAK' OR = 'SKS'
+  IGNORE
+ELSE
+  REINPUT 'USER NOT AUTHORIZED'
+END-IF
+*
+FOR #I1 1 TO 9
+  IF (#SCR-ISSUE-DATE = #SCR-FILE-ISSUE-DATES (#I1))
+   AND (#SCR-ISSUE-DATE NE ' ')
+*  AND (NOT PLAN (#I1) = 'LT' OR = 'RT')               /* DW7  /* YK1
+*  AND ((PLAN (#I1) LT 'U') OR (PLAN (#I1) GT 'Z'))    /* DW7  /* YK1
+    AND (NOT FUNCTION-TERM-POLICY(<ST-V.PLAN(#I1)>))           /* YK1
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #I1 GE 9
+    REINPUT 'ENTERED ISSUE DATE DOESN"T MATCH 1 OF THE ABOVE DATES'
+    MARK *#SCR-ISSUE-DATE
+  END-IF
+END-FOR
+*
+IF ((ST-V.ONLINE-ACTION-GN = '2')         /* NEW MEMBER THIS MONTH
+ OR (ST-V.ONLINE-ACTION (#I1) = '1'))     /* NEW POLICY THIS MONTH
+  AND (NOT #CGA-CLERK = 'VXT' OR = 'KHB' OR = 'CEB'   /* PM10 vt 06/19/2013
+                   OR = 'BMG')
+  REINPUT 'ADJUSTMENT NOT ALLOWED ON NEW POLICY THIS MONTH'
+  MARK *#SCR-ISSUE-DATE
+END-IF
+*
+PERFORM APPLY-MISSED-PREMIUMS                                     /* PM1
+*
+IF   (#SCR-ACV-PREM-ADJ NE 0)
+ AND (NOT #SCR-ACV-PREM-ADJ-S = '+' OR = '-')
+  REINPUT 'SIGN MUST BE + OR -'
+  MARK *#SCR-ACV-PREM-ADJ-S
+END-IF
+*
+IF   (#SCR-ACV-INT-ADJ NE 0)
+ AND (NOT #SCR-ACV-INT-ADJ-S = '+' OR = '-')
+  REINPUT 'SIGN MUST BE + OR -'
+  MARK *#SCR-ACV-INT-ADJ-S
+END-IF
+*
+IF   (#SCR-ACV-COI-ADJ NE 0)
+ AND (NOT #SCR-ACV-COI-ADJ-S = '+' OR = '-')
+  REINPUT 'SIGN MUST BE + OR -'
+  MARK *#SCR-ACV-COI-ADJ-S
+END-IF
+*
+* IF ((ST-V.PLAN (#I1) = 'LT' OR = 'RT')                         /* PM3   /* YK1
+*  OR  ((ST-V.PLAN-A1 (#I1) GE 'U')                              /* PM3   /* YK1
+*  AND  (ST-V.PLAN-A1 (#I1) LE 'Z')))                            /* PM3   /* YK1
+IF FUNCTION-TERM-POLICY(<ST-V.PLAN(#I1)>)                                 /* YK1  
+ AND ((#SCR-ACV-PREM-ADJ NE 0)                /* DW6
+  OR  (#SCR-ACV-COI-ADJ NE 0)                 /* DW6
+  OR  (#SCR-ACV-INT-ADJ NE 0)
+  OR  (#SCR-PREM-SHORTAGE NE 0))
+  REINPUT 'Cash Value cannot be adjusted on a Term Policy'  /* DW6
+  MARK *#SCR-ACV-PREM-ADJ
+END-IF                                                          /* PM3
+*
+IF ST-V.MTD-ACV-PREM-ADJ (#I1) = 9999999.99
+  RESET ST-V.MTD-ACV-PREM-ADJ (#I1)
+END-IF
+*
+IF ST-V.MTD-ACV-INT-ADJ (#I1) = 99999.99
+  RESET ST-V.MTD-ACV-INT-ADJ (#I1)
+END-IF
+*
+IF ST-V.MTD-ACV-COI-ADJ (#I1) = 99999.99
+  RESET ST-V.MTD-ACV-COI-ADJ (#I1)
+END-IF
+*
+MOVE ST-V.MTD-ACV-PREM-ADJ (#I1) TO #PRIOR-PREM-ADJ
+MOVE ST-V.MTD-ACV-INT-ADJ (#I1) TO #PRIOR-INT-ADJ
+MOVE ST-V.MTD-ACV-COI-ADJ (#I1) TO #PRIOR-COI-ADJ
+*
+IF #I1 NE 1            /* FILLUP PRECEEDING MULTIPLE FIELDS
+  COMPUTE #I3 = #I1 - 1
+  FOR #I2 1 TO #I3
+    IF ST-V.MTD-ACV-PREM-ADJ (#I2) = 0
+      MOVE 9999999.99 TO ST-V.MTD-ACV-PREM-ADJ (#I2)
+    END-IF
+*
+    IF ST-V.MTD-ACV-INT-ADJ (#I2) = 0
+      MOVE 99999.99 TO ST-V.MTD-ACV-INT-ADJ  (#I2)
+    END-IF
+*
+    IF ST-V.MTD-ACV-COI-ADJ (#I2) = 0
+      MOVE 99999.99 TO ST-V.MTD-ACV-COI-ADJ  (#I2)
+    END-IF
+  END-FOR
+END-IF
+*
+IF #SCR-ACV-PREM-ADJ-S = '+'
+  ADD #SCR-ACV-PREM-ADJ TO ST-V.MTD-ACV-PREM-ADJ (#I1)
+  ADD #SCR-ACV-PREM-ADJ TO #SCR-ACV-TOT-ADJ
+ELSE
+  SUBTRACT #SCR-ACV-PREM-ADJ FROM ST-V.MTD-ACV-PREM-ADJ (#I1)
+  SUBTRACT #SCR-ACV-PREM-ADJ FROM #SCR-ACV-TOT-ADJ
+END-IF
+*
+IF #SCR-ACV-INT-ADJ-S = '+'
+  ADD #SCR-ACV-INT-ADJ TO ST-V.MTD-ACV-INT-ADJ (#I1)
+  ADD #SCR-ACV-INT-ADJ TO #SCR-ACV-TOT-ADJ
+ELSE
+  SUBTRACT #SCR-ACV-INT-ADJ FROM ST-V.MTD-ACV-INT-ADJ (#I1)
+  SUBTRACT #SCR-ACV-INT-ADJ FROM #SCR-ACV-TOT-ADJ
+END-IF
+*
+IF #SCR-ACV-COI-ADJ-S = '+'
+  ADD      #SCR-ACV-COI-ADJ TO   ST-V.MTD-ACV-COI-ADJ (#I1)
+  SUBTRACT #SCR-ACV-COI-ADJ FROM #SCR-ACV-TOT-ADJ
+ELSE
+  SUBTRACT #SCR-ACV-COI-ADJ FROM ST-V.MTD-ACV-COI-ADJ (#I1)
+  ADD #SCR-ACV-COI-ADJ TO #SCR-ACV-TOT-ADJ
+END-IF
+*
+MOVE ST-V.TOT-PREMIUMS-PAID (#I1) TO #PRIOR-TOT-PREMS-PD
+IF ST-V.TOT-PREMIUMS-PAID (#I1) NE #SCR-FILE-TOT-PR-PD (#I1)
+  MOVE #SCR-FILE-TOT-PR-PD (#I1) TO ST-V.TOT-PREMIUMS-PAID (#I1)
+  MOVE TRUE TO #TPP-CHGED
+END-IF
+*
+MOVE (AD=P) TO #SCR-CV
+COMPRESS #MSG-TEXT 'PRESS ENTER TO APPLY TRANSACTION' INTO #MSG-TEXT
+INPUT TEXT #MSG-TEXT USING MAP 'C2350MVA'                         /* PM1
+*
+IF #CGA-SCR-COMMAND NE '*'
+  END TRANSACTION
+  FETCH 'G1000PXX'
+END-IF
+*
+MOVE EDITED #SCR-ACV-TOT-ADJ  (EM=ZZZ.99-) TO #TOT-ADJ
+MOVE EDITED #SCR-ACV-PREM-ADJ (EM=Z,ZZZ,ZZZ.99) TO #TOT-PREM        /*TT1
+MOVE EDITED #SCR-ACV-INT-ADJ  (EM=ZZ,ZZZ.99)  TO #TOT-INT
+MOVE EDITED #SCR-ACV-COI-ADJ  (EM=ZZZ.99)  TO #TOT-COI
+COMPRESS #SCR-ACV-PREM-ADJ-S #TOT-PREM INTO #TOT-PREM-W-SIGN LEAVING NO
+COMPRESS #SCR-ACV-INT-ADJ-S  #TOT-INT  INTO #TOT-INT-W-SIGN  LEAVING NO
+COMPRESS #SCR-ACV-COI-ADJ-S  #TOT-COI  INTO #TOT-COI-W-SIGN  LEAVING NO
+COMPRESS '## V/A ADJ' #SCR-ISSUE-DATE 'PRM' #TOT-PREM-W-SIGN 'INT'
+         INTO #NOTE-TEXT (1)
+COMPRESS #NOTE-TEXT (1) #TOT-INT-W-SIGN INTO #NOTE-TEXT (1) LEAVING NO
+COMPRESS #NOTE-TEXT (1) 'COI' INTO #NOTE-TEXT (1)
+COMPRESS #NOTE-TEXT (1) #TOT-COI-W-SIGN INTO #NOTE-TEXT (1) LEAVING NO
+MOVE 1 TO #INT
+*
+IF #TPP-CHGED
+  ADD 1 TO #INT
+  MOVE EDITED #PRIOR-TOT-PREMS-PD (EM=-ZZZ,ZZZ.99) TO #TOT-PREM-W-SIGN
+  COMPRESS '## V/A ADJ' #SCR-ISSUE-DATE 'Old/New VA TPP'
+     #TOT-PREM-W-SIGN INTO #NOTE-TEXT (#INT)
+  MOVE EDITED ST-V.TOT-PREMIUMS-PAID (#I1) (EM=-ZZZ,ZZZ.99)
+      TO #TOT-PREM-W-SIGN
+  COMPRESS #NOTE-TEXT (#INT) #TOT-PREM-W-SIGN INTO #NOTE-TEXT (#INT)
+END-IF
+*
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+MOVE ST-V.NAME      TO TR-REG-V.NAME
+MOVE ST-V.PROCESS-IND TO TR-REG-V.PROCESS-IND
+MOVE ST-V.ID-NUMBER TO TR-REG-V.ID-NUMBER
+MOVE ST-V.DTS-DATN  TO TR-REG-V.DATE-LAST-UPDATE
+MOVE #CGA-CLERK     TO TR-REG-V.CLERK-ID
+MOVE *INIT-ID       TO TR-REG-V.TERMINAL-ID
+MOVE *DATN          TO TR-REG-V.TRANSACTION-DATN
+MOVE *TIMN          TO TR-REG-V.TRANSACTION-TIMN
+*
+IF #PRIOR-PREM-ADJ LT 0                                           /* PM1
+  MOVE '-' TO #T-PRM-SGN                                          /* PM1
+ELSE                                                              /* PM1
+  MOVE '+' TO #T-PRM-SGN                                          /* PM1
+END-IF                                                            /* PM1
+*
+IF #PRIOR-INT-ADJ LT 0                                            /* PM1
+  MOVE '-' TO #T-INT-SGN                                          /* PM1
+ELSE                                                              /* PM1
+  MOVE '+' TO #T-INT-SGN                                          /* PM1
+END-IF                                                            /* PM1
+*
+IF #PRIOR-COI-ADJ LT 0                                            /* PM1
+  MOVE '-' TO #T-COI-SGN                                          /* PM1
+ELSE                                                              /* PM1
+  MOVE '+' TO #T-COI-SGN                                          /* PM1
+END-IF                                                            /* PM1
+*
+COMPRESS 'VA-ACV ADJUSTMENT PRIOR PREM MTD =' #T-PRM-SGN #PRIOR-PREM-ADJ
+                                  'INT MTD =' #T-INT-SGN #PRIOR-INT-ADJ
+                                  'COI MTD =' #T-COI-SGN #PRIOR-COI-ADJ
+                INTO TR-REG-V.OLD-DATA (1)
+*
+IF ST-V.MTD-ACV-PREM-ADJ (#I1) LT 0                               /* PM1
+  MOVE '-' TO #T-PRM-SGN                                          /* PM1
+ELSE                                                              /* PM1
+  MOVE '+' TO #T-PRM-SGN                                          /* PM1
+END-IF                                                            /* PM1
+*
+IF ST-V.MTD-ACV-INT-ADJ (#I1) LT 0                                /* PM1
+  MOVE '-' TO #T-INT-SGN                                          /* PM1
+ELSE                                                              /* PM1
+  MOVE '+' TO #T-INT-SGN                                          /* PM1
+END-IF                                                            /* PM1
+*
+IF ST-V.MTD-ACV-COI-ADJ (#I1) LT 0                                /* PM1
+  MOVE '-' TO #T-COI-SGN                                          /* PM1
+ELSE                                                              /* PM1
+  MOVE '+' TO #T-COI-SGN                                          /* PM1
+END-IF                                                            /* PM1
+*
+COMPRESS 'VA-ACV ADJUSTMENT   NEW PREM MTD =' #T-PRM-SGN
+                                              ST-V.MTD-ACV-PREM-ADJ(#I1)
+                                  'INT MTD =' #T-INT-SGN
+                                              ST-V.MTD-ACV-INT-ADJ(#I1)
+                                  'COI MTD =' #T-COI-SGN
+                                              ST-V.MTD-ACV-COI-ADJ(#I1)
+                INTO TR-REG-V.NEW-DATA (1)
+*
+IF ST-V.TOT-PREMIUMS-PAID (#I1) NE #PRIOR-TOT-PREMS-PD
+  COMPRESS 'VA-UPDATE TOT-PREMIUMS PAID =' #PRIOR-TOT-PREMS-PD
+                INTO TR-REG-V.OLD-DATA (2)
+  COMPRESS 'VA-UPDATE TOT-PREMIUMS PAID =' ST-V.TOT-PREMIUMS-PAID (#I1)
+                INTO TR-REG-V.NEW-DATA (2)
+END-IF
+STORE TR-REG-V
+*
+IF ST-V.MTD-ACV-PREM-ADJ (#I1) = 0
+  MOVE 9999999.99 TO ST-V.MTD-ACV-PREM-ADJ (#I1)
+END-IF
+*
+IF ST-V.MTD-ACV-INT-ADJ (#I1) = 0
+  MOVE 99999.99 TO ST-V.MTD-ACV-INT-ADJ (#I1)
+END-IF
+*
+IF ST-V.MTD-ACV-COI-ADJ (#I1) = 0
+  MOVE 99999.99 TO ST-V.MTD-ACV-COI-ADJ (#I1)
+END-IF
+*
+MOVE *DATN   TO ST-V.LAST-FM-DATE
+MOVE *DATN   TO ST-V.DTS-DATN
+MOVE *TIMN   TO ST-V.DTS-TIMN
+*
+PERFORM ACCT-TRANS                   /* DW9
+*
+UPDATE RECORD (0149)
+*
+END TRANSACTION
+*
+MOVE 'VA' TO #CGA-SCR-COMMAND
+MOVE (AD=P) TO #SCR-CV
+*
+INPUT TEXT 'TRANSACTION COMPLETED' USING MAP 'C2350MVA'
+*
+FETCH 'G1000PXX'
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE FLIP-DATE
+* * * * * * * * * * * * * *
+*
+MOVE BY NAME #WYYYYMMDD TO #WMMDDYYYY
+IF #WMMDDYYYY-A = '00000000'
+  MOVE ' ' TO #WMMDDYYYY-A
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE APPLY-MISSED-PREMIUMS                           /* PM1
+* * * * * * * * * * * * * * * * * * * *
+*
+IF #SCR-DATE-PAID NE 0
+  IF NOT #SCR-MISS-OVER = 'M' OR = 'R'                            /* PM5
+    REINPUT USING HELP MARK *#SCR-MISS-OVER                       /* PM5
+  END-IF                                                          /* PM5
+*
+  IF #SCR-OVR-DATE NE 0
+    IF #SCR-OVR-DATE NE MASK (MMDDYYYY)
+      REINPUT 'Please enter the override calc date in MMDDYYYY format'
+      MARK *#SCR-OVR-DATE
+    END-IF
+*
+    MOVE #SCR-OVR-DATE TO #WMMDDYYYY-N
+    MOVE BY NAME #WMMDDYYYY TO #WYYYYMMDD
+    MOVE #WYYYYMMDD-N TO #DATN
+  ELSE
+    MOVE *DATN TO #DATN
+    MOVE 01 TO #DATN-DD     /* default to first day of current month
+    MOVE #DATN TO #WYYYYMMDD-N
+    MOVE BY NAME #WYYYYMMDD TO #WMMDDYYYY
+    MOVE #WMMDDYYYY-N TO #SCR-OVR-DATE
+  END-IF
+*
+  IF #SCR-DATE-PAID NE MASK (MMDDYYYY)
+    REINPUT 'Please enter the Premiums Paid Date in MMDDYYYY format'
+    MARK *#SCR-DATE-PAID
+  END-IF
+*
+  IF #DATE-PAID-YYYY GE #DATN-YYYY
+   AND #DATE-PAID-MM GE #DATN-MM
+    REINPUT 'Please enter a date prior to the current month/year'
+    MARK *#SCR-DATE-PAID
+  END-IF
+*
+  IF #SCR-PREM-SHORTAGE LE 0
+    REINPUT 'Please enter the Premiums to be applied'
+    MARK *#SCR-PREM-SHORTAGE
+  END-IF
+*
+  IF #SCR-ACV-DATE-PAID EQ 0
+   AND #SCR-COI-DATE-PAID EQ 0
+   AND #SCR-DB-DATE-PAID EQ 0
+    COMPRESS ST-V.ID-NUMBER-A #SCR-ISSUE-DATE-YYYY #SCR-ISSUE-DATE-MM
+             #SCR-ISSUE-DATE-DD ST-V.SPLIT-IND (#I1)
+         INTO #HISTORY-KEY-A LEAVING NO
+  ELSE
+    RESET #HISTORY-KEY
+  END-IF
+*
+  MOVE #SCR-DATE-PAID TO #WMMDDYYYY-N
+  MOVE BY NAME #WMMDDYYYY TO #WYYYYMMDD
+*
+  CALLNAT 'C2351SVA'
+    #SCR-MISS-OVER                                                /* PM5
+    #SCR-ISSUE-DATE
+    #SCR-PREM-SHORTAGE
+    #WYYYYMMDD-N
+    #SCR-DB-DATE-PAID
+    #SCR-ACV-DATE-PAID
+    #SCR-COI-DATE-PAID
+    #SCR-ACV-PREM-ADJ-S
+    #SCR-ACV-PREM-ADJ
+    #SCR-ACV-INT-ADJ-S
+    #SCR-ACV-INT-ADJ
+    #SCR-ACV-COI-ADJ-S
+    #SCR-ACV-COI-ADJ
+    #HISTORY-KEY
+    #DATN
+*
+* IF #SCR-ACV-DATE-PAID EQ 0                                      /* PM2
+*  OR #SCR-COI-DATE-PAID EQ 0                                     /* PM2
+  IF #SCR-DB-DATE-PAID EQ 0                                       /* PM2
+    IF #HISTORY-KEY = 0
+      REINPUT 'Please enter the ACV/COI/and DB or leave all blank'
+      MARK *#SCR-DB-DATE-PAID
+    ELSE
+      REINPUT 'History not found. Please enter the ACV/COI/DB manually'
+      MARK *#SCR-DB-DATE-PAID
+    END-IF
+  END-IF
+*
+  MOVE 'Adjustments Calculated -' TO #MSG-TEXT
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCT-TRANS                 /* DW9
+* * * * * * * * * * * * * * *
+*
+MOVE ST-V.ISSUE-DATE (#I1) TO #WYYYYMMDD-N
+SUBTRACT 1 FROM #WYYYY
+MOVE #WYYYYMMDD-N TO #1-YR-AGO
+*
+MOVE *TIMN TO #TIMN
+CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1 /* build POL-#  /* DW6
+*
+RESET ACCT-REG-V
+MOVE ST-V.ID-NUMBER   TO ACCT-REG-V.ID-NUMBER
+MOVE #TIMN            TO ACCT-REG-V.TRANSACTION-TIMN
+MOVE *INIT-ID         TO ACCT-REG-V.TERMINAL-ID
+MOVE #CGA-CLERK       TO ACCT-REG-V.CLERK-ID
+MOVE ST-V.NAME        TO ACCT-REG-V.NAME
+MOVE *DATN            TO ACCT-REG-V.ACCT-DATE
+MOVE #POL-NUM         TO ACCT-REG-V.POLICY-NUMBER
+MOVE 'ACV Adjustment' TO ACCT-REG-V.DESCRIPTION
+MOVE #POL-NUM         TO ACCT-REG-V.POLICY-NUMBER
+MOVE *DATN            TO ACCT-REG-V.TRANSACTION-DATN
+MOVE 'A' TO ACCT-REG-V.CASH-CODE
+*
+IF ACCT-REG-V.TRANSACTION-DATN = 0
+  MOVE *DATN TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+ELSE
+  MOVE ACCT-REG-V.TRANSACTION-DATN TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+END-IF
+*
+MOVE 'SUSP' TO ACCT-REG-V.TXN-CODE
+*
+IF #SCR-ACV-PREM-ADJ-S = '+'
+  MOVE #SCR-ACV-PREM-ADJ TO ACCT-REG-V.DEBIT-AMOUNT
+  RESET ACCT-REG-V.CREDIT-AMOUNT
+ELSE
+  MOVE #SCR-ACV-PREM-ADJ TO ACCT-REG-V.CREDIT-AMOUNT
+  RESET ACCT-REG-V.DEBIT-AMOUNT
+END-IF
+*
+STORE ACCT-REG-V
+*
+IF ST-V.ISSUE-DATE (#I1) GT #1-YR-AGO
+  MOVE '1Y' TO SG-CATEGORY-1 (1)
+ELSE
+  MOVE 'RN' TO SG-CATEGORY-1 (1)
+END-IF
+MOVE #SCR-ACV-PREM-ADJ TO SG-AMOUNT (1)
+*
+IF #SCR-ACV-PREM-ADJ-S = '+'
+  MOVE 'PREP' TO ACCT-REG-V.TXN-CODE
+  MOVE #SCR-ACV-PREM-ADJ TO ACCT-REG-V.CREDIT-AMOUNT
+  RESET ACCT-REG-V.DEBIT-AMOUNT
+ELSE
+  MOVE 'PRER' TO ACCT-REG-V.TXN-CODE
+  MOVE #SCR-ACV-PREM-ADJ TO ACCT-REG-V.DEBIT-AMOUNT
+  RESET ACCT-REG-V.CREDIT-AMOUNT
+END-IF
+*
+STORE ACCT-REG-V
+
+END-SUBROUTINE
+
+END

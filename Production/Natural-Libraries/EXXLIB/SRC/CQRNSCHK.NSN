@@ -1,0 +1,147 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*
+* CALLNAT 'CQRNSCHK' CustomerQuote.ContactId Product (PN)
+* YAK    06/01/2016  YK1  Add Mortgage and Wealth Management                          
+* YAK    12/01/2016  YK2  Add Group Term Life Insurance and Complimentary Membership
+*
+DEFINE DATA
+PARAMETER
+1 #CONTACT-ID (N8)
+1 Rank        (A) DYNAMIC
+1 Code        (A) DYNAMIC
+1 Eligibility (L)
+1 ProductType (A1) /* Service=S, Insurance=I
+1 Succeeded   (L)
+1 ErrorDesc   (A) DYNAMIC
+1 MilitaryWidow (L) OPTIONAL
+*
+LOCAL
+1 #NUMBER-MEMBERSHIPS (P1)
+1 #STATUS-CD          (A1)
+1 #SVC-CD             (A1)
+1 #SVC-STATUS         (A1)
+1 #SVC-CODE           (A3)
+*
+1 RR-V VIEW OF A-RANK-REFERENCE
+  2 MILITARY-BRANCH
+1 CNT-V VIEW OF A-CONTACTS
+  2 RANK-ID
+  2 ID-NUMBER
+*
+1 #YOU-HAVE         (A) DYNAMIC CONST
+  <'You cannot apply for Premier Services. You have an existing Premier Services application on file.'>
+1 #NOT-ELIGIBLE1    (A) DYNAMIC CONST
+  <'Not eligible for Premier Services: You are not a member.'>
+1 #NOT-ELIGIBLE2    (A) DYNAMIC CONST
+  <'Not eligible for Premier Services: You do not have an Active Policy.'>
+1 #NONE             (A) DYNAMIC CONST
+  <'Not eligible for Premier Services: You are not a member and do not have Active Policy.'>
+1 #Grandfathered    (A) DYNAMIC CONST
+  <'As a grandfathered person you have the services provided in Premier Services. You do not need to apply for Premier Services.'>
+1 #NON-MIL   (A) DYNAMIC CONST
+  <'Not eligible to get services'>
+1 #SAS-WITH-POL     (A) DYNAMIC CONST
+  <'You have an existing active policy.'>
+1 #UNKNOWN     (A) DYNAMIC CONST
+  <'The requested service is not supported.'>
+*
+END-DEFINE
+*
+RESET ErrorDesc
+#SVC-CODE := Code
+IF #CONTACT-ID > 0
+  FIND (1) CNT-V WITH CONTACT-ID = #CONTACT-ID
+    FIND (1) RR-V  WITH RANK-ID = CNT-V.RANK-ID
+/*  All services require non civilian
+      IF RR-V.MILITARY-BRANCH = 'Civilian'
+*         OR= 'AAFMAA Employee'
+        IF (MilitaryWidow SPECIFIED) AND MilitaryWidow = TRUE
+            Eligibility := TRUE
+        ELSE
+          ErrorDesc := #NON-MIL
+          RESET Eligibility
+        END-IF
+      ELSE
+        Eligibility := TRUE
+      END-IF
+    END-FIND
+  END-FIND
+  CALLNAT 'MEMSTUS'
+    #CONTACT-ID
+    #STATUS-CD
+    #SVC-CD
+    #NUMBER-MEMBERSHIPS
+    #SVC-STATUS
+    #SVC-CODE
+  IF #SVC-STATUS = '0'
+    ErrorDesc := #NON-MIL
+    RESET Eligibility
+  END-IF
+END-IF
+IF Eligibility
+  DECIDE ON FIRST VALUE OF Code
+    VALUE 'PSM'
+      RESET Eligibility
+      IF #CONTACT-ID > 0
+        DECIDE FOR FIRST CONDITION
+          WHEN #SVC-STATUS = 'A' OR= 'P'
+            ErrorDesc := #YOU-HAVE
+          WHEN #STATUS-CD = 'O' OR= 'S' OR= 'C' OR= 'G' OR= 'E'
+            ErrorDesc := #NOT-ELIGIBLE1
+          WHEN #SVC-CD = 'G'
+            ErrorDesc := #Grandfathered
+*         WHEN #STATUS-CD = 'M' AND #NUMBER-MEMBERSHIPS <= 0
+*           ErrorDesc := #NOT-ELIGIBLE2
+          WHEN NONE
+            RESET ErrorDesc
+            Eligibility := TRUE
+        END-DECIDE
+      ELSE
+        PERFORM CHECK-MIL-DATA
+      END-IF
+    VALUE 'SAS'
+      IF #CONTACT-ID > 0
+        IF #NUMBER-MEMBERSHIPS > 0
+          ErrorDesc := #SAS-WITH-POL
+          RESET Eligibility
+        END-IF
+      ELSE
+        PERFORM CHECK-MIL-DATA
+      END-IF
+    VALUE 'WMT', 'MTG', 'GTI', 'CMS'                    /* YK1 YK2
+      IGNORE
+      /* temp fix.  Need to add military Status rules for WMT
+    NONE VALUE
+      ErrorDesc := #UNKNOWN
+      RESET Eligibility
+  END-DECIDE
+END-IF
+*
+DEFINE CHECK-MIL-DATA
+/*     --------------
+IF MilitaryWidow
+  Eligibility := TRUE
+ELSE
+  IF *LENGTH (Rank) > 0
+    CNT-V.RANK-ID := VAL (Rank)
+    FIND (1) RR-V  WITH RANK-ID = CNT-V.RANK-ID
+      IF RR-V.MILITARY-BRANCH = 'Civilian'
+          OR= 'AAFMAA Employee'
+        ErrorDesc := #NON-MIL
+        RESET Eligibility
+      ELSE
+        RESET ErrorDesc
+        Eligibility := TRUE
+      END-IF
+    END-FIND
+  ELSE
+    ErrorDesc := #NON-MIL
+    RESET Eligibility
+  END-IF
+END-IF
+END-SUBROUTINE
+END

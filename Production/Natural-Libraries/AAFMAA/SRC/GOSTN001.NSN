@@ -1,0 +1,208 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  GOSTN001
+* 1. Validation:
+* CHECK BY CONTACT-ID IF STATUS RECORD ALREADY EXIST AND RETURN ERRROR
+* 1. Create STATUS record -
+*
+**********************************************************************
+*      MODIFICATION LOG
+* USER DATE       TAG  REASON
+* RSE  11/22/2011 RE1  Populate death-related fields
+* RSE  11/30/2011 RE2  Pass Clerk ID to subprogram
+***********************************************************************
+DEFINE DATA
+PARAMETER USING GOSTMA01     /*   Contact-ID and   (STATUS) fields
+PARAMETER
+1 #ERROR-CODE    (A2)
+1 #MSG           (A) DYNAMIC
+1 #UPDATED       (L)
+1 #CLERK-ID      (A3)
+1 #LOG           (A) DYNAMIC OPTIONAL
+LOCAL USING S0MPLA01
+LOCAL USING GOMSCA01
+LOCAL
+1 CONTACT VIEW OF A-CONTACTS
+  2 ID-NUMBER
+  2 DATE-OF-BIRTH
+  2 RANK-ID
+  2 MILITARY-STATUS
+  2 DATE-OF-DEATH-REPORTED        /* RE1
+  2 DATE-OF-DEATH-STATUS-CODE     /* RE1
+  2 DATE-OF-DEATH-STATUS-DATE     /* RE1
+1 RR VIEW OF A-RANK-REFERENCE
+  2 RANK-IN-SAS
+1 p_PARMS
+  2 p_CN       (N6)
+  2 p_Err      (N4)
+  2 p_Err_Dscr (A78)
+  2 p_Mod      (A1)
+*
+1 SVP-V VIEW OF A-SVC-PLAN
+  2 SVC-PLAN (A3)
+  2 SVC-PLAN-DESCRIPTION (A50)
+1  V_A    (A) DYNAMIC
+*
+1 #Timeout          (A2) CONST <'-2'>
+1 #Natural-error    (A2) CONST <'-3'>
+1 #Member-exist     (A2) CONST <'-8'>
+*
+END-DEFINE
+*
+FIND (1) CONTACT WITH CONTACT-ID = #STATUS.MEMBER-CONTACT-ID
+  #STATUS.ID-NUMBER := CONTACT.ID-NUMBER
+  #STATUS.MILITARY-STATUS := CONTACT.MILITARY-STATUS
+END-FIND
+*
+IF #STATUS.ID-NUMBER <> 0
+  #ERROR-CODE := #Member-exist
+  COMPRESS 'CN' #STATUS.ID-NUMBER 'already exist in the system' ':' *PROGRAM ':' *DATN ':' *TIME
+    INTO #MSG
+  ESCAPE ROUTINE
+END-IF
+*
+FIND RR WITH RANK-ID = CONTACT.RANK-ID
+  #STATUS.RANK := RR.RANK-IN-SAS
+END-FIND
+*
+COMPRESS '(' #STATUS.APPL-SOURCE ')' INTO v_A LEAVING NO SPACE
+READ SVP-V
+  IF SVC-PLAN-DESCRIPTION = SCAN (v_A)
+    #SVC-MEM-PLAN.SVC-PLAN := SVP-V.SVC-PLAN
+    #MSC.SVC-PLAN := SVP-V.SVC-PLAN
+    ESCAPE BOTTOM
+  END-IF
+END-READ
+*
+IF #MSC.SVC-PLAN = ' '
+  COMPRESS 'Incorrect APPL-SOURCE' #STATUS.APPL-SOURCE *PROGRAM *DATN *TIME
+    INTO #MSG WITH DELIMITER ':'
+  ESCAPE ROUTINE
+END-IF
+*
+#STATUS.MEMBER-FLAG := 'Y'
+#STATUS.WIDOW-FLAG  := 'Y'
+#STATUS.PROCESS-IND := 'S'
+#STATUS.INTRO-FLAG  := 'O'
+*
+IF #STATUS.ID-NUMBER = 0
+  CALLNAT 'GOST0N01' p_PARMS                    /* Get New CN, Create DUMMY STATUS
+  IF p_Err <> 0 OR p_Err_Dscr <> ' '
+    COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+    ESCAPE ROUTINE
+  END-IF
+  #STATUS.ID-NUMBER := p_CN
+ELSE
+  p_CN := #STATUS.ID-NUMBER
+END-IF
+*
+IF #LOG SPECIFIED
+  COMPRESS
+    'ID-NUMBER' #STATUS.ID-NUMBER
+    'MEMBER-CONTACT-ID' #STATUS.MEMBER-CONTACT-ID
+    'MEMBER-FLAG'  #STATUS.MEMBER-FLAG
+    'WIDOW-FLAG'  #STATUS.WIDOW-FLAG
+    'PROCESS-IND'  #STATUS.PROCESS-IND
+    'INTRO-FLAG'  #STATUS.INTRO-FLAG
+    'APPL-SOURCE'  #STATUS.APPL-SOURCE
+    'RANK' #STATUS.RANK
+    'MILITARY-SERVICE'  #STATUS.MILITARY-SERVICE
+    'DATE-OF-RANK'  #STATUS.DATE-OF-RANK
+    'PRIOR-DATE-OF-RANK'  #STATUS.PRIOR-DATE-OF-RANK
+    'DATE-RETIRED'  #STATUS.DATE-RETIRED
+    'MIL-SBP-OPT'  #STATUS.MIL-SBP-OPT
+    'DATE-OF-MARRIAGE' #STATUS.DATE-OF-MARRIAGE
+    'DATE-INIT-ENTRY-MIL-SVC'  #STATUS.DATE-INIT-ENTRY-MIL-SVC
+    'BASE-PAY-EF-DATE'  #STATUS.BASE-PAY-EF-DATE
+    'ACTIVE-DUTY-BASE-DATE'  #STATUS.ACTIVE-DUTY-BASE-DATE
+    'DEATH-SERVICE-CON'  #STATUS.DEATH-SERVICE-CON
+    'MILITARY-STATUS'  #STATUS.MILITARY-STATUS
+    'PLAN'            #MSC.SVC-PLAN
+    'Clerk ID'        #CLERK-ID
+    INTO #LOG
+END-IF
+IF #STATUS.ID-NUMBER > 0
+  FIND CONTACT WITH CONTACT-ID = #STATUS.MEMBER-CONTACT-ID
+    CONTACT.ID-NUMBER := #STATUS.ID-NUMBER
+    CONTACT.DATE-OF-DEATH-REPORTED := *DATN                  /* RE1
+    CONTACT.DATE-OF-DEATH-STATUS-CODE := 'C'                 /* RE1
+    CONTACT.DATE-OF-DEATH-STATUS-DATE := *DATN               /* RE1
+    UPDATE
+  END-FIND
+END-IF
+*
+#STATUS.ID-NUMBER := p_CN                     /* Populate Mil. Info. and MEMBER-CONTACT-ID
+RESET  p_PARMS
+CALLNAT 'GOSTMN01' #STATUS p_Err  p_Err_Dscr p_Mod
+IF p_Err <> 0 OR p_Err_Dscr <> ' '
+  COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+  ESCAPE ROUTINE
+END-IF
+RESET p_PARMS
+p_CN := #STATUS.ID-NUMBER                     /* Populate Contact info. for Member, Spouse, Former SP.
+CALLNAT 'GOSTCN01' p_PARMS
+IF p_Err <> 0 OR p_Err_Dscr <> ' '
+  COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+  ESCAPE ROUTINE
+END-IF
+RESET p_PARMS                                 /* Populate Addr and S-Addr
+p_CN := #STATUS.ID-NUMBER
+* CALLNAT 'GOSTAN01' p_PARMS
+* IF p_Err <> 0 OR p_Err_Dscr <> ' '
+*   COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+*   ESCAPE ROUTINE
+* END-IF
+* RESET p_PARMS                                 /* Populate Phone fax
+* p_CN := #STATUS.ID-NUMBER
+* CALLNAT 'GOSTPN01' p_PARMS
+* IF p_Err <> 0 OR p_Err_Dscr <> ' '
+*   COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+*   ESCAPE ROUTINE
+* END-IF
+* RESET p_PARMS                                 /* Populate Email
+* p_CN := #STATUS.ID-NUMBER
+* CALLNAT 'GOSTEN01' p_PARMS
+* IF p_Err <> 0 OR p_Err_Dscr <> ' '
+*   COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+*   ESCAPE ROUTINE
+* END-IF
+RESET p_PARMS
+p_CN := #STATUS.ID-NUMBER                   /* Create FIR
+CALLNAT 'S0FIRN01' p_PARMS
+IF p_Err <> 0 OR p_Err_Dscr <> ' '
+  COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+  ESCAPE ROUTINE
+END-IF
+*                                      Settings below taken from S2000PLN
+* #SVC-MEM-PLAN.SVC-ID-NUMBER        := #STATUS.ID-NUMBER
+* #SVC-MEM-PLAN.SVC-STATUS           := 'D'
+* #SVC-MEM-PLAN.SVC-PAY-STATUS       := '22'
+* #SVC-MEM-PLAN.SVC-FIRST-PLACE-FEE  := 995
+* #CNT.DATE-OF-BIRTH := CONTACT.DATE-OF-BIRTH
+* CALLNAT 'S0MPLN01' #SVC-MEM-PLAN #CNT #CLERK-ID p_Err p_Err_Dscr p_Mod     /* RE2
+* IF p_Err <> 0 OR p_Err_Dscr <> ' '
+*   COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+*   ESCAPE ROUTINE
+* END-IF
+RESET p_PARMS                                 /* Populate/Update MTD Stat Note
+p_CN := #STATUS.ID-NUMBER
+#MSC.CLERK-ID := #CLERK-ID /* recieved from outside
+* NOTE message
+COMPRESS p_CN 'CRM Gift of Membership' *DATN '***' INTO #MSC.NOTE-MSG(1)  /*  Hardcoded for testing  <!!>
+CALLNAT 'GOMSCN01' #MSC p_CN p_Err p_Err_Dscr p_Mod
+IF p_Err <> 0 OR p_Err_Dscr <> ' '
+  COMPRESS #MSG p_Err ':' p_Err_Dscr INTO #MSG
+  ESCAPE ROUTINE
+END-IF
+*
+ON ERROR
+  #ERROR-CODE := #Natural-error
+  COMPRESS 'Status:' *ERROR-NR *ERROR-LINE *PROGRAM *DATN *TIME
+    INTO #MSG WITH DELIMITER ':'
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

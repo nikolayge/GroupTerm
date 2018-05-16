@@ -1,0 +1,163 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPBPMAIL                                              
+* AUTHOR       : Boris Zaslavskiy 05-27-2014  
+* DESCRIPTION  : Send Email to users. Intent to be used in Batch       
+*    Generic  routine for email notification from BATCH 
+* 1. Input data consumed from the script input parameters.
+* 2. Email will be sent to the every email address define in the input lines and to the User who submitted
+*    job. If User's email already defined in the input duplication will be eliminated.
+*    If no email addresses defined in the input, email will be sent to support team with notification
+*    "Blank email address "TO:" has been changed to <IASAlert@aafmaa.com>"
+* 3. Symbol "#" in the first position defined a comment line.
+* 4. "Subject:" at the beginning of the line defined email subject.
+*    Default subject "IAS Batch Processing" enforced if subject does not defined.
+* 5. Symbol  "." in the first position defined a blank line.
+* 6. Execution in the development identification line - 
+*    "* Email has been sent from the Test/Development environment" at the bottom of the email.
+* 7. Text like \\192.168.50.71\ftp\TEST\W1.txt and https://www.google.com/ will result in correct links
+*    in the email.
+*
+*          
+DEFINE DATA
+LOCAL
+*
+1 v_PARM                    (A78)  
+1 v_PARM_SL                 (A78)  
+1 v_TO                      (A)    DYNAMIC
+1 v_TO_Support              (A)    DYNAMIC INIT <'IASAlert@aafmaa.com'>
+1 c_TO                      (I4) 
+1 v_BODY                    (A/80)    DYNAMIC
+1 c_BODY                    (I4)
+1 v_Subj                    (A80) 
+1 v_USER                    (A8)
+*
+1 f_BODY                    (A) DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/TEMP/@@ID_EML.EML'>
+1 #i                        (I4)
+1 v_A                       (A)    DYNAMIC
+1 A400                      (A400)
+1 #USER                     (A8)
+*
+1 #USER-ID                  (A8)
+1 #SCL-NAME                 (A8)
+1 #SCL-STEP-NAME            (A8)
+1 A08                       (A8)
+1 A60                       (A60)
+1 v_RC                      (N4)
+1 Dev/Prod                  (A11) 
+END-DEFINE
+************************************************************************
+*
+ON ERROR
+  PRINT(0) *PROGRAM  "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR  /
+END-ERROR
+ CALL 'GETENV' 'SCL_NAME' #SCL-NAME
+ IF #SCL-NAME = ' ' 
+    v_A := *PID
+ ELSE   
+    v_A := #SCL-NAME
+ END-IF
+ v_A := *TRIM(v_A)
+ EXAMINE f_BODY FOR '@@ID' REPLACE v_A
+ DEFINE WORK FILE 1 f_BODY TYPE 'ASCII-COMPRESSED'
+* PERFORM sbr_TEST                                       /* Test
+ REPEAT WHILE *DATA <> 0
+     INPUT v_PARM
+     v_PARM_SL := *TRANSLATE(v_PARM, LOWER)
+     DECIDE FOR FIRST CONDITION
+       WHEN v_PARM = ' ' OR v_PARM = MASK('#')
+             IGNORE
+       WHEN v_PARM_SL = SCAN('subject:')
+            v_Subj := *TRIM(V_PARM)
+       WHEN v_PARM = SCAN('@')
+           IF c_TO = 0
+             v_TO   := *TRIM(v_PARM)
+           ELSE  
+             v_A    := *TRIM(v_PARM)
+             COMPRESS v_TO ',' v_A INTO v_TO
+           END-IF
+           c_TO := c_TO + 1  
+       WHEN NOT v_PARM = SCAN '@'
+           c_BODY := c_BODY + 1
+           IF v_PARM = '.' v_PARM := ' ' END-IF
+           v_BODY(c_BODY) := *TRIM(v_PARM)
+       WHEN NONE IGNORE
+     END-DECIDE  
+ END-REPEAT   
+   v_USER       := *USER
+IF v_USER = 'sag' OR = 'SAG'       
+   A60 := ' '                               /* <!>
+ELSE
+  A08 := *USER
+  A60  := FUNCTION-EMAIL(<A08>)
+END-IF                                  
+
+IF A60 <> ' ' 
+  IF v_TO = ' ' 
+     v_TO := A60
+  ELSE
+     A60 := *TRANSLATE(A60, LOWER)
+     v_A := v_TO
+     v_A := *TRANSLATE(v_A, LOWER)
+     EXAMINE v_A FOR A60 GIVING NUMBER #i
+     IF #i = 0 
+        COMPRESS v_TO ',' A60 INTO v_TO    
+     END-IF
+  END-IF
+END-IF
+ IF v_To = ' '
+    v_TO := v_TO_Support
+    c_BODY := c_BODY + 2
+    COMPRESS 'Blank email address "TO:" has been changed to' v_TO_Support INTO v_BODY(c_BODY)
+ END-IF
+ IF F-IS-DEV(<>)
+    c_BODY := c_BODY + 2
+    v_BODY(c_BODY) := '* Email has been sent from the Test/Development environment'
+ END-IF
+
+ A400 := v_TO
+ WRITE WORK FILE 1 VARIABLE 'TO:' A400
+ WRITE WORK FILE 1 VARIABLE 'FROM: IAS-BATCH_Noreplay@aafmaa.com' 
+ IF v_Subj = ' '
+   v_Subj := 'Subject: IAS Batch Processing.'
+ END-IF
+ WRITE WORK FILE 1 VARIABLE v_Subj
+ WRITE WORK FILE 1 VARIABLE ' '
+ FOR #i = 1 TO c_BODY
+*    PRINT '='#i '='v_BODY(#i) 
+    A400 := v_BODY(#i)
+    WRITE WORK FILE 1 VARIABLE A400
+ END-FOR
+ COMPRESS  '/usr/lib/sendmail -oi  -t' '<' f_BODY INTO v_A
+ CLOSE WORK FILE 1
+ call 'shcmd' v_A
+ v_RC := RET('shcmd')
+ IF v_RC = 0
+    PRINT NOTITLE *PROGRAM *DATX *TIMX 'Email sent. Success' #SCL-NAME /
+    'Input:' f_BODY
+    
+ ELSE   
+    PRINT NOTITLE *PROGRAM *DATX *TIMX 'Email sent. Error' v_RC #SCL-NAME /
+    'Input:' f_BODY
+    TERMINATE 11
+ END-IF  
+* --------------- Test ------------- * 
+DEFINE SUBROUTINE sbr_TEST
+ IF *DEVICE <> 'BATCH'
+     STACK  DATA 'bzaslavskiy@aafmaa.com'
+     STACK  DATA '# jcudjoe@aafmaa.com'
+     STACK  DATA ' ----------- line A'
+     STACK  DATA ' ----------- line B'
+     STACK  DATA '# Comment Line'
+     STACK  DATA '. '
+     STACK  DATA 'This is a Test'
+     STACK  DATA 'Subject: Test GPBPMAIL.'
+     STACK  DATA '\\192.168.50.71\ftp\TEST\W1.txt'
+ END-IF
+END-SUBROUTINE
+* --------------- Test End ------------- * 
+END

@@ -1,0 +1,196 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* WCCN0030 - Card request to SAGE
+* Accepts Request Data from IAS and calls WebService that communicates with SAG
+* Called from - WEPN0001 - FPF payment with policy issue
+*
+**********************************************************
+*        MODIFICATION LOG
+* YAK    09122015       Initial creation
+* YAK    04122016  YK1  EB&P Phase 1 - Add GUID
+* YAK    07082016  YK2  Add timestamp for request/response
+* bz-1777 01/06/2016 Set and process TimeOut
+**********************************************************
+DEFINE DATA
+PARAMETER USING WCCA0030
+LOCAL
+*
+1 #REQUEST        (A)  DYNAMIC
+1 #WEBCHARGE-LOG  (A500)
+1 D1              (A) DYNAMIC
+1 D2              (A) DYNAMIC
+*
+1 v_Env           (A) DYNAMIC
+1 v_Res           (A) DYNAMIC
+1 v_RC            (I4)
+1 v_Error         (I4)              /* bz-1777
+* ---------------------------
+1  RQTOUT         (I4)   INIT <5>   /* bz-1777
+1  RQTOUT_RC      (I4)              /* bz-1777 
+1  RQTOUT_Msg     (A) DYNAMIC       /* bz-1777   
+* ---------------------------
+1 #DATN           (A) DYNAMIC
+1 #TIMN           (A) DYNAMIC
+1 #APPROVED       (A) DYNAMIC CONST <'APPROVED'>
+1 URL_wsIAS       (A)  DYNAMIC
+* 1 URL_Test      (A)  DYNAMIC  INIT <"http://localhost:49247/api/cardsale/PostCardSaleIAS">
+1 URL_Test        (A)  DYNAMIC  INIT <"http://sagewebapiv2.testing.local/api/cardsale/PostCardSaleIAS">
+1 URL_Prod        (A)  DYNAMIC  INIT <"https://sagewebapiservice.aafmaa.com/api/cardsale/PostCardSaleIAS">
+*
+1 Pars-Tag   (A/9) DYNAMIC INIT <'ApprovalIndicator:',
+  'Code:',
+  'CodeDescription:',
+  'Message:',
+  'FrontEndIndicator:',
+  'CVVIndicator:',
+  'AVSIndicator:',
+  'Reference:',
+  'Invoice:'>
+1 Pars-Val (A/9) DYNAMIC
+1 ParsedResult
+  2 ApprovalIndicator     (A) DYNAMIC
+  2 Code                  (A) DYNAMIC
+  2 CodeDescription       (A) DYNAMIC
+  2 Message               (A) DYNAMIC
+  2 Reference             (A) DYNAMIC
+  2 Invoice               (A) DYNAMIC
+1 #ERROR-CODE             (A3)
+1 #I                      (I2)
+1 #QT                     (A1) CONST <H'22'>
+1 #SEP                    (A3) 
+1 #NULL                   (A6) INIT <'null'>
+END-DEFINE
+*
+* ON ERROR
+*   PRINT  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+* END-ERROR
+*
+MOVE EDITED F-IS-DEV(<>) (EM=Prod/Test) TO v_Env
+*
+DECIDE ON FIRST VALUE v_Env
+  VALUE 'Test'
+    URL_wsIAS  :=  URL_Test
+  VALUE 'Prod'
+    URL_wsIAS   :=  URL_Prod
+  NONE
+    ResultCode := 1
+    COMPRESS 'Unknown environment' v_Env INTO #WEBCHARGE-LOG
+    WRITE WORK FILE 3 #WEBCHARGE-LOG
+    CLOSE WORK 3
+    ESCAPE ROUTINE
+END-DECIDE
+*
+PERFORM CREATE-REQUEST
+* PERFORM Test_wsIAS
+PERFORM CALL-SERVICE
+*
+********************************
+DEFINE SUBROUTINE CREATE-REQUEST
+********************************
+* Create request in Jason Format for Web API
+D1 := '":"'
+D2 := '","'
+*    
+COMPRESS
+  '={"'
+  'CardNumber' D1 CardNumber D2
+  'CardExpDate' D1 CardExpDate D2
+  'CardGUID' D1 CardGUID D2                   /* YK1
+  'CardHolderName' D1 CardHolderName D2
+  'Street' D1 Street D2
+  'City' D1 City D2
+  'State' D1 State D2
+  'ZipCode' D1 ZipCode D2
+  'CNumber' D1 CNumber D2
+  'Amount' D1 Amount D2
+  'ApplicationSource' D1 ApplicationSource D2
+  'UserLoginName' D1 UserId
+  '"}'
+  INTO #REQUEST LEAVING NO
+*
+#DATN := *DAT4I      /* YK2
+#TIMN := *TIMX       /* YK2
+COMPRESS #DATN #TIMN 'Member CN =' CNumber #REQUEST INTO #WEBCHARGE-LOG
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE CALL-SERVICE
+******************************
+*
+CALLNAT 'USR6307N' 'S' RQTOUT RQTOUT_RC RQTOUT_Msg   /* bz-1777 S
+IF RQTOUT_RC <> 0
+ COMPRESS #DATN #TIMN 'Member CN =' CNumber 'Error set TimeOut'  INTO #WEBCHARGE-LOG
+ WRITE WORK FILE 3 #WEBCHARGE-LOG
+END-IF                                               /* bz-1777 E
+REQUEST DOCUMENT FROM URL_wsIAS
+  WITH DATA
+      NAME ' ' VALUE #REQUEST
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+GIVING   v_ERROR                               /* bz-1777
+IF v_ERROR = 8304 v_RC := 8304 END-IF          /* bz-1777
+*
+#DATN := *DAT4I     /* YK2
+#TIMN := *TIMX      /* YK2
+COMPRESS #DATN #TIMN 'Member CN =' CNumber 'Response Code = ' v_RC v_Res INTO #WEBCHARGE-LOG
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+IF v_RC <> 200                                        /* bz-1777 S
+  IF v_ERROR = 8304                                 
+       ResultMessage := "TimeOut"                   
+       ResultCode    := "1"                         
+  ELSE                                              
+       COMPRESS "RC=" v_RC INTO ResultMessage       
+       ResultCode    := "1"                         
+  END-IF                                            
+  ESCAPE ROUTINE                                    
+END-IF                                                /* bz-1777 E
+* Parse Response
+EXAMINE v_Res FOR '{' DELETE
+EXAMINE v_Res FOR '}' DELETE
+PERFORM PARSE-RESULT
+*
+IF ParsedResult.ApprovalIndicator = 'A' AND ParsedResult.Message = SCAN(#APPROVED)
+  ResultCode := 0
+  ResultMessage := #APPROVED
+ELSE
+  ResultCode    := ParsedResult.Code
+  ResultMessage := ParsedResult.CodeDescription
+  IF ResultMessage = ' ' OR ResultMessage = 'null'
+    ResultMessage := ParsedResult.Message
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE PARSE-RESULT
+COMPRESS #QT 'null' #QT INTO #NULL LEAVING NO
+EXAMINE v_Res FOR 'null' REPLACE #NULL
+COMPRESS #QT ',' #QT INTO #SEP LEAVING NO
+EXAMINE v_Res FOR #SEP REPLACE ';'
+EXAMINE v_Res FOR #QT DELETE
+EXAMINE v_Res FOR Pars-Tag(*) DELETE
+SEPARATE v_Res INTO Pars-Val(*) WITH DELIMITER ';'
+*
+ParsedResult.ApprovalIndicator := Pars-Val(1)
+ParsedResult.Code              := Pars-Val(2)
+ParsedResult.CodeDescription   := Pars-Val(3)
+ParsedResult.Message           := Pars-Val(4)
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE Test_wsIAS
+REQUEST DOCUMENT FROM URL_wsIAS
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+END-SUBROUTINE
+*
+END

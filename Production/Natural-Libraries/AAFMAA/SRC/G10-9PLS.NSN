@@ -1,0 +1,302 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* G10-9PLS bz 02-03-2017 
+* Add/Delete secondary CN linkage 
+
+DEFINE DATA
+PARAMETER
+1  p_ID      (N6) BY VALUE
+  
+LOCAL
+ 1 PRM-V VIEW OF A-STATUS
+   2 ID-NUMBER  (N6)
+   2 MEMBER-CONTACT-ID (N8)
+   2 SPOUSE-CONTACT-ID (N8)
+   2 NAME-SP
+   2 STATUS-CODE-SP
+   2 SSN
+   2 C*LINKED-CN 
+   2 LINKED-CN (40) (EM=ZZZZZZ)
+*
+ 1 SEC-V VIEW OF A-STATUS
+   2 ID-NUMBER  (N6)
+   2 MEMBER-CONTACT-ID (N8)
+   2 SPOUSE-CONTACT-ID (N8)
+   2 NAME-SP
+   2 STATUS-CODE-SP
+   2 SSN
+   2 C*LINKED-CN
+   2 LINKED-CN (40)  (EM=ZZZZZZ)
+*
+ 1 CNT-V VIEW OF A-CONTACTS
+   2  SSN
+   2  FIRST-NAME
+   2  MIDDLE-NAME
+   2  LAST-NAME
+   2  SUFFIX
+* 
+ 1 O9-V VIEW OF OVER-9-LINKS
+   2 PRIME-CN         (N6)
+   2 C*SECONDARY-CN   
+   2 SECONDARY-CN     (N6/10)(EM=ZZZZZZ)
+   2 DATE-UPD         (N8)   (EM=9999-99-99)
+   2 TIME-UPD         (N6)
+*  
+ 1 cn-1               (N6)
+ 1 cn-2               (N6)
+ 1 Name-1             (A50)
+ 1 Name-2             (A50)
+*
+ 1 work
+   2 #i               (I2)
+   2 #j               (I2)
+ 1 v_msg              (A78)
+ 1 v_ATTN             (A40)
+ 1 sel                (N1)
+ 1 RC                 (N4)   
+*
+END-DEFINE
+ON ERROR
+    WRITE NOTITLE  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+    ESCAPE ROUTINE
+END-ERROR
+
+FORMAT LS=80 PS=23
+SET KEY PF3
+cn-1 := p_ID
+FORMAT KD=OFF
+REPEAT
+  sel := 0
+  INPUT  (IP=OFF) WITH TEXT v_Msg
+   2x  *DAT4U(AD=OD)  3x  'Add/Delete/View links for Secondary CNs'(I) 3x GET_DBN(<>)(EM=' DB:'999) *TIMX
+     3/3  'Primary   CN:' cn-1(AD=MU EM=ZZZZZZ) 3x Name-1(AD=O)
+     4/3  23x v_ATTN(AD=OI)
+     5/3  'Secondary CN:' cn-2(AD=MU EM=ZZZZZZ) 3x Name-2(AD=O) 
+     7/3  'Link Primary and Secondary CNs      1'                   
+     8/3  'Remove links and Attention message  2' 
+     9/3  'Delete Attention message only       3'
+    10/3  'Show Linkage                        4'
+    11/3  'View all Primary and Secondary CNs  5'
+    12/3  '- - - - - - - - - - - - - - - - - - -'
+    13/3  'Select                             ' sel(AD=MU EM=9)
+    22/3  'PF3-exit'  
+  IF *PF-KEY = 'PF3' ESCAPE ROUTINE END-IF
+  v_Msg  := ' '
+  v_ATTN := ' '
+  PERFORM sbr_Validate_Input
+  DECIDE ON FIRST VALUE sel
+    VALUE 1
+       IF v_Msg <> ' ' OR v_ATTN <> ' ' 
+         COMPRESS v_Msg v_ATTN INTO v_Msg 
+         ESCAPE TOP 
+       END-IF 
+       PERFORM sbr_Add
+       PERFORM sbr_Upd-O9    
+       IF v_Msg = ' ' v_Msg := 'No actions are required'
+       ELSE  PERFORM sbr_TR END TRANSACTION  
+       END-IF
+    VALUE 2
+        IF v_Msg <> ' ' ESCAPE TOP END-IF 
+        PERFORM sbr_Delete_LNK
+        PERFORM sbr_Delete_REC
+        IF v_Msg = ' ' v_Msg := 'Nothing to delete'
+        ELSE  PERFORM sbr_TR  END TRANSACTION
+        END-IF   
+     VALUE 3
+        IF v_Msg <> ' '  ESCAPE TOP END-IF 
+        PERFORM sbr_Delete_REC
+        IF v_Msg = ' ' v_Msg := 'Nothing to delete'
+        ELSE  PERFORM sbr_TR  END TRANSACTION           
+        END-IF
+     VALUE 4
+       FIND(1) PRM-V WITH ID-NUMBER = cn-1
+         WRITE 1x 'Primary CN:'(I) ID-NUMBER 'has' C*LINKED-CN(EM=Z9) 'Links' 3x 'SSN:' SSN(EM=999-99-9999) 'sp:' SPOUSE-CONTACT-ID //
+         1x LINKED-CN(1:11) /
+         1x LINKED-CN(12:22) /
+       END-FIND 
+       FIND(1) SEC-V WITH ID-NUMBER = cn-2
+         WRITE 1x 'Secondary CN:'(I) ID-NUMBER 'has' C*LINKED-CN(EM=Z9)'Links' 3x 'SSN:' SSN(EM=999-99-9999) 'sp:' SPOUSE-CONTACT-ID //
+         1x LINKED-CN(1:11) /
+         1x LINKED-CN(13:22) /
+       END-FIND       
+       FIND(1) O9-V WITH PRIME-CN = cn-1
+         WRITE // ' 9+ messages record'(I)      /
+            1x  'Primary:' 'Secondary CNs' /
+            1x PRIME-CN(AD=I EM=ZZZZZ9) ':' SECONDARY-CN(1:9)
+       END-FIND  
+     VALUE 5
+        #i := 0 #j := 22
+        READ O9-V BY PRIME-CN
+          IF #i = 0 OR #i = #j 
+            WRITE 'No:  Prime: Secondary                                 : Upd Date   Time (GMT)'(I)
+            #i := 0 
+          END-IF
+            #i := #i + 1
+          WRITE *COUNTER(EM=Z9':') PRIME-CN(AD=I EM=ZZZZZ9':') SECONDARY-CN(1:6) ':' DATE-UPD TIME-UPD(EM=99:99:99)
+        END-READ
+     NONE IGNORE
+  END-DECIDE 
+ END-REPEAT
+* ---------------------------------------------------------------------
+ DEFINE sbr_Add
+* -------------- 
+    FIND(1) PRM-V WITH ID-NUMBER = cn-1
+      IF PRM-V.LINKED-CN(*) = cn-2 ESCAPE BOTTOM END-IF
+      FOR #i = 1 TO *OCC(PRM-V.LINKED-CN)
+         IF PRM-V.LINKED-CN(#i) = 0 
+            PRM-V.LINKED-CN(#i) := cn-2
+            ESCAPE BOTTOM
+         END-IF  
+      END-FOR
+      COMPRESS cn-2 'added'   INTO v_Msg
+      UPDATE
+    END-FIND  
+    FIND(1) SEC-V WITH ID-NUMBER = cn-2    
+     IF SEC-V.LINKED-CN(*) = cn-1 ESCAPE BOTTOM END-IF
+      FOR #i = 1 TO *OCC(SEC-V.LINKED-CN)
+        IF SEC-V.LINKED-CN(#i) = 0 
+           SEC-V.LINKED-CN(#i) := cn-1
+           ESCAPE BOTTOM
+        END-IF 
+      END-FOR
+      COMPRESS v_Msg '+' cn-1 'added' INTO v_Msg
+      IF SEC-V.SSN <> SEC-V.ID-NUMBER
+        SEC-V.SSN := SEC-V.ID-NUMBER
+        COMPRESS v_Msg '+ SSN changed' INTO v_Msg
+        FIND(1) CNT-V WITH ID-NUMBER = cn-2
+          CNT-V.SSN := SEC-V.ID-NUMBER
+          UPDATE
+        END-FIND    
+      END-IF
+      IF SEC-V.SPOUSE-CONTACT-ID = 0 AND PRM-V.SPOUSE-CONTACT-ID <> 0 
+         SEC-V.SPOUSE-CONTACT-ID := PRM-V.SPOUSE-CONTACT-ID
+         SEC-V.NAME-SP           := PRM-V.NAME-SP 
+         SEC-V.STATUS-CODE-SP    := PRM-V.STATUS-CODE-SP     
+      END-IF   
+      UPDATE
+    END-FIND
+ END-SUBROUTINE
+* ---------------------------------------------------------
+ DEFINE sbr_Upd-O9
+*       ----------
+   FIND(1) O9-V  WITH PRIME-CN = cn-1
+        IF NO RECORD FOUND 
+          RESET O9-V
+           PRIME-CN := cn-1
+           STORE O9-V
+           COMPRESS v_Msg '+' '9+ message created' INTO v_Msg
+         END-NOREC
+   END-FIND
+   FIND(1) O9-V  WITH PRIME-CN = cn-1
+        IF SECONDARY-CN(*) = cn-2 ESCAPE BOTTOM END-IF
+        FOR #i = 1 TO 10
+          IF SECONDARY-CN(#i) <> 0 ESCAPE TOP END-IF
+          SECONDARY-CN(#i) := cn-2
+          UPDATE
+          COMPRESS v_Msg '+' '9+ messages updated' INTO v_Msg
+          ESCAPE BOTTOM
+        END-FOR    
+   END-FIND
+ END-SUBROUTINE 
+* --------------------------------------------------------------------- 
+ DEFINE  sbr_Delete_LNK
+*        ---------- 
+   FIND(1) PRM-V WITH ID-NUMBER = cn-1
+     FOR #i = 1 TO PRM-V.C*LINKED-CN
+       IF PRM-V.LINKED-CN(#i) = cn-2
+          PRM-V.LINKED-CN(#i) := 0
+          COMPRESS cn-2 ',' INTO v_Msg LEAVING NO SPACE
+          UPDATE
+          ESCAPE BOTTOM
+       END-IF
+     END-FOR
+   END-FIND
+   FIND(1) SEC-V WITH ID-NUMBER = cn-2
+     FOR #i = 1 TO SEC-V.C*LINKED-CN
+       IF SEC-V.LINKED-CN(#i) = cn-1
+          SEC-V.LINKED-CN(#i) := 0
+          COMPRESS v_Msg cn-1 INTO v_Msg
+          UPDATE
+          ESCAPE BOTTOM
+       END-IF
+     END-FOR
+   END-FIND  
+   IF v_Msg <> ' '
+     COMPRESS 'Deleted links:' v_Msg INTO v_Msg
+   END-IF  
+ END-SUBROUTINE 
+* --------------------------------------------------------------------- 
+ DEFINE  sbr_Delete_REC
+*        ---------- 
+   FIND(1) O9-V  WITH PRIME-CN = cn-1
+     FOR #i = 1 TO C*SECONDARY-CN
+        IF SECONDARY-CN(#i) = cn-2
+           SECONDARY-CN(#i) := 0
+           ESCAPE BOTTOM
+        END-IF
+     END-FOR
+     IF #i < ( C*SECONDARY-CN + 1 )
+       FOR #i = 1 TO C*SECONDARY-CN
+          IF SECONDARY-CN(#i) <> 0 ESCAPE BOTTOM END-IF
+       END-FOR
+       IF #i = ( C*SECONDARY-CN + 1 )
+          DELETE
+          COMPRESS v_Msg '* Message for' cn-1 cn-2 'deleted' INTO v_Msg
+       ELSE
+          UPDATE   
+          COMPRESS v_Msg '* Message for' cn-2 'deleted' INTO v_Msg
+       END-IF   
+     END-IF 
+   END-FIND
+ END-SUBROUTINE 
+* --------------------------------------------------------------------- 
+DEFINE sbr_Validate_Input
+*      ------------------
+  IF  cn-1 = 0 OR cn-2 = 0 
+       v_Msg := 'Both CNs are required' 
+       ESCAPE ROUTINE
+  END-IF
+  FN1.
+  FIND NUMBER PRM-V WITH ID-NUMBER = cn-1
+  IF *NUMBER(FN1.) = 0 
+       v_Msg := 'Primary CN not found'
+       ESCAPE ROUTINE
+  END-IF
+  FN2.
+  FIND NUMBER SEC-V WITH ID-NUMBER = cn-2
+  IF *NUMBER(FN2.) = 0 
+       v_Msg := 'Secondary CN not found'
+       ESCAPE ROUTINE
+  END-IF
+  FIND(1) CNT-V WITH ID-NUMBER = cn-1
+    COMPRESS FIRST-NAME MIDDLE-NAME LAST-NAME SUFFIX INTO Name-1
+  END-FIND
+  FIND(1) CNT-V WITH ID-NUMBER = cn-2
+    COMPRESS FIRST-NAME MIDDLE-NAME LAST-NAME SUFFIX INTO Name-2
+  END-FIND  
+  IF Name-1 <> Name-2 
+       v_ATTN := 'Names mismatch'
+       ESCAPE ROUTINE
+  END-IF
+    FIND(1) PRM-V WITH ID-NUMBER = cn-1 END-FIND
+    FIND(1) SEC-V WITH ID-NUMBER = cn-2 END-FIND
+    IF PRM-V.SPOUSE-CONTACT-ID <> SEC-V.SPOUSE-CONTACT-ID AND SEC-V.SPOUSE-CONTACT-ID <> 0
+       IF PRM-V.SPOUSE-CONTACT-ID = 0 OR SEC-V.SPOUSE-CONTACT-ID = 0
+         COMPRESS 'Spouse mismatch: [' PRM-V.NAME-SP '] <> [' SEC-V.NAME-SP ']' INTO v_Msg
+       ELSE 
+         COMPRESS 'Duplicate spouse: [' PRM-V.NAME-SP '] and [' SEC-V.NAME-SP ']' INTO v_Msg
+       END-IF  
+       ESCAPE ROUTINE
+    END-IF
+ END-SUBROUTINE 
+* --------------------------------------------------------------------- 
+DEFINE sbr_TR
+*      ------------------
+ CALLNAT 'G10-9TR' cn-1 cn-2 sel RC
+
+END-SUBROUTINE
+*  
+END

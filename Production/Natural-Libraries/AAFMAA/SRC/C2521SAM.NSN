@@ -1,0 +1,161 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C2521SAM -  Create Accounting Transactions for Deposits
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    04282005  None    Program Written.                            *
+* PAM    07192005  PM1     Update member number on transaction log.    *
+* DRW  03/27/2008  DW2     Put Cash Code on TR Accounting file         *
+* RSE  10/02/2009  RE1     Change PROCESS-IND logic for Unification    *
+* bz     11/19/2009 bz1    Remove Re1. Unification: Identify SAS Only
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+*
+1 #SSN                      (N9)
+1 #TRAN                     (A4)
+1 #AMOUNT                   (P7.2)
+1 #CGA-CLERK                (A3)
+1 #SENT-BY                  (A1)
+1 #TYPE                     (A1)
+1 #CHECK-NUM                (A6)
+1 #CMBX                     (A4)
+1 #DATE-OF-UPDATE           (N8)
+1 #TIME-OF-UPDATE           (N7)
+1 #cash-code                (a1)     /* DW2
+*
+LOCAL
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+ 2 ID-NUMBER                (N6)
+ 2 PROCESS-IND              (A1)
+ 2 TRANSACTION-DATN         (P9)
+ 2 TRANSACTION-TIMN         (P7)
+ 2 TXN-CODE                 (A4)
+ 2 SEQUENCE-NUM             (N1)
+ 2 NAME                     (A25)
+ 2 TXN-ACCT-NUMBER          (N3)
+ 2 ACCT-DATE                (N8)
+ 2 DATE-LAST-ACCT-UPDATE    (N8)
+ 2 DEBIT-AMOUNT             (P7.2)
+ 2 CREDIT-AMOUNT            (P7.2)
+ 2 DESCRIPTION              (A20)
+ 2 REDEFINE DESCRIPTION
+  3 DESC-MEMBER-NUM         (A6)
+  3 DESC-1                  (A1)
+  3 DESC-SENT-BY            (A1)
+  3 DESC-2                  (A1)
+  3 DESC-TYPE               (A1)
+  3 DESC-3                  (A1)
+  3 DESC-CHECK-NUM          (A6)
+  3 DESC-4                  (A1)
+  3 DESC-APPLY-IND          (A1)
+  3 DESC-REST               (A1)
+ 2 MESSAGE-CODE             (A1)
+ 2 AALP-FLAG                (A1)
+ 2 CLERK-ID                 (A3)
+ 2 TERMINAL-ID              (A8)
+ 2 CASH-CODE                (A1)
+ 2 SG-CATEGORY-1            (A2/15)
+ 2 SG-CATEGORY-2            (A2/15)
+ 2 SG-AMOUNT                (N6.2/15)
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER                (N6)
+ 2 SSN                      (N9)
+ 2 PROCESS-IND              (A1)
+ 2 INTRO-FLAG               (A1)                                  /* PM1
+ 2 STATUS(9)                                                      /* bz1
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER                (N6)
+ 2 SSN                      (N9)
+ 2 INTRO-FLAG               (A1)
+ 2 ACTION-FLAG              (A1)
+*
+1 #AFFL-ONLY (L)
+END-DEFINE
+************************************************************************
+*
+RESET ACCT-REG-V
+MOVE 999999                     TO ACCT-REG-V.ID-NUMBER
+MOVE 'I'                        TO ACCT-REG-V.PROCESS-IND
+MOVE #DATE-OF-UPDATE            TO ACCT-REG-V.TRANSACTION-DATN
+MOVE #TIME-OF-UPDATE            TO ACCT-REG-V.TRANSACTION-TIMN
+MOVE *INIT-ID                   TO ACCT-REG-V.TERMINAL-ID
+MOVE #CGA-CLERK                 TO ACCT-REG-V.CLERK-ID
+MOVE EDITED #SSN (EM=999999999) TO ACCT-REG-V.NAME
+MOVE *DATN                      TO ACCT-REG-V.ACCT-DATE
+MOVE #SENT-BY                   TO ACCT-REG-V.DESC-SENT-BY
+MOVE #TYPE                      TO ACCT-REG-V.DESC-TYPE
+MOVE #CHECK-NUM                 TO ACCT-REG-V.DESC-CHECK-NUM
+MOVE *DATN                      TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+MOVE 500                        TO ACCT-REG-V.TXN-ACCT-NUMBER
+MOVE #TRAN                      TO ACCT-REG-V.TXN-CODE
+move #cash-code                 to ACCT-REG-V.CASH-CODE      /* DW2
+*
+IF #TRAN = 'APFR'
+  MOVE #AMOUNT                  TO ACCT-REG-V.DEBIT-AMOUNT
+ELSE
+  MOVE #AMOUNT                  TO ACCT-REG-V.CREDIT-AMOUNT
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #CMBX = 'FPFP'
+    MOVE 'A'                    TO ACCT-REG-V.DESC-APPLY-IND
+  WHEN #CMBX = 'APPW'
+    MOVE 'W'                    TO ACCT-REG-V.DESC-APPLY-IND
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+FIND ST-V WITH ST-V.SSN = #SSN
+PERFORM CHECK-AFFL-ONLY   /*   #AFFL-ONLY    bz1
+*  IF  (ST-V.PROCESS-IND = 'S')                                      RE1
+*  IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                          /* RE1
+   IF #AFFL-ONLY                                                  /* bz1
+   OR (ST-V.ID-NUMBER LT 1900)
+   OR (ST-V.PROCESS-IND = 'C' AND ST-V.INTRO-FLAG NE 'A')         /* PM1
+    ESCAPE TOP
+  ELSE
+    MOVE EDITED ST-V.ID-NUMBER (EM=999999) TO ACCT-REG-V.DESC-MEMBER-NUM
+    MOVE ST-V.ID-NUMBER TO ACCT-REG-V.ID-NUMBER                   /* PM1
+  END-IF
+END-FIND
+*
+IF ACCT-REG-V.DESC-MEMBER-NUM = ' '
+  FIND AT-V WITH AT-V.SSN = #SSN
+    IF AT-V.INTRO-FLAG = 'V'
+     OR AT-V.ACTION-FLAG = 'W' OR = 'A'
+      ESCAPE TOP
+    END-IF
+*
+    MOVE EDITED AT-V.ID-NUMBER (EM=999999) TO ACCT-REG-V.DESC-MEMBER-NUM
+    ESCAPE BOTTOM
+  END-FIND
+END-IF
+*
+MOVE '1Y'                       TO SG-CATEGORY-1 (1)
+MOVE #AMOUNT                    TO SG-AMOUNT (1)
+*
+STORE ACCT-REG-V
+*
+** - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DEFINE SUBROUTINE CHECK-AFFL-ONLY                                       /*  bz1
+*  PERFORM  CHECK-AFFL-ONLY                                             /*  bz1
+* 1 #AFFL-ONLY (L) INIT <FALSE>                                         /*  bz1
+ IF ( ST-V.PROCESS-IND <> "S" ) OR ( ST-V.STATUS(*) <> " " )            /*  bz1
+   #AFFL-ONLY := FALSE                                                  /*  bz1
+ ELSE                                                                   /*  bz1
+   IF ST-V.INTRO-FLAG NE 'A'  #AFFL-ONLY := TRUE                        /*  bz1
+      ELSE #AFFL-ONLY := FALSE                                          /*  bz1
+   END-IF                                                               /*  bz1
+ END-IF                                                                 /*  bz1
+END-SUBROUTINE                                                          /*  bz1
+END

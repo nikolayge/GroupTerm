@@ -1,0 +1,193 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center/FIR modification)
+* Object name - MBCNFIR0
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    10282015       Initial Creation
+* YAK    05172016  YK1  Add Start/End date for partial FIR printing    
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 PROCESS-NAME      (A) Dynamic
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING MBCAFIR0
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 SIScreen
+  2 CN (N6)
+  2 SILineCount (N2)
+  2 SITotal     (A) DYNAMIC   
+  2 SIScreenGroup (*)
+    3 SILine (A) DYNAMIC
+*    
+1 #SILine (A23)    
+1 REDEFINE #SILine
+  2 #Flag       (A1)
+  2 Filler1     (A1)
+  2 #Year       (A4)
+  2 Filler2     (A1)
+  2 #Amount     (A10)      
+* 
+1 FirList
+  2 Date        (A8)       /* YK1
+  2 REDEFINE Date          /* YK1
+    3 StartDate (A4)       /* YK1 
+    3 EndDate   (A4)       /* YK1
+  2 ListCount   (N4)
+  2 FirTable    (*)
+    3 FirCN     (N6)
+    3 FirType   (A1) 
+*
+1 #value       (A) DYNAMIC
+1 #I  (I2)
+1 #I1 (I2)
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'BAScreen'
+    RESET FirPages
+  VALUE 'BAScreen/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      FirPages.CN := VAL(#value)
+    END-IF
+  VALUE 'MemberWageHistory'
+    RESET SIScreen
+  VALUE 'MemberWageHistory/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      SIScreen.CN := VAL(#value)
+    END-IF
+  VALUE 'GetFirList'
+    RESET FirList
+  VALUE 'FirList/StartDate/$'                        /* YK1
+    FirList.StartDate := *TRIM(XML_PARSER_CONTENT)   /* YK1
+  VALUE 'FirList/EndDate/$'                          /* YK1 
+    FirList.EndDate := *TRIM(XML_PARSER_CONTENT)     /* YK1
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+* Business Logic
+DECIDE ON FIRST VALUE PROCESS-NAME
+  VALUE 'GetBAScreen'
+    CALLNAT 'MBCNFIR1' FirPages #ErrorCode
+  VALUE 'GetWageHistory'
+    CALLNAT 'MBCNFIR2' SIScreen
+  VALUE 'GetFirList'
+    CALLNAT 'MBCNFIR5' FirList
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+PERFORM COMPILE-RESPONSE
+*
+**********************************
+DEFINE SUBROUTINE COMPILE-RESPONSE
+**********************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+DECIDE ON FIRST VALUE PROCESS-NAME
+  VALUE 'GetBAScreen'
+    FOR #I = 1 TO C@Pages
+      COMPRESS RESPONSE-DATA
+        '<Page>' 
+        '<Header>' Header(#I) '</Header>' INTO RESPONSE-DATA LEAVING NO
+      COMPRESS RESPONSE-DATA '<BALines>' INTO RESPONSE-DATA LEAVING NO 
+      FOR #I1 = 1 TO C@Lines(#I)
+        COMPRESS FULL RESPONSE-DATA
+        '<BALine>' Lines(#I,#I1) '</BALine>'  INTO RESPONSE-DATA LEAVING NO 
+      END-FOR  
+      COMPRESS RESPONSE-DATA '</BALines>' INTO RESPONSE-DATA LEAVING NO   
+      COMPRESS RESPONSE-DATA 
+        '<Footer>' Footer(#I) '</Footer>' '</Page>' INTO RESPONSE-DATA LEAVING NO
+    END-FOR
+    COMPRESS   '<BAScreen>' '<CN>' FirPages.CN '</CN>'
+      '<BAScreenGroup>' RESPONSE-DATA '</BAScreenGroup>'
+      '<ErrorCode>' #ErrorCode '</ErrorCode>'
+      '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+      '</BAScreen>' INTO RESPONSE-DATA LEAVING NO
+  VALUE 'GetWageHistory'
+    FOR #I = 1 TO SIScreen.SILineCount
+      #SILine := SIScreen.SILine(#I)      
+      #value := #Amount
+      #value := *TRIM(#value)
+      COMPRESS RESPONSE-DATA
+        '<TableRow>'
+        '<Year>' #Year   '</Year>'
+        '<Wage>' #value  '</Wage>'
+        '<Flag>' #Flag   '</Flag>'
+        '</TableRow>'
+        INTO RESPONSE-DATA LEAVING NO
+    END-FOR
+    COMPRESS   '<MemberWageHistory>' '<CN>' SIScreen.CN '</CN>'
+      '<WageHistoryTotal>' SIScreen.SITotal '</WageHistoryTotal>'
+      '<WageHistoryTable>' RESPONSE-DATA '</WageHistoryTable>'
+      '<ErrorCode>' #ErrorCode '</ErrorCode>'
+      '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+      '</MemberWageHistory>' INTO RESPONSE-DATA LEAVING NO
+  VALUE 'GetFirList'
+    FOR #I = 1 TO FirList.ListCount
+      COMPRESS RESPONSE-DATA
+        '<FirCN>' FirCN(#I) '</FirCN>'
+*       '<FirType>' FirType(#I) '</FirType>'
+        INTO RESPONSE-DATA LEAVING NO
+    END-FOR
+    COMPRESS   '<FirList>'
+      '<StartDate>' FirList.StartDate '</StartDate>'             /* YK1
+      '<EndDate>' FirList.EndDate '</EndDate>'                   /* YK1
+      '<FirListTable>' RESPONSE-DATA '</FirListTable>'
+      '<ErrorCode>' #ErrorCode '</ErrorCode>'
+      '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+      '</FirList>' INTO RESPONSE-DATA LEAVING NO      
+*
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+END

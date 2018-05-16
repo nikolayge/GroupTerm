@@ -1,0 +1,313 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C1006SAT    process AT quote info
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    07232004  PM1     Allow quote amounts under $50,000 for term  *
+*                          insurance if whole life is also selected.   *
+* DRW    08112007  DW2     Add Quot LT2 Clas Processing
+* DRW  08/13/2008  DW3     Add GENERATIONS PLUS processing
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+*
+1 #MEMBER-CN   (A6)
+1 #USER        (A3)
+1 #QUOT-FAC    (N3/5)   /*  1 / 2/  3/4/5/6   /7 / 8/ 9 /10 /11/12
+1 #QUOT-PLAN   (A2/13)  /* ALL/LT/LT2(4 terms)/RT/OL/30P/20P/7P/SP/GPL  DW3
+1 REDEFINE #QUOT-PLAN
+ 2 #QUOT-PLAN-OCC (13)      /* DW3
+  3 #QUOT-PLAN-X   (A1/2)
+1 #QUOT-LT2-RIDER (A1)  /* Y OR N
+1 #quot-lt2-class (a1)  /* U/V but not W             /* DW2
+1 #SMOKER-FLAG (A1)     /* N OR S
+1 #ISS-AGE     (A2)
+1 REDEFINE #ISS-AGE
+ 2 #ISS-AGE-N  (N2)
+1 #ISS-AGE-MM  (N2)
+1 #NEW-ADDL    (A1)
+1 #INTRO-FLAG  (A1)
+1 #TOT-FACE    (N6.2)
+1 #TOT-FACE-TERM (N6.2)
+*
+1 #ERR-MSG     (A60)
+1 #FLEX-POLICY (L)
+*
+LOCAL
+*
+1 #I1  (I2)
+1 #I2  (I2)
+1 #I3  (I2)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY      (N4)
+ 2 #MMDD      (N4)
+ 2 REDEFINE #MMDD
+  3 #MM       (N2)
+  3 #DD       (N2)
+*
+1 #FOUND-FAC    (L)
+1 #FOUND-PLAN   (L)
+1 #FOUND-LT2    (L)
+1 #FACE-AMT   (N6.2)
+1 #PLAN       (A3)
+1 #DEFAULT-FACE (L)
+*
+END-DEFINE
+* * * * * * * * *
+*
+* WRITE 'top c1006sat-flex=' #FLEX-POLICY 'fac=' #quot-fac(*) 'pln=' #quot-plan(13)
+RESET #ERR-MSG
+*
+if #quot-plan (13) ne ' '                  /* DW3
+  for #i1 1 to 5
+    if not #quot-fac(#i1) = 10 or = 15 or = 20 or = 25 or = 30 or = 0
+      MOVE 'Face Amount for Gen-Plus must be 10/15/20/25/30 k' TO #ERR-MSG
+      ESCAPE BOTTOM
+    end-if
+  end-for
+*
+  IF #ERR-MSG NE ' '
+    ESCAPE ROUTINE
+  END-IF
+end-if                                  /* END DW3
+*
+RESET #FOUND-LT2
+FOR #I1 3 TO 6
+  IF #QUOT-PLAN (#I1) NE ' '
+    MOVE TRUE TO #FOUND-LT2
+    IF  #QUOT-PLAN (#I1) = MASK (' 'N)
+      MOVE '0' TO #QUOT-PLAN-X (#I1, 1)
+    END-IF
+*
+    IF  #QUOT-PLAN (#I1) = MASK (N' ')
+      MOVE #QUOT-PLAN-X (#I1, 1) TO #QUOT-PLAN-X (#I1, 2)
+      MOVE '0' TO #QUOT-PLAN-X (#I1, 1)
+    END-IF
+*
+    IF NOT #QUOT-PLAN (#I1) = MASK (NN)
+      MOVE 'LT2 term must be numeric' TO #ERR-MSG
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+END-FOR
+*
+IF #ERR-MSG NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+if #found-lt2        /* DW2
+  if not #quot-lt2-class = ' ' or = 'U' or = 'V'
+    move 'LT2-Class must be "U" or "V"' to #err-msg
+  end-if
+else
+  if #quot-lt2-class ne ' '
+    move 'LT2-Class invalid if no LT2 requested' to #err-msg
+  end-if
+end-if
+*
+FOR #I1 1 TO 5
+  IF #QUOT-FAC (#I1) NE 0
+    MOVE TRUE TO #FOUND-FAC
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF #QUOT-PLAN (1) NE ' '  /* do all the plans except GEN PLUS    DW3
+  IF  ((#SMOKER-FLAG =  'S') AND (#ISS-AGE-N LT 36))
+   OR ((#SMOKER-FLAG NE 'S') AND (#ISS-AGE-N LT 46))
+    MOVE 'X' TO #QUOT-PLAN (2)    /* lt
+  ELSE
+    RESET #QUOT-PLAN (2)
+  END-IF
+*
+  IF NOT #FOUND-LT2             /* LT2
+    IF (#ISS-AGE-N + 25)  GT 85
+      IF (#ISS-AGE-N + 5 ) LE 85 MOVE '05' TO #QUOT-PLAN (3) END-IF
+      IF (#ISS-AGE-N + 10) LE 85 MOVE '10' TO #QUOT-PLAN (4) END-IF
+      IF (#ISS-AGE-N + 15) LE 85 MOVE '15' TO #QUOT-PLAN (5) END-IF
+      IF (#ISS-AGE-N + 20) LE 85 MOVE '20' TO #QUOT-PLAN (6) END-IF
+    ELSE
+      IF (#ISS-AGE-N + 10) LE 85 MOVE '10' TO #QUOT-PLAN (3) END-IF
+      IF (#ISS-AGE-N + 15) LE 85 MOVE '15' TO #QUOT-PLAN (4) END-IF
+      IF (#ISS-AGE-N + 20) LE 85 MOVE '20' TO #QUOT-PLAN (5) END-IF
+      IF (#ISS-AGE-N + 25) LE 85 MOVE '25' TO #QUOT-PLAN (6) END-IF
+    END-IF
+  END-IF
+  MOVE 'X' TO #QUOT-PLAN (7:8) /* RT and OL (not 20p/30p etc)
+  move 'X' to #quot-plan (13)    /* GEN PLUS                  /* DW3
+*
+  IF NOT #FOUND-FAC
+*   IF #INTRO-FLAG = 'K' OR = 'G' /* removed 3/2003 when max became 600k
+*     MOVE  10 TO #QUOT-FAC (1)
+*     MOVE  20 TO #QUOT-FAC (2)
+*     MOVE  50 TO #QUOT-FAC (3)
+*     MOVE 100 TO #QUOT-FAC (4)
+*     MOVE 200 TO #QUOT-FAC (5)
+*   ELSE
+      MOVE 100 TO #QUOT-FAC (1)
+      MOVE 250 TO #QUOT-FAC (2)
+      MOVE 400 TO #QUOT-FAC (3)
+      MOVE 500 TO #QUOT-FAC (4)
+      MOVE 600 TO #QUOT-FAC (5)
+*   END-IF
+    MOVE TRUE TO #DEFAULT-FACE
+  END-IF
+END-IF
+*
+FOR #I1 1 TO 13                 /* DW3
+  IF #QUOT-PLAN (#I1) NE ' '
+    MOVE TRUE TO #FOUND-PLAN
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF NOT #FOUND-FAC AND NOT #FOUND-PLAN
+  ESCAPE ROUTINE   /* no quotes requested
+END-IF
+*
+IF #FOUND-PLAN AND NOT #FOUND-FAC
+* IF #INTRO-FLAG = 'K' OR = 'G'
+*   MOVE  10 TO #FACE-AMT #QUOT-FAC (1)
+*   MOVE  20 TO #FACE-AMT #QUOT-FAC (2)
+*   MOVE  50 TO #FACE-AMT #QUOT-FAC (3)
+*   MOVE 100 TO #FACE-AMT #QUOT-FAC (4)
+*   MOVE 200 TO #FACE-AMT #QUOT-FAC (5)
+* ELSE
+  if #quot-plan (13) ne ' '                        /* DW3
+    MOVE 10 TO #FACE-AMT #QUOT-FAC (1)
+    MOVE 15 TO #FACE-AMT #QUOT-FAC (2)
+    MOVE 20 TO #FACE-AMT #QUOT-FAC (3)
+    MOVE 25 TO #FACE-AMT #QUOT-FAC (4)
+    MOVE 30 TO #FACE-AMT #QUOT-FAC (5)
+  else                                             /* END DW3
+    MOVE 100 TO #FACE-AMT #QUOT-FAC (1)
+    MOVE 250 TO #FACE-AMT #QUOT-FAC (2)
+    MOVE 400 TO #FACE-AMT #QUOT-FAC (3)
+    MOVE 500 TO #FACE-AMT #QUOT-FAC (4)
+    MOVE 600 TO #FACE-AMT #QUOT-FAC (5)
+  END-IF
+END-IF
+*
+IF #FOUND-FAC AND NOT #FOUND-PLAN
+  MOVE 'Must select a plan if a face amount is selected' TO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+FOR #I1 1 TO 5   /* 5 possible face amounts
+  IF #QUOT-FAC (#I1) = 0
+    ESCAPE TOP
+  END-IF
+*
+  FOR #I2 2 TO 13 /* 12 possible plan/face options    DW3
+    IF #QUOT-PLAN (#I2) = ' '
+      ESCAPE TOP
+    END-IF
+*
+    DECIDE ON FIRST VALUE #I2
+      VALUE 2  MOVE 'LT' TO #PLAN
+      VALUE 3
+        IF #QUOT-LT2-RIDER  = 'N'
+          COMPRESS 'V' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        ELSE
+          COMPRESS 'Y' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        END-IF
+      VALUE 4
+        IF #QUOT-LT2-RIDER  = 'N'
+          COMPRESS 'V' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        ELSE
+          COMPRESS 'Y' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        END-IF
+      VALUE 5
+        IF #QUOT-LT2-RIDER  = 'N'
+          COMPRESS 'V' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        ELSE
+          COMPRESS 'Y' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        END-IF
+      VALUE 6
+        IF #QUOT-LT2-RIDER  = 'N'
+          COMPRESS 'V' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        ELSE
+          COMPRESS 'Y' #QUOT-PLAN (#I2) INTO #PLAN LEAVING NO
+        END-IF
+      VALUE 7  MOVE 'RT' TO #PLAN
+      VALUE 8  MOVE 'OL' TO #PLAN
+      VALUE 9  MOVE '30' TO #PLAN
+      VALUE 10 MOVE '20' TO #PLAN
+      VALUE 11 MOVE '7P' TO #PLAN
+      VALUE 12 MOVE 'SP' TO #PLAN
+      value 13 move 'GPL' to #plan             /* DW3
+      NONE IGNORE
+    END-DECIDE
+*
+    PERFORM EDIT-PLAN
+*
+    IF #ERR-MSG NE ' '
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF #ERR-MSG NE ' '
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+* WRITE 'END C1006SAT' #quot-plan (*) #quot-fac (*)
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE EDIT-PLAN
+* * * * * * * * * * * * * * *
+*
+COMPUTE #FACE-AMT = (#QUOT-FAC (#I1) * 1000)
+* DISPLAY #PLAN #ISS-AGE #SMOKER-FLAG #FACE-AMT #ERR-MSG (EM=XXXXXXXXX)
+CALLNAT 'GPLANSXX'
+  #MEMBER-CN
+  #USER
+  #PLAN
+  #ISS-AGE
+  #ISS-AGE-MM
+  #INTRO-FLAG
+  #SMOKER-FLAG
+  #FACE-AMT
+  #TOT-FACE
+  #TOT-FACE-TERM
+  #NEW-ADDL
+  #ERR-MSG
+  #FLEX-POLICY
+* DISPLAY #PLAN #ISS-AGE #SMOKER-FLAG #FACE-AMT #ERR-MSG (EM=XXXXXXXXX)
+*
+IF ((#QUOT-PLAN (8)  NE ' '   /* if at least 1 non-term quote selected
+ OR #QUOT-PLAN (9)   NE ' '   /* bypass term maximum
+ OR #QUOT-PLAN (10)  NE ' '
+ OR #QUOT-PLAN (11)  NE ' '
+ OR #QUOT-PLAN (12)  NE ' '
+ or #quot-plan (13)  ne ' ')            /* DW3
+ AND (#ERR-MSG EQ MASK ('Face Amount exceeds maximum for this plan')
+       OR EQ MASK ('RT/LT minimum is $50,000')))                  /* PM1
+  RESET #ERR-MSG
+END-IF
+*
+IF   (#ERR-MSG NE ' ')
+ AND (#ERR-MSG NE MASK ('MAX additional'))/* get LT msg below
+  ESCAPE ROUTINE
+END-IF
+*
+* DISPLAY #PLAN #SMOKER-FLAG #ISS-AGE-N
+IF #PLAN = 'LT'
+  IF  ((#SMOKER-FLAG =  'S') AND (#ISS-AGE-N GE 36))
+   OR ((#SMOKER-FLAG NE 'S') AND (#ISS-AGE-N GE 46))
+    COMPRESS #ERR-MSG 'LT not suggested for this age' INTO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+END

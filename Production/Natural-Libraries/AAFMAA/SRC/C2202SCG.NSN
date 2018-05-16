@@ -1,0 +1,114 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2202SCG    ** Resolve AT/CG Address/Phone/Email Differences
+************************************************************************
+*     MODIFICATION LOG
+* USER DATE       TAG  REASON
+* RSE  10/02/2009 RE1  Change PROCESS-IND logic for Unification
+* bz     11/19/2009 bz1    Remove Re1. Unification: Identify SAS Only
+* NGG  20130808   NG1  Address normalization
+* YAK  20140514   YK1  Email/Phone contact normalization
+************************************************************************
+DEFINE DATA
+PARAMETER
+1 #CGA-ISN      (P8)
+*
+LOCAL USING OBJLCOPH
+LOCAL
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER     (N6)
+  2 INTRO-FLAG
+  2 SSN           (N9)
+  2 WORK-PHONE
+  2 WORK-PHONE-INTR
+  2 HOME-PHONE
+  2 HOME-PHONE-INTR
+  2 INTERNET-ADDR
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID           /* YK1
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 SSN
+  2 STATUS(9)                   /*   bz1
+* YK1
+1 #PHONE    (A) DYNAMIC
+1 #PHONE-INTR (A16)
+1 REDEFINE #PHONE-INTR
+  2 #PHONE-10  (N10)
+  2 #PHONE-6   (A6)
+*
+1 #AFFL-ONLY (L) INIT <FALSE>    /*   bz1
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+GET ST-V #CGA-ISN   /* Read just updated record
+PERFORM  CHECK-AFFL-ONLY
+*
+* IF PROCESS-IND = 'S' OR = 'C'              RE1
+IF PROCESS-IND = 'C'                       /* RE1
+*  OR AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)   /* RE1
+    OR #AFFL-ONLY                           /* bz1
+  ESCAPE ROUTINE
+END-IF
+*
+READ AT-V BY SSN FROM ST-V.SSN
+  IF AT-V.SSN NE ST-V.SSN
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF AT-V.INTRO-FLAG = 'V'   /* Bypass AFSC AT
+    ESCAPE TOP
+  END-IF
+* YK1 <
+  FIND CNT-PHONE-V WITH CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+    DECIDE FOR FIRST CONDITION
+      WHEN TYPE = 'D' AND PHONE-TYPE-CODE = 'H'
+        COMPRESS FULL CNT-PHONE-V.AREA-CODE CNT-PHONE-V.DIAL-NUMBER INTO #PHONE
+        AT-V.HOME-PHONE := VAL(#PHONE)
+      WHEN TYPE = 'I' AND PHONE-TYPE-CODE = 'H'
+        #PHONE := CNT-PHONE-V.INTL-DIAL-NUMBER
+        #PHONE := *TRIM(#PHONE)
+        COMPRESS FULL CNT-PHONE-V.INTL-ACCESS-CODE #PHONE INTO #PHONE
+        #PHONE-INTR := #PHONE
+        AT-V.HOME-PHONE      := #PHONE-10
+        AT-V.HOME-PHONE-INTR := #PHONE-6
+      WHEN TYPE = 'D' AND PHONE-TYPE-CODE = 'B'
+        COMPRESS FULL CNT-PHONE-V.AREA-CODE CNT-PHONE-V.DIAL-NUMBER INTO #PHONE
+        AT-V.WORK-PHONE := VAL(#PHONE)
+      WHEN TYPE = 'I' AND PHONE-TYPE-CODE = 'B'
+        #PHONE := CNT-PHONE-V.INTL-DIAL-NUMBER
+        #PHONE := *TRIM(#PHONE)
+        COMPRESS FULL CNT-PHONE-V.INTL-ACCESS-CODE #PHONE INTO #PHONE
+        #PHONE-INTR := #PHONE
+        AT-V.WORK-PHONE      := #PHONE-10
+        AT-V.WORK-PHONE-INTR := #PHONE-6
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-FIND
+*
+  AT-V.INTERNET-ADDR := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)
+* > YK1  
+  UPDATE (0059)
+  END TRANSACTION
+END-READ
+*
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - /*  bz1
+DEFINE SUBROUTINE CHECK-AFFL-ONLY                                       /*  bz1
+*  PERFORM  CHECK-AFFL-ONLY                                             /*  bz1
+* 1 #AFFL-ONLY (L) INIT <FALSE>                                         /*  bz1
+IF ( ST-V.PROCESS-IND <> "S" ) OR ( ST-V.STATUS(*) <> " " )             /*  bz1
+  #AFFL-ONLY := FALSE                                                   /*  bz1
+ELSE                                                                    /*  bz1
+  IF ST-V.INTRO-FLAG NE 'A'  #AFFL-ONLY := TRUE                         /*  bz1
+  ELSE #AFFL-ONLY := FALSE                                              /*  bz1
+  END-IF                                                                /*  bz1
+END-IF                                                                  /*  bz1
+END-SUBROUTINE                                                          /*  bz1
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - /*  bz1
+END

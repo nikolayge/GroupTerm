@@ -1,0 +1,187 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPSCTX - Create AFSC DFAS file from CTX summary
+*                        and sort it
+*
+DEFINE DATA
+LOCAL
+*
+1 CTX-SUMMARY       (A133)
+1 REDEFINE CTX-SUMMARY
+ 2 CS-EFF-DT-LBL    (A22) /* 'Effective Entry Date: '
+ 2 CS-EFF-DT-MM     (A2)
+ 2 CS-FILL-1        (A1)
+ 2 CS-EFF-DT-DD     (A2)
+ 2 CS-FILL-2        (A1)
+ 2 CS-EFF-DT-YYYY   (A4)
+1 REDEFINE CTX-SUMMARY
+ 2 CS-TOT-AMT-LBL   (A18) /* 'TOTAL AMOUNT  : $ '
+ 2 CS-TOT-AMT       (A12) /* 12,345.67
+1 REDEFINE CTX-SUMMARY
+ 2 CS-COMP-CODE-LBL (A72) /* '          Code assigned by the organiza--'
+ 2 CS-COMP-CODE     (A6)
+1 REDEFINE CTX-SUMMARY                    /* tm1
+ 2 CS-COMP-CODE-LBL2(A63) /* 'Code assigned by the organiza--'
+ 2 CS-COMP-CODE2    (A6)
+1 REDEFINE CTX-SUMMARY
+ 2 CS-SSN           (A9)
+ 2 CS-FILL-3        (A78)
+ 2 CS-AMT           (A10)  /* xxxxxxx.xx
+ 2 REDEFINE CS-AMT
+  3 CS-AMT-X        (A1/10)
+*
+1 ALOT-REC     (A45)
+1 REDEFINE ALOT-REC
+ 2 AL-SSN-A    (A09)
+ 2 REDEFINE AL-SSN-A
+  3 AL-SSN     (N09)
+ 2 AL-SERV     (A01)
+ 2 AL-STATUS   (A01)
+ 2 AL-AMOUNT-A (A06)
+ 2 REDEFINE AL-AMOUNT-A
+  3 AL-AMOUNT  (N4.2)
+ 2 REDEFINE AL-AMOUNT-A
+  3 AL-AMOUNT-X  (A1/6)
+ 2 AL-NAME     (A22)
+ 2 AL-EFF-YYYYMM (A6)
+*
+1 #COUNTERS
+ 2 #RECS-READ        (P5)
+ 2 #RECS-SELECTED    (P5)
+ 2 #CNT              (P5)
+ 2 #CNT-2            (P5)
+ 2 #CNT-3            (P5)
+ 2 #CNT-4            (P5)
+ 2 #CNT-5            (P5)
+ 2 #CNT-6            (P5)
+ 2 #CNT-7            (P5)
+ 2 #I1               (I2)
+ 2 #I2               (I2)
+ 2 #I3               (I2)
+*
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY          (N4)
+  2 #MM            (N2)
+  2 #DD            (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM-A      (A6)
+*
+1 #AA-RECS      (N5)
+1 #FA-RECS      (N5)
+1 #XR-RECS      (N5)
+1 #ALOT-RECS    (N5)
+1 #EFF-DT       (A10)
+1 #COMP-CODE    (A6)
+1 #TOT-AMT      (N7.2)
+1 #LAST-SSN     (A9)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'AFSC DFAS Allotment Exceptions'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'AFSC DFAS Allotment Ongoing credits'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+READ WORK 2 RECORD CTX-SUMMARY    /* CTX Summary from AFB
+* IF CS-SSN = 'Trading P'
+*    ESCAPE BOTTOM
+*  END-IF
+*
+*  WRITE CTX-SUMMARY (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+  IF CS-EFF-DT-LBL = 'Effective Entry Date: '
+    COMPRESS CS-EFF-DT-MM CS-EFF-DT-DD CS-EFF-DT-YYYY
+            INTO #EFF-DT WITH '/'
+    WRITE 'Eff Date= ' #EFF-DT
+    RESET #COMP-CODE    /* to start a new company
+  END-IF
+*
+  IF CS-TOT-AMT-LBL = 'TOTAL AMOUNT  : $ '
+    WRITE 'Total amt = ' CS-TOT-AMT
+  END-IF
+*
+  IF CS-COMP-CODE-LBL = MASK ('         Code assigned by the org')
+    MOVE CS-COMP-CODE TO #COMP-CODE
+    WRITE 'Company Code =' #COMP-CODE
+   END-IF
+*  a 2nd possible layout below if label is left-justified
+  IF CS-COMP-CODE-LBL = MASK ('Code assigned by the org') /* tm1
+    MOVE CS-COMP-CODE2 TO #COMP-CODE                      /* tm1
+    WRITE 'Company Code =' #COMP-CODE
+   END-IF
+*
+  IF   (CS-SSN = MASK (NNNNNNNNN))
+   AND (#COMP-CODE NE ' ')       /* past comp code
+    IGNORE
+  ELSE
+    ESCAPE TOP
+  END-IF
+*
+END-ALL
+*
+SORT BY CS-SSN
+  USING CTX-SUMMARY #COMP-CODE
+*
+  RESET ALOT-REC
+  MOVE '000000' TO AL-AMOUNT-A
+*
+  MOVE 7 TO #I2
+  FOR #I1 10 TO 1 STEP -1
+    IF CS-AMT-X (#I1) = MASK (N)
+      SUBTRACT 1 FROM #I2
+      MOVE CS-AMT-X (#I1) TO AL-AMOUNT-X (#I2)
+    END-IF
+  END-FOR
+  ADD AL-AMOUNT TO #TOT-AMT
+*
+  MOVE CS-SSN TO AL-SSN-A
+*
+  IF #COMP-CODE = 'X08530'
+    MOVE 'A' TO AL-SERV
+    MOVE 'A' TO AL-STATUS
+    ADD 1 TO #AA-RECS
+  ELSE
+    IF #COMP-CODE = 'S95789'
+      MOVE 'F' TO AL-SERV
+      MOVE 'A' TO AL-STATUS
+      ADD 1 TO #FA-RECS
+    ELSE
+      MOVE '?' TO AL-SERV
+      MOVE 'R' TO AL-STATUS
+      ADD 1 TO #XR-RECS
+    END-IF
+  END-IF
+*
+* WRITE 'detail =' AL-SSN AL-AMOUNT
+   ADD 1 TO #CNT-2
+   DISPLAY (2) #CNT-2
+     'SSN'      AL-SSN-A
+     'MIL/SERV' AL-SERV
+     'MIL/STAT' AL-STATUS
+     'ALOT/AMT' AL-AMOUNT
+     'NAME'     AL-NAME
+  WRITE WORK 3 ALOT-REC
+  ADD 1 TO #ALOT-RECS
+*
+  IF CS-SSN = #LAST-SSN
+    WRITE 'Duplicate SSN' CS-SSN AL-SERV AL-STATUS AL-NAME
+  END-IF
+  MOVE CS-SSN TO #LAST-SSN
+END-SORT
+*
+WRITE 'tot AFSC army active alots     =' #AA-RECS
+WRITE 'tot AFSC airforce active alots =' #FA-RECS
+WRITE 'tot AFSC retired         alots =' #XR-RECS
+WRITE 'tot                      alots =' #ALOT-RECS
+WRITE 'tot                     amount =' #TOT-AMT
+*
+END

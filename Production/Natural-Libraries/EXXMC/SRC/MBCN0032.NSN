@@ -1,0 +1,504 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* MBCN0032 - Address/Address Relationship Business logic
+* Update/Delete
+*******************************************************************************
+*        MODIFICATION LOG
+*******************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    09072010       Initial Creation
+* YAK    11292011  YK1  Fix logic to match attached contacts for ADDR-REL file
+*        OI-665         to update existing ADDR-POOL-ID instead of creating new
+*******************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0003
+PARAMETER 1 #ErrorCode (A3)
+*
+LOCAL USING OBJAADDR
+LOCAL USING OBJAADRL
+LOCAL USING GPRATR00
+LOCAL USING ADDA0001          /* Format for Transaction register
+LOCAL USING ERROR_L
+LOCAL
+*
+1 #DEL                      (A1) CONST <'-'>
+1 #MEMBER                   (A) DYNAMIC INIT  <'MEMBER'>
+1 #MEMBER-CENTER-CLERK      (A) DYNAMIC INIT  <'MBR'>
+1 #UPDATE                   (A) DYNAMIC CONST <'UPDATE'>
+1 #UPDATE-TYPE              (A) DYNAMIC CONST <'UPDATE-TYPE'>
+1 #ADD                      (A) DYNAMIC CONST <'ADD'>
+1 #HIST-KEY                 (A) DYNAMIC CONST <'HIST-KEY'>
+1 #DELETE                   (A) DYNAMIC CONST <'DELETE'>
+1 #GET                      (A) DYNAMIC CONST <'GET'>
+1 #GET-CONT-TYPE            (A) DYNAMIC CONST <'GET-CONT-TYPE'>
+1 #GET-CONT-POOL            (A) DYNAMIC CONST <'GET-CONT-POOL'>
+1 #GET-CONT-POOL-TYPE       (A) DYNAMIC CONST <'GET-CONT-POOL-TYPE'>
+1 #UPDATE-SWAP              (A) DYNAMIC CONST <'UPDATE-SWAP'>
+1 #SOURCE-WEBSITE           (A) DYNAMIC CONST <'W'>
+1 #PRIMARY                  (A) DYNAMIC CONST <'P'>
+1 #SECONDARY                (A) DYNAMIC CONST <'S'>
+1 #OTHER                    (A) DYNAMIC CONST <'O'>
+1 #ZERO-ZIP                 (A) DYNAMIC CONST <'000000000'>
+1 #ZIP-CODE                 (A9)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-5                  (A5)
+  2 #ZIP-4                  (A4)
+1 #INIT-ACTION              (A) DYNAMIC
+1 #INIT-ADDRESS-POOL-ID     (N8)
+1 #DATN                     (N8)
+1 #TIMN                     (N7)
+1 #I                        (I2)
+1 #II                       (I2)
+1 #NewAddress               (L)
+1 #UpdateAll                (L)
+1 #ContactID                (N8)
+1 #AddressString            (A) Dynamic
+1 #AddressPoolID            (N8)
+1 #AddressPool_ContactID    (L)
+1 #AddressType_ContactID    (L)
+1 #ISN_PoolId               (P9)
+1 #ISN_Type                 (P9)
+1 #ExistingTypeForPoolId    (A1)
+1 #ExistingPoolIdForType    (N8)
+1 #LOG                      (A100)
+1 #AddressRelOnly           (L)
+1 #TRANSACTION-LOG          (L)
+1 #CN                       (N6)
+1 #MATCH                    (L)
+1 #HM-CONTACT-ID            (N8/*)
+1 FUNCTION_CODE             (A) DYNAMIC CONST <'ADDRESS'>
+1 #ShareAddr                (A) DYNAMIC CONST <'1'>
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+IF AddressInfo.UserID <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<AddressInfo.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<AddressInfo.UserID>)(2)
+END-IF
+*
+#ContactID     := F-GET-CONTACT-ID(<AddressInfo.CN>)
+* YK2 Start
+* Check if Add button was used when it's really Update
+* for Primary/Secondary only
+* GET address relationships record with contact ID and type
+* and assign this Pool ID to the new address
+* change Action to Update (can be done on the Front End)
+IF AddressInfo.ActionType = '1' AND AddressInfo.AddressPoolId = 0
+    AND (AddressInfo.AddressTypeCode = #PRIMARY OR = #SECONDARY)
+  PARM-ADDRESS-REL.#ACTION     := #GET-CONT-TYPE
+  PARM-ADDRESS-REL.CONTACT-ID  := #ContactID
+  PARM-ADDRESS-REL.ADDR-TYPE-CD:= AddressInfo.AddressTypeCode
+  CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+  IF (PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-TYPE-NOT-FOUND OR
+      PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-NOT-FOUND)
+    IGNORE
+  ELSE
+    AddressInfo.AddressPoolId := PARM-ADDRESS-REL.ADDRESS-POOL-ID
+    AddressInfo.ActionType    := '2'    /* Update
+  END-IF
+END-IF
+* YK2 End
+* Find All Contacts using this address
+IF AddressInfo.AddressPoolId NE 0
+  PARM-ADDRESS-REL.#ACTION := #HIST-KEY
+  PARM-ADDRESS-REL.ADDRESS-POOL-ID := AddressInfo.AddressPoolId
+  EXPAND ARRAY #HM-CONTACT-ID TO (*:1)
+  CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+    #ExistingPoolIdForType
+    #ExistingTypeForPoolId
+    #HM-CONTACT-ID(*)
+  DECIDE FOR FIRST CONDITION
+    WHEN #NUMBER-OF-RECORDS = 0
+      #ErrorCode  := #ADDR-REL-POOL-NOT-FOUND
+      ESCAPE ROUTINE
+    WHEN C@CONTACT = 0 AND #NUMBER-OF-RECORDS = 1
+        AND #HM-CONTACT-ID(1) = #ContactID
+* No attached contacts
+      #UpdateAll := TRUE
+    WHEN NONE
+      PERFORM MATCH-CONTACTS
+  END-DECIDE
+**================================
+  DEFINE SUBROUTINE MATCH-CONTACTS
+**================================
+*
+  FOR #I = 1 TO #NUMBER-OF-RECORDS
+    FOR #II = 1 TO C@Contact
+      IF #HM-CONTACT-ID(#I) = ContactID(#II)
+          OR #HM-CONTACT-ID(#I) = #ContactID     /* YK1
+        #MATCH := TRUE
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+    IF #MATCH
+      RESET #MATCH
+    ELSE
+*       C@Contact := C@Contact + 1
+*       EXPAND ARRAY AddressInfo.Contact TO (*:C@Contact)
+*       AddressInfo.ContactID(C@Contact) := #HM-CONTACT-ID(#I)
+*       AddressInfo.SharingAddress(C@Contact) := #Yes
+* Link to the address that is not part of this update exist
+      #UpdateAll := false
+      ESCAPE ROUTINE
+    END-IF
+  END-FOR
+  END-SUBROUTINE
+END-IF
+*
+DECIDE ON FIRST VALUE AddressInfo.ActionType
+  VALUE '0'
+    ESCAPE ROUTINE
+  VALUE '1'
+    PARM-ADDRESS-POOL.#ACTION := #INIT-ACTION := #ADD
+  VALUE '2'
+    PARM-ADDRESS-POOL.#ACTION := #INIT-ACTION := #UPDATE
+*   VALUE '3'
+*     PARM-ADDRESS-POOL.#ACTION := #DELETE
+  NONE VALUE
+    #ErrorCode  := #ACTION-INVALID
+    ESCAPE ROUTINE
+END-DECIDE
+*
+* Update only the ones who has to move
+* Create a new record on Address Pool file
+* Update Contact ID with the new Address Pool ID
+If (NOT #UpdateAll) AND AddressInfo.AddressPoolId NE 0
+    AND PARM-ADDRESS-POOL.#ACTION = #UPDATE
+  PARM-ADDRESS-POOL.#ACTION := #ADD
+  #INIT-ADDRESS-POOL-ID := AddressInfo.AddressPoolId
+  RESET AddressInfo.AddressPoolId
+end-if
+*
+DECIDE FOR FIRST CONDITION
+  WHEN AddressInfo.AddressPoolId = 0 AND PARM-ADDRESS-POOL.#ACTION = #UPDATE
+    #ErrorCode  := #MISSING-ADDR-POOL-ID
+    ESCAPE MODULE
+  WHEN AddressInfo.AddressPoolId NE 0 AND PARM-ADDRESS-POOL.#ACTION = #ADD
+    #ErrorCode  := #ADD-HAS-ADDR-POOL-ID
+    ESCAPE MODULE
+  WHEN NONE
+    PERFORM SEARCH-ADDRESS
+    DECIDE FOR FIRST CONDITION
+      WHEN AddressInfo.AddressPoolId = 0 AND PARM-ADDRESS-POOL.#ACTION = #ADD
+          AND #NewAddress
+        PERFORM UPDATE-ADDRESS-POOL
+        PERFORM UPDATE-ADDRESS-RELATIONSHIP
+* If address exists - update Address Relationships only
+      WHEN AddressInfo.AddressPoolId = 0 AND PARM-ADDRESS-POOL.#ACTION = #ADD
+          AND #AddressPoolID NE 0
+* no new address pool ID needed
+        #AddressRelOnly := TRUE                      /* tr-log
+        PARM-ADDRESS-POOL.ADDRESS-POOL-ID := #AddressPoolID
+        PERFORM POPULATE-BEFORE-IMAGE
+        PERFORM UPDATE-ADDRESS-RELATIONSHIP
+* #UpdateAll is true and ActionType = #UPDATE
+      WHEN #AddressPoolID = AddressInfo.AddressPoolId
+* Update address relationship only
+        #AddressRelOnly := TRUE                      /* tr-log
+        PARM-ADDRESS-POOL.ADDRESS-POOL-ID := #AddressPoolID
+        PERFORM POPULATE-BEFORE-IMAGE
+        PERFORM UPDATE-ADDRESS-RELATIONSHIP        
+      WHEN NONE
+        PARM-ADDRESS-POOL.ADDRESS-POOL-ID := AddressInfo.AddressPoolId
+        PERFORM UPDATE-ADDRESS-POOL
+        PERFORM UPDATE-ADDRESS-RELATIONSHIP
+    END-DECIDE
+END-DECIDE
+*
+*************************************
+DEFINE SUBROUTINE UPDATE-ADDRESS-POOL
+*************************************
+*
+PERFORM POPULATE-BEFORE-IMAGE
+*
+PARM-ADDRESS-POOL.STREET              := AddressInfo.Street
+PARM-ADDRESS-POOL.UNIT                := AddressInfo.Unit
+PARM-ADDRESS-POOL.CITY                := AddressInfo.City
+PARM-ADDRESS-POOL.STATE-CODE          := AddressInfo.StateCode
+EXAMINE AddressInfo.ZipCode FOR #DEL DELETE 
+IF (AddressInfo.ZipCode) IS (N9)
+  #ZIP-CODE := AddressInfo.ZipCode
+* if not CASS certified   
+  IF #ZIP-4 = ' '
+    #ZIP-4 := '0000'
+  END-IF  
+  PARM-ADDRESS-POOL.ZIP-CODE := VAL(#ZIP-CODE)
+END-IF
+PARM-ADDRESS-POOL.COUNTRY-CODE        := AddressInfo.CountryCode
+PARM-ADDRESS-POOL.INTL-REGION         := AddressInfo.IntlRegion
+PARM-ADDRESS-POOL.POSTAL-CODE         := AddressInfo.PostalCode
+PARM-ADDRESS-POOL.URBANIZATION        := AddressInfo.Urbanization
+PARM-ADDRESS-POOL.ADDR-FORMAT-TYPE-CD := AddressInfo.AddressFormatTypeCode
+PARM-ADDRESS-POOL.ADDR-VALID-IND      := AddressInfo.AddressValidIndicator
+PARM-ADDRESS-POOL.ADDR-VALID-DATE     := #DATN
+PARM-ADDRESS-POOL.LAST-DATE-UPD       := #DATN
+PARM-ADDRESS-POOL.LAST-TIME-UPD       := #TIMN
+PARM-ADDRESS-POOL.LAST-USER-UPD       := #MEMBER
+CALLNAT 'OBJNADDR' PARM-ADDRESS-POOL
+IF PARM-ADDRESS-POOL.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-ADDRESS-POOL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+*********************************************
+DEFINE SUBROUTINE UPDATE-ADDRESS-RELATIONSHIP
+*********************************************
+*
+FOR #I = 0 TO C@Contact
+  RESET PARM-ADDRESS-REL
+  IF #I = 0
+    PARM-ADDRESS-REL.CONTACT-ID  := #ContactID   /* Member contact ID
+  ELSE
+    IF  AddressInfo.SharingAddress(#I) = #ShareAddr
+      RESET #TRANSACTION-LOG
+      PARM-ADDRESS-REL.CONTACT-ID  := AddressInfo.ContactID(#I)
+    ELSE
+      ESCAPE TOP  
+    END-IF  
+  END-IF
+* Check Existing Address relationship records
+  RESET #AddressPool_ContactID #AddressType_ContactID
+    #ExistingTypeForPoolId #ISN_PoolId
+    #ExistingPoolIdForType #ISN_Type
+* Check ContactID/AddressPoolID/Type combination
+  PARM-ADDRESS-REL.ADDRESS-POOL-ID := PARM-ADDRESS-POOL.ADDRESS-POOL-ID
+  PARM-ADDRESS-REL.ADDR-TYPE-CD    := AddressInfo.AddressTypeCode
+  PARM-ADDRESS-REL.#ACTION         := #GET-CONT-POOL-TYPE
+  CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+  IF PARM-ADDRESS-REL.#RETURN-CODE = ' '
+    #AddressPool_ContactID := TRUE
+    #AddressType_ContactID := TRUE
+    #ExistingTypeForPoolId := PARM-ADDRESS-REL.ADDR-TYPE-CD
+    #ISN_PoolId            := #ISN_Type := PARM-ADDRESS-REL.ISN
+    #ExistingPoolIdForType := PARM-ADDRESS-REL.ADDRESS-POOL-ID
+  ELSE
+* Check ContactID/AddressPoolID combination
+    PARM-ADDRESS-REL.ADDRESS-POOL-ID := PARM-ADDRESS-POOL.ADDRESS-POOL-ID
+    PARM-ADDRESS-REL.#ACTION         := #GET-CONT-POOL
+    RESET PARM-ADDRESS-REL.#RETURN-CODE
+    CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+    IF PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-POOL-NOT-FOUND OR
+        PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-NOT-FOUND
+* Address Pool/Contact combination Does not exists
+      IGNORE
+    ELSE
+      #AddressPool_ContactID := TRUE
+      #ExistingTypeForPoolId := PARM-ADDRESS-REL.ADDR-TYPE-CD
+      #ISN_PoolId            := PARM-ADDRESS-REL.ISN
+*    #AddressPoolId - current address pool ID
+    END-IF
+* Check ContactID/AddressType combination
+    PARM-ADDRESS-REL.ADDR-TYPE-CD:= AddressInfo.AddressTypeCode
+    PARM-ADDRESS-REL.#ACTION     := #GET-CONT-TYPE
+    RESET PARM-ADDRESS-REL.#RETURN-CODE
+    CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+    IF (PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-TYPE-NOT-FOUND OR
+        PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-NOT-FOUND)
+      IGNORE
+    ELSE
+      #AddressType_ContactID := TRUE
+      #ExistingPoolIdForType := PARM-ADDRESS-REL.ADDRESS-POOL-ID
+      #ISN_Type              := PARM-ADDRESS-REL.ISN
+    END-IF
+  END-IF
+***********************************************************************
+  PARM-ADDRESS-REL.ADDRESS-POOL-ID := PARM-ADDRESS-POOL.ADDRESS-POOL-ID
+  DECIDE FOR FIRST CONDITION
+* Add new address with the new type
+    WHEN #AddressPool_ContactID = false AND #AddressType_ContactID = false
+      PARM-ADDRESS-REL.#ACTION := #ADD
+* Add new address/Update address of type "Other"
+    WHEN #AddressPool_ContactID = false AND #AddressType_ContactID AND
+        PARM-ADDRESS-REL.ADDR-TYPE-CD = #Other
+      PARM-ADDRESS-REL.ISN     := #ISN_Type
+      PARM-ADDRESS-REL.#ACTION := #INIT-ACTION
+* Replace primary or secondary address with the new one
+    WHEN #AddressPool_ContactID = false AND #AddressType_ContactID AND
+        PARM-ADDRESS-REL.ADDR-TYPE-CD <> #Other
+      PARM-ADDRESS-REL.ISN     := #ISN_Type
+      PARM-ADDRESS-REL.#ACTION := #UPDATE
+* Add new address type/Update address type for existing Pool Id
+    WHEN #AddressPool_ContactID AND #AddressType_ContactID = false
+      PARM-ADDRESS-REL.ISN     := #ISN_PoolID
+      PARM-ADDRESS-REL.#ACTION := #INIT-ACTION
+*************************************************
+* Add existing address as a new type "Other"
+    WHEN #INIT-ACTION = #ADD AND #AddressPool_ContactID AND #AddressType_ContactID
+        AND PARM-ADDRESS-REL.ADDR-TYPE-CD <> #ExistingTypeForPoolId
+        AND PARM-ADDRESS-REL.ADDR-TYPE-CD = #Other
+      PARM-ADDRESS-REL.#ACTION := #ADD
+*************************************************
+* Add existing address as a new type "Other"
+    WHEN #INIT-ACTION = #ADD AND #AddressPool_ContactID AND #AddressType_ContactID
+        AND PARM-ADDRESS-REL.ADDR-TYPE-CD = #ExistingTypeForPoolId
+        AND PARM-ADDRESS-REL.ADDR-TYPE-CD = #Other
+      #ErrorCode := #ADD-DUPLICATE-ADDRESS-TYPE
+      ESCAPE MODULE
+*************************************************
+* Update existing primary or secondary address with existing address of other type
+    WHEN #INIT-ACTION = #ADD AND #AddressPool_ContactID AND #AddressType_ContactID
+        AND PARM-ADDRESS-REL.ADDR-TYPE-CD <> #ExistingTypeForPoolId
+        AND PARM-ADDRESS-REL.ADDR-TYPE-CD <> #Other
+      PARM-ADDRESS-REL.ISN     := #ISN_Type
+      PARM-ADDRESS-REL.#ACTION := #UPDATE
+*************************************************
+* Update existing record
+    WHEN #INIT-ACTION = #UPDATE AND #AddressPool_ContactID AND #AddressType_ContactID
+        AND PARM-ADDRESS-REL.ADDR-TYPE-CD = #ExistingTypeForPoolId
+      PARM-ADDRESS-REL.ISN     := #ISN_Type
+      PARM-ADDRESS-REL.#ACTION := #UPDATE
+*************************************************      
+    WHEN NONE
+      WRITE WORK FILE 1 VARIABLE 'Unable to determine the action' PARM-ADDRESS-REL.ADDR-TYPE-CD
+        ' ADDR-POOL-ID '  PARM-ADDRESS-REL.ADDRESS-POOL-ID
+        ' TO CONTACT ID ' PARM-ADDRESS-REL.CONTACT-ID
+  END-DECIDE
+*************************************************
+* Write Log
+  COMPRESS PARM-ADDRESS-REL.#ACTION ' TYPE ' PARM-ADDRESS-REL.ADDR-TYPE-CD
+    ' ADDR-POOL-ID '  PARM-ADDRESS-REL.ADDRESS-POOL-ID
+    ' CONTACT ID ' PARM-ADDRESS-REL.CONTACT-ID INTO #LOG
+  WRITE WORK FILE 1 VARIABLE #LOG
+**************************************************************************
+* Decide if write transaction log needed
+  IF PARM-ADDRESS-REL.CONTACT-ID = #ContactID   /* processing member
+    #CN := AddressInfo.CN
+  ELSE
+    #CN := F-GET-CN(<AddressInfo.ContactID(#I)>)
+  END-IF
+  IF #CN <> 0
+    #TRANSACTION-LOG := TRUE
+  END-IF
+*
+* Update/Add Address relationship
+  PARM-ADDRESS-REL.ADDR-LOCATION   := AddressInfo.AddressLocationCode
+  PARM-ADDRESS-REL.ATTENTION-LINE  := AddressInfo.AttentionLine
+  RESET PARM-ADDRESS-REL.RETURNED-MAIL-IND PARM-ADDRESS-REL.RETURNED-MAIL-DATE
+  PARM-ADDRESS-REL.ADDRESS-SOURCE  := #SOURCE-WEBSITE               /* Website
+  PARM-ADDRESS-REL.START-DATE      := AddressInfo.StartDate
+  PARM-ADDRESS-REL.END-DATE        := AddressInfo.EndDate
+  PARM-ADDRESS-REL.LAST-DATE-UPD   := #DATN
+  PARM-ADDRESS-REL.LAST-TIME-UPD   := #TIMN
+  PARM-ADDRESS-REL.LAST-USER-UPD   := #MEMBER
+  RESET PARM-ADDRESS-REL.#RETURN-CODE
+  IF PARM-ADDRESS-REL.#ACTION = #UPDATE-SWAP
+    CALLNAT 'OBJNADRL' PARM-ADDRESS-REL #ExistingPoolIdForType #ExistingTypeForPoolId
+  ELSE
+    CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+  END-IF
+  IF PARM-ADDRESS-REL.#RETURN-CODE NE ' '
+    #ErrorCode := PARM-ADDRESS-POOL.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+*
+  IF #TRANSACTION-LOG
+    PERFORM POPULATE-AFTER-IMAGE                     /* tr-log
+    PERFORM WRITE-TRANSACTION-LOG                    /* tr-log
+  END-IF
+*
+END-FOR
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-BEFORE-IMAGE
+***************************************
+*
+IF AddressInfo.AddressPoolId = 0 AND #INIT-ADDRESS-POOL-ID = 0
+  RESET BEFORE_IMAGE
+  ESCAPE ROUTINE
+END-IF
+RESET #PDA-ADDRESS
+IF #INIT-ACTION = #UPDATE AND #INIT-ADDRESS-POOL-ID <> 0
+  #ADD-POOL-ID := #INIT-ADDRESS-POOL-ID
+ELSE
+  #ADD-POOL-ID    := PARM-ADDRESS-POOL.ADDRESS-POOL-ID
+END-IF
+#ADD-CONTACT-ID := #ContactID
+#ADD-TYPE       := AddressInfo.AddressTypeCode
+* Load address before update for transaction logging
+CALLNAT 'ADDN001M' #PDA-ADDRESS
+BEFORE_IMAGE.ADDRESS-LINE-1    := #ADD-LINE-1
+BEFORE_IMAGE.ADDRESS-LINE-2    := #ADD-LINE-2
+BEFORE_IMAGE.ADDRESS-LINE-3    := #ADD-LINE-3
+*
+BEFORE_IMAGE.ADDR-TYPE-CD      := #ADD-TYPE
+BEFORE_IMAGE.ADDR-VALID-IND    := #ADD-VALID-IND
+BEFORE_IMAGE.RETURNED-MAIL-IND := #ADD-RETURNED-MAIL
+BEFORE_IMAGE.PREVENT-OVER-IND  := #ADD-PREVENT-OVER-IND
+BEFORE_IMAGE.ADDR-LOCATION     := #ADD-LOCATION
+BEFORE_IMAGE.ADDRESS-SOURCE    := #ADD-ADDRESS-SOURCE
+BEFORE_IMAGE.DATE-LAST-UPDATE  := #ADD-LAST-DATE-UPD
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE POPULATE-AFTER-IMAGE
+**************************************
+*
+RESET #PDA-ADDRESS
+#ADD-CONTACT-ID := PARM-ADDRESS-REL.CONTACT-ID
+#ADD-POOL-ID    := PARM-ADDRESS-REL.ADDRESS-POOL-ID
+#ADD-TYPE       := PARM-ADDRESS-REL.ADDR-TYPE-CD
+* Load address after update for transaction logging
+CALLNAT 'ADDN001M' #PDA-ADDRESS
+*
+AFTER_IMAGE.ADDRESS-LINE-1    := #ADD-LINE-1
+AFTER_IMAGE.ADDRESS-LINE-2    := #ADD-LINE-2
+AFTER_IMAGE.ADDRESS-LINE-3    := #ADD-LINE-3
+*
+AFTER_IMAGE.ADDR-TYPE-CD      := #ADD-TYPE
+AFTER_IMAGE.ADDR-VALID-IND    := #ADD-VALID-IND
+AFTER_IMAGE.RETURNED-MAIL-IND := #ADD-RETURNED-MAIL
+AFTER_IMAGE.PREVENT-OVER-IND  := #ADD-PREVENT-OVER-IND
+AFTER_IMAGE.ADDR-LOCATION     := #ADD-LOCATION
+AFTER_IMAGE.ADDRESS-SOURCE    := #SOURCE-WEBSITE
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+TR_ID_NUMBER  := #CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<PARM-ADDRESS-REL.CONTACT-ID>)
+TR_CLERK      := #MEMBER-CENTER-CLERK
+CALLNAT 'GPRNTR00' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE SEARCH-ADDRESS
+********************************
+*
+IF AddressInfo.ZipCode = ' '
+  AddressInfo.ZipCode := #ZERO-ZIP
+END-IF
+EXAMINE AddressInfo.ZipCode FOR #DEL DELETE
+COMPRESS AddressInfo.Street
+  AddressInfo.Unit
+  AddressInfo.City
+  AddressInfo.StateCode
+  AddressInfo.ZipCode
+  AddressInfo.CountryCode
+  AddressInfo.IntlRegion
+  AddressInfo.PostalCode
+  AddressInfo.Urbanization INTO #AddressString leaving no
+* #ContactID     := F-GET-CONTACT-ID(<AddressInfo.CN>)
+#AddressPoolID := F-ADDR-SEARCH(<#ContactID,#AddressString>)
+IF #AddressPoolID = 0
+  #NewAddress := TRUE
+END-IF
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,968 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*   bz Life Cycle FOR GPL/GP2
+* GPL/GP2 Proj
+* Run daily
+* 1) Identify events. 2) Trigger actions. 3) Create report.
+* Assumtions:
+* 1.  Feb 29 is a March 1
+* 2.  Executes every day
+* 3.  1 mo eq 30 days
+* 4.  2 mo eq 60 days
+* 5.  One CN might have many GPL/GP2 policies
+* 6.  Action ChgOwn include Addition of Payer for Mode = M, Q, S, A
+*
+* Exclusions: -------------------------------
+* GPL AND GP2
+*   Policy Terminated
+*   Exclusion for all 1.RPU 2.Payed-To < Today
+*   Exceed quntity of GIPO policies
+*   Exceed Combine FA of GIPO policies => non event b/c of AT restrictions
+*   Techical exclusions: second run
+
+* E V E N T S   A N D  P O L I C Y   S T A T E
+* ================================ GPL =========================================
+* Exclusion for all 1.RPU 2.Payed-To < Today
+* Reported current state of policy      State/Event   GPL Communication
+* ---------------------------------------- ------     ---------------------------
+* wait for N21-60 GIPO                     w21-60
+* Notified 60d to GIPO                     N21-60     60d to GIPO(L+E)
+* wait for N21-30 GIPO + 2xDB              w21-30
+* Notified 30d to GIPO + 2xDB              N21-30     30d to GIPO(Eml) + 2xDB(L+E)
+* wait for GIPO + 2xDB. Anniversary 21     w21
+* Action 2xDB. Anniversary 21              A21        (Dbl DB)
+* GIPO-21 next 90d                         G21
+* wait for N25-60                          w25-60
+* Notified - 60d to 25 GIPO                N25-60     60d to GIPO(L+E)
+* wait for N25-30                          w25-30
+* Notified - 30d to 25 GIPO                N25-30     30d to GIPO(Eml)
+* wait for GIPO-25. Annivesary 25          w25
+* GIPO-25 next 90d                         G25
+* ... 28
+* No more notifications. Age over 28       Stop GIPO
+* =================================== GP2 =======================================
+* Reported current state of policy       State/Event   GP2 Communication
+* --------------------------------------------------   --------------------------
+* wait for N18-30                           w18-30
+* Notify 30d to 2xDB to 18                  N18-30     30d to 2xDB(L+E)
+* Action 2xDB. Anniversary 18               A18        (Dbl DB)
+* wait for N21-30                           w21-30
+* Notify 30d to Own                         N21-30     30d to Own((L+E)
+* wait for A21 GIPO + Own                   w21
+* Action Ownership. + GIPO Anniversary 21   A21        (ChgOwn) Print New Cert. GIPO(L+E)
+* GIPO-21 next 90d                          G21
+* wait for w25-60                           w25-60
+* Notified - 60d to 25 GIPO                 N25-60      60d to GIPO(L+E)
+* wait for w25-30                           w25-30
+* Notified - 30d to 25 GIPO                 N25-30      60d to GIPO(Eml)
+* wait for GIPO-25. Anniversary 25          w25
+* GIPO-25 next 90d                          G25
+* ... 30
+* ... 35
+* ... 40
+* No more notifications. Age over 40          Stop  GIPO
+* ---------------------------------------------------------------------------------------
+* Known issues: 
+* ---
+* No GP2 ownership communications if the owner already the Insured prior to the 21st birthday.
+* ---
+* Do not generate a note for "30d Ownership Transfer" and "30d DB doubling"
+* ---
+* Exclude 60 and 30 GIPO note for GP2 21 
+* Ver 4.5 Upd 8/3/2016
+
+DEFINE DATA
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2  ID-NUMBER
+  2  MEMBER-CONTACT-ID
+  2  PROCESS-IND
+  2  INTRO-FLAG
+  2  NUMBER-MEMBERSHIPS
+  2  MILITARY-SERVICE
+  2  C*ACTIVE-SEGMENTS (N1)
+  2  ACTIVE-SEGMENTS(9)
+    3  POLICY-ID            (A16)
+    3  FACE-AMOUNT          (N7.2)
+    3  CASH-VALUE           (N7.2)
+    3  MODE                 (A1)
+    3  PAID-TO-DATE         (N8)
+    3  REDEFINE PAID-TO-DATE
+      4  PAID-TO-DATE_A    (A8)
+    3  PAY-STATUS
+    3  PLAN
+    3  STATUS
+    3  ISSUE-DATE
+    3  REDEFINE ISSUE-DATE
+      4 ISSUE-YYYYMM      (N6)
+      4 ISSUE-DD          (N2)
+    3  DEATH-BENEFIT       (N7.2)
+    3  NXT-MON-DEATH-BENEFIT
+*
+1 ST-U VIEW OF A-STATUS
+  2 DEATH-BENEFIT(N7.2/9)
+  2 NXT-MON-DEATH-BENEFIT(N7.2/9)
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 FIRST-NAME
+  2 LAST-NAME
+  2 DATE-OF-BIRTH           (N8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DATE-OF-BIRTH_A       (A8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 xxx                   (A4)
+    3 DATE-OF-BIRTH_MMDD    (A4)
+  2  DATE-OF-DEATH
+*
+1 POL-V VIEW OF A-POLICY-CONTACTS
+  2 ADD-USER                (A8)
+  2 ADD-DATE                (N8)
+  2 ADD-TIME                (N7)
+  2 POLICY-NUMBER           (A16)
+  2 RELATION                (N2)
+  2 REFERENCE-NUMBER        (N6)    /* D
+  2 CONTACT-ID              (N8)
+  2 LAST-UPD-USER           (A8)
+  2 LAST-UPD-DATE           (N8)
+  2 LAST-UPD-TIME           (N7)
+*
+1 #i                       (I2)
+1 #j                       (I2)
+1 #k                       (I2)
+1 #n                       (I2)
+1 N01_1                    (N01)
+1 N01_2                    (N01)
+1 N07/2                    (N08.2)
+1 l_Err                    (L)
+1 c_Err_1                  (I2)
+1 c_Err_2                  (I2)
+1 c_Excl                   (I2)
+1 c_Repeat                 (I2)
+1 c_GPL                    (I2)
+1 c_GPL-21A                (I2)
+1 c_GP2                    (I2)
+1 c_GP2-18                 (I2)
+1 c_GP2-21A                (I2)
+1 c_EML                    (I2)
+1 c_Log                    (I2)
+* ------------------------------------
+1 DB_Collection_N
+  2 DB_18                   (N8) INIT <180000>
+  2 DB_21                   (N8) INIT <210000>
+  2 DB_25                   (N8) INIT <250000>
+  2 DB_28                   (N8) INIT <280000>
+  2 DB_30                   (N8) INIT <300000>
+  2 DB_35                   (N8) INIT <350000>
+  2 DB_40                   (N8) INIT <400000>
+*
+1 DB_Collection_D
+  2 de_18                   (D) (EM=MM/DD/YYYY)
+  2 de_21                   (D) (EM=MM/DD/YYYY)
+  2 de_25                   (D) (EM=MM/DD/YYYY)
+  2 de_28                   (D) (EM=MM/DD/YYYY)
+  2 de_30                   (D) (EM=MM/DD/YYYY)
+  2 de_35                   (D) (EM=MM/DD/YYYY)
+  2 de_40                   (D) (EM=MM/DD/YYYY)
+*
+1 DB_A                    (A8)
+1 #d0                     (D)  INIT <*DATX>
+1 #de                     (D)
+1 v_A                     (A) DYNAMIC
+1 old_FA                  (N7.2)
+* -------------------------------------
+1 f_Out                     (A) DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/WORK/@@F_NAME'>
+1 f_Log                     (A80)
+1 f_Name                    (A) DYNAMIC INIT <'GPL-GP2_Daily_@@DAY.TXT'>
+1 v_out                     (A300)
+1 dm                        (A1) INIT <H'09'>
+1 nl                        (A2) INIT <H'0A0D'>
+1 v_Days                    (N5)
+1 c_Out                     (N5)
+1 A_pr                      (A/12) DYNAMIC
+1 msg_Err                   (A) DYNAMIC
+* 1 msg_Wrn                   (A) DYNAMIC
+1 v_RC                      (N4)
+1 p_Pol_Ch                  (A16/*)
+1 p_Pol_Ch_Type             (A6/*)
+1 msg_Event                 (A) DYNAMIC
+1 CN_Owner                  (N6)
+1 v_From                    (A6)
+1 v_To                      (A6)
+1 l_Add_Payer               (L)
+1 has_RPU                   (L)
+1 Ins_is_Own                (L)
+*
+1 old_Own       (N6)        /* used for Tr.reg
+1 nt_ID         (A9)        /* Note id
+1 #ISN          (P9)
+1 v_Today       (N8)    INIT <*DATN>
+1 REDEFINE v_Today
+  2  v_Today_YYYY  (N6)
+  2  v_Today_DD    (N2)
+* -----------------
+1  v_PN         (I1)     INIT  <1>
+END-DEFINE
+* -------------------------------------------------------------
+ON ERROR
+  WRITE  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR  / 'cn:' ST-V.ID-NUMBER
+END-ERROR
+v_From := '104264' /* tt test commented out
+v_To   := '300000' /* tt test commented out
+
+*    v_From := '202844'  /* tt test
+*    v_To   := '202844'  /* tt test
+
+IF *DEVICE <> 'BATCH'  /* [ is a batch ]
+  MOVE EDITED #d0(EM=YYYYMMDD) TO v_A
+  EXAMINE f_Name     FOR '@@DAY'    REPLACE v_A
+  EXAMINE f_Out      FOR '@@F_NAME' REPLACE f_Name
+  f_Log := f_Out
+  EXAMINE f_Log FOR 'Daily'     REPLACE 'Daily_Log'
+  SET KEY PF3
+  REPEAT
+    INPUT (IP=OFF)
+      1/2 'Today:' *DATX(AD=V EM=YYYY-MM-DD)  'GPL/GP2 Daily Report'
+*      3/2 2x 'Run date:' #d0 (AD=IM EM=YYYY-MM-DD) '(Allows to trigger events as of YYYY-MM-DD)' //
+      4/2 'CN range:  From:'  v_From(AD=IM EM=XXXXXX) 2x  'To:' 2x v_To(AD=IM EM=XXXXXX)
+      08/2 'GPL'(I) '- 21 Dbl' 5x 'GP2'(I) '- 18 Dbl; 21 Chg own'
+      13/1 'F_Name:' f_Name  (AD=IO AL=70)
+      15/1 'Out   :' f_Out   (AD=IO AL=70)
+      16/1 'Log   :' f_Log   (AD=IO AL=70)
+      23/2 'ENTR:'(I) 'Run' 6x 'PF3:'(I) 'Exit'
+
+    IF *PF-KEY = 'PF3' ESCAPE ROUTINE END-IF
+    IF v_From <> MASK(999999) OR v_To <> MASK(999999)
+      REINPUT 'From and To should be 999999'
+    END-IF
+    l_Err :=  FN_EXIST(<f_Out, 1>)
+    l_Err :=  FN_EXIST(<f_Log, 1>)
+    DEFINE WORK FILE 1 f_Out TYPE 'ASCII-COMPRESSED'
+    v_PN := 1  v_RC := PRT_FN_PUT(<v_PN, f_Log>)
+    ESCAPE BOTTOM
+  END-REPEAT
+END-IF           /* End of [is a batch]
+PRINT(1) *DAT4U *TIME 'DPL/GP2 Daily batch'
+READ ST-V BY MEMBER-KEY FROM v_From TO v_To
+  #ISN := *ISN
+  l_Err := FALSE
+*   msg_Wrn := ' '
+  N01_1 := 0 N01_2 := 0 #j := 0 N07/2 := 0
+  FOR #i = 1 TO C*ACTIVE-SEGMENTS
+    RESET A_pr(*)
+    IF STATUS(#i) <> 'D'
+        OR (PLAN(#i) <> 'GPL' AND PLAN(#i) <> 'GP2' )
+      ESCAPE TOP
+    END-IF
+    /* For Each GPL/GP2 Policy :: 
+    has_RPU := FALSE
+    IF PAY-STATUS(#i) = '45'
+      has_RPU := TRUE
+      IF PLAN(#i) = 'GPL'    /* Bypass for GPL. For GP2 ownership only
+        l_Err := TRUE
+        c_Excl  := c_Excl + 1
+        msg_Err := 'has RPU - Bypass'
+        PERFORM sbr_Log
+        ESCAPE TOP
+      END-IF
+    END-IF
+*                  --- Excluded as an ambiguous condition ---
+*       IF PAID-TO-DATE(#i) < *DATN
+*          msg_Wrn := 'Rear'
+*          MOVE EDITED PAID-TO-DATE_A(#i) TO #de(EM=YYYYMMDD)
+*          v_Days := #d0 - #de
+*          COMPRESS msg_Wrn v_Days INTO msg_Wrn
+*       END-IF
+
+    nt_ID     := ' '
+    msg_Err   := ' '
+    msg_Event := ' '
+    
+    DECIDE ON FIRST VALUE PLAN(#i)
+      VALUE 'GPL'
+        PERFORM sbr_GPL
+      VALUE 'GP2'
+        PERFORM sbr_GP2
+      NONE
+        IGNORE
+    END-DECIDE
+  END-FOR
+END-READ
+CLOSE WORK FILE 1
+WRITE(0)  NOTITLE *PROGRAM 'Completed' *DATX *TIMX
+SKIP(1) 2
+WRITE(1) *PROGRAM 'Completed' *DATX *TIMX         //
+  'Data error.  No Contact'  dm  c_Err_1     /
+  'Data error.  Bad DOB   '  dm  c_Err_2     /
+  'Excluded               '  dm  c_Excl      /
+  'Repeated               '  dm  c_Repeat    /
+  'GPL                    '  dm  c_GPL       /
+  '   GPL-21A  DB*2       '  dm  c_GPL-21A   /
+  'GP2                    '  dm  c_GP2       /
+  '   GP2-18   DB*2       '  dm  c_GP2-18    /
+  '   GP2-21A  Ownership  '  dm  c_GP2-21A   /
+  'GIPO Eml/Ltr           '  dm  c_EML       /
+  'Log records            '  dm  c_Log
+CLOSE PRINTER(1)
+* ==================================== GPL ===========================================
+DEFINE  sbr_GPL
+c_GPL := c_GPL + 1
+PERFORM sbr_DOB
+IF l_Err
+  c_Excl := c_Excl + 1
+  PERFORM sbr_Log
+  ESCAPE ROUTINE
+END-IF
+DECIDE FOR FIRST CONDITION
+  WHEN #d0 <= de_21
+    v_Days := de_21 - #d0
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days >  60
+        #de := de_21 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 60 days notification. 21 event'
+      WHEN  v_Days = 60                                                  /* Notify GPL-21-60  [NT}
+        #de := de_21 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 60 days to 21'
+        nt_ID := 'GPL-21-60'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days >  30
+        #de := de_21 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days notification. 21 event'
+      WHEN  v_Days = 30                                                  /* Notify GPL-21-30
+        #de := de_21 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 30 days to 21'
+        nt_ID := 'GPL-21-30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 0
+        MOVE EDITED de_21(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for Double Death Benefits. Anniversary 21'
+      WHEN v_Days = 0                                                     /* action GPL-21A
+        nt_ID := 'GPL-21A'
+        MOVE EDITED de_21(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Double Death Benefits. Anniversary 21'
+        c_GPL-21A := c_GPL-21A + 1
+        PERFORM sbr_Double  /* Notes writen in subroutine
+        PERFORM sbr_EML
+        /* No notes for Email comm */
+      WHEN NONE IGNORE
+    END-DECIDE
+  WHEN  #d0 <= de_25
+    v_Days := de_25 - #d0
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days > 60
+        #de := de_25 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 60 days notification. 25 event'
+      WHEN v_Days = 60                                                     /* action GPL-25-60
+        #de := de_25 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 60 days to 25'
+        nt_ID := 'GPL-25-60'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 30
+        #de := de_25 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days notification. 25 event'
+      WHEN v_Days = 30                                                     /* action GPL-25-30
+        #de := de_25 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 30 days to 25'
+        nt_ID := 'GPL-25-30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 0
+        MOVE EDITED de_25(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for GIPO-25. Annivesary 25'
+      WHEN v_Days = 0
+        MOVE EDITED de_25(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'GIPO-25 for next 90 days'
+      WHEN NONE IGNORE /* PRINT *LINE '********'
+    END-DECIDE
+  WHEN #d0 <= de_28
+    MOVE EDITED de_28(EM=MM/DD/YYYY) TO A_pr(2)
+    v_Days := de_28 - #d0
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days > 60
+        #de := de_28 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 60 days notification. 28 event'
+      WHEN v_Days = 60                                                     /* action GPL-28-60
+        #de := de_28 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 60 days to 28'
+        nt_ID := 'GPL-28-60'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 30
+        #de := de_28 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days notification. 28 event'
+      WHEN v_Days = 30                                                     /* action GPL-28-30
+        #de := de_28 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 30 days to 28'
+        nt_ID := 'GPL-28-30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 0
+        MOVE EDITED de_28(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for GIPO-28. Annivesary 28'
+      WHEN v_Days = 0
+        MOVE EDITED de_28(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'GIPO-28 for next 90 days'
+      WHEN NONE IGNORE
+    END-DECIDE
+  WHEN ANY
+    PERFORM sbr_REPORT
+  WHEN NONE
+    msg_Event := 'No more notifications. Age over 28'
+    PERFORM sbr_REPORT
+END-DECIDE
+END-SUBROUTINE
+* =========================== GP2 ===========================================================
+DEFINE  sbr_GP2
+c_GP2 := c_GP2 + 1
+PERFORM sbr_DOB
+IF l_Err
+  c_Excl := c_Excl + 1
+  PERFORM sbr_Log
+  ESCAPE ROUTINE
+END-IF
+* Added - for RPU only action is an Ownership change
+IF has_RPU
+    AND ( #d0 <= de_21 - 30 OR #d0 > de_21 )
+  l_Err := TRUE
+  c_Excl  := c_Excl + 1
+  msg_Err := 'has RPU - Bypass'
+  PERFORM sbr_Log
+  ESCAPE ROUTINE
+END-IF /* End has RPU
+
+DECIDE FOR FIRST CONDITION
+  WHEN #d0 <= de_18
+    v_Days := de_18 - #d0
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days >  30
+        #de := de_18 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days notification. 18 event'
+      WHEN  v_Days = 30                                                       /* action GP2_18-30
+        #de := de_18 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30d DBL DB. 18 event'
+        nt_ID := 'GP2-18-30'
+        PERFORM sbr_EML
+      WHEN v_Days > 0
+        #de := de_18
+        MOVE EDITED de_18(EM=MM/DD/YYYY) TO A_pr(2)
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for Double DB. Anniversary 18'
+      WHEN v_Days = 0                                                         /* action GP2_18  [Tr.Reg,NT]
+        MOVE EDITED de_18(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Double Death Benefits. Anniversary 18'
+        c_GP2-18 := c_GP2-18 + 1
+        nt_ID := 'GP2-18'
+        PERFORM sbr_Double
+        PERFORM sbr_EML   /* TT1 7-05-2016  To add correspondences after doubling event
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  WHEN #d0 <= de_21
+    v_Days := de_21 - #d0
+    Ins_is_Own := FALSE
+    FIND POL-V WITH POLICY-NUMBER =  POLICY-ID(#i)
+                   WHERE RELATION = 2
+            IF REFERENCE-NUMBER = ST-V.ID-NUMBER
+                AND POL-V.CONTACT-ID = MEMBER-CONTACT-ID
+                Msg_Err := 'Insured is an Owner'
+                PERFORM sbr_Log
+                Ins_is_Own := TRUE
+            END-IF   
+    END-FIND
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days >  30
+        #de := de_21 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for Notify Ownership: 30 days to 21'
+      WHEN v_Days =  30                                                      /* action GP2-21-30  [NT]
+        #de := de_21 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        IF  NOT Ins_is_Own
+              msg_Event := 'Notify Ownership: 30 days to 21'
+              nt_ID := 'GP2-21-30'
+              PERFORM sbr_EML
+              /* No notes 
+        END-IF   
+      WHEN  v_Days >  0
+        MOVE EDITED de_21(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for Ownership change and GIPO. Anniversary 21'
+      WHEN  v_Days =  0                                                       /* action GP2-21  [Tr.Reg,NT]
+        MOVE EDITED de_21(EM=MM/DD/YYYY) TO A_pr(2)
+        IF  NOT Ins_is_Own
+          msg_Event := 'Ownership change. Anniversary 21'
+          nt_ID := 'GP2-21A'
+          c_GP2-21A := c_GP2-21A + 1
+          PERFORM sbr_ChgOwn
+        END-IF
+        IF NOT has_RPU
+          nt_ID := 'GP2-21-GP' 
+          PERFORM sbr_EML
+          IF v_RC = 0
+            CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+          END-IF
+        END-IF
+       WHEN NONE
+        IGNORE
+    END-DECIDE
+  WHEN #d0 <= de_25
+    v_Days := de_25 - #d0
+    MOVE EDITED de_25(EM=MM/DD/YYYY) TO A_pr(2)
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days > 60
+        #de := de_25 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 60 days notification. 25 event'
+      WHEN v_Days =  60                                                       /* action GP2-25-60  [NT]
+        #de := de_25 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 60 days to 25'
+        nt_ID := 'GP2-25-60'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 30
+        #de := de_25 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days notification. 25 event'
+      WHEN v_Days =  30                                                        /* action GP2-25-30  [NT]
+        #de := de_25 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 30 days to 25'
+        nt_ID := 'GP2-25-30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 0
+        MOVE EDITED de_25(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for GIPO-25. Annivesary 25'
+      WHEN v_Days =  0
+        MOVE EDITED de_25(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'GIPO-25 next 90 days'
+      WHEN NONE IGNORE
+    END-DECIDE
+
+  WHEN #d0 <= de_30
+    v_Days := de_30 - #d0
+    MOVE EDITED de_30(EM=MM/DD/YYYY) TO A_pr(2)
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days > 60
+        #de := de_30 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 60 days 30 event'
+      WHEN v_Days =  60                                                        /* action GP2-30-60  [NT]
+        nt_ID := 'GP2-30-60'
+        #de := de_30 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 60 days to 30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 30
+        #de := de_30 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days 30 event'
+      WHEN v_Days =  30                                                        /* action GP2-30-30  [NT]
+        #de := de_30 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 30 days to 30'
+        nt_ID := 'GP2-30-30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 0
+        MOVE EDITED de_30(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for GIPO-30.  Annivesary 30'
+      WHEN v_Days =  0
+        MOVE EDITED de_30(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'GIPO-30 next 90 days'
+      WHEN NONE IGNORE
+    END-DECIDE
+
+  WHEN #d0 <= de_35
+    v_Days := de_35 - #d0
+    MOVE EDITED de_35(EM=MM/DD/YYYY) TO A_pr(2)
+
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days > 60
+        #de := de_35 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 60 days 35 event'
+      WHEN v_Days =  60                                                        /* action GP2-35-60  [NT]
+        nt_ID := 'GP2-35-60'
+        #de := de_35 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 60 days to 35'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 30
+        #de := de_35 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days 35 event'
+      WHEN v_Days =  30                                                        /* action GP2-35-30  [NT]
+        #de := de_35 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 30 days to 35'
+        nt_ID := 'GP2-35-30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 0
+        MOVE EDITED de_35(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for GIPO-35.  Annivesary 35'
+      WHEN v_Days =  0
+        MOVE EDITED de_35(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'GIPO-35 next 90 days'
+      WHEN NONE IGNORE
+    END-DECIDE
+
+  WHEN #d0 <= de_40
+    v_Days := de_40 - #d0
+    MOVE EDITED de_40(EM=MM/DD/YYYY) TO A_pr(2)
+    DECIDE FOR FIRST CONDITION
+      WHEN v_Days > 60
+        #de := de_40 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 60 days 40 event'
+      WHEN v_Days =  60                                                        /* action GP2-40-60  [NT]
+        nt_ID := 'GP2-40-60'
+        #de := de_40 - 60
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 60 days to 40'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 30
+        #de := de_40 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for 30 days 40 event'
+      WHEN v_Days =  30                                                        /* action GP2-40-30  [NT]
+        #de := de_40 - 30
+        MOVE EDITED #de(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'Notified - 30 days to 40'
+        nt_ID := 'GP2-40-30'
+        PERFORM sbr_EML
+        IF v_RC = 0
+          CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+        END-IF
+      WHEN v_Days > 0
+        MOVE EDITED de_40(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'wait for GIPO-40.  Annivesary 40'
+      WHEN v_Days =  0
+        MOVE EDITED de_40(EM=MM/DD/YYYY) TO A_pr(2)
+        msg_Event := 'GIPO-40 next 90 days'
+      WHEN NONE IGNORE
+    END-DECIDE
+    /* ..... */
+  WHEN ANY
+    PERFORM sbr_REPORT
+  WHEN NONE
+    msg_Event := 'No more notifications. Age over 40'
+    PERFORM sbr_REPORT
+END-DECIDE
+END-SUBROUTINE
+* ---------------------------------------------------------------------------------------------------
+DEFINE  sbr_DOB
+FIND CNT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+  IF NO RECORD FOUND
+    c_Err_1 := c_Err_1 + 1
+    msg_Err := 'Contact Record not found'
+    l_Err := TRUE
+    ESCAPE ROUTINE
+  END-NOREC
+  IF DATE-OF-DEATH <> 0
+    c_Err_1 := c_Err_1 + 1
+    COMPRESS 'Insured has a date of death' DATE-OF-DEATH INTO msg_Err
+    l_Err := TRUE
+    ESCAPE ROUTINE
+  END-IF
+
+  IF CNT-V.DATE-OF-BIRTH <> MASK(YYYYMMDD) OR CNT-V.DATE-OF-BIRTH = 0
+    c_Err_2 := c_Err_2 + 1
+    msg_Err := 'Date of Birth has an incorrect format'
+    l_Err := TRUE
+    ESCAPE ROUTINE
+  END-IF
+
+  IF CNT-V.DATE-OF-BIRTH_MMDD = MASK('0229')     /* convert to March 1
+    CNT-V.DATE-OF-BIRTH_MMDD := '0301'
+  END-IF
+
+  /*   Calculate event days --------------------------------------
+  RESET INITIAL DB_Collection_N
+  DB_18 := CNT-V.DATE-OF-BIRTH + DB_18  /* GP2
+  DB_A  := DB_18   MOVE EDITED DB_A  TO de_18(EM=YYYYMMDD)
+  DB_21 := CNT-V.DATE-OF-BIRTH + DB_21  /* GP2 GP1
+  DB_A  := DB_21   MOVE EDITED DB_A  TO de_21(EM=YYYYMMDD)
+  DB_25 := CNT-V.DATE-OF-BIRTH + DB_25  /* GP2 GP1
+  DB_A  := DB_25   MOVE EDITED DB_A  TO de_25(EM=YYYYMMDD)
+  DB_28 := CNT-V.DATE-OF-BIRTH + DB_28  /* GP1
+  DB_A  := DB_28   MOVE EDITED DB_A  TO de_28(EM=YYYYMMDD)
+  DB_30 := CNT-V.DATE-OF-BIRTH + DB_30  /* GP2
+  DB_A  := DB_30   MOVE EDITED DB_A  TO de_30(EM=YYYYMMDD)
+  DB_35 := CNT-V.DATE-OF-BIRTH + DB_35  /* GP2
+  DB_A  := DB_35   MOVE EDITED DB_A  TO de_35(EM=YYYYMMDD)
+  DB_40 := CNT-V.DATE-OF-BIRTH + DB_40  /* GP2
+  DB_A  := DB_40   MOVE EDITED DB_A  TO de_40(EM=YYYYMMDD)
+
+  MOVE EDITED DATE-OF-BIRTH (EM=9999/99/99)   TO A_pr(1)
+END-FIND
+END-SUBROUTINE
+* ---------------------------------------------------------------------------------------------------
+DEFINE  sbr_Report
+*       ----------
+c_Out := c_Out + 1
+N01_1 := 0
+IF c_Out = 1
+  COMPRESS 'GP1/GP2 Policies - State as of' #d0 *TIMX INTO v_Out
+  WRITE WORK FILE 1 v_Out
+  COMPRESS  'CN' 'Policy' 'Owner' 'Plan' 'DOB'
+    'Issue date' 'Face amnt' 'Cash val' 'Paid to' 'Mode' 'Death-Benefit'
+    'Days to event' 'Event day' 'Event' 'GIPO policies' 'GIPO Amount' 'No.GPL/GP2'
+*               'Warning'
+    INTO v_Out WITH DELIMITER dm
+  WRITE WORK FILE 1 v_Out
+END-IF
+
+CN_Owner := 0
+FIND POL-V WITH POLICY-NUMBER = POLICY-ID(#i)
+    WHERE RELATION = 2
+  CN_Owner := REFERENCE-NUMBER
+END-FIND
+
+FOR #j = 1 TO ST-V.C*ACTIVE-SEGMENTS
+  IF STATUS(#j) = 'D'
+      AND ( PLAN(#j) = 'GPL' OR = 'GP2' )
+    N01_1 := N01_1 + 1 END-IF
+END-FOR
+v_RC := 0
+CALLNAT 'GP-P2P' 2 POLICY-ID(#i) v_RC #n p_Pol_Ch(*) p_Pol_Ch_Type(*)
+IF v_RC <> 0
+  c_Excl := c_Excl + 1
+  COMPRESS 'Error' v_Rc 'in GPL/GP2 policy realtions'  INTO Msg_Err
+  PERFORM sbr_Log
+  ESCAPE ROUTINE
+END-IF
+FOR #j = 1 TO #n
+  EXAMINE FULL POLICY-ID(*) FOR FULL p_Pol_Ch(#j) GIVING INDEX #k
+  IF #k <> 0
+    IF STATUS(#k) = 'D'
+      N07/2 := N07/2 + ST-V.FACE-AMOUNT(#k)
+      N01_2 := N01_2 + 1
+    END-IF
+  END-IF
+END-FOR
+/* Populate # if GIPO'
+COMPRESS NUMERIC N01_1 INTO A_pr(3)
+MOVE EDITED ST-V.ISSUE-DATE(#i)(EM=9999/99/99)   TO A_pr(4)
+MOVE EDITED ST-V.FACE-AMOUNT(#i) (EM=Z,ZZZ,ZZ9)  TO A_pr(5)
+MOVE EDITED ST-V.CASH-VALUE(#i) (EM=Z,ZZZ,ZZ9)   TO A_pr(6)
+MOVE EDITED ST-V.PAID-TO-DATE(#i)(EM=9999/99/99) TO A_pr(7)
+MOVE EDITED N01_2(EM=9) TO A_pr(8)
+MOVE EDITED N07/2(EM=Z,ZZZ,ZZ9)   TO A_pr(9)
+MOVE EDITED ST-V.DEATH-BENEFIT(#i)(EM=Z,ZZZ,ZZ9.99)         TO A_pr(10)
+MOVE EDITED ST-V.NXT-MON-DEATH-BENEFIT(#i)(EM=Z,ZZZ,ZZ9.99) TO A_pr(11)
+
+COMPRESS ST-V.ID-NUMBER
+  dm POLICY-ID(#i)
+  dm CN_Owner
+  dm ST-V.PLAN(#i)
+  dm A_Pr(1)
+  dm A_Pr(4)
+  dm A_Pr(5)
+  dm A_Pr(6)
+  dm A_Pr(7)
+  dm MODE(#i)
+  dm A_pr(10)
+  dm v_Days
+  dm A_Pr(2)
+  dm msg_Event
+  dm A_pr(8)
+  dm A_pr(9)
+  dm A_pr(3)
+*        dm msg_Wrn
+  dm A_pr(11)
+*        dm A_pr(12)
+  INTO v_Out
+WRITE WORK FILE 1 v_Out
+END-SUBROUTINE
+* ---------------------------------------------------------------------------------------------------
+DEFINE  sbr_Double
+*       ------------
+IF ST-V.DEATH-BENEFIT(#i) > ST-V.FACE-AMOUNT(#i) /* = ST-V.FACE-AMOUNT(#i) * 2
+  l_Err := TRUE
+  c_Repeat := c_Repeat + 1
+  Msg_Err := 'Death benefits already modified'
+  PERFORM sbr_Log
+  ESCAPE ROUTINE
+END-IF
+GST.
+GET ST-U #ISN
+ST-U.DEATH-BENEFIT(#i)           := ST-U.DEATH-BENEFIT(#i) + ST-U.DEATH-BENEFIT(#i)
+ST-V.DEATH-BENEFIT(#i)           := ST-U.DEATH-BENEFIT(#i)                          /* for report
+IF ISSUE-DD(#i) > v_Today_DD  /* for CVALUSXX
+  ST-U.NXT-MON-DEATH-BENEFIT(#i) := ST-U.NXT-MON-DEATH-BENEFIT(#i) + ST-U.NXT-MON-DEATH-BENEFIT(#i)
+  ST-V.NXT-MON-DEATH-BENEFIT(#i) := ST-U.NXT-MON-DEATH-BENEFIT(#i)                  /* for report
+END-IF
+UPDATE(GST.)
+v_Rc := 0
+CALLNAT 'GP-TR' ID-NUMBER POLICY-ID(#i) FACE-AMOUNT(#i) DEATH-BENEFIT(#i) 0 0 v_Rc
+IF v_Rc <> 0
+  PRINT 'GP-TR' nt_ID v_Rc
+END-IF
+v_Rc := 0
+CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+IF v_Rc <> 0
+  PRINT 'GP-NOTE' nt_ID v_Rc                          /* --db
+END-IF
+END TRANSACTION
+END-SUBROUTINE
+* ---------------------------------------------------------------------------------------------------
+DEFINE  sbr_ChgOwn
+*       ------------
+l_Add_Payer := FALSE
+IF MODE(#i) = 'M' OR ='Q' OR = 'S' OR = 'A'
+  FIND POL-V WITH POLICY-NUMBER =  POLICY-ID(#i)
+      WHERE RELATION = 8
+    IF NO RECORD FOUND
+      l_Add_Payer := TRUE
+    END-NOREC
+  END-FIND
+END-IF
+FIND POL-V WITH POLICY-NUMBER =  POLICY-ID(#i)
+    WHERE RELATION = 2
+  IF REFERENCE-NUMBER = ID-NUMBER
+      AND CONTACT-ID = MEMBER-CONTACT-ID
+    l_Err := TRUE
+    c_Repeat := c_Repeat + 1
+    Msg_Err := 'Owner already changed to Insured'
+    PERFORM sbr_Log
+    ESCAPE BOTTOM
+  END-IF
+  LAST-UPD-USER := 'EDS'
+  LAST-UPD-DATE := *DATN
+  LAST-UPD-TIME := *TIMN
+  IF l_Add_Payer
+    RELATION      := 8
+    ADD-USER      := 'EDS'
+    ADD-DATE      := *DATN
+    ADD-TIME      := *TIMN
+    STORE POL-V
+    msg_Event := 'Ownership change. Add Payer. Anniversary 21'
+  END-IF
+  RELATION      := 2
+  old_Own := REFERENCE-NUMBER
+  REFERENCE-NUMBER := ID-NUMBER
+  CONTACT-ID := MEMBER-CONTACT-ID
+  LAST-UPD-USER := 'EDS'
+  LAST-UPD-DATE := *DATN
+  LAST-UPD-TIME := *TIMN
+  UPDATE
+  ESCAPE BOTTOM
+END-FIND
+IF l_Err
+  ESCAPE ROUTINE
+END-IF
+v_Rc := 0
+CALLNAT 'GP-TR' ID-NUMBER POLICY-ID(#i) 0 0 old_Own 0 v_Rc
+IF v_Rc <> 0
+  PRINT 'GP-TR' 'Error' nt_ID v_Rc
+END-IF
+IF l_Add_Payer
+  CALLNAT 'GP-TR' ID-NUMBER POLICY-ID(#i) 0 0 0 old_Own v_Rc
+  IF v_Rc <> 0
+    PRINT 'GP-TR' 'Error' nt_ID v_Rc
+  END-IF
+END-IF
+v_Rc := 0
+CALLNAT 'GP-NOTE' ID-NUMBER POLICY-ID(#i) nt_ID v_Rc
+IF v_Rc <> 0
+  PRINT 'GP-NOTE' 'Error' nt_ID v_Rc
+END-IF
+PERFORM sbr_EML
+END TRANSACTION
+END-SUBROUTINE
+* --------------------------------------EML-------------------------------------------------------------
+DEFINE sbr_EML
+*      ------------
+c_EML := c_EML + 1
+msg_Err := 'Communication'
+PERFORM sbr_Log
+v_RC := 0
+CALLNAT 'GP_COMM' nt_ID ID-NUMBER ST-V.POLICY-ID(#i) ST-V.FACE-AMOUNT(#i) ST-V.DEATH-BENEFIT(#i) v_RC
+IF v_RC <> 0
+  IF v_RC = 5
+    msg_Err := 'Bypass. Already sent'
+  ELSE
+    COMPRESS 'Error in Communication' 'RC=' v_RC INTO msg_Err  
+  END-IF
+  PERFORM sbr_Log
+END-IF
+END-SUBROUTINE
+* ---------------------------------------------------------------------------------------------------
+DEFINE  sbr_Log
+c_Log := c_Log + 1
+IF c_Log = 1
+  FORMAT(1) PS=60 LS=121
+  PRINT(1) NOTITLE 'Event'
+    dm 'CN'
+    dm 'Policy'
+    dm 'Plan'
+    dm 'Pay status'
+    dm 'Mode'
+    dm 'FA'
+    dm 'DB'
+    dm 'Message'
+END-IF
+PRINT(1) nt_ID
+  dm ST-V.ID-NUMBER
+  dm POLICY-ID(#i)
+  dm ST-V.PLAN(#i)
+  dm PAY-STATUS(#i)
+  dm MODE(#i)
+  dm ST-V.FACE-AMOUNT(#i)
+  dm ST-V.DEATH-BENEFIT(#i)
+  dm Msg_Err
+END-SUBROUTINE
+* ---------------------------------------------------------------------------------------------------
+
+END
+

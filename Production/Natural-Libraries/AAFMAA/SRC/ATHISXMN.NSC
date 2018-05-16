@@ -1,0 +1,465 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*****************************************************************
+*                                                               *
+* New COPYCODE member: ATHISXMN created by ACCORD on: 02/09/05  *
+*                                                               *
+*****************************************************************
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE     TAG  REASON                                            *
+* SAG  20060221 RH1  AS - Correction made to converted code.  Logic    *
+*                    now matches that of original Cobol module.        *
+** DW14-AB 20060327 Cobol changes 1/2006 migrated to converted Natural *
+* SAG-AB 20060622 Resequencing calculations to get optimal precision   *
+*                 and rounding                                         *
+* DRW  20070316 DW1  Stop using Loan Amt to calc ACV Interest          *
+* DRW 02/22/2008 DW2 Stop projection when CSV exceeds 9,999,999,99     *
+* DRW 08/18/2008 DW21 Gen Plus processing                              *
+* PAM 07/21/2010 PM3  Added 3SR service-fee processing                 *
+* TMT 01/08/2014 TT1  CHANGED GEN PROCESSING DOUBLING FACE AMOUNT FROM *
+*                      21 TO 18.  MAY NEED TO ADD MORE LOGIC TO DIFFER *
+*                      -ENTIATE BETWEEN GPL AND GP2 POLICIES           *
+* NGG 20141023   NG1  Annuity life products
+* NGG 20160111   NG2  VAWL new TDIV calculation
+* vxt 11/29/2017 vt1  /Ticket 6627/ fix for GP policies
+************************************************************************
+*
+DEFINE SUBROUTINE CALC-NEW-MNTHLY-VALUES-X
+*
+IF IS-TYPE = 'GP' /* Gen Plus     /* DW21
+  PERFORM ADD-AUTO-PREM-XNU  /* To get prem for history
+  MOVE IS-NXT-ACV TO IS-LST-ACV IS-LST-CSV
+  COMPUTE ROUNDED IS-NXT-ACV = IS-MIN-CSV
+    + (((IS-NXT-YR-MIN-CSV - IS-MIN-CSV) / 12) * IS-MNTH-IND)
+  MOVE IS-NXT-ACV TO IS-NXT-CSV IS-CSH-SUR-VL
+*  write 'athisxmn is-nxt-acv=' is-nxt-acv 'is-lst-acv=' is-lst-acv
+*                 'is-nxt-csv=' is-nxt-csv 'is-lst-csv=' is-lst-csv
+*     'Cur mcsv=' is-min-csv 'nxt-yr min-csv' is-nxt-yr-min-csv
+*     'mnth-ind =' is-mnth-ind 'is-premium=' is-premium
+  MOVE IS-EOM-DB TO IS-ILL-DB
+COMPUTE IS-GPL-AGE-21 = IS-DOB + 180000      /*TT1 changed from 210000 to 180000
+  MOVE IS-ISS-DATE TO IS-YYYYMMDD
+  COMPUTE IS-YYYY = IS-YYYY + (IS-DURATION - 1)
+  ADD IS-MNTH-IND TO IS-MM
+  IF IS-MM GT 12
+    SUBTRACT 12 FROM IS-MM
+    ADD 1 TO IS-YYYY
+  END-IF
+*
+*  write 'ATHISXMN is-dob' is-dob is-mnth-ind 'dur=' is-duration
+*    'age 21=' is-gpl-age-21 'coming month=' is-yyyymm 'db=' is-eom-db is-db
+*
+  IF IS-GPL-AGE-21-YYYYMM = IS-YYYYMM
+    COMPUTE IS-EOM-DB = IS-LST-DB * 2
+    MOVE IS-EOM-DB TO IS-ILL-DB IS-SAVE-INT-DB IS-DB
+*    write 'double db to' is-eom-db is-gpl-age-21
+  END-IF
+*
+reset is-coi is-interest                                            /* 02/23/2015 vt
+is-mon-maint-exp                         /* vt1 11/29/2017
+  ESCAPE ROUTINE
+END-IF
+*
+IF IS-TYPE = 'AL'
+**IF IS-ANNUITY-LIFE (< IS-TYPE >)  /* NG1
+  RESET IS-SNG-PREM-CURR IS-SNG-PREM-NXMO IS-WORK-PREM IS-INT-ACV
+    IS-INT-CSV IS-INT-DB IS-NAR IS-MON-DB-PROC-EXP IS-TDIV-A IS-TDIV-B
+    IS-RBC IS-CURR-ACQ
+  CALLNAT 'ATHISALC' /* NG1
+    IS-ISS-AGE
+    IS-DURATION
+    DISP-X
+    IS-GUAR-INT-RT
+    PLAN-CODE
+    LST-SNG-PA
+    NXT-SNG-PA
+    IS-M-GUAR-INT-RT-AL
+  COMPUTE ROUNDED IS-WORK-E = IS-LST-MCV-AL * IS-M-GUAR-INT-RT-AL
+  COMPUTE IS-NXT-MCV-AL = IS-LST-MCV-AL + IS-WORK-E
+ COMPUTE ROUNDED IS-INTEREST = ((IS-LST-ACV - IS-LN-AMT - IS-LN-AMT-2) *
+IS-M-CURR-RT) + (IS-LN-AMT * IS-M-LOAN-RT) + (IS-LN-AMT-2 * IS-M-LOAN-RT-2)
+  COMPUTE ROUNDED IS-WORK-E = IS-INTEREST * 1
+  MOVE IS-WORK-E TO IS-INTEREST
+**COMPUTE ROUNDED IS-WORK-B = IS-LST-ACV * (IS-M-CURR-RT - IS-M-CURR-RT-AL) NG1
+  COMPUTE ROUNDED IS-WORK-B = IS-LST-ACV * IS-M-CURR-RT-AL
+  COMPUTE ROUNDED IS-WORK-E = IS-WORK-B * IS-CALC-12-MORT-PORT
+  MOVE IS-WORK-E TO IS-COI
+  COMPUTE ROUNDED IS-MON-MAINT-EXP = IS-WORK-B - IS-COI
+*
+  IF #SERVICES                                        /* PM3
+      AND #OL-IND                                        /* PM3
+      AND #OL-INDEX = IS-SEG-X                           /* PM3
+      AND IS-ISS-AGE + IS-DURATION LE 99                 /* PM3
+    ADD IS-SVCS-FEE TO IS-COI                         /* PM3
+  END-IF                                              /* PM3
+*
+COMPUTE IS-NXT-ACV = IS-LST-ACV + IS-INTEREST - IS-COI - IS-MON-MAINT-EXP
+  IF IS-NXT-ACV GT 9999999.99  /* Stop PROJ at this point  /* DW2
+    MOVE 998 TO IS-DURATION
+    MOVE 998 TO IS-MNTH-IND
+    ESCAPE ROUTINE
+  END-IF
+  MOVE IS-NXT-ACV TO IS-CSH-SUR-VL
+  MOVE IS-NXT-ACV TO IS-NXT-CSV
+  COMPUTE ROUNDED IS-NXT-CONT-FUND = IS-NXT-ACV * 0.10
+  MOVE IS-NXT-CONT-FUND TO IS-AVL-TDIV
+  RESET IS-MON-AMORT-ACQ
+COMPUTE ROUNDED IS-WORK-B = LST-SNG-PA + (((NXT-SNG-PA - LST-SNG-PA) / 12) *
+    IS-MNTH-IND)
+  COMPUTE ROUNDED CUR-SNG-PA = IS-WORK-B * 1
+  COMPUTE ROUNDED IS-WORK-B = (IS-NXT-ACV - IS-AVL-TDIV) / CUR-SNG-PA
+  IF IS-LST-DB > IS-WORK-B
+    MOVE IS-LST-DB TO IS-WORK-B
+  END-IF
+  COMPUTE ROUNDED IS-EOM-DB = IS-WORK-B * 1
+  MOVE IS-EOM-DB TO IS-ILL-DB IS-SAVE-INT-DB
+  COMPUTE ROUNDED IS-WORK-B = (IS-NXT-MCV-AL * 0.90) / CUR-SNG-PA
+  COMPUTE ROUNDED IS-MIN-DB = IS-WORK-B + (IS-NXT-MCV-AL * 0.10)
+  ESCAPE ROUTINE
+END-IF
+*
+* Set values for calculations based on VAWL version NG2
+*
+IF #VERSION = '4'
+  IS-CALC-16-MAINT-PER-POL   := 28.24
+  IS-CALC-17-MAINT-PER-1K    := 0.14
+  IS-CALC-18-DB-PROC-PER-POL := 444.85
+  IS-CALC-19-DB-PROC-PER-1K  := 2.22
+END-IF
+*
+**          SAG-AB 20060622 START
+**COMPUTE ROUNDED IS-SNG-PREM-CURR = IS-SNG-PREM-1AGO + (((IS-MNTH-IND - 1) / 12) *
+**  (IS-SNG-PREM - IS-SNG-PREM-1AGO))
+COMPUTE #INTVAL1 = (IS-MNTH-IND - 1) / 12
+COMPUTE ROUNDED #INTVAL2 = IS-SNG-PREM - IS-SNG-PREM-1AGO
+COMPUTE ROUNDED #INTVAL3 = #INTVAL1 * #INTVAL2
+COMPUTE ROUNDED IS-SNG-PREM-CURR = IS-SNG-PREM-1AGO + #INTVAL3
+**COMPUTE ROUNDED IS-SNG-PREM-NXMO = IS-SNG-PREM-1AGO + ((IS-MNTH-IND / 12) *
+**  (IS-SNG-PREM - IS-SNG-PREM-1AGO))
+COMPUTE #INTVAL1 = IS-MNTH-IND / 12
+COMPUTE ROUNDED #INTVAL2 = IS-SNG-PREM - IS-SNG-PREM-1AGO
+COMPUTE ROUNDED #INTVAL3 = #INTVAL1 * #INTVAL2
+COMPUTE ROUNDED IS-SNG-PREM-NXMO = IS-SNG-PREM-1AGO + #INTVAL3
+**          SAG-AB 20060622 END
+*
+IF IS-RESTRICTED-MBR-SW = 'Y'
+COMPUTE ROUNDED IS-NXT-CSV = IS-MIN-CSV + (IS-MNTHLY-MIN-DIFF * IS-MNTH-IND)
+  RESET IS-COI IS-INTEREST IS-WORK-PREM
+  MOVE IS-FAC-AMT TO IS-EOM-DB
+  IF IS-NXT-CSV < 0
+    RESET IS-NXT-CSV
+  END-IF
+END-IF
+MOVE IS-NXT-CSV TO IS-CSH-SUR-VL
+IF IS-RESTRICTED-MBR-SW = 'Y'
+  ESCAPE ROUTINE
+END-IF
+*
+IF L-REIN-CODE NE 'REDO'
+  RESET IS-WORK-PREM
+  IF IS-PAID-UP-SW NE 'Y' AND L-REIN-CODE NE 'REIN'
+    IF L-REIN-CODE = ' '
+      PERFORM ADD-AUTO-PREM-XNU
+    ELSE
+      IF (IS-MODE = 12)
+          OR ((IS-MODE = 2) AND ((IS-TODAY-MON = IS-PRM-PD-MON(1))
+          OR (IS-TODAY-MON = IS-PRM-PD-MON(2))))
+          OR ((IS-MODE = 4) AND ((IS-TODAY-MON = IS-PRM-PD-MON(1))
+          OR (IS-TODAY-MON = IS-PRM-PD-MON(2))
+          OR (IS-TODAY-MON = IS-PRM-PD-MON(3))
+          OR (IS-TODAY-MON = IS-PRM-PD-MON(4))))
+          OR ((IS-MODE = 1) AND (IS-TODAY-MON = IS-PRM-PD-MON(1)))
+        MOVE IS-PREMIUM TO IS-WORK-PREM
+      END-IF
+    END-IF
+  END-IF
+  IF IS-CALC-INT-SW = 'N'
+    RESET IS-WORK-PREM
+  END-IF
+**  IF IS-PROJ-SW = 'Y' AND IS-PROCESS-IND = 'O' /* removed 10/2005 DW10-AB
+**    ADD IS-OO-COI-ADJ TO IS-WORK-PREM          /* DW10-AB 20060327
+**  END-IF                                       /* DW10-AB 20060327
+END-IF
+*
+IF IS-TYPE = 'SO' OR IS-TYPE = 'FS'
+  COMPUTE ROUNDED IS-WORK-B = IS-CALC-24-MAINT-PER-POL / 12
+ELSE
+  COMPUTE ROUNDED IS-WORK-B = (IS-CALC-16-MAINT-PER-POL +
+    (IS-CALC-17-MAINT-PER-1K * (IS-LST-DB / 1000))) / 12
+END-IF
+IF IS-PROJ-DUR > 1
+  COMPUTE ROUNDED IS-WORK-B = IS-WORK-B * ((1 + IS-INFLATION-RT) **
+    (IS-PROJ-DUR - 1))
+**COMPUTE ROUNDED IS-MON-MAINT-EXP = IS-WORK-B * +1      /*SAG 20060221 RH1 AS
+END-IF
+COMPUTE ROUNDED IS-MON-MAINT-EXP = IS-WORK-B * +1        /*SAG 20060221 RH1 AS
+IF IS-CALC-INT-SW = 'N'
+  RESET IS-MON-MAINT-EXP
+END-IF
+*
+IF IS-CURR-ACQ = 0 OR IS-DURATION > 10 OR IS-CALC-INT-SW = 'N'
+  RESET IS-MON-AMORT-ACQ
+END-IF
+COMPUTE IS-INT-ACV = IS-LST-ACV + IS-WORK-PREM - IS-MON-AMORT-ACQ -
+  IS-MON-MAINT-EXP
+COMPUTE IS-INT-CSV = IS-INT-ACV - IS-LST-CONT-FUND
+COMPUTE ROUNDED IS-WORK-B = IS-INT-CSV / IS-SNG-PREM-CURR
+COMPUTE ROUNDED IS-SAVE-INT-DB = IS-WORK-B * +1
+IF IS-WORK-B > IS-FAC-AMT
+  COMPUTE ROUNDED IS-INT-DB = IS-WORK-B * +1
+ELSE
+  MOVE IS-FAC-AMT TO IS-INT-DB
+END-IF
+*
+IF IS-TYPE = 'SO' OR IS-TYPE = 'FS'
+  MOVE IS-FAC-AMT TO IS-INT-DB
+END-IF
+IF IS-TYPE = 'SO' OR IS-TYPE = 'FS'
+  MOVE IS-CALC-25-DB-PROC-PER-POL TO IS-WORK-B
+ELSE
+  COMPUTE ROUNDED IS-WORK-B = IS-CALC-18-DB-PROC-PER-POL +
+    (IS-CALC-19-DB-PROC-PER-1K * (IS-INT-DB / 1000))
+END-IF
+IF IS-PROJ-DUR > 1
+COMPUTE ROUNDED IS-WORK-B = IS-WORK-B * ((1 + IS-INFLATION-RT) ** (IS-PROJ-DUR - 1))
+**COMPUTE ROUNDED IS-MON-DB-PROC-EXP = IS-WORK-B * +1    /*SAG 20060221 RH1 AS
+END-IF
+COMPUTE ROUNDED IS-MON-DB-PROC-EXP = IS-WORK-B * +1      /*SAG 20060221 RH1 AS
+*
+COMPUTE ROUNDED #TEMPFLT1 = IS-INT-DB
+COMPUTE ROUNDED #TEMPFLT2 = (#TEMPFLT1 /(1 + IS-M-GUAR-INT-RT))
+COMPUTE ROUNDED IS-NAR    = #TEMPFLT2 - IS-INT-CSV + IS-MON-DB-PROC-EXP
+IF (IS-ISS-AGE + IS-DURATION > 99) OR IS-CALC-INT-SW = 'N'
+  RESET IS-COI
+ELSE
+  COMPUTE ROUNDED IS-COI = IS-MORT-RT * (IS-NAR / 1000)
+END-IF
+IF IS-PREM-RATING = '1'
+  COMPUTE ROUNDED IS-COI = IS-COI * 1.25
+ELSE
+  IF IS-PREM-RATING = '2'
+    IF IS-SMOK-STATUS = 'N'
+      IF IS-ISS-AGE < 71
+        COMPUTE ROUNDED IS-COI = IS-COI * 1.75
+      ELSE
+        IF IS-ISS-AGE < 76
+          COMPUTE ROUNDED IS-COI = IS-COI * 1.50
+        ELSE
+          COMPUTE ROUNDED IS-COI = IS-COI * 1.70
+        END-IF
+      END-IF
+    ELSE
+      IF IS-ISS-AGE < 66
+        COMPUTE ROUNDED IS-COI = IS-COI * 1.75
+      ELSE
+        IF IS-ISS-AGE < 71
+          COMPUTE ROUNDED IS-COI = IS-COI * 1.60
+        ELSE
+          COMPUTE ROUNDED IS-COI = IS-COI * 1.45
+        END-IF
+      END-IF
+    END-IF
+  ELSE
+    IF IS-PREM-RATING = '3'
+      IF IS-SMOK-STATUS = 'N'
+        IF IS-ISS-AGE < 71
+          COMPUTE ROUNDED IS-COI = IS-COI * 2.20
+        ELSE
+          IF IS-ISS-AGE < 76
+            COMPUTE ROUNDED IS-COI = IS-COI * 1.80
+          ELSE
+            COMPUTE ROUNDED IS-COI = IS-COI * 2.00
+          END-IF
+        END-IF
+      ELSE
+        IF IS-ISS-AGE < 61
+          COMPUTE ROUNDED IS-COI = IS-COI * 2.10
+        ELSE
+          IF IS-ISS-AGE < 66
+            COMPUTE ROUNDED IS-COI = IS-COI * 2.00
+          ELSE
+            IF IS-ISS-AGE < 71
+              COMPUTE ROUNDED IS-COI = IS-COI * 1.90
+            ELSE
+              COMPUTE ROUNDED IS-COI = IS-COI * 1.65
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+COMPUTE ROUNDED IS-WORK-E = IS-COI * 1
+MOVE IS-WORK-E TO IS-COI
+*
+**             REMOVE BELOW FOR 1/2006 M/E - DW14
+**IF IS-PROCESS-IND = 'G'                           /* DW14-AB 20060327
+**   AND IS-SEG-X = IS-FIRST-GF-POL                 /* DW14-AB 20060327
+**   AND (IS-ISS-AGE + IS-DURATION LE 99)           /* DW14-AB 20060327
+**  COMPUTE IS-COI = (IS-COI + (IS-SVCS-FEE - 2.00))/* DW14-AB 20060327
+**END-IF                                            /* DW14-AB 20060327
+*
+IF #SERVICES                                        /* PM3
+    AND #OL-IND                                        /* PM3
+    AND #OL-INDEX = IS-SEG-X                           /* PM3
+    AND IS-ISS-AGE + IS-DURATION LE 99                 /* PM3
+  ADD IS-SVCS-FEE TO IS-COI                         /* PM3
+END-IF                                              /* PM3
+*
+COMPUTE ROUNDED #XX = IS-LST-CONT-FUND /(1 + IS-CALC-21-TDIV-B-RATIO)
+COMPUTE ROUNDED IS-TDIV-B = IS-LST-CONT-FUND - #XX
+COMPUTE ROUNDED IS-TDIV-A := #XX
+**COMPUTE IS-TDIV-A = IS-LST-CONT-FUND /(1 + IS-CALC-21-TDIV-B-RATIO)
+**COMPUTE IS-TDIV-B = IS-LST-CONT-FUND - IS-TDIV-A
+* Below replaced 3/16/2007
+* MPUTE ROUNDED IS-INTEREST = ((IS-INT-CSV - IS-COI - IS-LN-AMT - IS-LN-AMT-2) *
+* IS-M-CURR-RT) + (IS-TDIV-A * IS-M-TDIV-A-INT-RT)
+* + (IS-TDIV-B * IS-M-TDIV-B-INT-RT)
+* + (IS-LN-AMT * IS-M-LOAN-RT)  + (IS-LN-AMT-2 * IS-M-LOAN-RT-2)
+*  New Int Calc as of 3/16/2007 bypassing Loan
+COMPUTE ROUNDED IS-INTEREST = ((IS-INT-CSV - IS-COI) *
+  IS-M-CURR-RT) + (IS-TDIV-A * IS-M-TDIV-A-INT-RT)
+  + (IS-TDIV-B * IS-M-TDIV-B-INT-RT)
+*
+COMPUTE ROUNDED IS-WORK-E = IS-INTEREST * 1
+MOVE IS-WORK-E TO IS-INTEREST
+*
+IF IS-INTEREST < 0 OR IS-CALC-INT-SW = 'N'
+  RESET IS-INTEREST
+END-IF
+*
+COMPUTE ROUNDED IS-NXT-ACV = IS-INT-ACV - IS-COI + IS-INTEREST
+IF IS-PAID-UP-SW = 'Y'
+  RESET IS-WORK-E
+ELSE
+  MOVE IS-ANN-PREM TO IS-WORK-E
+END-IF
+/*
+/* New TDIV calculation requested by actuaries  NG2
+/*
+IF #VERSION = '4'
+* The new value of TDIV-A is based on the previous month value + new factor
+*                           defined in ATHISWRK
+COMPUTE ROUNDED IS-TDIV-A = (IS-INTEREST * IS-TDIV-A-FACTOR-4) + IS-TDIV-A
+ELSE
+/* The previous versions of VAWL change the TDIV calculation
+/* Currently they are using the same factor IS-TDIV-A-FACTOR
+COMPUTE ROUNDED IS-TDIV-A = (IS-INTEREST * IS-TDIV-A-FACTOR-3) + IS-TDIV-A
+*  COMPUTE ROUNDED IS-RISK1 = IS-NXT-ACV * 0.0327
+*  COMPUTE ROUNDED IS-RISK2 = IS-NAR * 0.0015
+*  COMPUTE ROUNDED IS-RISK3 = (IS-NXT-ACV - IS-LST-CONT-FUND) * 0.0075
+*  COMPUTE ROUNDED IS-RISK4 = IS-WORK-E * 0.00
+*  COMPUTE ROUNDED IS-RBC = IS-CALC-20-RBC-RATIO * (IS-RISK4
+*   + ((((IS-RISK1 + IS-RISK3) ** 2) + (IS-RISK2 ** 2)) ** 0.5))
+* *
+*  COMPUTE IS-WORK-B = IS-NXT-ACV * 0.10
+*  IF IS-WORK-B < IS-RBC
+*   COMPUTE ROUNDED IS-TDIV-A = IS-WORK-B * 1
+*  ELSE
+*   COMPUTE ROUNDED IS-TDIV-A = IS-RBC * 1
+*  END-IF
+END-IF
+COMPUTE ROUNDED IS-TDIV-B = IS-TDIV-A * IS-CALC-21-TDIV-B-RATIO
+* PRINT
+*   / 'VERSION..............:' #VERSION
+*   / 'PREVIOUS IS-TDIV-A...:' #XX
+*   / 'INTEREST.............:' IS-INTEREST
+*   / 'TDIV FACTOR 4........:' IS-TDIV-A-FACTOR-4
+*   / 'TDIV FACTOR 3........:' IS-TDIV-A-FACTOR-3
+*   / 'IS-TDIV-A............:' IS-TDIV-A
+*   / 'IS-TDIV-B............:' IS-TDIV-B
+/*
+COMPUTE IS-NXT-CONT-FUND = IS-TDIV-A + IS-TDIV-B
+COMPUTE IS-NXT-CSV = IS-NXT-ACV - IS-NXT-CONT-FUND
+COMPUTE ROUNDED IS-WORK-B = IS-NXT-CSV / IS-SNG-PREM-NXMO
+IF IS-WORK-B > IS-FAC-AMT
+  COMPUTE ROUNDED IS-EOM-DB = IS-WORK-B * +1
+ELSE
+  MOVE IS-FAC-AMT TO IS-EOM-DB
+END-IF
+*
+IF IS-LST-DB > IS-EOM-DB
+  MOVE IS-LST-DB TO IS-EOM-DB
+END-IF
+*
+IF (IS-ISS-AGE + IS-DURATION > 99) AND IS-NXT-CSV > IS-EOM-DB
+  MOVE IS-NXT-CSV TO IS-EOM-DB
+END-IF
+IF IS-TYPE = 'SO' OR IS-TYPE = 'FS'
+  MOVE IS-FAC-AMT TO IS-EOM-DB
+END-IF
+*
+IF IS-CALC-INT-SW = 'N'
+  MOVE IS-LST-ACQ TO IS-CURR-ACQ
+ELSE
+  COMPUTE ROUNDED IS-CURR-ACQ = (IS-LST-ACQ - IS-MON-AMORT-ACQ) *
+    (1 + IS-M-ACQ-LOAN-INT-RT)
+**IF (IS-CURR-ACQ < 0) OR (IS-DURATION > 10)             /*SAG 20060221 RH1 AS
+**  RESET IS-CURR-ACQ                                    /*SAG 20060221 RH1 AS
+**END-IF                                                 /*SAG 20060221 RH1 AS
+END-IF
+IF (IS-CURR-ACQ < 0) OR (IS-DURATION > 10)               /*SAG 20060221 RH1 AS
+RESET IS-CURR-ACQ                                      /*SAG 20060221 RH1 AS
+END-IF                                                   /*SAG 20060221 RH1 AS
+*
+COMPUTE ROUNDED IS-AVL-TDIV = IS-NXT-CONT-FUND - IS-CURR-ACQ
+IF IS-AVL-TDIV < 0
+  RESET IS-AVL-TDIV
+END-IF
+COMPUTE ROUNDED IS-CSH-SUR-VL = IS-NXT-CSV + IS-AVL-TDIV
+COMPUTE ROUNDED IS-ILL-DB = IS-EOM-DB + IS-AVL-TDIV
+IF IS-TYPE = 'SO' OR IS-TYPE = 'FS'
+  MOVE IS-FAC-AMT TO IS-ILL-DB
+END-IF
+*
+END-SUBROUTINE
+*
+********************************************************************************
+*
+DEFINE SUBROUTINE ADD-AUTO-PREM-XNU
+*
+* write 'top of add auto-prem' is-pad-code is-mode-mode is-pd-thru-yyyymm is-type
+*    'pay-status=' is-pay-status
+IF ((IS-PAD-CODE = 'E') AND (IS-MODE-MODE = 'E'))
+    OR (IS-PAD-CODE = 'V')
+    OR ((IS-PAD-CODE = 'W') AND (IS-POL-OWNER = 'N'))
+    OR ((IS-PAD-CODE = 'X') AND (IS-POL-OWNER = 'D'))
+  IF IS-PD-THRU-YYYYMM GE IS-RUN-DATE-YYYYMM
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+**IF NOT ((IS-PAD-CODE = 'E') AND (IS-MODE-MODE = 'E'))    /*SAG 20060224 RH1 AS
+IF ((IS-PAD-CODE = 'E') AND (IS-MODE-MODE = 'E'))
+    OR (IS-PAD-CODE = 'V')
+    OR ((IS-PAD-CODE = 'W') AND (IS-POL-OWNER = 'N'))
+    OR ((IS-PAD-CODE = 'X') AND (IS-POL-OWNER = 'D'))
+    OR ((IS-MODE-MODE = 'G') AND (IS-PAY-STATUS = '20'))
+    OR ((IS-MODE-MODE = 'G') AND (IS-PAY-STATUS = '22'))
+    OR ((IS-TYPE = 'FS') AND (IS-DURATION = 1))
+IGNORE                                                   /*SAG 20060224 RH1 AS
+ELSE                                                       /*SAG 20060224 RH1 AS
+  ESCAPE ROUTINE
+END-IF
+*
+IF IS-TYPE = 'OL' OR IS-TYPE = 'SO' OR IS-TYPE = 'FS' OR = 'GP'   /* DW21
+  MOVE IS-DOB TO IS-PD-UP
+  ADD 100 TO IS-PD-UP-YYYY
+ELSE
+  MOVE IS-ISS-DATE TO IS-PD-UP
+  ADD IS-TYPE-YEARS TO IS-PD-UP-YYYY
+END-IF
+IF IS-PD-UP-YYYYMM < IS-RUN-DATE-YYYYMM
+  ESCAPE ROUTINE
+END-IF
+MOVE IS-PREMIUM TO IS-WORK-PREM
+* write 'end of add prem=' is-work-prem
+*
+END-SUBROUTINE
+*
+********************************************************************************
+*

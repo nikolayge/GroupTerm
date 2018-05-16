@@ -1,0 +1,121 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  GOSTCN05 - Update Status Code and Marriage fields of Sp/FS
+*  NG Created 05/04/2012
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* NGG    08/07/2012  NG1    Fix dependents FIR synch                   *
+*
+DEFINE DATA
+PARAMETER
+1 RequestCode        (I4)
+1 #CALL_MBCN0064     (L)
+1 #CALL_MBCN0065     (L)
+1 ErrorCode          (I4)
+1 ErrorDescription   (A) DYNAMIC
+1 #Relation
+  2 SystemSource                 (A) DYNAMIC
+  2 ParentContact                (N8)
+  2 DependentContact             (N8)
+  2 RelationshipCode             (A1)
+  2 ExistingRelationshipCode     (A1)
+  2 DependentStatusCode          (A1)
+  2 SpouseDateOfMarriage         (N8)
+  2 SpouseBirthCertCode          (A1)
+  2 SpouseMarriageCertCode       (A1)
+  2 FormerSpouseDateOfDivorce    (N8)
+  2 FormerSpouseDateOfMarriage   (N8)
+  2 FormerSpouseBirthCertCode    (A1)
+  2 FormerSpouseMarriageCertCode (A1)
+LOCAL USING MBCA0064
+LOCAL USING MBCA0065
+LOCAL USING C2230ACB
+LOCAL USING C2231ACB
+LOCAL
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER
+  2 CONTACT-ID
+  2 CONTACT-TYPE
+  2 RANK-ID
+  2 DATE-OF-BIRTH
+  2 BIRTH-CERT-CODE
+  2 DATE-OF-DEATH
+  2 DEATH-CERT-CODE
+  2 FIRST-NAME
+  2 LAST-NAME
+  2 MIDDLE-NAME
+  2 SUFFIX
+  2 PREFIX-TITLE
+  2 GENDER-CD
+  2 SSN
+1 #ADD       (I4) CONST <1>
+1 #UPDATE    (I4) CONST <2>
+1 #DELETE    (I4) CONST <3>
+*
+END-DEFINE
+*
+IF NOT ( #CALL_MBCN0064 OR #CALL_MBCN0065)
+  ESCAPE ROUTINE
+END-IF
+*
+IF ParentContact <= 0
+  ErrorCode := 97
+  COMPRESS 'Parent contact MISSING' ParentContact INTO ErrorDescription
+  ESCAPE ROUTINE
+END-IF
+FIND (1) CNT-V WITH CONTACT-ID = ParentContact
+  IF CNT-V.ID-NUMBER = 0
+    ErrorCode := 98
+    COMPRESS 'No Status record for parent contact' ParentContact INTO ErrorDescription
+    ESCAPE ROUTINE
+  END-IF
+  Fir_Sync.CN        := CNT-V.ID-NUMBER
+END-FIND
+Fir_Sync.ContactID := DependentContact
+FIND (1) CNT-V WITH CONTACT-ID = DependentContact   /* NG1   Start
+  Fir_Sync.SSN         := CNT-V.SSN
+  Fir_Sync.DateOfBirth := CNT-V.DATE-OF-BIRTH
+  Fir_Sync.GenderCode  := CNT-V.GENDER-CD
+  Fir_Sync.LastName    := CNT-V.LAST-NAME
+  Fir_Sync.FirstName   := CNT-V.FIRST-NAME
+  Fir_Sync.MiddleName  := CNT-V.MIDDLE-NAME
+  Fir_Sync.Suffix      := CNT-V.SUFFIX
+END-FIND
+*
+IF #Relation.DependentStatusCode = ' '
+  IF #Relation.RelationshipCode = 'S'
+    #Relation.DependentStatusCode := 'S'
+  END-IF
+  IF #Relation.RelationshipCode = 'F'
+    #Relation.DependentStatusCode := 'F'
+  END-IF
+  IF #Relation.RelationshipCode = 'G'
+    #Relation.DependentStatusCode := 'G'
+  END-IF
+END-IF
+*                                                   /* NG1   End
+Fir_Sync.RelationshipCode    := #Relation.RelationshipCode
+Fir_Sync.DependentStatusCode := #Relation.DependentStatusCode
+Fir_Sync.SystemSource        := #Relation.SystemSource
+MOVE BY NAME Fir_Sync TO Status_Sync
+MOVE BY NAME #Relation TO Status_Sync
+*
+IF #CALL_MBCN0064
+  CALLNAT 'MBCN0064' Status_Sync
+    #OLD-VALUES
+    #NEW-VALUES
+END-IF
+IF #CALL_MBCN0065
+  IF RequestCode = #DELETE
+    ActionType := 'DELETE'
+  ELSE
+    ActionType := 'UPDATE'
+  END-IF
+  CALLNAT 'MBCN0065' Fir_Sync
+END-IF
+END

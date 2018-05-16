@@ -1,0 +1,454 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPCAPL - LIST CAP MEMBERS & PRINT CAP OPTION LETTER
+*                        AOAP001D/ATHPTEMP PRINTS CAP FAS LETTER
+* SIMPLY RUN THIS JOB TO GET CAP OPTION LTR (NO CHANGES NEEDED)
+* 10/2003 - THIS PGM MODIFIED TO PRODUCE A DATA FILE TO IMPORT INTO A
+*           FORMATTED WORD DOCUMENT.  ALL LETTERS CREATED IN THIS
+*           PROGRAM HAVE BEEN DISABLED.  TASK # 120 - TDM
+********************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG     REASON
+* DRW 01262005 DW1   use GDUESSXX to CALC svc-fee
+* DRW 03222005 DW2   bypass non-active CAP mbrs on CAP OPT ltrs
+* DRW 05162005 DW3   Add Sex for LTII Rates
+* DRW 06302005 DW4   Handle more than 999 months to payoff
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)
+*                    EBCDIC to HEX code '09' ASCII
+* DRW 04192006 DW5   Use Updated LT face amt and bypass mode E & undelv
+* DRW  09062006 DW6  Increase size of #recs-read
+* DRW 11/29/2008 DW7 Increase number of entries for #TERM-CNT
+* RSE 09/21/2009 RE1 Change PROCESS-IND logic for Unification
+* YAK 05/04/2010 YK1 Correct calculation for PARM-DATE
+* PAM 09/29/2010 PM2 truncate address for now
+* YAK 10/09/2012 YK2 Use function to identify Level Term II plans
+* YAK 11/08/2012 YK3 Add No Medical Term plan (EZ)
+* RSE 04/18/2013 RE2 Stability Project for $1M Policy - increase length
+*                    of face amount field
+* JNT 09/17/2013 JT1 Address normalization
+* YK4 06/04/2014 YK4 Call generic program to load CAP options letters
+*                    data to Letters file for SSRS process
+*                    Remove unused code/reports/fields
+* YK5 08/07/2015 YK5 Stop CAP Option letters by user request
+* YF1 01/22/2018 YF1 Unique identifier for plan Ticket 5936
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GPBACOMM                       /* YK4
+LOCAL
+*
+* * * *   S T A T U S   F I L E   * * * * * * * * * * * * * * *
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 INTRO-FLAG          (A1)
+  2 PROCESS-IND
+  2 MEMBER-CONTACT-ID               /* JT1
+  2 MILITARY-STATUS
+  2 LAST-MBRSHIP-PHONE-DT
+  2 MEMBERSHIP-DRIVE (A6)
+  2 REDEFINE MEMBERSHIP-DRIVE
+    3 PC-1        (A1)
+    3 PC-2        (A1)
+    3 PC-3        (A1)
+    3 PC-4        (A1)
+    3 PC-5        (A1)
+    3 PC-6        (A1)
+  2 ALOT-AMT
+  2 C*ACTIVE-SEGMENTS
+  2 STATUS              (9)
+  2 MODE                (9)
+  2 PLAN                (9)
+  2 PAY-STATUS          (9)
+  2 FACE-AMOUNT         (9)
+  2 ANNUAL-PREM         (9)
+  2 ISSUE-DATE          (N8/9)
+  2 NUM-MBRSHIPS        (N1/9)
+  2 CASH-VALUE          (9)
+  2 PAID-TO-DATE        (N8/9)
+  2 CONV-DURATION       (N3/9)
+  2 MONTH-ALLOC-AMT     (N7.2/9)     /* NG99
+  2 X-LOAN-AMOUNT (9)
+  2 X-LOAN-DATE (9)
+  2 X-ALT-LP-AMT (9)
+*
+1 #SUFFIX     (A3)
+1 #LOAN-BAL   (N7.2/9)
+1 #LOAN-BAL-2 (N7.2/9)
+1 #ACC-INT    (N7.2/9)
+1 #ACC-INT-2  (N7.2/9)
+1 #CSV        (N7.2/9)
+1 #CVALUE     (N7.2/9)
+1 #LVALUE     (N7.2/9)
+1 #MCSV       (N7.2/9)
+1 #DB         (N7.2/9)
+1 #ANN-PREMIUM (N7.2/9)
+1 #FACE-AMT   (N7.2/9)
+1 #TPP        (N7.2/9)
+1 #CSV-P      (P7.2/9)
+*
+1 #TOT-CAP-MBRS   (P5)
+1 #NUM-CAP-TERM   (P5)
+1 #NUM-CAP-WL     (P5)
+*
+1 #NEW-CAP-DATE   (N8)
+1 REDEFINE #NEW-CAP-DATE
+  2 #NCD-YYYY   (N4)
+  2 #NCD-MM     (N2)
+  2 #NCD-DD     (N2)
+*
+1 #TAB       (A1) INIT <H'09'>
+1 #DYNAMIC-FIELDS
+  2 #Dynamic_Field    (A) DYNAMIC
+  2 #CAP-LOAN-AMT     (P5.2)
+  2 #CAP-LOAN-DATE    (N8)
+  2 #CAP-ALT-LP-AMT   (P5.2)
+  2 #NOTE-TEXT        (A60/10)
+  2 #UPDATE           (L)
+  2 #SEND-CAP-LTR     (L)
+  2 #EXCP-REASON      (A35)
+  2 #CAP-EXCP         (L)
+  2 #CAP-X            (I2)    /* DW1
+  2 #CAP-MODE         (A1)
+  2 #FACE-AMOUNT-DISP (A) DYNAMIC
+  2 #CAP-PLAN         (A3)
+  2 #CAP-PAY-STATUS   (A2)
+  2 #CAP-PAID-TO-DATE (N8)
+  2 #CAP-ISSUE-DATE   (N8)
+*
+1 #MONS-TO-PAYOFF   (N7.2)   /* Was N3.2   /* DW4
+1 REDEFINE #MONS-TO-PAYOFF
+  2 #MONS-TO-PAYOFF-MONS (N7)
+  2 #MONS-TO-PAYOFF-DEC  (N2)
+*
+1 NT-V VIEW OF A-NOTES
+  2 C*NOTE-TABLE
+  2 NOTE-TEXT (A60/500)
+*
+1 #COUNTERS
+  2 #RECS-READ        (P7)   /* DW6
+  2 #CAPS-READ        (P5)
+  2 #NUM-POLS         (P3)
+  2 #CNT-1            (P5)
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #FND-999          (L)
+*
+1 #YYYYMMDD (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY   (N4)
+  2 #MM     (N2)
+  2 #DD     (N2)
+*
+1 #PARM-DATE  (N8)
+1 REDEFINE #PARM-DATE
+  2 #PARM-YYYY (N4)
+  2 #PARM-MM   (N2)
+  2 #PARM-DD   (N2)
+*
+1 #DATN (N8)
+1 #CAP-OPT         (A10) CONST <'CAP-OPT'>
+1 #CAP-OPT-MONTH   (N2) CONST <2>
+1 #CAP-OPT-LETTER-DATE (N8)
+1 #LETTER-NOTE     (A) DYNAMIC CONST <'* Sent letter: CAP Options'>
+1 #CLERK-ID        (A3) CONST <'EDS'>
+*
+* Variables for running program online (testing/debugging)
+1 f_1     (A80) INIT <"/usr/SAG/tmp/CAP_Letter_Exception_report.txt">
+1 v_PN    (I1)
+1 v_RC    (N3)
+END-DEFINE
+*
+#DATN := *DATN
+IF *DEVICE = 'BATCH'
+  IGNORE
+ELSE
+  PERFORM DEFINE-PRINTERS
+END-IF
+*
+**===============================
+DEFINE SUBROUTINE DEFINE-PRINTERS
+**===============================
+v_PN := 1
+v_RC := PRT_FN_PUT(<v_PN, f_1>)
+IF v_RC <> 0
+  PRINT (0)  'Error in print file 1 assigment'
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+ON ERROR
+  WRITE ST-V.ID-NUMBER
+END-ERROR
+MOVE #DATN TO #YYYYMMDD
+IF #CGA-SCR-SUFFIX = 'CP*'
+  FIND (1) ST-V MEMBER-KEY = #CGA-ID-G
+*
+    PERFORM FIND-CAP-POL
+    PERFORM OPTIONS-LETTER   /* print CAP Options Letter
+    UPDATE (0188)
+    PERFORM WRITE-NOTE
+    END TRANSACTION
+  END-FIND
+  ESCAPE ROUTINE
+END-IF
+*
+FORMAT (1) LS=133 PS=76
+WRITE  (1) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'C.A.P. Letter Exception List'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+MOVE #DATN TO #NEW-CAP-DATE
+MOVE 1 TO #NCD-DD
+*
+MOVE #DATN TO #PARM-DATE
+IF #PARM-DD > 26                          /* YK1 was > 27
+  ADD 1 TO #PARM-MM
+  IF #PARM-MM > 12
+    ADD 1 TO #PARM-YYYY
+    SUBTRACT 12 FROM #PARM-MM
+  END-IF
+END-IF
+MOVE 1 TO #PARM-DD
+*
+#Dynamic_Field       := FUNCTION-CALENDAR(<#PARM-DATE,'T'>)          /* YK4
+#CAP-OPT-LETTER-DATE := VAL(#Dynamic_Field)                          /* YK4
+WRITE 'CAP LOAN DATE           : ' #PARM-DATE
+WRITE 'CAP options Letter Date : ' #CAP-OPT-LETTER-DATE              /* YK4
+*
+READ ST-V BY MEMBER-KEY FROM '001900'        /* WAS 89893
+*  IF PROCESS-IND = 'S' OR = 'C'             /* RE1
+  IF PROCESS-IND = 'C'                       /* RE1
+      OR AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)  /* RE1
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #RECS-READ
+  IF NOT INTRO-FLAG = 'B' OR = 'C' OR = 'P' OR = 'Q'
+    FOR #I1 = 1 TO C*ACTIVE-SEGMENTS
+      IF   (CONV-DURATION (#I1) = 999)
+          AND (STATUS (#I1) = 'D')
+        WRITE(1) ST-V.ID-NUMBER 'Has a C.A.P. Policy but not C.A.P. Member'
+          ISSUE-DATE (#I1)
+      END-IF
+    END-FOR
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #CAPS-READ
+*
+  RESET #DYNAMIC-FIELDS
+  RESET PARM-LETTERS
+  PERFORM FIND-CAP-POL
+*
+  IF NOT #FND-999
+      AND (#CAP-LOAN-AMT NE 0)
+    WRITE(1) ST-V.ID-NUMBER 'CAP Mbr with no CAP Policies'
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF #CAP-ISSUE-DATE GE #NEW-CAP-DATE /* BYPASS NEW CAPS BEFORE LOAN
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF #CAP-LOAN-AMT = 0
+    IGNORE
+  ELSE
+    COMPUTE #MONS-TO-PAYOFF = #CAP-LOAN-AMT / #CAP-ALT-LP-AMT
+*
+    IF #MONS-TO-PAYOFF GT 999    /* DW4
+      WRITE(1) ST-V.ID-NUMBER 'Num Mons to payoff exceeds 999'
+        #MONS-TO-PAYOFF
+    END-IF
+*
+    ADD 1 TO #MONS-TO-PAYOFF-MONS   /*  ANY DEC INCL 0 ADD 1 MTH
+*
+    IF (#MONS-TO-PAYOFF-MONS <= #CAP-OPT-MONTH)                   /* YK4
+      IF F-UNDEL-ADDRESS (< ST-V.MEMBER-CONTACT-ID >)             /* JT1
+        WRITE(1) ST-V.ID-NUMBER 'CAP Option ltr bypassed due to Undeliverable address'
+      ELSE
+        MOVE TRUE TO #SEND-CAP-LTR
+      END-IF
+    END-IF
+  END-IF
+* Check for bankruptcy
+  FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER /* ADDED 5/2004 KHB
+    FOR #I1 1 TO C*NOTE-TABLE
+      IF NOTE-TEXT(#I1) = MASK ('*Mbr in bnkrptcy')
+        WRITE(1) ST-V.ID-NUMBER 'CAP Option ltr bypassed due to bankruptcy'
+        RESET #SEND-CAP-LTR
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+*
+  IF #SEND-CAP-LTR
+    IF  (ST-V.ALOT-AMT = 0)
+        OR (ST-V.MILITARY-STATUS NE 'A')   /* DW2    ??????
+      WRITE(1) ST-V.ID-NUMBER
+        'CAP OPT LTR BYPASSED DUE TO NO ALLOTMENT or not active'
+      ESCAPE TOP
+    END-IF
+*
+    MOVE #PARM-DATE     TO #YYYYMMDD
+    MOVE 01 TO #DD
+    ADD #MONS-TO-PAYOFF-MONS TO #MM
+    IF #MM > 12
+      ADD 1 TO #YYYY
+      SUBTRACT 12 FROM #MM
+    END-IF
+    PARM-LETTERS.PAYOFF-DATE := #YYYYMMDD       /* YK4
+*
+    IF (PC-5 = ' ' OR = 'Q')         /* MEANS PAYOFF OPTION LTR HASN'T BEEN SENT
+*
+*    IF LAST-MBRSHIP-PHONE-DT = 20140331 /* USED TO RERUN CAP OPT LETTERS
+*     AND PC-5 = 'O'
+*     OR (ST-V.ID-NUMBER = 109424 OR = 109774 OR = 110951 OR = 111278
+*                     OR = 111906 OR = 112645 OR = 112800 OR = 112802
+*                     OR = 113165 OR = 113407 OR = 119840 OR = 124268))
+*
+      IF   (#CAP-LOAN-AMT NE 0)
+          AND (#CAP-ALT-LP-AMT = 0)
+        IF #CAP-LOAN-AMT LT 700
+          MOVE TRUE TO #CAP-EXCP
+          MOVE 'Loan less than $700 and AIP stopped' TO #EXCP-REASON
+        ELSE
+          WRITE(1) ST-V.ID-NUMBER 'AIP stopped - loan amt = ' #CAP-LOAN-AMT
+            'ALOT-AMT =' ALOT-AMT
+            'PD-TO-Date =' #CAP-PAID-TO-DATE
+        END-IF
+*
+        END TRANSACTION
+        ESCAPE TOP
+      END-IF
+*
+      RESET #UPDATE
+* Creation of the letter in SSRS commented out by the user request     /* YK5
+*       IF FUNCTION-TERM-POLICY(<#CAP-PLAN>)                           /* YK4
+*         PERFORM OPTIONS-LETTER   /* print CAP Options Letter         /* YK4
+*         PERFORM WRITE-NOTE                                           /* YK4
+*       ELSE
+*         WRITE(1) ST-V.ID-NUMBER 'CAP Option ltr bypassed due to Whole Life policy'
+*         RESET #SEND-CAP-LTR
+*       END-IF
+*
+      IF #UPDATE
+        UPDATE (0222)
+      END-IF
+*
+    END-IF
+  END-IF
+*
+  IF  #CAP-LOAN-AMT NE 0
+    ADD 1 TO #TOT-CAP-MBRS
+    IF FUNCTION-TERM-POLICY(<#CAP-PLAN>)                    /* YK2
+      ADD 1 TO #NUM-CAP-TERM
+    ELSE
+      ADD 1 TO #NUM-CAP-WL
+    END-IF
+  END-IF
+*
+  END TRANSACTION
+END-READ
+*
+WRITE #TOT-CAP-MBRS 'Tot Cap members'
+WRITE #NUM-CAP-WL   'Tot Cap W/L'
+WRITE #NUM-CAP-TERM 'Tot Cap Term'
+WRITE 'TOT-RECS-READ        = ' #RECS-READ
+WRITE 'TOT-cap-records      = ' #CAPS-READ
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-CAP-POL
+* * * * * * * * * * * * * * * *
+*
+RESET #FND-999
+FOR #I1 1 TO C*ACTIVE-SEGMENTS
+  IF STATUS (#I1) NE 'D'
+    ESCAPE TOP
+  END-IF
+*
+  IF CONV-DURATION (#I1) = 999
+    IF #FND-999
+      WRITE(1) ST-V.ID-NUMBER 'C.A.P. Mbr with 2 C.A.P. Policies'
+      ESCAPE TOP
+    END-IF
+*
+    MOVE TRUE TO #FND-999
+    MOVE #I1 TO #CAP-X                          /* DW1
+    MOVE X-LOAN-AMOUNT(#I1) TO #CAP-LOAN-AMT
+    MOVE X-LOAN-DATE(#I1)   TO #CAP-LOAN-DATE
+    MOVE X-ALT-LP-AMT(#I1)  TO #CAP-ALT-LP-AMT
+    MOVE ISSUE-DATE(#I1)    TO #CAP-ISSUE-DATE
+    MOVE PAID-TO-DATE(#I1)  TO #CAP-PAID-TO-DATE
+    MOVE MODE(#I1)          TO #CAP-MODE
+    MOVE PAY-STATUS(#I1)    TO #CAP-PAY-STATUS
+    MOVE ST-V.PLAN(#I1)     TO #CAP-PLAN        /* YF1
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE OPTIONS-LETTER        /* YK4
+* * * * * * * * * * * * * * * * *
+*
+MOVE ST-V.FACE-AMOUNT(*) TO #FACE-AMT(*)
+CALLNAT 'CVALUSXX'          /* To get current FACE AMOUNT  /* DW5
+  ST-V.ID-NUMBER
+  #SUFFIX
+  #DATN
+  #LOAN-BAL   (1:9)
+  #LOAN-BAL-2 (1:9)
+  #ACC-INT    (1:9)
+  #ACC-INT-2  (1:9)
+  #CSV        (1:9)
+  #CVALUE     (1:9)
+  #LVALUE     (1:9)
+  #MCSV       (1:9)
+  #DB         (1:9)
+  #ANN-PREMIUM  (1:9)
+  #FACE-AMT   (1:9)
+  #TPP        (1:9)
+*
+PARM-LETTERS.ID-NUMBER     := ST-V.ID-NUMBER
+PARM-LETTERS.PROCESS-TYPE  := #CAP-OPT
+COMPRESS PARM-LETTERS.ID-NUMBER '-' ST-V.NUM-MBRSHIPS(#CAP-X) INTO PARM-LETTERS.POLICY-NUMBER LEAVING NO
+MOVE EDITED #FACE-AMT(#CAP-X) (EM=Z,ZZZ,ZZZ.99) TO #FACE-AMOUNT-DISP
+#FACE-AMOUNT-DISP := *TRIM(#FACE-AMOUNT-DISP)
+COMPRESS '$' #FACE-AMOUNT-DISP INTO #FACE-AMOUNT-DISP LEAVING NO
+PARM-LETTERS.FACE-AMOUNT   := #FACE-AMOUNT-DISP
+CALLNAT 'GPBNCOMM' PARM-LETTERS
+*
+IF PC-5 = ' '
+  MOVE 'O' TO PC-5    /* TO INDICATE needs paid ltr yet
+ELSE
+  MOVE 'P' TO PC-5    /* TO INDICATE both have been done
+END-IF
+MOVE #DATN TO LAST-MBRSHIP-PHONE-DT
+*
+MOVE TRUE TO #UPDATE
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE WRITE-NOTE     /* YK4
+****************************
+*
+#I2 := 1
+#NOTE-TEXT(#I2) := #LETTER-NOTE
+*
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER
+  #I2
+  #CLERK-ID
+  #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+END

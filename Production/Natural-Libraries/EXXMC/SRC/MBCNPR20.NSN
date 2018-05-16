@@ -1,0 +1,124 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center 'SchedulePayment' Step 2 - called from MBCNPR10
+* MBCNPR20 - calls save payment request, save/update bank account routines,
+*            creates Response XML
+* Called from    - NATSERV0 (EntireX NATURAL server)
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+* USER   DATE      TAG  REASON
+* YAK    08202014       Initial Creation
+***********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAPR01
+LOCAL USING MBCAEC51
+LOCAL USING MBCAPR02
+LOCAL
+1 #I                (I2)
+1 #II               (I2)
+1 #I1               (I2)
+1 #J                (I2)
+1 #K                (I2)
+1 #ErrorCode        (A3)
+1 #ErrorDescription (A) DYNAMIC
+1 #ActionType       (A) DYNAMIC
+*
+1 #SUCCESS-CODE    (A4) CONST <'0'>
+1 #RequestData     (A) DYNAMIC
+1 #TRUE            (A4) INIT <'true'>
+1 #SAVE            (A) DYNAMIC CONST <'SAVE'>
+1 #ECHECK          (A) DYNAMIC CONST <'eCheck'>
+1 #OneTimePay      (A) DYNAMIC CONST <'OneTimePay'>
+*
+END-DEFINE
+*
+* Business Logic
+FOR #I = 1 TO Members.C@Member
+*
+  FOR #II = 1 TO C@Account(#I)
+    IF Members.SaveBankAccountInfoInd(#I,#II) = #TRUE AND Members.CheckType(#I,#II) = #ECHECK
+      BankAccount.AccountCN := Members.CN_Owner
+      MOVE BY NAME Members.Account(#I,#II) TO BankAccount
+      BankAccount.UserId := Members.User
+      BankAccount.ActionType := #SAVE
+      RESET #ErrorCode
+      CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+      IF #ErrorCode <> ' '
+        COMPRESS Members.ErrorDescription F-ERROR-DESCRIPTION(<#ErrorCode>) INTO Members.ErrorDescription
+        COMPRESS Members.ErrorCode #ErrorCode INTO Members.ErrorCode
+      END-IF
+    END-IF
+  END-FOR
+*
+  FOR #I1 = 1 TO C@PaymentRequest(#I)
+    PayRequest.CN            := Members.CN(#I)
+    PayRequest.RequestorCN   := Members.CN_Owner
+    PayRequest.UserId        := Members.User
+*   PayRequest.ProcessType   := Members.ProcessType
+    PayRequest.ProcessType   := #OneTimePay
+    PayRequest.RequestType   := Members.RequestType(#I,#I1)
+    PayRequest.RequestStatus := Members.RequestStatus(#I,#I1)
+    PayRequest.RequestDate   := Members.RequestDate(#I,#I1)
+    PayRequest.PaymentDate   := Members.PaymentDate(#I,#I1)
+    PayRequest.PayPolicyNumber := Members.PayPolicyNumber(#I,#I1)
+    PayRequest.PaymentAmount := Members.PaymentAmount(#I,#I1)
+    RESET #RequestData
+    PERFORM CREATE-POLICY-REQUEST-DATA
+    PayRequest.RequestData   := #RequestData
+    #ActionType := #SAVE
+    RESET #ErrorCode
+    CALLNAT 'MBCNPR21' PayRequest #ActionType #ErrorCode
+    IF #ErrorCode <> ' '
+      COMPRESS Members.ErrorDescription F-ERROR-DESCRIPTION(<#ErrorCode>) INTO Members.ErrorDescription
+      COMPRESS Members.ErrorCode #ErrorCode INTO Members.ErrorCode
+    END-IF
+  END-FOR
+*
+END-FOR
+*
+********************************************
+DEFINE SUBROUTINE CREATE-POLICY-REQUEST-DATA
+********************************************
+*
+EXAMINE Members.PolicyNumber(#I,*) FOR PayRequest.PayPolicyNumber INDEX #K #J
+IF #J <> 0
+  COMPRESS '<Member>'
+    '<CN>' Members.CN(#I) '</CN>'
+    '<Policies>' INTO #RequestData LEAVING NO
+  COMPRESS #RequestData
+    '<Policy>'
+    '<PolicyNumber>' Members.PolicyNumber(#I,#J) '</PolicyNumber>' '<Payments>' INTO #RequestData LEAVING NO
+  FOR #II = 1 TO Members.C@Payment(#I,#J)
+    COMPRESS #RequestData '<Payment ID="' Members.ID(#I,#J,#II) '">'
+      '<Amount>' Members.Amount(#I,#J,#II) '</Amount>'
+      '<PaymentType>' Members.PaymentType(#I,#J,#II) '</PaymentType>'      
+      '<DueDate>' Members.DueDate(#I,#J,#II) '</DueDate>'
+      '</Payment>' INTO #RequestData LEAVING NO
+  END-FOR
+*  
+  COMPRESS #RequestData '</Payments>' '</Policy>' '</Policies>' '<BankAccounts>' INTO #RequestData LEAVING NO
+  FOR #II = 1 TO C@Account(#I)
+    COMPRESS #RequestData '<BankAccount>'
+      '<CheckType>' Members.CheckType(#I,#II) '</CheckType>'
+      '<RoutingNumber>' Members.RoutingNumber(#I,#II) '</RoutingNumber>'
+      '<AccountNumber>' Members.AccountNumber(#I,#II) '</AccountNumber>'
+      '<AccountType>' Members.AccountType(#I,#II) '</AccountType>'
+      '<AccountHolderFirstName>' Members.AccountHolderFirstName(#I,#II) '</AccountHolderFirstName>'
+      '<AccountHolderLastName>' Members.AccountHolderLastName(#I,#II) '</AccountHolderLastName>'
+      '<AccountStreet>' Members.AccountStreet(#I,#II) '</AccountStreet>'
+      '<AccountCity>' Members.AccountCity(#I,#II) '</AccountCity>'
+      '<AccountState>' Members.AccountState(#I,#II) '</AccountState>'
+      '<AccountZipCode>' Members.AccountZipCode(#I,#II) '</AccountZipCode>'
+      '<SaveBankAccountInfoInd>false</SaveBankAccountInfoInd>'
+      '</BankAccount>' INTO #RequestData LEAVING NO
+  END-FOR
+  COMPRESS #RequestData '</BankAccounts>' '</Member>' INTO #RequestData LEAVING NO
+END-IF
+*
+END-SUBROUTINE
+END

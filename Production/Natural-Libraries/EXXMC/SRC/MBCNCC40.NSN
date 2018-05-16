@@ -1,0 +1,296 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online / MC-II
+* MBCNCC40 - ManageCreditCardInformation
+* Called from NATSERV0 / MBCNEP30
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    12142011       Initial Creation
+* YAK    04222016  YK1  Add GUID to the interface with MC
+* YAK    08202016  YK2  Changes for EB&P II
+* YAK    04102017  YK3  Changes for EB&P III
+************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+*
+LOCAL USING PARSER-X
+LOCAL USING MBCACC40
+LOCAL USING MBCACC41
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 #XML              (A) DYNAMIC
+1 #value            (A) DYNAMIC
+*
+1 #MethodId         (N2)
+1 #ErrorCode        (A3)
+1 #ErrorDescription (A) DYNAMIC
+1 #ActionType       (A) DYNAMIC
+1 #CardId           (N1)
+1 #Get              (A) DYNAMIC CONST <'0'>
+1 #ADD              (A) DYNAMIC CONST <'1'>
+1 #UPDATE           (A) DYNAMIC CONST <'2'>
+1 #DELETE           (A) DYNAMIC CONST <'3'>
+1 #UpdateDI         (A) DYNAMIC CONST <'5'>
+1 #GET-ACCOUNT      (A) DYNAMIC CONST <'GET'>
+1 #GET-ALL          (A) DYNAMIC CONST <'GET-ALL'>        /* YK2
+1 #ADD-ACCOUNT      (A) DYNAMIC CONST <'ADD'>
+1 #UPDATE-ACCOUNT   (A) DYNAMIC CONST <'UPDATE'>
+1 #DELETE-ACCOUNT   (A) DYNAMIC CONST <'DELETE'>
+1 #UPDATE-DEF-IND   (A) DYNAMIC CONST <'UPDATE-DEF-IND'>
+1 #UsedForRecurringPayments (A) DYNAMIC                  /* YK3
+1 #I                (I2)
+1 #I1               (I2)                                 /* YK2
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Input verify
+DECIDE FOR FIRST CONDITION
+  WHEN CreditCards.ViewCN = 0 AND #ActionType = #Get
+    #ErrorCode  := #MISSING-CN
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN CreditCard.AccountCN = 0 AND #ActionType <> #Get
+    #ErrorCode  := #MISSING-CN
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+#ErrorCode := '0'
+DECIDE ON FIRST VALUE #ActionType
+  VALUE #Get
+    PERFORM GET-CC-DATA
+  VALUE #Add
+    CreditCard.ActionType := #ADD-ACCOUNT
+    CALLNAT 'MBCNCC42' CreditCard #ErrorCode        /* YK2
+  VALUE #Update
+    CreditCard.ActionType := #UPDATE-ACCOUNT
+    CALLNAT 'MBCNCC42' CreditCard #ErrorCode        /* YK2
+  VALUE #Delete
+    CreditCard.ActionType := #DELETE-ACCOUNT
+    PERFORM CHECK-DELETE-CARD
+    CALLNAT 'MBCNCC42' CreditCard #ErrorCode        /* YK2
+  VALUE #UpdateDI
+    CreditCard.ActionType := #UPDATE-DEF-IND
+    CALLNAT 'MBCNCC42' CreditCard #ErrorCode        /* YK2
+  NONE
+    IGNORE
+END-DECIDE
+*
+IF #ActionType <> #Get
+  IF #ErrorCode = '0'
+    END TRANSACTION
+  ELSE
+    BACKOUT TRANSACTION
+  END-IF
+END-IF
+PERFORM COMPOSE-RESPONSE-DATA
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'Members/ActionType/$'
+    #ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/SystemSource/$'                              /* YK3
+    CreditCards.SystemSource := *TRIM(XML_PARSER_CONTENT)     /* YK3
+    CreditCard.SystemSource  := CreditCards.SystemSource      /* YK3
+  VALUE 'Members/UserID/$'
+    CreditCard.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      CreditCard.AccountCN := VAL(#value)
+    END-IF
+  VALUE 'Members/CreditCards/CreditCard/AccountCN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      CreditCard.AccountCN := VAL(#value)
+    END-IF
+  VALUE 'Members/CreditCards/CreditCard/CardHolder/$'
+    CreditCard.CardHolder := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/CardNumber/$'
+    CreditCard.CardNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/CardGUID/$'            /* YK1
+    CreditCard.CardGUID := *TRIM(XML_PARSER_CONTENT)           /* YK1
+  VALUE 'Members/CreditCards/CreditCard/DefaultInd/$'          /* YK2
+    CreditCard.DefaultInd := *TRIM(XML_PARSER_CONTENT)         /* YK2
+  VALUE 'Members/CreditCards/CreditCard/ExMonth/$'
+    CreditCard.ExMonth := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/ExYear/$'
+    CreditCard.ExYear := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/Street/$'
+    CreditCard.Street := *TRIM(XML_PARSER_CONTENT)
+    IF *LENGTH(CreditCard.Street) > 50
+      #value := CreditCard.Street
+      CreditCard.Street  := SUBSTR(#value,1,50)
+      CreditCard.Street2 := SUBSTR(#value,51)
+    END-IF
+  VALUE 'Members/CreditCards/CreditCard/City/$'
+    CreditCard.City := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/StateProvinceRegion/$'
+    CreditCard.StateProvinceRegion := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/ZipCode/$'
+    CreditCard.ZipCode := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/CountryCode/$'
+    CreditCard.CountryCode := *TRIM(XML_PARSER_CONTENT)
+* YK3 >
+  VALUE 'Members/CreditCards/CreditCard/UsedForRecurringPayments/$'
+    #UsedForRecurringPayments := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/CreditCards/CreditCard/LastUpdatedDate/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8)
+      CreditCard.LastUpdatedDate := VAL(#value)
+    END-IF
+  VALUE 'Members/CreditCards/CreditCard/LastUpdatedTime/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N7)
+      CreditCard.LastUpdatedTime := VAL(#value)
+    END-IF
+  VALUE 'Members/CreditCards/CreditCard/LastUpdatedUser/$'
+    CreditCard.LastUpdatedUser := *TRIM(XML_PARSER_CONTENT)
+* < YK3
+  VALUE 'Members/PaymentSettings/CreditCardDisclaimerConfirmed/$'
+    CreditCard.CreditCardDisclaimerConfirmed := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET #XML
+#ErrorCode        := XML_PARSER_RESPONSE
+#ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE GET-CC-DATA    /* YK2
+*****************************
+*
+CreditCards.ActionType := #GET-ALL
+EXPAND ARRAY Account TO (*:1)
+CALLNAT 'MBCNCC41' CreditCards #ErrorCode
+IF #ErrorCode = #NO-CC-EXIST
+  #ErrorCode := '0'
+END-IF
+* END-IF
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE COMPOSE-GET-XML
+*********************************
+*
+FOR #I = 1 TO C@Account
+  #MethodID := #MethodId + 1
+  #CardID   := #CardID + 1
+  COMPRESS CreditCards.Street(#I) CreditCards.Street2(#I) INTO CreditCards.Street(#I)
+  COMPRESS #XML
+    '<CreditCard>'
+    '<MethodID>' #MethodId '</MethodID>'
+    '<CardID>' #CardId '</CardID>'
+    '<AccountCN>'CreditCards.AccountCN(#I)'</AccountCN>'
+    '<CardHolder>'CreditCards.CardHolder(#I)'</CardHolder>'
+    '<CardNumber>'CreditCards.CardNumber(#I)'</CardNumber>'
+    '<CardGUID>'CreditCards.CardGUID(#I)'</CardGUID>'          /* YK1
+    '<DefaultInd>'CreditCards.DefaultInd(#I)'</DefaultInd>'    /* YK2
+    '<UsedForRecurringPayments>'CreditCards.Recurring(#I)'</UsedForRecurringPayments>'    /* YK2
+    '<IsModifiable>'CreditCards.Modifiable(#I)'</IsModifiable>'                           /* YK2
+    '<CardType>'CreditCards.CardType(#I)'</CardType>'
+    '<ExMonth>'CreditCards.ExMonth(#I)'</ExMonth>'
+    '<ExYear>'CreditCards.ExYear(#I)'</ExYear>'
+    '<Street>'CreditCards.Street(#I)'</Street>'
+    '<City>'CreditCards.City(#I)'</City>'
+    '<StateProvinceRegion>'CreditCards.StateProvinceRegion(#I)'</StateProvinceRegion>'
+    '<ZipCode>'CreditCards.ZipCode(#I)'</ZipCode>'
+    '<CountryCode>'CreditCards.CountryCode(#I)'</CountryCode>'
+    '<LastUpdatedDate>' CreditCards.LastUpdatedDate(#I) '</LastUpdatedDate>'
+    '<LastUpdatedTime>' CreditCards.LastUpdatedTime(#I) '</LastUpdatedTime>'
+    '<LastUpdatedUser>' CreditCards.LastUpdatedUser(#I) '</LastUpdatedUser>'
+    '</CreditCard>'
+    INTO #XML LEAVING NO
+END-FOR
+COMPRESS  '<CreditCards>'
+  #XML
+  '</CreditCards>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+COMPRESS
+  '<Members>'
+  '<CN>' CreditCards.ViewCN '</CN>'
+  '<CreditCards>'
+  '<CreditCard>'
+  '<AccountCN>' CreditCard.AccountCN '</AccountCN>'
+  '</CreditCard>'
+  '</CreditCards>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</Members>'
+  INTO RESPONSE-DATA LEAVING NO
+ESCAPE MODULE
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #ErrorCode <> '0' AND #ErrorDescription = ' '
+    #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+    PERFORM COMPOSE-XML
+  WHEN #ErrorCode = '0' AND #ActionType = #GET
+    PERFORM COMPOSE-GET-XML
+  WHEN #ErrorCode = '0' AND #ActionType <> #GET
+    PERFORM COMPOSE-XML
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CHECK-DELETE-CARD
+***********************************
+*
+CALLNAT 'MBCNCC43' CreditCard #ErrorCode
+IF #ErrorCode <> '0'
+  PERFORM COMPOSE-RESPONSE-DATA
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+END

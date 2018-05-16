@@ -1,0 +1,352 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GOADN003 - Address EDITS
+*
+* The rules are:
+* 1. If the address is not shared UPDATE
+* 2. If the address is shared with no members UPDATE
+* 3. If the address is shared with members - create new address and
+*    share it with no members
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* NGG    03/28/2011  None    Program written                           *
+* NGG    11/04/2011  NG1     ZIP CODE FIX                              *
+* YAK    07/18/2012  YK1     Call to address validation for AT/NM      *
+*                            skip for calls from AUC                   *
+************************************************************************
+DEFINE DATA
+PARAMETER USING GOADA001
+PARAMETER USING GOADA002
+PARAMETER
+1 SYSTEM-SOURCE (A) DYNAMIC OPTIONAL          /* YK1
+LOCAL
+1 #CHG-FLAG             (A1)
+1 #CONTACT-ADDR-POOL    (I2/3)
+1 #CONTACT-ADDR-POOL-ID (N8/3)
+1 #ZIP-5                (A5)
+1 #ZIP-4                (A4)
+1 #DB-ZIP               (A10) 1 REDEFINE #DB-ZIP
+  2 ZIP-5-N    (N5)
+  2 FILLER 1X
+  2 ZIP-4-N    (N4)
+*
+1 CNRY view of A-GEN-TABLE
+  2 GEN-KEY                           (A4) /*    D
+  2 GEN-SUB-KEY                       (A3)
+  2 GEN-ALPHA-VALUE                   (A50)
+  2 GEN-DESCRIPTION                   (A75)
+1 #TABLE-KEY  (A7) 1 REDEFINE #TABLE-KEY
+  2 #GEN-KEY           (A4)
+  2 #SUB-KEY           (A3)
+*
+1 #ERROR-NBR           (I2)
+1 AD-V VIEW OF A-ADDRESS-POOL
+  2 STREET
+  2 UNIT
+  2 CITY
+  2 STATE-CODE
+  2 ZIP-CODE 2 REDEFINE ZIP-CODE
+    3 ZIP-5   (N5)
+    3 ZIP-4   (N4)
+  2 COUNTRY-CODE
+  2 POSTAL-CODE
+  2 URBANIZATION
+*
+1 A-ADD-REL VIEW OF A-ADDRESS-RELATIONSHIP
+  2 ADDRESS-POOL-ID (N8)
+  2 ADDR-TYPE-CD    (A1)
+  2 STATUS          (A1)
+1 #ERRORS-TXT       (A72/12) INIT <
+  'Street is missing',
+  'Status is missing',
+  'Invalid date format',
+  'Source and type are required',
+  'Only Y or N are valid',
+  'Primary address already exists',
+  'Secondary address already exists',
+  'Invalid country code. Please use look-up.',
+  'Primary/Secondary address already exists',
+  'Valid State for APO/DPO/FPO is AE/AP/AA',
+  'Valid City for AE/AP/AA is APO/DPO/FPO',
+  'City and state or zip code are required'
+  >
+1 PRIMARY           (A1) CONST <'P'>
+1 SECONDARY         (A1) CONST <'S'>
+1 BLANK             (A1) CONST <' '>
+1 YES               (A1) CONST <'Y'>
+1 NO                (A1) CONST <'N'>
+1 #DASH             (A1) CONST <'-'>
+1 USA               (A2) CONST <'US'>
+1 CANADA            (A2) CONST <'CA'>
+1 PUERTORICO        (A2) CONST <'PR'>
+1 #AUC              (A) DYNAMIC CONST <'AUC'>    /* YK1
+1 #ADDR-VALIDATION  (L) INIT <TRUE>              /* YK1
+*
+END-DEFINE
+*
+* YK1 Start
+IF SYSTEM-SOURCE SPECIFIED
+  IF SYSTEM-SOURCE = #AUC
+     #ADDR-VALIDATION := FALSE
+  END-IF
+END-IF
+* YK1 end
+RESET #MSG #CONTACT-ADDR-POOL (*)
+  #CONTACT-ADDR-POOL-ID (*)
+IF #ADDR-REL.STATUS = 'D'  /* REQUEST FOR DELETION
+  ESCAPE ROUTINE
+END-IF
+*
+FIND A-ADD-REL WITH CONTACT-ID = #ADDR-REL.CONTACT-ID
+  DECIDE ON FIRST VALUE OF A-ADD-REL.ADDR-TYPE-CD
+    VALUE PRIMARY
+      IF A-ADD-REL.STATUS NE 'D'
+        ADD 1 TO #CONTACT-ADDR-POOL (1)
+        #CONTACT-ADDR-POOL-ID (1) := A-ADD-REL.ADDRESS-POOL-ID
+      END-IF
+    VALUE SECONDARY
+      IF A-ADD-REL.STATUS NE 'D'
+        ADD 1 TO #CONTACT-ADDR-POOL (2)
+        #CONTACT-ADDR-POOL-ID (2) := A-ADD-REL.ADDRESS-POOL-ID
+      END-IF
+    NONE VALUE
+      ADD 1 TO #CONTACT-ADDR-POOL (3)
+  END-DECIDE
+END-FIND
+*
+IF #ADDR-REL.STATUS = 'R'
+  IF #ADDR-REL.ADDR-TYPE-CD EQ PRIMARY AND #CONTACT-ADDR-POOL (1) > 0
+    #ERROR-NBR := 9
+    #ERRORS := TRUE
+    #MSG := #ERRORS-TXT ( #ERROR-NBR )
+    #POS := POS ( #ADDR-REL.STATUS )
+    ESCAPE ROUTINE
+  END-IF
+  IF #ADDR-REL.ADDR-TYPE-CD EQ SECONDARY AND #CONTACT-ADDR-POOL (2) > 0
+    #ERROR-NBR := 9
+    #ERRORS := TRUE
+    #MSG := #ERRORS-TXT ( #ERROR-NBR )
+    #POS := POS ( #ADDR-REL.STATUS )
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF #ADDR-REL.ADDR-TYPE-CD EQ PRIMARY AND #CONTACT-ADDR-POOL (1) > 0
+  IF #CONTACT-ADDR-POOL-ID (1) NE #ADDR-POOL.ADDRESS-POOL-ID
+    #ERROR-NBR := 6
+    #ERRORS := TRUE
+    #MSG := #ERRORS-TXT ( #ERROR-NBR )
+    #POS := POS ( #ADDR-REL.ADDR-TYPE-CD )
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF #ADDR-REL.ADDR-TYPE-CD EQ SECONDARY AND #CONTACT-ADDR-POOL (2) > 0
+  IF #CONTACT-ADDR-POOL-ID (2) NE #ADDR-POOL.ADDRESS-POOL-ID
+    #ERROR-NBR := 7
+    #ERRORS := TRUE
+    #MSG := #ERRORS-TXT ( #ERROR-NBR )
+    #POS := POS ( #ADDR-REL.ADDR-TYPE-CD )
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+#MSG := FUNCTION-CV-CHECK (<'006',#ADDR-REL.ADDR-TYPE-CD>)
+IF #MSG NE BLANK
+  #ERRORS := TRUE
+  #POS := POS ( #ADDR-REL.ADDR-TYPE-CD )
+  ESCAPE ROUTINE
+END-IF
+*
+#MSG := FUNCTION-CV-CHECK (<'017',#ADDR-REL.ADDRESS-SOURCE>)
+IF #MSG NE BLANK
+  #ERRORS := TRUE
+  #POS := POS ( #ADDR-REL.ADDRESS-SOURCE )
+  ESCAPE ROUTINE
+END-IF
+*
+#MSG := FUNCTION-CV-CHECK (<'002',#ADDR-REL.ADDR-LOCATION>)
+IF #MSG NE BLANK
+  #ERRORS := TRUE
+  #POS := POS ( #ADDR-REL.ADDR-LOCATION )
+  ESCAPE ROUTINE
+END-IF
+*
+#MSG := FUNCTION-CV-CHECK (<'004',#ADDR-REL.PREVENT-OVER-IND>)
+IF #MSG NE BLANK
+  #ERRORS := TRUE
+  #POS := POS ( #ADDR-REL.PREVENT-OVER-IND )
+  ESCAPE ROUTINE
+END-IF
+*
+#MSG := FUNCTION-CV-CHECK (<'005',#ADDR-REL.RETURNED-MAIL-IND>)
+IF #MSG NE BLANK
+  #ERRORS := TRUE
+  #POS := POS ( #ADDR-REL.RETURNED-MAIL-IND )
+  ESCAPE ROUTINE
+END-IF
+*
+#MSG := FUNCTION-CV-CHECK (<'018',#ADDR-REL.STATUS>)
+IF #MSG NE BLANK
+  #ERRORS := TRUE
+  #POS := POS ( #ADDR-REL.STATUS )
+  ESCAPE ROUTINE
+END-IF
+*
+IF #ADDR-REL.STATUS = ' ' AND #STATUS-DATE NE ' '
+  #ERROR-NBR := 2
+  #ERRORS := TRUE
+  #MSG := #ERRORS-TXT ( #ERROR-NBR )
+  #POS := POS ( #ADDR-REL.STATUS )
+  ESCAPE ROUTINE
+END-IF
+*
+IF #STATUS-DATE NE ' ' AND #STATUS-DATE NE MASK(MMDDYYYY)
+  #ERROR-NBR := 3
+  #ERRORS := TRUE
+  #MSG := #ERRORS-TXT ( #ERROR-NBR )
+  #POS := POS ( #STATUS-DATE )
+  ESCAPE ROUTINE
+END-IF
+*
+IF #ADDR-REL.ADDR-TYPE-CD EQ ' '
+  #ERROR-NBR := 4
+  #ERRORS := TRUE
+  #MSG := #ERRORS-TXT ( #ERROR-NBR )
+  #POS := POS ( #ADDR-REL.ADDR-TYPE-CD )
+  ESCAPE ROUTINE
+END-IF
+*
+IF #ADDR-REL.ADDRESS-SOURCE EQ ' '
+  #ERROR-NBR := 4
+  #ERRORS := TRUE
+  #MSG := #ERRORS-TXT ( #ERROR-NBR )
+  #POS := POS ( #ADDR-REL.ADDRESS-SOURCE )
+  ESCAPE ROUTINE
+END-IF
+*
+#GEN-KEY := 'COUN'
+#SUB-KEY := #ADDR-POOL.COUNTRY-CODE
+FIND CNRY WITH SEC-KEY = #TABLE-KEY
+  IF NO RECORDS FOUND
+    #ERROR-NBR := 8
+    #ERRORS := TRUE
+    #MSG := #ERRORS-TXT ( #ERROR-NBR )
+    #POS := POS ( #ADDR-POOL.COUNTRY-CODE )
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+*
+IF #ADDR-POOL.COUNTRY-CODE = USA
+  #MSG := FUNCTION-STATE-CHECK (<#ADDR-POOL.STATE-CODE>)
+  IF #MSG NE BLANK
+    #ERRORS := TRUE
+    #POS := POS ( #ADDR-POOL.STATE-CODE )
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF #ADDR-POOL.STREET EQ ' '
+  #ERROR-NBR := 1
+  #ERRORS := TRUE
+  #MSG := #ERRORS-TXT ( #ERROR-NBR )
+  #POS := POS ( #ADDR-POOL.STREET )
+  ESCAPE ROUTINE
+END-IF
+*
+IF #ADDR-POOL.COUNTRY-CODE = USA OR= CANADA OR= PUERTORICO
+  MOVE *TRANSLATE(#ADDR-POOL.CITY,UPPER) TO #ADDR-POOL.CITY
+  IF #ADDR-POOL.STATE-CODE = 'AA' OR= 'AP' OR= 'AE'
+    IF NOT #ADDR-POOL.CITY = 'APO' OR= 'DPO' OR= 'FPO'
+      #ERROR-NBR := 11
+      #ERRORS := TRUE
+      #MSG := #ERRORS-TXT ( #ERROR-NBR )
+      #POS := POS ( #ADDR-POOL.CITY )
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+*
+  IF #ADDR-POOL.CITY = 'APO' OR= 'DPO' OR= 'FPO'
+    IF NOT #ADDR-POOL.STATE-CODE = 'AA' OR= 'AP' OR= 'AE'
+      #ERROR-NBR := 10
+      #ERRORS := TRUE
+      #MSG := #ERRORS-TXT ( #ERROR-NBR )
+      #POS := POS ( #ADDR-POOL.STATE-CODE )
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+  IF #ADDR-POOL.ZIP-CODE = 0
+      AND #ADDR-POOL.COUNTRY-CODE NE CANADA
+    IF #ADDR-POOL.CITY = BLANK OR #ADDR-POOL.STATE-CODE = BLANK
+      #ERROR-NBR := 12
+      #ERRORS := TRUE
+      #MSG := #ERRORS-TXT ( #ERROR-NBR )
+      IF #ADDR-POOL.CITY = BLANK
+        #POS := POS ( #ADDR-POOL.CITY )
+      ELSE
+        #POS := POS ( #ADDR-POOL.STATE-CODE )
+      END-IF
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+*                                                    NG1 Start
+  IF #ADDRESS-UI.#ZIP = BLANK
+    MOVE EDITED #ADDR-POOL.ZIP-5 (EM=99999) TO #ZIP-5
+    MOVE EDITED #ADDR-POOL.ZIP-4 (EM=9999)  TO #ZIP-4
+    IF #ZIP-4 NE BLANK
+      COMPRESS #ZIP-5 #ZIP-4 INTO #ZIP WITH DELIMITER '-'
+    END-IF
+  END-IF
+*                                                    NG1 End
+  FIND (1) AD-V WITH ADDRESS-POOL-ID = #ADDR-POOL.ADDRESS-POOL-ID
+    IF AD-V.COUNTRY-CODE = USA OR= PUERTORICO
+        AND AD-V.ZIP-5 > 0
+      MOVE EDITED AD-V.ZIP-5 (EM=99999) TO #ZIP-5
+      MOVE EDITED AD-V.ZIP-4 (EM=9999)  TO #ZIP-4
+      IF #ZIP-4 NE BLANK
+        COMPRESS #ZIP-5 #ZIP-4 INTO #DB-ZIP WITH DELIMITER '-'
+      END-IF
+    END-IF
+  END-FIND
+  IF  #ADDR-VALIDATION                          /* YK1
+      AND (#ADDR-POOL.STATE-CODE NE AD-V.STATE-CODE
+      OR #ADDR-POOL.STREET NE AD-V.STREET
+      OR #ADDR-POOL.UNIT   NE AD-V.UNIT
+      OR #ADDR-POOL.CITY   NE AD-V.CITY
+      OR #ZIP              NE #DB-ZIP
+      OR #CERT-REQUEST
+      OR (#ADDR-POOL.COUNTRY-CODE = PUERTORICO
+      AND #ADDR-POOL.URBANIZATION NE AD-V.URBANIZATION)
+      OR (#ADDR-POOL.COUNTRY-CODE = CANADA
+      AND #ADDR-POOL.POSTAL-CODE NE AD-V.POSTAL-CODE))
+    CALLNAT 'ADVN0002'
+      #ADDR-REL.CONTACT-ID
+      #ADDR-POOL.URBANIZATION
+      #ADDR-POOL.STREET
+      #ADDR-POOL.UNIT
+      #ADDR-POOL.CITY
+      #ADDR-POOL.STATE-CODE
+      #ZIP
+      #ADDR-POOL.ADDR-VALID-IND
+      #CHG-FLAG
+*    IF *USER = 'XZBSL7' or= 'guentch'
+*      PRINT #ADDR-POOL.ADDR-VALID-IND #CHG-FLAG / #DUMP
+*    END-IF
+    IF #ADDR-POOL.COUNTRY-CODE = CANADA
+      #ADDR-POOL.POSTAL-CODE := #ZIP
+      RESET #ZIP
+    ELSE
+      #DB-ZIP := #ZIP
+      #ADDR-POOL.ZIP-5 := ZIP-5-N
+      #ADDR-POOL.ZIP-4 := ZIP-4-N
+    END-IF
+  END-IF
+ELSE
+  RESET #ADDR-POOL.ADDR-VALID-IND
+END-IF
+END

@@ -1,0 +1,155 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* MBCNEP61 - Created for Member Center MC-II                           *
+* Returns Accounting transactions for the owner of policies            *
+* sorted by Account number                                             *
+* 1. 5 recent ones                                                     *
+* 2. All transactions for the last 12 months                           *
+************************************************************************
+*        MODIFICATION LOG                                              
+************************************************************************
+* USER   DATE        TAG     REASON                                    
+* YAK    12/22/2014          Program Written for MC-II                 
+* YAK    08/15/2016          HD-1141(help desk 1141) missing payments)
+* bz     11/14/2016  bz-1844 Add new transactions 'PADF','AIAF'      
+* YAK    03272017    YK1     Payor Role
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEP06
+LOCAL USING OBJLACRG       /* Accounting Register
+*
+LOCAL
+*
+1 #DATN                     (N8)
+1 #I1                       (I2)
+1 #I2                       (I2)
+1 #CNT                      (N7)
+1 #SERVICE-TXN              (A6/6) CONST <'DUEP1S','DUEPSS','DUERPS','DUEP1T','DUEPRF','DUEPPS'>
+1 #SHOW-TRAN                (A4/22) CONST <'PREP','PRER','DUEP','DUER','RIDP','RIDR','FPFP','FPFR','PRNF','PRNV','INTF','INTV',
+  'INPF','INPV','IADF','IADV','FPRP','FPRR','FPDP','FPDR','PADF','AIAF'>
+1 #PayOffAccountName        (A) DYNAMIC
+1 #LinkedLoan               (A) DYNAMIC CONST <'Linked Loan'>
+1 #Service                  (A) DYNAMIC CONST <'Service Plan'>
+1 #AR-ARRAY (*)
+  2 TRANSACTION-DATN (N8)
+  2 ID-NUMBER        (N6)
+  2 POLICY-NUMBER    (A16)
+  2 NAME             (A25)  
+  2 TXN-CODE         (A6)
+  2 AMOUNT           (N7.2)
+  2 CLERK-ID         (A3)
+  2 CASH-CODE        (A1)
+* Sort Variables
+1 #N   (I2)
+1 #M   (I2)
+1 #i   (I2)
+1 #j   (I2)
+1 iMax (I2)
+1 #HOLD-CN   (N6)
+1 #CNT-SKIP  (N3)
+1 #MAX-TRAN  (N4) INIT <100>
+1 #TEMP
+  2 TRANSACTION-DATN (N8)
+  2 ID-NUMBER        (N6)
+  2 POLICY-NUMBER    (A16)
+  2 NAME             (A25)  
+  2 TXN-CODE         (A6)
+  2 AMOUNT           (N7.2)
+  2 CLERK-ID         (A3)
+  2 CASH-CODE        (A1)
+*
+END-DEFINE
+*
+#DATN := *DATN
+#DATN := #DATN - 10000
+*
+EXPAND ARRAY #AR-ARRAY TO (*:#MAX-TRAN)
+FOR #I1 = 1 TO *OCCURRENCE(PaymentCN)
+  FIND ACCT-REG-V WITH ID-NUMBER = PaymentHistory.PaymentCN(#I1)
+    ACCEPT IF ACCT-REG-V.TRANSACTION-DATN > #DATN AND ACCT-REG-V.TXN-CODE = #SHOW-TRAN(*)
+      AND (ACCT-REG-V.CREDIT-AMOUNT <> 0 OR ACCT-REG-V.DEBIT-AMOUNT <> 0)
+    IF ACCT-REG-V.CREDIT-AMOUNT <> 0                          /* bz-1844 >
+       AND 
+      (ACCT-REG-V.TXN-CODE = 'PADF' OR = 'AIAF')
+          ESCAPE TOP
+    END-IF                                                    /* bz-1844 <
+    #CNT := #CNT + 1
+    IF #CNT > #MAX-TRAN
+      #MAX-TRAN := #MAX-TRAN + 100
+      EXPAND ARRAY #AR-ARRAY TO (*:#MAX-TRAN)
+    END-IF
+    MOVE BY NAME ACCT-REG-V TO #AR-ARRAY(#CNT)
+    IF ACCT-REG-V.CREDIT-AMOUNT NE 0
+      #AR-ARRAY.AMOUNT(#CNT) := ACCT-REG-V.CREDIT-AMOUNT * -1
+    ELSE
+      #AR-ARRAY.AMOUNT(#CNT) := ACCT-REG-V.DEBIT-AMOUNT
+    END-IF
+    IF ACCT-REG-V.SG-CATEGORY-1(1) <> '**'
+      COMPRESS #AR-ARRAY.TXN-CODE(#CNT) ACCT-REG-V.SG-CATEGORY-1(1)
+        INTO #AR-ARRAY.TXN-CODE(#CNT) LEAVING NO
+    END-IF
+  END-FIND
+END-FOR
+IF #CNT <> 0
+  RESIZE ARRAY #AR-ARRAY TO (*:#CNT)
+  EXPAND ARRAY Payment TO (*:#CNT)
+END-IF
+*
+#N := #CNT
+#M := #N - 1
+*
+FOR #j = 1 TO #M
+  iMax := #j
+  FOR #i = (#j + 1) TO #N
+    IF #AR-ARRAY.TRANSACTION-DATN(#i) > #AR-ARRAY.TRANSACTION-DATN(iMax)
+      iMax := #i
+    END-IF
+  END-FOR
+  IF iMax <> #j
+    MOVE BY NAME #AR-ARRAY(#j) TO #TEMP
+    MOVE BY NAME #AR-ARRAY(iMax) TO #AR-ARRAY(#j)
+    MOVE BY NAME #TEMP TO #AR-ARRAY(iMax)
+  END-IF
+END-FOR
+*
+FOR #I1 = 1 TO #CNT                                                                 /* YK HD-1141
+  IF #AR-ARRAY.POLICY-NUMBER(#I1) = PaymentHistory.PolicyNumber(*) OR
+      (#AR-ARRAY.ID-NUMBER(#I1) = PaymentHistory.ViewCN AND #AR-ARRAY.TXN-CODE(#I1) = #SERVICE-TXN(*))    /* YK1
+    #I2 := #I2 + 1  
+    PaymentDate(#I2) := FUNCTION-CALENDAR(<#AR-ARRAY.TRANSACTION-DATN(#I1),'D'>)
+    PaymentType(#I2) := FUNCTION-PAYMENT-TYPE(<#AR-ARRAY.TXN-CODE(#I1)>)(1)
+    IF #AR-ARRAY.TXN-CODE(#I1) = #SERVICE-TXN(*)
+      RESET PaymentPolicy(#I2)
+      EXAMINE PaymentType(#I2) FOR '-' POSITION #N
+      IF #N <> 0 #N := #N - 1 END-IF
+      PaymentPolicy(#I2) := SUBSTR(PaymentType(#I2),1,#N)
+      #N := #N + 2
+      PaymentType(#I2)   := SUBSTR(PaymentType(#I2),#N)
+      PaymentDescription(#I2) := #Service
+    ELSE
+      PaymentPolicy(#I2) := #AR-ARRAY.POLICY-NUMBER(#I1)
+    END-IF
+    PaymentInsuredName(#I2) := #AR-ARRAY.NAME(#I1)
+    MOVE EDITED #AR-ARRAY.AMOUNT(#I1) (EM=Z,ZZZ,ZZ9.99) TO PaymentAmount(#I2)
+    PaymentAmount(#I2) := *TRIM(PaymentAmount(#I2))
+    IF #AR-ARRAY.AMOUNT(#I1) > 0
+      COMPRESS '(' PaymentAmount(#I2) ')' INTO PaymentAmount(#I2) LEAVING NO
+    END-IF
+    COMPRESS '$' PaymentAmount(#I2) INTO PaymentAmount(#I2) LEAVING NO
+    PaymentMethod(#I2) := F-CASH-CODE(<#AR-ARRAY.CASH-CODE(#I1)>)(2)
+  ELSE
+    #CNT-SKIP := #CNT-SKIP + 1
+  END-IF
+END-FOR                                                                       /* YK HD-1141 End
+*
+C@HistoryPayment := #CNT - #CNT-SKIP
+IF C@HistoryPayment <> 0
+  RESIZE ARRAY #AR-ARRAY TO (*:C@HistoryPayment)
+END-IF
+*
+END

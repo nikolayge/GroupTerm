@@ -1,0 +1,209 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* SUBPROGRAM-ID: ADRNS004
+* FUNCTION: Gets Contact data given Organization name
+***********************************************************
+*        MODIFICATION LOG
+***********************************************************
+* USER   DATE       TAG  REASON
+* RSE    05/23/2011      Creation
+********************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CGA-ORIG-ID      (N6)
+1 #CONTACT-ID       (N8)
+1 #ORGANIZATION     (A75)
+1 #SSN              (N9)
+1 #FIRST-NAME       (A25)
+1 #MIDDLE-NAME      (A25)
+1 #LAST-NAME        (A25)
+1 #SUFFIX           (A10)
+1 #SEX              (A1)
+1 #DOB              (A8)
+1 #BCC              (A1)
+1 #DOD              (A8)
+1 #DCC              (A1)        /* RE1
+1 #DOM              (A8)
+1 #DIV              (A8)
+1 #CN               (N6)
+1 #LST-UPD          (A10)
+1 #LST-USR          (A22)
+1 #NOT-FOUND        (L)
+1 #PF3              (L)
+LOCAL
+*
+1 CONT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID       (N8)           /* D
+  2 ID-NUMBER        (N6)           /* D
+  2 FIRST-NAME       (A25)
+  2 MIDDLE-NAME      (A25)
+  2 LAST-NAME        (A25)
+  2 SUFFIX           (A10)
+  2 GENDER-CD        (A1)         /* --NA
+  2 DATE-OF-BIRTH    (N8)
+  2 SSN              (N9)           /* D
+  2 DATE-OF-DEATH    (N8)
+  2 BIRTH-CERT-CODE  (A1)
+  2 DEATH-CERT-CODE  (A1)         /* RE1
+  2 FIRM-ORGANIZATION-NAME(A75)
+  2 LAST-DATE-UPD    (N8)
+  2 LAST-USER-UPD    (A8)
+*
+1 CONT2-V VIEW OF A-CONTACTS
+  2 FIRM-ORGANIZATION-NAME
+*
+1 #YYYYMMDD    (A8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A    (A4)
+  2 #MM-A      (A2)
+  2 #DD-A      (A2)
+1 #PAGE        (N3)
+1 #TOT-PAGES   (N3)
+1 #I           (I4)
+1 #J           (I4)
+1 #K           (I4)
+1 #L           (I4)
+1 #MAX-CODES   (I4)
+1 #ISN         (P8)
+1 #ISNS        (P8/999)
+1 #CID         (N8/15)
+1 #ID-NUMBER   (N6/15)
+1 #ORG-NAME    (A59/15)
+1 #SELECTION   (A1/15)
+1 #SELECTION-CV(C/15)
+1 #CONT-DOB    (A8)
+1 #CONT-DOD    (A8)
+END-DEFINE
+*
+SET KEY ENTR NAMED 'Slct'
+SET KEY PF3  NAMED 'Exit'
+SET KEY PF7  NAMED 'Up'
+SET KEY PF8  NAMED 'Down'
+*
+RESET #SELECTION(*) #ID-NUMBER(*) #ORG-NAME(*) #CID(*) #ISNS(*) #MAX-CODES
+HISTOGRAM CONT2-V FIRM-ORGANIZATION-NAME WHERE FIRM-ORGANIZATION-NAME = SCAN(#ORGANIZATION)
+  FIND CONT-V WITH FIRM-ORGANIZATION-NAME = CONT2-V.FIRM-ORGANIZATION-NAME
+    ADD 1 TO #I
+    #ISN := *ISN (0089)
+END-ALL
+AND SORT BY CONT2-V.FIRM-ORGANIZATION-NAME USING #ISN
+  ADD 1 TO #MAX-CODES
+  #ISNS ( #MAX-CODES ) := #ISN
+END-SORT
+*
+IF #MAX-CODES <= 0
+  SET WINDOW OFF
+  MOVE TRUE TO #NOT-FOUND
+  ESCAPE ROUTINE
+END-IF
+*
+DIVIDE 15 INTO #MAX-CODES GIVING #TOT-PAGES REMAINDER #PAGE
+IF #PAGE > 0
+  add 1 to #TOT-PAGES
+end-if
+
+#PAGE := 1
+#L := 1
+
+PERFORM POPULATE-SCREEN-ARRAYS
+INPUT USING MAP 'ADRM0014'
+REPEAT UNTIL *PF-KEY = 'PF3'
+  DECIDE ON FIRST VALUE OF *PF-KEY
+    VALUE 'PF7'
+      IF #PAGE > 1
+        SUBTRACT 1 FROM #PAGE
+        SUBTRACT 15 FROM #L
+        PERFORM POPULATE-SCREEN-ARRAYS
+      END-IF
+    VALUE 'PF8'
+      IF #MAX-CODES >= #L + 15
+        ADD 1 TO #PAGE
+        ADD 15 TO #L
+        PERFORM POPULATE-SCREEN-ARRAYS
+      END-IF
+    VALUE 'ENTR'
+      RESET #K
+      for #I 1 to 15
+        if #SELECTION ( #I ) NE ' '
+          ADD 1 TO #K
+        END-IF
+      end-for
+      IF #K > 1
+        REINPUT 'Please select only one'
+          MARK 1
+      END-IF
+      FOR #I 1 to 15
+        IF #SELECTION ( #I ) NE ' '
+          PERFORM PASS-DATA-TO-CB
+          SET WINDOW OFF
+          ESCAPE ROUTINE
+        end-if
+      end-for
+    NONE VALUE IGNORE
+  END-DECIDE
+  INPUT USING MAP 'ADRM0014'
+END-REPEAT
+IF *PF-KEY = 'PF3'
+  MOVE TRUE TO #PF3
+END-IF 
+*
+SET WINDOW OFF
+****************************************
+DEFINE SUBROUTINE POPULATE-SCREEN-ARRAYS
+****************************************
+MOVE (AD=P) TO #SELECTION-CV(*)
+RESET #ID-NUMBER(*) #ORG-NAME (*) #CID (*)
+*
+ASSIGN #J = #L
+FOR #I 1 TO 15
+  GET CONT-V #ISNS ( #J )
+  #ID-NUMBER(#I) := CONT-V.ID-NUMBER
+  #ORG-NAME (#I) := CONT-V.FIRM-ORGANIZATION-NAME
+  #CID (#I)      := CONT-V.CONTACT-ID
+  #SELECTION-CV(#I) := (AD=DU)
+  ADD 1 TO #J
+  IF #J > #MAX-CODES
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+END-SUBROUTINE
+*********************************
+DEFINE SUBROUTINE PASS-DATA-TO-CB
+*********************************
+READ (1) CONT-V WITH ISN = #ISNS(#I)
+  IF *ISN(0177) NE #ISNS(#I)
+    ESCAPE BOTTOM
+  END-IF
+  MOVE ID-NUMBER        TO #CN
+  MOVE CONTACT-ID       TO #CONTACT-ID
+  MOVE SSN              TO #SSN
+  MOVE FIRST-NAME       TO #FIRST-NAME
+  MOVE MIDDLE-NAME      TO #MIDDLE-NAME
+  MOVE LAST-NAME        TO #LAST-NAME
+  MOVE SUFFIX           TO #SUFFIX
+  MOVE GENDER-CD        TO #SEX
+  IF DATE-OF-BIRTH NE 0
+    MOVE DATE-OF-BIRTH TO #YYYYMMDD
+    COMPRESS #MM-A #DD-A #YYYY-A INTO #DOB LEAVING NO
+  END-IF
+  IF DATE-OF-DEATH NE 0
+    MOVE DATE-OF-DEATH TO #YYYYMMDD
+    COMPRESS #MM-A #DD-A #YYYY-A INTO #DOD LEAVING NO
+  END-IF
+  MOVE BIRTH-CERT-CODE  TO #BCC
+  MOVE DEATH-CERT-CODE  TO #DCC
+  IF LAST-DATE-UPD NE 0
+    MOVE LAST-DATE-UPD TO #YYYYMMDD
+    COMPRESS #MM-A '-' #DD-A '-' #YYYY-A INTO #LST-UPD LEAVING NO
+  END-IF
+  MOVE LAST-USER-UPD TO #LST-USR
+  MOVE FIRM-ORGANIZATION-NAME TO #ORGANIZATION
+END-READ
+*
+END-SUBROUTINE
+*
+END

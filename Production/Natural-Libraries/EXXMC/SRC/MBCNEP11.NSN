@@ -1,0 +1,189 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*******************************************************************
+* Member Center/MC-II 
+* MBCNEP11 - Called from MBCNEP10 - 'GetPayments' function
+* Get Saved Payment methods short description for the policies own
+* for the Payment Center Landing page
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    01052015       Initial Creation
+* YAK    09142016  YK1  Remove filtering of the same CC / EZ-Pay account
+*                       Use MBCNCC41/MBCNEC51 to get all accounts
+*                       Use MBCNCC42/MBCNEC52 to get a single account
+* YAK    03292017  YK12 EB&P III (Payor project)
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEP10
+PARAMETER
+1 #ErrorCode (A3)
+*
+LOCAL USING MBCACC40
+LOCAL USING MBCACC41
+LOCAL USING MBCAEC50
+LOCAL USING MBCAEC51           /* YK1
+LOCAL USING ERROR_L
+LOCAL
+1 #I                (I2)
+1 #II               (I2)
+1 #I1               (I2)
+1 #N                (N2)
+1 #value            (A) DYNAMIC
+1 #length           (N2)
+*
+1 #GET             (A) DYNAMIC CONST <'GET'>
+1 #GET-ALL         (A) DYNAMIC CONST <'GET-ALL'>
+1 #GET-ST          (A) DYNAMIC CONST <'GET-ST'>
+1 #EZ-PAY          (A) DYNAMIC CONST <'EZ-Pay'>
+1 #BankCardName    (A) DYNAMIC
+1 #AccountType     (A) DYNAMIC
+1 #AccountNumber   (A) DYNAMIC
+1 #DDA             (A) DYNAMIC CONST <'DDA'>
+1 #Checking        (A) DYNAMIC CONST <'Checking'>
+1 #Saving          (A) DYNAMIC CONST <'Saving'>
+1 #CC              (A) DYNAMIC CONST <'Credit Card'>
+1 #CC_Other        (A) DYNAMIC CONST <'Credit Card Other'>
+1 #ActionType      (A) DYNAMIC
+1 #MethodType      (A) DYNAMIC
+1 #CheckType       (A) DYNAMIC                           /* YK1
+1 #EZPay           (A) DYNAMIC CONST <'EZ-Pay'>          /* YK1
+*
+END-DEFINE
+*
+* Get all accounts (eCheck and EZPay for OwnerCN)
+EXPAND ARRAY BankAccounts.Account TO (*:1)
+BankAccounts.ActionType := #GET-ALL
+BankAccounts.ViewCN := PaymentSettings.ViewCN
+CALLNAT 'MBCNEC51' BankAccounts #ErrorCode
+*
+* Get Credit Card for the OwnerCN
+EXPAND ARRAY CreditCards.Account TO (*:1)
+CreditCards.ActionType := #GET-ALL
+CreditCards.ViewCN := PaymentSettings.ViewCN
+#ErrorCode := '0'
+CALLNAT 'MBCNCC41' CreditCards #ErrorCode
+*
+* Get EZ-Pay and Credit Cards Information for Linked Accounts
+* FOR #I = 1 TO PaymentSettings.C@SavedMethods
+*   DECIDE FOR FIRST CONDITION
+*     WHEN PaymentSettings.MethodType(#I) = #EZ-Pay AND PaymentSettings.MethodCN(#I) <> PaymentSettings.ViewCN
+*       BankAccount.AccountCN := PaymentSettings.MethodCN(#I)        /* YK1
+*       PERFORM GET-EZPAY-DATA
+*     WHEN PaymentSettings.MethodType(#I) = #CC AND PaymentSettings.MethodCN(#I) <> PaymentSettings.ViewCN
+*       CreditCard.AccountCN := PaymentSettings.MethodCN(#I)
+*       PERFORM GET-CC-DATA
+*     WHEN NONE
+*       IGNORE
+*   END-DECIDE
+* END-FOR
+*
+PERFORM CREATE-BA-DATA
+PERFORM CREATE-CC-DATA
+*
+PaymentSettings.C@SavedMethods := BankAccounts.C@Account + CreditCards.C@Account
+*
+*********************************
+DEFINE SUBROUTINE GET-EZPAY-DATA          /* YK1
+*********************************
+* eCheck or EZ-Pay account
+BankAccount.ActionType := #GET-ST
+CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+IF #ErrorCode = '0'
+  FOR #II = 1 TO BankAccounts.C@Account
+    IF BankAccounts.RoutingNumber(#II) = BankAccount.RoutingNumber AND
+        BankAccounts.AccountNumber(#II) = BankAccount.AccountNumber AND
+        BankAccounts.AccountCN(#II) = BankAccount.AccountCN
+      ESCAPE ROUTINE
+    END-IF
+  END-FOR
+  BankAccounts.C@Account := BankAccounts.C@Account + 1
+  #I1 := BankAccounts.C@Account
+  EXPAND ARRAY BankAccounts.Account TO (*:#I1)
+  MOVE BY NAME BankAccount TO BankAccounts.Account(#I1)
+  BankAccounts.CheckType(#I1) := #EZPay
+END-IF
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CREATE-BA-DATA
+********************************
+*
+IF BankAccounts.C@Account <> 0
+  C@SavedMethods := BankAccounts.C@Account
+  RESIZE ARRAY SavedMethods TO (*:C@SavedMethods)
+END-IF
+*
+FOR #I = 1 TO BankAccounts.C@Account
+  #value := BankAccounts.AccountNumber(#I)
+  #value := *trim(#value)
+  #length := *LENGTH(#value)
+  #length := #length - 3
+  IF #length > 0
+    #AccountNumber := SUBSTR(BankAccounts.AccountNumber(#I),#LENGTH)
+  ELSE
+    #AccountNumber := BankAccounts.AccountNumber(#I)
+  END-IF
+  COMPRESS '(Ending in' #AccountNumber INTO #AccountNumber
+  COMPRESS #AccountNumber ')' INTO #AccountNumber LEAVING NO
+  IF BankAccounts.AccountType(#I) = #DDA
+    BankAccounts.AccountType(#I) := #Checking
+  ELSE
+    BankAccounts.AccountType(#I) := #Saving
+  END-IF
+  COMPRESS BankAccounts.AccountType(#I) 'Account' INTO #AccountType
+  COMPRESS #BankCardName #AccountType #AccountNumber INTO SavedMethodName(#I)
+  RESET CCExpirationDate(#I)
+END-FOR
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE GET-CC-DATA       /* YK1
+*****************************
+* Get deafult CC info for linked account
+#ErrorCode := '0'
+CreditCard.ActionType := #GET
+CALLNAT 'MBCNCC42' CreditCard #ErrorCode
+IF #ErrorCode = '0'
+  FOR #I1 = 1 TO CreditCards.C@Account
+    IF CreditCards.CardNumber(#I1) = CreditCard.CardNumber
+        AND CreditCards.AccountCN(#I1) = CreditCard.AccountCN
+      ESCAPE ROUTINE
+    END-IF
+  END-FOR
+  CreditCards.C@Account := CreditCards.C@Account + 1
+  #I1 := CreditCards.C@Account
+  EXPAND ARRAY CreditCards.Account TO (*:#I1)
+  MOVE BY NAME CreditCard TO CreditCards.Account(#I1)
+END-IF
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CREATE-CC-DATA
+********************************
+*
+IF CreditCards.C@Account <> 0
+  C@SavedMethods := BankAccounts.C@Account + CreditCards.C@Account
+  RESIZE ARRAY SavedMethods TO (*:C@SavedMethods)
+*
+  #II := BankAccounts.C@Account
+  FOR #I = 1  TO CreditCards.C@Account
+    #value := CreditCards.CardNumber(#I)
+    #length := *LENGTH(#value)
+    #length := #length - 3
+    #AccountNumber := SUBSTR(CreditCards.CardNumber(#I),#LENGTH)
+    COMPRESS FULL '(Ending in' #AccountNumber INTO #AccountNumber
+    COMPRESS #AccountNumber ')' INTO #AccountNumber LEAVING NO
+    #II := #II + 1
+    COMPRESS CreditCards.CardType(#I) #AccountNumber INTO SavedMethodName(#II)
+    COMPRESS CreditCards.ExMonth(#I) '/' SUBSTR(CreditCards.ExYear(#I),3,2) INTO CCExpirationDate(#II) LEAVING NO
+  END-FOR
+END-IF
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,795 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram AUCNPIM1.
+/**
+/** :author nguentchev   ONLY PARENT RELATIONS
+/*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* NGG    08/07/2012  NG1    Fix dependents FIR synch                   *
+* NGG    04/04/2017  NG2    Add CRM GUID                               *
+*
+*
+DEFINE DATA
+PARAMETER USING AUCAPI01
+LOCAL USING GPRAPINF
+LOCAL USING C2230ACB
+LOCAL USING C2231ACB
+LOCAL USING OBJADBTS
+LOCAL
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER
+  2 CONTACT-ID
+  2 CONTACT-TYPE
+  2 RANK-ID
+  2 DATE-OF-BIRTH
+  2 BIRTH-CERT-CODE
+  2 DATE-OF-DEATH
+  2 DEATH-CERT-CODE
+  2 FIRST-NAME
+  2 LAST-NAME
+  2 MIDDLE-NAME
+  2 SUFFIX
+  2 PREFIX-TITLE
+  2 GENDER-CD
+  2 SSN
+  2 SSN-PROTECT
+  2 SSN-PROTECT-DATE
+  2 WEBSITE-URL
+  2 FIRM-ORGANIZATION-NAME
+  2 FIRM-ESTABLISHED-DATE
+  2 FIRM-CERT-CODE
+  2 CRM-CONTACT-GUI     /* NG1
+  2 CONTACT-REMARKS(1:3)
+  2 DELETE-FLAG
+*
+1 CNT2-V VIEW OF A-CONTACTS
+  2 FIRST-NAME
+  2 LAST-NAME
+  2 MIDDLE-NAME
+  2 SUFFIX
+*
+1 ST-V VIEW OF A-STATUS
+  2 MEMBER-CONTACT-ID
+  2 STATUS-CODE-SP
+  2 NUMBER-MEMBERSHIPS
+  2 APPL-SOURCE
+  2 NOK-CONTACT-ID
+  2 WIDOW-FLAG
+  2 PROCESS-IND
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID (N8)
+  2 ROLE-1-CD    (A1)
+  2 CONTACT-2-ID (N8)
+  2 ROLE-2-CD    (A1)
+*
+1 ADR-V VIEW OF A-ADDRESS-RELATIONSHIP
+  2 ADDRESS-POOL-ID
+*
+1 ADP-V VIEW OF A-ADDRESS-POOL
+*
+1 EML-V VIEW OF A-CONTACT-EMAIL
+*
+1 PHN-V VIEW OF A-CONTACT-PHONE
+*
+1 TERM VIEW OF A-TERMINALS
+  2 COMMENTS
+  2 REDEFINE COMMENTS
+    3 #CONTACT-ID (N8)
+*
+1 MMD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER
+  2 ENTRY-DATE
+  2 REC-ISN
+  2 CODE
+  2 ISSUE-DATE
+  2 NUM-MBRSHIPS
+*
+1 #CN-PARMS
+  2 CN                   (N6)
+  2 ERR                  (N4)
+  2 ERR-DESC             (A78)
+  2 MOD                  (A1)
+*
+1 #GET       (I4) CONST <0>
+1 #ADD       (I4) CONST <1>
+1 #UPDATE    (I4) CONST <2>
+1 #DELETE    (I4) CONST <3>
+1 #UPDATEDIF (I4) CONST <4>
+1 #Contact   (I4) CONST <2>
+1 BLANK      (A1) CONST <' '>
+*
+1 #NOTFOUND    (A) DYNAMIC CONST <'CONTACT NOT FOUND'>
+1 #UNSUPPORTED (A) DYNAMIC CONST <'UNSUPPORTED REQUEST'>
+1 #REQUIRED    (A) DYNAMIC CONST <'ADDRESS POOL ID IS REQUIRED'>
+1 #CIREQUIRED  (A) DYNAMIC CONST <'CONTACT ID IS REQUIRED'>
+1 #UPDATECONFLICT (A) DYNAMIC CONST <'UPDATE CONFLICT'>
+*
+1 #ERROR-CODE-A(A3)
+1 REDEFINE #ERROR-CODE-A
+  2 #ERROR-CODE-N(N3)
+1 #UNKNOWN-REL  (A15/3) INIT <'SPOUSE','FORMER SPOUSE','DEPENDENT'>
+1 #DEFAULT-LN   (A25)
+1 #SYNCHRONIZE  (L)
+1 #DONT-DELETE  (L)
+1 XML_SERIALZE_OUTPUT (A) DYNAMIC
+1 #CSV-LINE           (A) DYNAMIC
+1 #CRM-Result         (A) DYNAMIC
+1 #USER               (A8)
+1 #XML                (A) DYNAMIC
+1 #LINE               (A) DYNAMIC
+1 #RESPONSE           (A) DYNAMIC
+1 #CRM-REQUEST        (I4)
+1 #RESPONSE-DSPL      (A16)
+1 #ST-ISN             (P8)
+1 #SAVE-CONTACT-1-ID  (N8)
+1 #CONTACT-REMARKS    (A225)
+1 REDEFINE #CONTACT-REMARKS
+  2 #CONTACT-REMARKS-ARRAY (A75/3)
+1 #CN                 (N6)
+1 #SPOUSE             (L)
+1 DOFDEATH-CHANGE     (L)             /* NG1
+END-DEFINE
+*
+EXPAND ARRAY #ERROR-CODE    TO (*:10)
+EXPAND ARRAY #VALIDATE-FLAG TO (*:26)
+*
+RESET ErrorCode
+  ErrorDescription
+#DB.#FILE-NAME := 'A-CONTACTS'
+DECIDE FOR FIRST CONDITION
+  WHEN ActionType EQ #ADD
+    IGNORE
+  WHEN PersonalInfo.ContactID NE 0
+    FINDR.
+    FIND CNT-V WITH CONTACT-ID = PersonalInfo.ContactID
+      IF NO RECORDS FOUND
+        ErrorCode := 1
+        ErrorDescription := #NOTFOUND
+        ESCAPE ROUTINE
+      END-NOREC
+      MOVE *ISN ( FINDR.) TO #DB.#FILE-REC-ISN
+      #DB.#REQUEST   := #GET
+      CALLNAT 'OBJNDBTS' #DB
+      PERFORM MOVE-OLD-VALUES-FOR-TR
+    END-FIND
+  WHEN NONE
+    ErrorCode := 3
+    ErrorDescription := #UNSUPPORTED
+    escape ROUTINE
+END-DECIDE
+*
+DECIDE ON FIRST VALUE OF ActionType
+  VALUE #GET          PERFORM GET-RECORD
+  VALUE #ADD          PERFORM ADD-RECORD
+  VALUE #UPDATE       PERFORM UPDATE-RECORD
+  VALUE #UPDATEDIF    PERFORM UPDATE-ONLY-PASSED
+  VALUE #DELETE       PERFORM DELETE-RECORD
+  ANY VALUE
+    IF ErrorCode = 0 AND #SYNCHRONIZE
+      PERFORM SYNC-OPERATIONS
+      PERFORM WRITE-TRANS-REG
+      PERFORM UPDATE-MBRSHIP-MTD-DET-FILE
+    END-IF
+  NONE VALUE
+    ErrorCode := 3
+    ErrorDescription := #UNSUPPORTED
+END-DECIDE
+*
+DEFINE GET-RECORD
+/*     ==========
+LastUpdatedDate     := #DB.LAST-DATE-UPD
+LastUpdatedTime     := #DB.LAST-TIME-UPD
+LastUpdatedUser     := #DB.LUU-NAME
+GET CNT-V #DB.#FILE-REC-ISN
+FIND (1) ST-V WITH ID-NUMBER = CNT-V.ID-NUMBER
+END-FIND
+*
+IF CNT-V.CONTACT-TYPE = BLANK
+  CNT-V.CONTACT-TYPE := 'I'
+END-IF
+PersonalInfo.ContactType      := CNT-V.CONTACT-TYPE
+PersonalInfo.CN               := CNT-V.ID-NUMBER
+PersonalInfo.ContactID        := CNT-V.CONTACT-ID
+PersonalInfo.Id               := CNT-V.CRM-CONTACT-GUI  /* NG1
+PersonalInfo.DateOfBirth      := CNT-V.DATE-OF-BIRTH
+PersonalInfo.BirthCode        := CNT-V.BIRTH-CERT-CODE
+PersonalInfo.DateOfDeath      := CNT-V.DATE-OF-DEATH
+PersonalInfo.DeathCode        := CNT-V.DEATH-CERT-CODE
+PersonalInfo.Insured          := ST-V.NUMBER-MEMBERSHIPS
+PersonalInfo.FirstName        := CNT-V.FIRST-NAME
+PersonalInfo.LastName         := CNT-V.LAST-NAME
+PersonalInfo.MiddleName       := CNT-V.MIDDLE-NAME
+PersonalInfo.Suffix           := CNT-V.SUFFIX
+PersonalInfo.Gender           := CNT-V.GENDER-CD
+PersonalInfo.Prefix           := CNT-V.PREFIX-TITLE
+PersonalInfo.SSN              := CNT-V.SSN
+PersonalInfo.SSNProtected     := CNT-V.SSN-PROTECT
+PersonalInfo.SSNProtectedDate := CNT-V.SSN-PROTECT-DATE
+PersonalInfo.OrganizationName := CNT-V.FIRM-ORGANIZATION-NAME
+PersonalInfo.WebsiteURL       := CNT-V.WEBSITE-URL
+PersonalInfo.OrganizationEstablishedDate  := CNT-V.FIRM-ESTABLISHED-DATE
+PersonalInfo.OrganizationCertificateCode  := CNT-V.FIRM-CERT-CODE
+COMPRESS CNT-V.CONTACT-REMARKS(1) CNT-V.CONTACT-REMARKS(2) CNT-V.CONTACT-REMARKS(3)
+  INTO PersonalInfo.Remarks
+*
+END-SUBROUTINE
+*
+DEFINE ADD-RECORD
+/*     ==========
+PERFORM VALIDATE-FIELDS  /* Populates #PERSONAL-INFO
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+RESET CNT-V
+*
+MOVE BY NAME #PERSONAL-INFO TO CNT-V
+*
+IF CNT-V.CONTACT-TYPE = ' '
+  MOVE 'I' TO CNT-V.CONTACT-TYPE
+END-IF
+MOVE #PERSONAL-INFO.GENDER  TO CNT-V.GENDER-CD
+MOVE #PERSONAL-INFO.PREFIX  TO CNT-V.PREFIX-TITLE
+MOVE 1616                   TO CNT-V.RANK-ID
+IF SSNProtected = 'Y'
+  MOVE *DATN TO CNT-V.SSN-PROTECT-DATE
+ELSE
+  RESET CNT-V.SSN-PROTECT-DATE
+END-IF
+*
+FIND (1) TERM WITH TERMINAL-ID = 'MASTERCO'
+  ADD 1 TO #CONTACT-ID
+  UPDATE
+END-FIND
+MOVE #CONTACT-ID TO CNT-V.CONTACT-ID PersonalInfo.ContactID
+MOVE PersonalInfo.Id TO CNT-V.CRM-CONTACT-GUI   /* NG1
+
+**MOVE 'N'                 TO CNT-V.DELETE-FLAG
+STORE-R.
+STORE CNT-V
+MOVE *ISN (STORE-R.) TO #DB.#FILE-REC-ISN
+**IF CNT-V.PREFIX-TITLE = ' '
+**  GET CNT-V #DB.#FILE-REC-ISN
+**  CNT-V.PREFIX-TITLE := F-DEFAULT-PREFIX (< CNT-V.CONTACT-ID >)
+**  UPDATE (0259)
+**END-IF
+#DB.#REQUEST   := #ADD
+#DB.LAST-USER-UPD := PersonalInfo.User
+CALLNAT 'OBJNDBTS' #DB
+LastUpdatedDate := #DB.LAST-DATE-UPD
+LastUpdatedTime := #DB.LAST-TIME-UPD
+LastUpdatedUser := #DB.LUU-NAME
+MOVE TRUE TO #SYNCHRONIZE
+*
+END-SUBROUTINE
+*
+DEFINE UPDATE-ONLY-PASSED
+/*     =============
+GET CNT-V #DB.#FILE-REC-ISN   /* Record for updates
+DECIDE FOR EVERY CONDITION
+  WHEN PersonalInfo.ContactType = BLANK
+    PersonalInfo.ContactType := CNT-V.CONTACT-TYPE
+*  WHEN PersonalInfo.DateOfBirth = 0
+*    PersonalInfo.DateOfBirth := CNT-V.DATE-OF-BIRTH
+*  WHEN PersonalInfo.BirthCode = BLANK
+*    PersonalInfo.BirthCode := CNT-V.BIRTH-CERT-CODE
+*  WHEN PersonalInfo.DateOfDeath = 0
+*    PersonalInfo.DateOfDeath := CNT-V.DATE-OF-DEATH
+*  WHEN PersonalInfo.DeathCode = BLANK
+*    PersonalInfo.DeathCode := CNT-V.DEATH-CERT-CODE
+  WHEN PersonalInfo.FirstName = BLANK
+    PersonalInfo.FirstName := CNT-V.FIRST-NAME
+  WHEN PersonalInfo.LastName = BLANK
+    PersonalInfo.LastName := CNT-V.LAST-NAME
+  WHEN PersonalInfo.MiddleName = BLANK
+    PersonalInfo.MiddleName := CNT-V.MIDDLE-NAME
+  WHEN PersonalInfo.Suffix = BLANK
+    PersonalInfo.Suffix := CNT-V.SUFFIX
+  WHEN PersonalInfo.Gender = BLANK
+    PersonalInfo.Gender := CNT-V.GENDER-CD
+  WHEN PersonalInfo.Prefix = BLANK
+    PersonalInfo.Prefix := CNT-V.PREFIX-TITLE
+  WHEN PersonalInfo.SSN = 0
+    PersonalInfo.SSN := CNT-V.SSN
+  WHEN PersonalInfo.SSNProtected = BLANK
+    PersonalInfo.SSNProtected := CNT-V.SSN-PROTECT
+  WHEN PersonalInfo.SSNProtectedDate = 0
+    PersonalInfo.SSNProtectedDate := CNT-V.SSN-PROTECT-DATE
+  WHEN PersonalInfo.OrganizationName = BLANK
+    PersonalInfo.OrganizationName := CNT-V.FIRM-ORGANIZATION-NAME
+  WHEN PersonalInfo.OrganizationEstablishedDate = 0
+ PersonalInfo.OrganizationEstablishedDate := CNT-V.FIRM-ESTABLISHED-DATE
+  WHEN PersonalInfo.OrganizationCertificateCode = BLANK
+    PersonalInfo.OrganizationCertificateCode := CNT-V.FIRM-CERT-CODE
+  WHEN PersonalInfo.WebsiteUrl = BLANK
+    PersonalInfo.WebsiteUrl := CNT-V.WEBSITE-URL
+  WHEN NONE IGNORE
+END-DECIDE
+LastUpdatedDate := #DB.LAST-DATE-UPD
+LastUpdatedTime := #DB.LAST-TIME-UPD
+PERFORM UPDATE-RECORD
+END-SUBROUTINE
+*
+DEFINE UPDATE-RECORD
+/*     =============
+IF #DB.LAST-DATE-UPD = LastUpdatedDate
+    AND #DB.LAST-TIME-UPD = LastUpdatedTime
+  UPDATE-CNT.
+  GET CNT-V #DB.#FILE-REC-ISN   /* Record for updates
+  FIND ST-V WITH ID-NUMBER = PersonalInfo.CN
+    #ST-ISN := *ISN
+  END-FIND
+  IF CNT-V.CONTACT-TYPE = ' '
+    MOVE 'I' TO CNT-V.CONTACT-TYPE
+  END-IF
+  IF CNT-V.CONTACT-TYPE           = PersonalInfo.ContactType AND
+      CNT-V.DATE-OF-BIRTH         = PersonalInfo.DateOfBirth AND
+      CNT-V.BIRTH-CERT-CODE       = PersonalInfo.BirthCode AND
+      CNT-V.DATE-OF-DEATH         = PersonalInfo.DateOfDeath AND
+      CNT-V.DEATH-CERT-CODE       = PersonalInfo.DeathCode AND
+      CNT-V.FIRST-NAME            = PersonalInfo.FirstName AND
+      CNT-V.LAST-NAME             = PersonalInfo.LastName AND
+      CNT-V.MIDDLE-NAME           = PersonalInfo.MiddleName AND
+      CNT-V.SUFFIX                = PersonalInfo.Suffix AND
+      CNT-V.GENDER-CD             = PersonalInfo.Gender AND
+      CNT-V.PREFIX-TITLE          = PersonalInfo.Prefix AND
+      CNT-V.SSN                   = PersonalInfo.SSN AND
+      CNT-V.SSN-PROTECT           = PersonalInfo.SSNProtected AND
+      CNT-V.SSN-PROTECT-DATE      = PersonalInfo.SSNProtectedDate AND
+      CNT-V.FIRM-ORGANIZATION-NAME= PersonalInfo.OrganizationName AND
+CNT-V.FIRM-ESTABLISHED-DATE = PersonalInfo.OrganizationEstablishedDate AND
+CNT-V.FIRM-CERT-CODE        = PersonalInfo.OrganizationCertificateCode AND
+      CNT-V.WEBSITE-URL           = PersonalInfo.WebsiteUrl AND
+      CNT-V.WEBSITE-URL           = PersonalInfo.WebsiteUrl
+    COMPRESS CNT-V.CONTACT-REMARKS(1)
+      CNT-V.CONTACT-REMARKS(2)
+      CNT-V.CONTACT-REMARKS(3)
+      INTO #CONTACT-REMARKS
+    IF #CONTACT-REMARKS = PersonalInfo.Remarks
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+*
+  PERFORM VALIDATE-FIELDS  /* Populates #PERSONAL-INFO
+  IF ErrorDescription NE ' '
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF PersonalInfo.DateOfDeath NE CNT-V.DATE-OF-DEATH          /* NG1
+    DOFDEATH-CHANGE := TRUE
+  END-IF
+  MOVE BY NAME #PERSONAL-INFO TO CNT-V
+*
+  IF PersonalInfo.Remarks NE #CONTACT-REMARKS
+    MOVE PersonalInfo.Remarks TO #CONTACT-REMARKS
+    MOVE #CONTACT-REMARKS-ARRAY(*) TO CNT-V.CONTACT-REMARKS(*)
+  END-IF
+  MOVE #PERSONAL-INFO.GENDER  TO CNT-V.GENDER-CD
+  MOVE #PERSONAL-INFO.PREFIX  TO CNT-V.PREFIX-TITLE
+  IF SSNProtected = 'Y'
+    IF SSNProtectedDate = 0
+      MOVE *DATN TO CNT-V.SSN-PROTECT-DATE SSNProtectedDate
+    END-IF
+  ELSE
+    RESET CNT-V.SSN-PROTECT-DATE SSNProtectedDate
+  END-IF
+*
+* Make contact history record and update beneficiary reference (if any)
+*
+  CALLNAT 'POSN0020' #DB.#FILE-REC-ISN PersonalInfo.ErrorDescription
+*
+  UPDATE (UPDATE-CNT.)
+*  IF CNT-V.PREFIX-TITLE = ' '
+*    CNT-V.PREFIX-TITLE  := F-DEFAULT-PREFIX (< CNT-V.CONTACT-ID >)
+*    PersonalInfo.Prefix := CNT-V.PREFIX-TITLE
+*    UPDATE (UPDATE-CNT.)
+*  END-IF
+  #DB.#REQUEST      := #UPDATE
+  #DB.LAST-USER-UPD := PersonalInfo.User
+  CALLNAT 'OBJNDBTS' #DB
+  LastUpdatedDate := #DB.LAST-DATE-UPD
+  LastUpdatedTime := #DB.LAST-TIME-UPD
+  LastUpdatedUser := #DB.LUU-NAME
+  MOVE TRUE TO #SYNCHRONIZE
+ELSE
+  ErrorCode := 99
+  COMPRESS *PROGRAM #UPDATECONFLICT INTO ErrorDescription
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE DELETE-RECORD
+/*     =============
+IF #DB.LAST-DATE-UPD = LastUpdatedDate
+    AND #DB.LAST-TIME-UPD = LastUpdatedTime
+  GET CNT-V #DB.#FILE-REC-ISN
+  RESET #SAVE-CONTACT-1-ID #DONT-DELETE
+  PERFORM CHECK-IF-OK-TO-DELETE
+  IF #DONT-DELETE
+    IGNORE
+  ELSE
+    DELETE (0412)
+    PERFORM DELETE-ADDR-EMAIL-PHN
+    MOVE TRUE TO #SYNCHRONIZE
+  END-IF
+ELSE
+  ErrorCode := 99
+  COMPRESS *PROGRAM #UPDATECONFLICT INTO ErrorDescription
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE VALIDATE-FIELDS
+/*     ===============
+IF ActionType NE #ADD
+  #PERSONAL-INFO.ID-NUMBER             := CNT-V.ID-NUMBER
+  #PERSONAL-INFO.CONTACT-ID            := CNT-V.CONTACT-ID
+END-IF
+#PERSONAL-INFO.CONTACT-TYPE            := PersonalInfo.ContactType
+#PERSONAL-INFO.DATE-OF-BIRTH           := PersonalInfo.DateOfBirth
+#PERSONAL-INFO.BIRTH-CERT-CODE         := PersonalInfo.BirthCode
+#PERSONAL-INFO.DATE-OF-DEATH           := PersonalInfo.DateOfDeath
+#PERSONAL-INFO.DEATH-CERT-CODE         := PersonalInfo.DeathCode
+#PERSONAL-INFO.FIRST-NAME              := PersonalInfo.FirstName
+#PERSONAL-INFO.LAST-NAME               := PersonalInfo.LastName
+#PERSONAL-INFO.MIDDLE-NAME             := PersonalInfo.MiddleName
+#PERSONAL-INFO.SUFFIX                  := PersonalInfo.Suffix
+#PERSONAL-INFO.GENDER                  := PersonalInfo.Gender
+#PERSONAL-INFO.PREFIX                  := PersonalInfo.Prefix
+#PERSONAL-INFO.SSN                     := PersonalInfo.SSN
+#PERSONAL-INFO.SSN-PROTECT             := PersonalInfo.SSNProtected
+#PERSONAL-INFO.SSN-PROTECT-DATE        := PersonalInfo.SSNProtectedDate
+#PERSONAL-INFO.FIRM-ORGANIZATION-NAME  := PersonalInfo.OrganizationName
+#PERSONAL-INFO.FIRM-ESTABLISHED-DATE   := PersonalInfo.OrganizationEstablishedDate
+#PERSONAL-INFO.FIRM-CERT-CODE          := PersonalInfo.OrganizationCertificateCode
+#PERSONAL-INFO.WEBSITE-URL             := PersonalInfo.WebsiteUrl
+#SYSTEM                                := 'UNIX'
+*
+MOVE 'Y' TO #VALIDATE-FLAG(8)                /* Role
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(17)               /* First Name
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(19)               /* Last Name
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(18)               /* Middle Name
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(20)               /* Suffix
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(5)               /* SSN
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(12)              /* SSN Protection Indicator
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(13)              /* SSN Protection DAte
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(6)               /* Prefix
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(7)               /* Gender
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(1)               /* Date of Birth
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(14)              /* Birth Cert Code
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(2)               /* Date of Death
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(15)              /* Death Cert Code
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(22)              /* Firm/Organization Name
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(23)              /* Firm Established Date
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'Y' TO #VALIDATE-FLAG(24)              /* Firm Cert Code
+PERFORM CALL-VALIDATION-ROUTINE
+IF ErrorDescription NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE CALL-VALIDATION-ROUTINE
+/*     =======================
+CALLNAT 'GPRNPINF' #PERSONAL-INFO #PERSONAL-OTHERS
+IF #ERROR-CODE(1) NE ' '
+  ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE(1)>)
+  #ERROR-CODE-A    := #ERROR-CODE(1)
+  ErrorCode        := #ERROR-CODE-N
+END-IF
+*
+RESET  #VALIDATE-FLAG(*) #VAL-FIELD
+END-SUBROUTINE
+*
+DEFINE CHECK-IF-OK-TO-DELETE
+/*     =====================
+/* Finds another member the contact is related to
+FIND CR-V WITH CONTACT-2-ID = CNT-V.CONTACT-ID
+  IF #SAVE-CONTACT-1-ID > 0 AND CONTACT-1-ID NE #SAVE-CONTACT-1-ID
+MOVE TRUE TO #DONT-DELETE                         /* Contact will not be deleted but relation will be;
+ESCAPE ROUTINE                                    /* this is not an error and so no error message
+  END-IF
+  MOVE CONTACT-1-ID TO #SAVE-CONTACT-1-ID
+END-FIND
+/* The widow of an AER member cannot be deleted.
+FIND ST-V WITH SPOUSE-CONTACT-ID = CNT-V.CONTACT-ID
+  IF APPL-SOURCE = 'AER'
+    MOVE TRUE TO #DONT-DELETE
+    MOVE 231 TO ErrorCode #ERROR-CODE-N
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE-A>)
+    ESCAPE ROUTINE
+  END-IF
+END-FIND
+/* Cannot delete a DN NOTIFIED-BY contact.
+FIND NUMBER CNT-V WITH DEATH-NOTIFIED-BY-CONTACT-ID = CNT-V.CONTACT-ID
+IF *NUMBER(0591) > 0
+  MOVE TRUE TO #DONT-DELETE
+  MOVE 232 TO ErrorCode #ERROR-CODE-N
+  ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE-A>)
+  ESCAPE ROUTINE
+END-IF
+/* Cannot delete a DN NOK contact.
+FIND NUMBER ST-V WITH NOK-CONTACT-ID = CNT-V.CONTACT-ID
+IF *NUMBER(0599) > 0
+  MOVE TRUE TO #DONT-DELETE
+  MOVE 233 TO ErrorCode #ERROR-CODE-N
+  ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE-A>)
+  ESCAPE ROUTINE
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE DELETE-ADDR-EMAIL-PHN
+/*                =====================
+FIND ADR-V WITH CONTACT-ID = CNT-V.CONTACT-ID
+IF FUNCTION-FIND-NUMBER(<ADDRESS-POOL-ID>)  /* Delete ADDRESS POOL record if address is not shared
+    FIND ADP-V WITH ADDRESS-POOL-ID = ADR-V.ADDRESS-POOL-ID
+      DELETE
+    END-FIND
+  END-IF
+  DELETE
+END-FIND
+*
+FIND EML-V WITH CONTACT-ID = CNT-V.CONTACT-ID
+  DELETE
+END-FIND
+*
+FIND PHN-V WITH CONTACT-ID = CNT-V.CONTACT-ID
+  DELETE
+END-FIND
+*
+END-SUBROUTINE
+*
+DEFINE SYNC-OPERATIONS
+/*     ===============
+IF ActionType NE #GET
+  GET CNT-V #DB.#FILE-REC-ISN
+  IF CNT-V.ID-NUMBER > 0
+    #CN-PARMS.CN := CNT-V.ID-NUMBER
+    CALLNAT 'GOSTCN02'              /* Synch with Status
+      #CN-PARMS
+  ELSE                              /* NG1
+    IF DOFDEATH-CHANGE
+    CALLNAT 'GOSTCN03' PersonalInfo.ContactID  /* UPDATES STATUS AND FIR
+        PersonalInfo.DateOfDeath
+    END-IF
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE WRITE-TRANS-REG
+/*     ===============
+IF ActionType NE #GET
+  IF CNT-V.ID-NUMBER > 0
+    #ID-NUMBER := CNT-V.ID-NUMBER
+  ELSE
+    #ID-NUMBER := F-GET-PARENT-CN (< PersonalInfo.ContactID >)
+    PERFORM GET-ROLE-NAME
+  END-IF
+  PERFORM MOVE-NEW-VALUES-FOR-TR
+  CALLNAT 'C2230SCB' #OLD-VALUES #NEW-VALUES
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE GET-ROLE-NAME
+/*     =============
+FIND ST-V WITH ID-NUMBER = #ID-NUMBER               /* Get role of member's relation
+  FIND CR-V WITH CONTACT-1-ID = MEMBER-CONTACT-ID
+    IF CONTACT-2-ID = PersonalInfo.ContactID
+      MOVE ROLE-2-CD TO #OLD-ROLE
+      MOVE ROLE-2-CD TO #ROLE
+      ESCAPE BOTTOM
+    END-IF
+  END-FIND
+END-FIND
+*
+FIND CNT2-V WITH CONTACT-ID = MEMBER-CONTACT-ID     /* Get member name for TR
+#ST-NAME := FUNCTION-DISP-CT-NAME(<CNT2-V.FIRST-NAME,CNT2-V.MIDDLE-NAME,CNT2-V.LAST-NAME,CNT2-V.SUFFIX>)
+END-FIND
+*
+END-SUBROUTINE
+*
+DEFINE UPDATE-MBRSHIP-MTD-DET-FILE
+/*     ===========================
+RESET #ST-ISN
+IF ActionType = #ADD OR = #UPDATE
+  FIND CR-V WITH CONTACT-2-ID = PersonalInfo.ContactID
+    IF ROLE-2-CD = 'S'
+      MOVE TRUE TO #SPOUSE
+    END-IF
+  END-FIND
+  IF NOT #SPOUSE
+    ESCAPE ROUTINE
+  END-IF
+IF #OLD-DOD = '0' AND CNT-V.DATE-OF-DEATH > 0              /* Spouse has been deaded
+    FIND (1) CNT-V WITH CONTACT-ID = CONTACT-1-ID
+      IF CNT-V.ID-NUMBER > 0
+        MOVE CNT-V.ID-NUMBER TO #CN
+        FIND (1) ST-V WITH ID-NUMBER = CNT-V.ID-NUMBER
+          MOVE *ISN TO #ST-ISN
+        END-FIND
+      END-IF
+    END-FIND
+    FIND (1) CNT-V WITH CONTACT-ID = CONTACT-2-ID
+      IF CNT-V.ID-NUMBER > 0
+        FIND (1) ST-V WITH ID-NUMBER = CNT-V.ID-NUMBER
+MOVE *ISN TO #ST-ISN                  /* Use spouse ISN if spouse has CN
+        END-FIND
+      END-IF
+    END-FIND
+    RESET MMD-V
+    COMPUTE MMD-V.ENTRY-DATE = 99999999 - *DATN
+    MOVE #ST-ISN           TO MMD-V.REC-ISN
+    MOVE 'W'               TO MMD-V.CODE
+    MOVE #CN               TO MMD-V.ID-NUMBER
+*
+    IF ST-V.WIDOW-FLAG = 'Y'
+      IF ST-V.PROCESS-IND = 'G'
+        MOVE 99999999 TO MMD-V.ISSUE-DATE
+      ELSE
+        MOVE 60606060 TO MMD-V.ISSUE-DATE
+      END-IF
+    ELSE
+      MOVE 88888888 TO MMD-V.ISSUE-DATE
+    END-IF
+*
+    MOVE 0          TO MMD-V.NUM-MBRSHIPS
+    STORE MMD-V
+*
+    FIND (1) ST-V WITH MEMBER-CONTACT-ID = CONTACT-1-ID
+      MOVE 'D' TO ST-V.STATUS-CODE-SP
+      UPDATE (0728)
+    END-FIND
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE MOVE-OLD-VALUES-FOR-TR
+/*     ======================
+IF CNT-V.ID-NUMBER > 0
+  MOVE 'M' TO #OLD-ROLE
+END-IF
+#OLD-DOB              := CNT-V.DATE-OF-BIRTH
+#OLD-BCC              := CNT-V.BIRTH-CERT-CODE
+#OLD-DOD              := CNT-V.DATE-OF-DEATH
+#OLD-DCC              := CNT-V.DEATH-CERT-CODE
+**#OLD-DIV              := DATE-OF-DIVORCE
+#OLD-FIRST-NAME       := CNT-V.FIRST-NAME
+#OLD-LAST-NAME        := CNT-V.LAST-NAME
+#OLD-MIDDLE-NAME      := CNT-V.MIDDLE-NAME
+#OLD-SUFFIX           := CNT-V.SUFFIX
+#OLD-GENDER-CD        := CNT-V.GENDER-CD
+#OLD-PREFIX-TITLE     := CNT-V.PREFIX-TITLE
+#OLD-SSN              := CNT-V.SSN
+#OLD-SSN-PROTECT      := CNT-V.SSN-PROTECT
+#OLD-FIRM             := CNT-V.FIRM-ORGANIZATION-NAME
+#OLD-WEBSITE          := CNT-V.WEBSITE-URL
+#OLD-EST-DATE         := CNT-V.FIRM-ESTABLISHED-DATE
+#OLD-ECC              := CNT-V.FIRM-CERT-CODE
+#OLD-REMARKS(*)       := CNT-V.CONTACT-REMARKS(*)
+*
+END-SUBROUTINE
+*
+DEFINE  MOVE-NEW-VALUES-FOR-TR
+/*      ======================
+IF CNT-V.ID-NUMBER > 0
+  MOVE 'M' TO #ROLE
+END-IF
+#ORIG-COMMAND     := 'CB'
+#CGA-CLERK        := FUNCTION-CLERK(<#DB.LAST-USER-UPD>)
+IF #ST-NAME = ' '
+#ST-NAME        := FUNCTION-DISP-CT-NAME(<CNT-V.FIRST-NAME,CNT-V.MIDDLE-NAME,CNT-V.LAST-NAME,CNT-V.SUFFIX>)
+END-IF
+#LAST-FM-DATE     := *DATN
+#FIRST-NAME       := CNT-V.FIRST-NAME
+#MIDDLE-NAME      := CNT-V.MIDDLE-NAME
+#LAST-NAME        := CNT-V.LAST-NAME
+#SUFFIX           := CNT-V.SUFFIX
+#DATE-OF-BIRTH    := CNT-V.DATE-OF-BIRTH
+#SSN              := CNT-V.SSN
+#SEX              := CNT-V.GENDER-CD
+#BCC              := CNT-V.BIRTH-CERT-CODE
+#DCC              := CNT-V.DEATH-CERT-CODE
+#DOD              := CNT-V.DATE-OF-DEATH
+#ORG-NAME         := CNT-V.FIRM-ORGANIZATION-NAME
+#SSN-PROTECT      := CNT-V.SSN-PROTECT
+#PREFIX-TITLE     := CNT-V.PREFIX-TITLE
+#CHANGE-DESC      := FUNCTION-CODE-1-DESC(<'049',NameChangeCode>)
+#WEBSITE-URL      := CNT-V.WEBSITE-URL
+#EST-DATE         := CNT-V.FIRM-ESTABLISHED-DATE
+#ECC              := CNT-V.FIRM-CERT-CODE
+#REMARKS(*)       := CNT-V.CONTACT-REMARKS(*)
+*
+END-SUBROUTINE
+*
+END

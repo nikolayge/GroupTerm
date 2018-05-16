@@ -1,0 +1,363 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPRPPR01                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Policy Package Printing                               *
+*              : Requests file maintenance                             *
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* YAK    07252008  None    Program Written                             *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLPRST      /* Payment Request file
+LOCAL USING MBCAEC51      /* Payment Request file
+LOCAL USING PARSER-X
+LOCAL
+1 #I                    (I2)
+1 #I1                   (I2)
+1 #TEXT                 (A78)
+1 #SCREEN-NUMBER        (N2)
+1 #SCREEN-COUNT         (N5)
+1 #SIZE-ARRAY           (N5)
+1 #LINE-COUNT           (N5)
+1 #MAX-ENTRY            (N2)    INIT <14>
+1 #ADMIN-ACCESS         (L)
+1 #FULL-ACCESS          (L)
+1 #USER-ACCESS          (L)
+1 #CV-SEL               (C/14)
+1 #TAB                  (A1) INIT <H'09'>
+1 #FUNCTION-ATTRIBUTES  (A70)
+1 REDEFINE #FUNCTION-ATTRIBUTES
+  2 #PROGRAM            (A8)
+  2 #SEPARATOR          (A1)
+  2 #FUNCTION-PARM      (A7)
+  2 #HEADER-1           (A50)
+  2 #SECURITY-CODE      (N2)
+*
+1 #REQUEST-ARRAY    (*)
+  2 #ISN           (P9)
+  2 ID-NUMBER      (N6)
+  2 POLICY-NUMBER  (A16)
+  2 REQUEST-STATUS (A1)
+  2 REQUESTOR-CN   (N6)
+  2 REQUEST-DATE   (A10)
+  2 PAYMENT-DATE   (A10)
+  2 PAYMENT-AMOUNT (A11)
+*
+1 #SCR-ARRAY       (14)
+  2 #SEL           (A1)
+  2 #ISN           (P9)
+  2 ID-NUMBER      (N6)
+  2 POLICY-NUMBER  (A16)
+  2 REQUEST-STATUS (A1)
+  2 REQUESTOR-CN   (N6)
+  2 REQUEST-DATE   (A10)
+  2 PAYMENT-DATE   (A10)
+  2 PAYMENT-AMOUNT (A11)
+*
+1 #DATN            (N8)
+1 #PAYMENT-DATE-STATUS (A9)
+1 REDEFINE #PAYMENT-DATE-STATUS
+  2 #PAYMENT-DATE      (N8)
+  2 #REQUEST-STATUS    (A1)
+*
+1 #CV-DATE (C)
+1 #CV-STAT (C)
+1 #CURSOR  (I2)
+1 #GET-ISN (P9)
+1 #REQUEST (A) DYNAMIC
+1 #REQUESTOR-CN   (N6)
+1 #ROUTING-NUMBER (A15)
+1 #ACCOUNT-NUMBER (A15)
+1 #ACCOUNT-TYPE   (A10)
+1 #NAME           (A25)
+1 #STREET         (A25)
+1 #CITY-STATE-ZIP (A25)
+*
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+END-DEFINE
+*
+DEFINE WINDOW HELP_WINDOW
+  SIZE 8*24
+  BASE 5/7
+  TITLE 'Request Status' FRAMED ON
+*
+DEFINE WINDOW DETAIL_WINDOW
+  SIZE 11*50
+  BASE 5/7
+  TITLE 'Request Details' FRAMED ON
+*
+SET KEY PF1  NAMED 'Help'
+SET KEY PF3  NAMED 'Retrn'
+SET KEY PF7  NAMED 'Up'
+SET KEY PF8  NAMED 'Down'
+SET KEY PF12 NAMED 'Quit'
+*
+IF *DATA NE 0
+  INPUT #FUNCTION-ATTRIBUTES
+END-IF
+*
+RESET #ADMIN-ACCESS #FULL-ACCESS
+IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A'
+  #ADMIN-ACCESS := #FULL-ACCESS := TRUE
+ELSE
+  IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'U'
+    #FULL-ACCESS := TRUE
+  END-IF
+END-IF
+*
+IF NOT #FULL-ACCESS
+  #TEXT := 'User not authorized to perform this function. Browse access only'
+  #CV-SEL(*) := (AD=P)
+END-IF
+*
+#DATN := *DATN
+PERFORM READ-FILE
+PERFORM POPULATE-SCREEN
+REPEAT
+  INPUT TEXT #TEXT USING MAP 'GPRMPR01'
+  IF #CV-DATE MODIFIED
+    RESET #TEXT
+    PERFORM READ-FILE
+    PERFORM POPULATE-SCREEN
+    ESCAPE TOP
+  END-IF
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF1'
+      PERFORM DISPLAY-HELP
+    VALUE 'PF3'
+      PERFORM RETURN-TO-MENU
+    VALUE 'ENTR'
+      PERFORM GET-REQUEST-DETAILS
+    VALUE 'PF8', 'PF7', 'ENTR'
+      IF #SIZE-ARRAY <> 0
+        PERFORM NEXT-SCREEN
+      END-IF
+    VALUE 'PF12'
+      SET KEY OFF
+      FETCH 'G1000PXX'
+    NONE
+      IGNORE
+  END-DECIDE
+END-REPEAT
+*
+***************************
+DEFINE SUBROUTINE READ-FILE
+***************************
+*
+IF #PAYMENT-DATE = 0
+  #PAYMENT-DATE := #DATN
+END-IF
+*
+F1.
+FIND NUMBER PAY-REQUEST-V WITH PAYMENT-DATE-STATUS >= #PAYMENT-DATE-STATUS
+#SIZE-ARRAY := *NUMBER (F1.)
+IF #SIZE-ARRAY = 0
+  #TEXT := '*** There are no requests for these dates'
+  RESET #SCR-ARRAY(*)
+  REINPUT FULL WITH #TEXT MARK *#PAYMENT-DATE
+END-IF
+EXPAND ARRAY #REQUEST-ARRAY TO (1:#SIZE-ARRAY)
+#I := 0
+READ PAY-REQUEST-V WITH PAYMENT-DATE-STATUS = #PAYMENT-DATE
+  #I := #I + 1
+  IF #I > #SIZE-ARRAY
+    ESCAPE BOTTOM
+  END-IF
+  #REQUEST-ARRAY.#ISN(#I) := *ISN
+  MOVE BY NAME PAY-REQUEST-V TO #REQUEST-ARRAY(#I)
+  #REQUEST-ARRAY.REQUEST-DATE(#I) := FUNCTION-CALENDAR(<PAY-REQUEST-V.REQUEST-DATE,'D'>)
+  #REQUEST-ARRAY.PAYMENT-DATE(#I) := FUNCTION-CALENDAR(<PAY-REQUEST-V.PAYMENT-DATE,'D'>)
+  MOVE EDITED PAY-REQUEST-V.PAYMENT-AMOUNT (EM=ZZZZ,ZZ9.99) TO #REQUEST-ARRAY.PAYMENT-AMOUNT(#I)
+END-READ
+#SCREEN-NUMBER := 1
+#SCREEN-COUNT  := #SIZE-ARRAY / #MAX-ENTRY
+IF (#SCREEN-COUNT * #MAX-ENTRY) < #SIZE-ARRAY
+  #SCREEN-COUNT := #SCREEN-COUNT + 1
+END-IF
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE NEXT-SCREEN
+*****************************
+*
+IF *PF-KEY = 'PF8' OR = 'ENTR'
+  IF #SCREEN-NUMBER = #SCREEN-COUNT
+    #TEXT   := 'Last Screen'
+  ELSE
+    RESET #TEXT
+    #SCREEN-NUMBER := #SCREEN-NUMBER + 1
+  END-IF
+ELSE
+  IF #SCREEN-NUMBER = 1
+    #TEXT   := 'First Screen'
+  ELSE
+    RESET #TEXT
+    #SCREEN-NUMBER := #SCREEN-NUMBER - 1
+  END-IF
+END-IF
+PERFORM POPULATE-SCREEN
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE POPULATE-SCREEN
+*********************************
+*
+RESET #SCR-ARRAY(*)
+#CV-SEL(*) := (AD=I)
+#I1 := ((#SCREEN-NUMBER - 1) * #MAX-ENTRY)
+#LINE-COUNT := #SIZE-ARRAY - #I1
+IF #LINE-COUNT > #MAX-ENTRY
+  #LINE-COUNT := #MAX-ENTRY
+END-IF
+FOR #I = 1 TO #LINE-COUNT
+  MOVE BY NAME #REQUEST-ARRAY(#I1 + #I) TO #SCR-ARRAY(#I)
+END-FOR
+#LINE-COUNT := #LINE-COUNT + 1
+FOR #I = #LINE-COUNT TO #MAX-ENTRY
+  #CV-SEL(#I) := (AD=P)
+END-FOR
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE GET-REQUEST-DETAILS
+*************************************
+*
+RESET #CURSOR
+FOR #I = 1 TO #MAX-ENTRY
+  IF #SCR-ARRAY.#SEL(#I) <> ' '
+    #CURSOR := #I
+    RESET #SCR-ARRAY.#SEL(#I)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+IF #CURSOR = 0
+  #CURSOR := *CURS-LINE - 5
+END-IF
+DECIDE FOR FIRST CONDITION
+  WHEN #CURSOR > 0 AND #CURSOR < #LINE-COUNT
+    #GET-ISN := #SCR-ARRAY.#ISN(#CURSOR)
+    PERFORM GET-DETAILS
+    PERFORM DISPLAY-DETAILS
+  WHEN (*CURS-LINE > #LINE-COUNT OR *CURS-LINE < 6) AND #SIZE-ARRAY <> 0
+    PERFORM NEXT-SCREEN
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE GET-DETAILS
+*************************************
+*
+GET PAY-REQUEST-V #GET-ISN
+FOR #I = 1 TO C*REQUEST-LINE
+  COMPRESS #REQUEST REQUEST-LINE(#I) INTO #REQUEST LEAVING NO
+END-FOR
+* Parse to get Rounting and Account Number
+XML_PARSER_INPUT := #REQUEST
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+END-SUBROUTINE
+*
+************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'Member/BankAccounts/BankAccount/CheckType/$'
+    BankAccount.CheckType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountHolderFirstName/$'
+    BankAccount.AccountHolderFirstName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountHolderLastName/$'
+    BankAccount.AccountHolderLastName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/RoutingNumber/$'
+    BankAccount.RoutingNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountNumber/$'
+    BankAccount.AccountNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountType/$'
+    BankAccount.AccountType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountStreet/$'
+    BankAccount.AccountStreet := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountCity/$'
+    BankAccount.AccountCity := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountState/$'
+    BankAccount.AccountState := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountZipCode/$'
+    BankAccount.AccountZipCode := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE DISPLAY-HELP
+******************************
+*
+SET WINDOW 'HELP_WINDOW'
+INPUT  WINDOW = 'HELP_WINDOW'  (IP=OFF)
+  2x 'S - Scheduled' (AD=O)    /
+  2x 'X - Cancelled' (AD=O)    /
+  2x 'C - Completed' (AD=O)    /
+  2x 'F - Failed   ' (AD=O)
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE DISPLAY-DETAILS
+*********************************
+*
+RESET #ROUTING-NUMBER #ACCOUNT-NUMBER
+#REQUESTOR-CN := PAY-REQUEST-V.REQUESTOR-CN
+#ROUTING-NUMBER := BankAccount.RoutingNumber
+#ACCOUNT-NUMBER := BankAccount.AccountNumber
+COMPRESS BankAccount.AccountHolderFirstName BankAccount.AccountHolderLastName
+  INTO #NAME
+IF BankAccount.AccountType = 'DDA'
+  #ACCOUNT-TYPE := 'Checking'
+ELSE
+  #ACCOUNT-TYPE := 'Saving'
+END-IF
+#STREET := BankAccount.AccountStreet
+COMPRESS BankAccount.AccountCity BankAccount.AccountState BankAccount.AccountZipCode INTO #CITY-STATE-ZIP
+SET WINDOW 'DETAIL_WINDOW'
+INPUT  WINDOW = 'DETAIL_WINDOW'  (IP=OFF)
+  2x 'Requestor CN  : ' #REQUESTOR-CN (AD=ILO)    /
+  2x 'Routing Number: ' #ROUTING-NUMBER (AD=O)    /
+  2x 'Account Number: ' #ACCOUNT-NUMBER (AD=O)    /
+  2x 'Account Name  : ' #NAME (AD=O)    /
+  2x 'Account Type  : ' #ACCOUNT-TYPE (AD=O)    /
+  2x 'Street        : ' #STREET (AD=O)    /
+  2x 'City State Zip: ' #CITY-STATE-ZIP (AD=O)    /
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE RETURN-TO-MENU
+********************************
+*
+RESET #TEXT
+#FUNCTION-PARM := 'PROC   '
+#PROGRAM       := 'G1000PUI'
+STACK TOP DATA #FUNCTION-ATTRIBUTES #TEXT
+FETCH #PROGRAM
+END-SUBROUTINE
+*
+END

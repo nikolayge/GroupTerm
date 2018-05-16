@@ -1,0 +1,188 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2301PCI
+*
+*    CI SCREEN 'DEAD' PROCESSING   OLD TRAN 601
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE      TAG   REASON
+* DRW  07202005  DW1   Create Acct TR if DB/CR or BADJ chges
+* DRW 04/07/2008 DW2   Add TIMN to C2522SAM Linkage so all trans have same time
+* YAK 07/19/2013 YK1   Do not create RDCR/ADCR/PREP/PRER when billing adjustment exist
+*                      Change information display screen 
+*                      Use time passed from C2300PCI to have the same time for all transactions
+* TMT 12/06/2013 TT1   1 MILLION DOLLAR POLICY STABILITY PROJECT   
+********************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.CI-BLOCK
+LOCAL
+*
+* Linkage to C2522SAM below    /* DW1
+1 #SOURCE-PROG  (A8)   /* Prog sending Info
+1 #EFF-DT       (N8)
+1 #ILN1       (I2)
+1 #TR-CD      (A4)
+1 #ADJ-AMT    (N5.2)
+1 #OLD-FPF         (N7.2)
+1 #NEW-FPF         (N7.2)
+1 #LAST-DATE-UPDATE (N8)
+1 #NEW-DATE-UPDATE  (N8)
+1 #ISSUE-DATE      (N8)   /* issue date of affected policy
+1 #SCR-TRAN-COD    (A4)   /* TRAN Code if from CI
+1 #CMBX            (A4)   /* Used to send indicator to C2522sam for Desc
+1 #TIMN            (n7)          /* DW2
+* Linkage to C2522SAM above
+*
+1 ST-V VIEW OF A-STATUS
+  2 X-BILL-ADJUST  (9)
+  2 X-FIRST-PLACE-FEE (9)
+  2 C*OUT-TERM-REF-GROUP       /* YK1
+  2 OUT-TERM-REF-GROUP   (100) /* YK1
+    3 OUT-TERM-REF-AMOUNT      /* YK1
+*
+1 #DB-ADJ              (N7.2)
+*
+1 #TR-REG-DEAD-GR
+  2 #TR-REG-DEAD-LBL-1         (A18) INIT <'CI-DEATH ISSUE-DT '>
+  2 #TR-REG-DEAD-ISSUE-DATE    (N08)
+  2 #TR-REG-DEAD-LBL-2         (A07) INIT <'  PLAN '>
+  2 #TR-REG-DEAD-PLAN          (A02)
+  2 #TR-REG-DEAD-LBL-3         (A11) INIT <'  FACE-AMT '>
+  2 #TR-REG-DEAD-FAC-AMT       (A10)                             /*TT1
+1 REDEFINE #TR-REG-DEAD-GR
+  2 #TR-REG-DEAD               (A56)                             /*TT1
+*
+1 #DEBIT-CREDIT-AMT (N7.2)     /* YK1
+1 #TERM-REF         (N7.2)     /* YK1 
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+* move *timn to #TIMN                   /* DW2
+#TIMN := TR-REG-V.TRANSACTION-TIMN      /* YK1 -  pass from C2300PCI to have the same time for all transactions    
+GET ST-V #CGA-ISN
+*
+MOVE TRUE TO #REC-CHGD              /* INDICATE RECORD CHANGED
+*
+MOVE CI-V.ISSUE-DATE(#IFL) TO #TR-REG-DEAD-ISSUE-DATE /* TRANS-REGISTER
+MOVE CI-V.PLAN      (#IFL) TO #TR-REG-DEAD-PLAN
+MOVE EDITED CI-V.FACE-AMOUNT(#IFL) (EM=ZZZZZZZ.99)      /*TT1
+  TO #TR-REG-DEAD-FAC-AMT
+MOVE #TR-REG-DEAD        TO TR-REG-V.OLD-DATA (#ITR1)
+ADD 1 TO #ITR1
+*
+MOVE '9' TO CI-V.HANDLE-FLAG
+  CI-V.S-ADDRESS-CODE
+MOVE 'E' TO CI-V.STATUS (#IFL)    /* INDICATE TO BE PURGED
+MOVE '3' TO CI-V.SUSPEND-CODE
+RESET CI-V.NUMBER-MEMBERSHIPS
+*
+IF CI-V.ONLINE-ACTION-GN NE '2'         /* IF NOT NEW MEMBER THIS MONTH
+  MOVE  '1' TO CI-V.ONLINE-ACTION-GN /* MOVE DEAD THIS MONTH TO GEN IND
+END-IF
+*
+IF CI-V.ONLINE-ACTION (#IFL) = '1'          /* IF NEW POLICY THIS MONTH
+  MOVE 'G' TO CI-V.ONLINE-ACTION (#IFL)           /* INDICATE NEW/DEAD
+ELSE
+  IF CI-V.ONLINE-ACTION (#IFL) = 'B'        /*REINSTATED THIS MONTH
+    MOVE 'H' TO CI-V.ONLINE-ACTION (#IFL)         /* INDICATE REIN/DEAD
+  ELSE                                 /* OTHERWISE
+    MOVE 'E' TO CI-V.ONLINE-ACTION (#IFL)         /* INDICATE DEAD
+  END-IF
+END-IF
+*
+ADD X-BILL-ADJUST     (#IFL) TO #DB-ADJ
+ADD X-FIRST-PLACE-FEE (#IFL) TO #DB-ADJ
+
+* ADD #DB-ADJ TO CI-V.DEBIT-CREDIT-AMT          /* YK1
+*
+IF X-FIRST-PLACE-FEE (#IFL) NE 0   /* DW1
+  MOVE 'FPFC' TO #TR-CD
+  MOVE X-FIRST-PLACE-FEE (#IFL) TO #OLD-FPF
+  RESET #NEW-FPF #ADJ-AMT
+  PERFORM CALL-C2522SAM
+END-IF
+*
+IF X-BILL-ADJUST (#IFL) NE 0   /* DW1
+  MOVE 'BADJ' TO #TR-CD
+  COMPUTE #ADJ-AMT = X-BILL-ADJUST (#IFL) * -1
+  RESET #OLD-FPF #NEW-FPF
+  PERFORM CALL-C2522SAM
+END-IF
+*
+* YK1 - create only BADJ transactions
+* IF #DB-ADJ NE 0            /* DW1
+*   IF #DB-ADJ GT 0
+*     MOVE 'RDCR' TO #TR-CD
+*   ELSE
+*     MOVE 'ADCR' TO #TR-CD
+*   END-IF
+* *
+*   MOVE #DB-ADJ TO #ADJ-AMT
+*   PERFORM CALL-C2522SAM
+* END-IF
+*  YK1 start
+FOR #I1 = 1 TO C*OUT-TERM-REF-GROUP                      
+  #TERM-REF := #TERM-REF + ST-V.OUT-TERM-REF-AMOUNT(#I1)
+END-FOR
+#TERM-REF := #TERM-REF * (-1)
+#DEBIT-CREDIT-AMT := CI-V.DEBIT-CREDIT-AMT + #DB-ADJ + #TERM-REF
+IF #DB-ADJ NE 0
+  WRITE // 'This Termination has caused the following adjustment:'
+  IF X-BILL-ADJUST(#IFL) <> 0
+    WRITE / 'Billing Adjustment            ' X-BILL-ADJUST(#IFL)
+  END-IF
+  IF #TERM-REF <> 0
+    WRITE / 'Term refund adjustment      ' #TERM-REF
+  END-IF  
+  IF CI-V.DEBIT-CREDIT-AMT <> 0
+    WRITE / 'Current Debit-Credit-Amount ' CI-V.DEBIT-CREDIT-AMT
+  END-IF
+  WRITE / 'New Debit-Credit-Amount     ' #DEBIT-CREDIT-AMT
+*   WRITE /  'Debit-Credit has been adjusted by' #DB-ADJ
+*   WRITE /  'New Debit-Credit-Amt is' DEBIT-CREDIT-AMT
+WRITE // 'Press ENTER to proceed'
+END-IF
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-C2522SAM   /* DW1
+* * * * * * * * * * * * * * * *
+*
+IF NOT #CGA-ORIG-SUFFIX = 'UPD' OR = 'UPO' OR = 'PUU'
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE CI-V.DATE-ACCT-UPDATE TO #LAST-DATE-UPDATE
+MOVE *DATN TO CI-V.DATE-ACCT-UPDATE #NEW-DATE-UPDATE #EFF-DT
+*
+MOVE 'C2301PCI' TO #SOURCE-PROG
+MOVE CI-V.ISSUE-DATE (#IFL) TO #ISSUE-DATE
+MOVE #SCR-MODE (#ISC) TO #SCR-TRAN-COD /* C2522SAM USES FOR MACV
+MOVE 'DETH' TO #CMBX
+*
+CALLNAT 'C2522SAM'
+  #CGA-SCR-COMMAND
+  #CGA-SCR-ID
+  #CGA-SCR-SUFFIX
+  #CGA-CLERK
+  CI-V.ID-NUMBER
+  #SOURCE-PROG
+  #EFF-DT
+  #TR-CD
+  #ADJ-AMT
+  #OLD-FPF
+  #NEW-FPF
+  #LAST-DATE-UPDATE
+  #NEW-DATE-UPDATE
+  #ISSUE-DATE
+  #SCR-TRAN-COD
+  #CMBX
+  #TIMN                  /* DW2
+*
+END-SUBROUTINE
+*
+END

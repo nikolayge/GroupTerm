@@ -1,0 +1,281 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*******************************************************************
+* PROGRAM-ID: GPRNTR05                                            *
+*                                                                 *
+* FUNCTION  : Store records  on TR file when the designation is   *
+*             changed from pending to final status                *
+*******************************************************************
+*        MODIFICATION LOG                                         *
+*******************************************************************
+* USER   DATE      TAG  REASON                                    *
+* VXT    10302015       Initial Creation                          *
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER  USING AUCTRPDA   /* Ttransaction register PDA
+LOCAL USING GPRA0004       /* PDA to pass data to TR log subprogram
+LOCAL USING GPRL0004
+LOCAL
+1 #TR_DESCRIPTION       (A) DYNAMIC
+1 #I  (I4)
+1 #J  (I4)
+1 #K  (I4)
+1 #BD-FINAL            (A) DYNAMIC CONSTANT <'BD-FINAL'>
+1 #dob          (a10)
+1 redefine #dob
+  2 #dob-yyyy   (a4)
+  2 #dob-mm     (a2)
+  2 #dob-dd     (a2)
+1 #dob-bef      (a10)
+1 #dob-after    (a10)
+1 #settlement-bef (a16)
+1 #settlement-after (a16)
+1 #ssn-bef        (a11)
+1 #ssn-after      (a11)
+1 #date-signed-before (a10)
+1 #date-signed-after  (a10)
+1 #date   (a8)
+1 redefine #date
+  2 #date-yyyy   (a4)
+  2 #date-mm     (a2)
+  2 #date-dd     (a2)
+
+*
+END-DEFINE
+*
+PERFORM PREPARE-DATA
+*
+PERFORM WRITE-TRAN-LOG
+*
+*****************
+DEFINE SUBROUTINE PREPARE-DATA
+*****************
+*
+**** DECIDE FOR EVERY CONDITION
+* * *   WHEN   BEFORE-IMAGE.DESIGNATION-STATUS NE AFTER-IMAGE.DESIGNATION-STATUS
+* * *       OR BEFORE-IMAGE.DATE-SIGNED NE AFTER-IMAGE.DATE-SIGNED
+*       OR BEFORE-IMAGE.COMMON-DISASTER NE AFTER-IMAGE.COMMON-DISASTER
+*       OR BEFORE-IMAGE.IRREVOCABLE NE AFTER-IMAGE.IRREVOCABLE
+ADD 1 TO #J
+reset #date #date-signed-before #date-signed-after
+#FIELD-DESCRIPTION(#j) := #BD-FINAL
+if before-image.date-signed ne ' '
+  move before-image.date-signed  to #date
+  compress #date-mm '/' #date-dd '/' #date-yyyy into #date-signed-before leaving no
+end-if
+reset #date
+if after-image.date-signed ne ' '
+  move after-image.date-signed  to #date
+  compress #date-mm '/' #date-dd '/' #date-yyyy into #date-signed-after leaving no
+end-if
+COMPRESS
+  'Status: '      BEFORE-IMAGE.DESIGNATION-STATUS
+  'Pol #:'        BEFORE-IMAGE.POLICY-NUMBER
+*  'Date Signed:'  #date-signed-before
+  INTO #OLD-DATA(#J)
+COMPRESS
+  'Status: '       AFTER-IMAGE.DESIGNATION-STATUS
+  'Pol #:'         AFTER-IMAGE.POLICY-NUMBER
+*  'Date Signed:'   #date-signed-after
+  INTO #NEW-DATA(#J)
+
+* *   WHEN   BEFORE-IMAGE.COMMON-DISASTER NE AFTER-IMAGE.COMMON-DISASTER
+* *       OR BEFORE-IMAGE.IRREVOCABLE NE AFTER-IMAGE.IRREVOCABLE
+ADD 1 TO #J
+#FIELD-DESCRIPTION(#j) := #BD-FINAL
+COMPRESS
+  'Date Signed:'  #date-signed-before
+  'CDD:'     BEFORE-IMAGE.COMMON-DISASTER
+  'Rest:'    BEFORE-IMAGE.IRREVOCABLE
+  INTO #OLD-DATA(#J)
+COMPRESS
+  'Date Signed:'   #date-signed-after
+  'CDD:'     AFTER-IMAGE.COMMON-DISASTER
+  'Rest:'    AFTER-IMAGE.IRREVOCABLE
+  INTO #NEW-DATA(#J)
+
+* *   WHEN BEFORE-IMAGE.PRIMARY-BD-TYPE  NE  AFTER-IMAGE.PRIMARY-BD-TYPE
+* *       OR BEFORE-IMAGE.CONTINGENT-BD-TYPE NE AFTER-IMAGE.CONTINGENT-BD-TYPE
+* *       OR BEFORE-IMAGE.ALL-CHILDREN-PRIMARY NE AFTER-IMAGE.ALL-CHILDREN-PRIMARY
+* *       OR BEFORE-IMAGE.ALL-CHILDREN-CONTINGENT NE AFTER-IMAGE.ALL-CHILDREN-CONTINGENT
+* *       OR BEFORE-IMAGE.PER-STIRPES-PRIMARY NE AFTER-IMAGE.PER-STIRPES-PRIMARY
+* *       OR BEFORE-IMAGE.PER-STIRPES-CONTINGENT NE AFTER-IMAGE.PER-STIRPES-CONTINGENT
+ADD 1 TO #J
+#FIELD-DESCRIPTION(#j) := #BD-FINAL
+COMPRESS
+  'P-Ty:' BEFORE-IMAGE.PRIMARY-BD-TYPE
+  'P#:'   BEFORE-IMAGE.primary-nbr
+  'P-PS:' BEFORE-IMAGE.PER-STIRPES-PRIMARY
+  'C-Ty:' BEFORE-IMAGE.CONTINGENT-BD-TYPE
+  'C#:'   BEFORE-IMAGE.contingent-nbr
+  'C-PS:' BEFORE-IMAGE.PER-STIRPES-CONTINGENT
+  INTO #OLD-DATA(#J)
+COMPRESS
+  'P-Ty:' AFTER-IMAGE.PRIMARY-BD-TYPE
+  'P#:'   AFTER-IMAGE.primary-nbr
+  'P-PS:' AFTER-IMAGE.PER-STIRPES-PRIMARY
+  'C-Ty:' AFTER-IMAGE.CONTINGENT-BD-TYPE
+  'C#:'   AFTER-IMAGE.contingent-nbr
+  'C-PS:' AFTER-IMAGE.PER-STIRPES-CONTINGENT
+  INTO #NEW-DATA(#J)
+
+
+IF *OCCURRENCE(BEFORE-IMAGE.ROLE) > 0
+  FOR #I 1 TO *OCCURRENCE(BEFORE-IMAGE.ROLE)
+    ADD 1 TO #J
+*       reset #ssn-bef
+*       if before-image.ssn(#i) = ' '
+*         move '000-00-0000' to #ssn-bef
+*       else
+*         move before-image.ssn(#i) to #ssn-bef
+*       end-if
+    #FIELD-DESCRIPTION(#J) := #BD-FINAL
+    COMPRESS
+      'Ty:'  BEFORE-IMAGE.beneficiary-type(#i)
+      'Name:'    BEFORE-IMAGE.FULL-NAME(#I)
+      'SSN:'     BEFORE-IMAGE.SSN(#I)
+      to #old-data(#j)
+*       reset #ssn-after
+    IF *OCCURRENCE(after-IMAGE.ROLE) > 0                                /* vt 12/11/2015
+      if after-image.ssn(#i) = '000'
+        move '000-00-0000' to #ssn-after
+*       else
+*         move after-image.ssn(#i) to #ssn-after
+      end-if
+      COMPRESS
+        'Ty:' after-IMAGE.beneficiary-type(#i)
+        'Name:'    after-IMAGE.FULL-NAME(#I)
+        'SSN:'    after-IMAGE.SSN(#I)
+        to  #new-data(#j)
+    end-if                                                            /* vt 12/11/2015
+    ADD 1 TO #J
+    #FIELD-DESCRIPTION(#J) := #BD-FINAL
+    reset #dob-bef  #dob
+    if before-image.dob(#i) eq '0'
+      move 'N/A' to #dob-bef
+    else
+      move   before-image.dob(#i)  to #dob
+      if #dob ne ' '
+        compress #dob-mm '/' #dob-dd '/' #dob-yyyy into #dob-bef leaving no
+      end-if
+    end-if
+    if before-image.share (#i) = ' '
+      move '0' to before-image.share (#i)
+    end-if
+    compress BEFORE-IMAGE.share(#I) '%' into BEFORE-IMAGE.share(#I)  leaving no
+    COMPRESS
+      'DOB:'     #dob-bef
+      'Rel:'     BEfore-image.relation-to-insured(#i)
+      'Share:'   BEFORE-IMAGE.share(#I)
+      into #old-data(#j)
+    reset #dob #dob-after
+    IF *OCCURRENCE(after-IMAGE.ROLE) > 0                                /* vt 12/11/2015
+      if  after-image.dob(#i)   eq '0'
+        move 'N/A' to #dob-after
+      else
+        move   after-image.dob(#i)  to #dob
+        if #dob ne ' '
+          compress #dob-mm '/' #dob-dd '/' #dob-yyyy into #dob-after leaving no
+        end-if
+      end-if
+      if after-image.share(#i) = ' '
+        move '0' to after-image.share(#i)
+      end-if
+      compress after-image.share(#i) '%' into after-image.share(#i) leaving no
+      COMPRESS
+        'DOB:'     #dob-after
+        'Rel:'     after-image.relation-to-insured(#i)
+        'Share:'   AFTER-IMAGE.share(#I)
+        into  #new-data(#j)
+    end-if                                                            /* vt 12/11/2015
+
+    ADD 1 TO #J
+    #FIELD-DESCRIPTION(#J) := #BD-FINAL
+    if BEFORE-IMAGE.SETTLEMENT(#I) = ' '
+      move 'None' to #settlement-bef
+    else
+      decide on first value of BEFORE-IMAGE.SETTLEMENT(#I)
+        value '1'
+          move 'Life Annuity' to #settlement-bef
+        value '2'
+          move 'Life Annuity 10' to #settlement-bef
+        value '3'
+          move 'Life Annuity 15' to #settlement-bef
+        value '4'
+          move 'Life Annuity 20' to #settlement-bef
+        value '5'
+          move 'Interest Only' to #settlement-bef
+        value '6'
+          move 'Lump Sum' to #settlement-bef
+        none value
+          ignore
+      end-decide
+    end-if
+    if before-image.restriction(#i) = ' '
+      move 'N' to before-image.restriction(#i)
+    end-if
+    COMPRESS
+      'Set:'     #settlement-bef
+      'Res:'     BEFORE-IMAGE.RESTRICTION(#I)
+      to #old-data(#j)
+    IF *OCCURRENCE(after-IMAGE.ROLE) > 0                                /* vt 12/11/2015
+      if after-IMAGE.SETTLEMENT(#I) = ' '
+        move 'None' to #settlement-after
+      else
+        decide on first value of after-IMAGE.SETTLEMENT(#I)
+          value '1'
+            move 'Life Annuity' to #settlement-after
+          value '2'
+            move 'Life Annuity 10' to #settlement-after
+          value '3'
+            move 'Life Annuity 15' to #settlement-after
+          value '4'
+            move 'Life Annuity 20' to #settlement-after
+          value '5'
+            move 'Interest Only' to #settlement-after
+          value '6'
+            move 'Lump Sum' to #settlement-after
+          none value
+            ignore
+        end-decide
+      end-if
+      COMPRESS
+        'Set:'     #settlement-after
+        'Res:'     AFTER-IMAGE.RESTRICTION(#I)
+        to  #new-data(#j)
+        end-if                        /* vt 12/11/2015
+    END-FOR
+  end-if
+ 
+**************  WHEN NONE
+**************    IGNORE
+******* END-DECIDE
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE WRITE-TRAN-LOG
+*****************
+*
+IF #J NE 0
+  #TR-NAME               := TR-NAME
+  #TR-ID-NUMBER          := TR-ID-NUMBER
+*   #LOG-DESCRIPTION       := ' '
+  #TR-CLERK-ID           := TR-CLERK
+  #TR-DATE-LAST-UPDATE   := BEFORE-IMAGE.DATE-LAST-UPDATE
+*   #NEW-DATA-TAG(1)       := ' '
+  CALLNAT 'GPRN0004'
+    #TR-FIELDS #SYNC-FIELD-TABLE(*)
+    #OLD-DATA-TABLE(*) #NEW-DATA-TABLE(*)
+END-IF
+END-SUBROUTINE
+*
+* IF *SERVER-TYPE = 'DEVELOP'
+*   END TRANSACTION
+* END-IF
+*
+END

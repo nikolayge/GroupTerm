@@ -1,0 +1,194 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C1007SAT   ** ability to select which of multiple AT's
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* PAM   05/26/2011 PM1   CRM modifications - SSN no longer on AT file  *    
+* NGG    20130509  NG1   Stability Project for $1M Policy              *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-COMMAND (A2)
+1 #CGA-SCR-ID      (N9)
+1 #CGA-SCR-SUFFIX  (A3)
+1 #CGA-ORIG-COMMAND(A2)
+1 #CGA-ISN         (P8)
+1 #AT-SSN          (N9)
+1 #AT-CN           (N6)
+1 #APPL-FOUND      (L)
+1 #NEW-AT          (L)
+*
+LOCAL USING OBJLCONT
+LOCAL
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 ID-NUMBER
+ 2 INTRO-FLAG
+ 2 DATE-RECEIVED
+ 2 AT-STATUS
+ 2 REDEFINE AT-STATUS
+  3 AT-STATUS-1   (A1)
+  3 AT-STATUS-2   (A1)
+ 2 PLAN
+ 2 FACE-AMT-UNITS
+ 2 FACE-AMT-DOLS
+*
+1 #I1  (I2)
+1 #I2  (I2)
+1 #I3  (I2)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY    (A4)
+ 2 #MM      (A2)
+ 2 #DD      (A2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMMDD-A  (A8)
+*
+1 #MMDDYYYY   (N8)
+1 REDEFINE #MMDDYYYY
+ 2 #MM-X    (A2)
+ 2 #DD-X    (A2)
+ 2 #YYYY-X  (A4)
+1 REDEFINE #MMDDYYYY
+ 2 #MMDDYYYY-A  (A8)
+*
+1 #FST-X   (I2)
+1 #TEXT    (A78)
+1 #NEW-LBL   (A50)
+1 #NUM-FNDS  (N3)
+1 #NUM-TO-SEL (N3)
+1 #SEL-NEW-CV(C)
+1 #SEL-NEW   (A1)
+1 #SEL       (A1/10)
+1 #SEL-CV    (C/10)
+1 #CN        (N6/10)
+1 #ISN       (P8/10)
+1 #AT-STATUS (A2/10)
+1 #NAME      (A25/10)
+1 #DOB-A     (A8/10)
+1 REDEFINE #DOB-A
+ 2 #DOB      (N8/10)
+1 #DATE-RECEIVED-A (A8/10)
+1 REDEFINE #DATE-RECEIVED-A
+ 2 #DATE-RECEIVED (N8/10)
+1 #PLAN      (A3/10)
+1 #FACE      (N7.2/10)          /* NG1
+*
+END-DEFINE
+************************************************************************
+*
+RESET #CGA-ISN
+RESET #NEW-AT
+*
+IF #AT-SSN LT 700000 /* ignore if not an SSN
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE (AD=P) TO #SEL-CV (*) #SEL-NEW-CV
+*
+FIND CT-V WITH CT-V.SSN = #AT-SSN                              /* PM1
+*
+  FIND AT-V WITH AT-V.CONTACT-ID = CT-V.CONTACT-ID             /* PM1
+    IF  (INTRO-FLAG = 'V')
+*    OR (AT-STATUS  = 'A')
+     OR (#I1 GE 10)
+      ESCAPE TOP
+    END-IF
+*
+    ADD 1 TO #I1
+*
+    IF   (#CGA-ORIG-COMMAND = 'NM' OR = 'AI')  /* only show this option
+     AND (NOT AT-V.AT-STATUS-1 = 'P' OR = 'U') /* invalid to select
+      IGNORE
+    ELSE
+      RESET #SEL-CV (#I1)
+      ADD 1 TO #NUM-TO-SEL
+*
+      IF #FST-X = 0
+        MOVE #I1 TO #FST-X
+      END-IF
+    END-IF
+*
+    MOVE *ISN               TO #ISN    (#I1)
+    MOVE AT-V.ID-NUMBER     TO #CN     (#I1)
+    MOVE AT-V.DATE-RECEIVED TO #YYYYMMDD
+    COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+    MOVE #MMDDYYYY-A TO #DATE-RECEIVED-A (#I1)
+    MOVE AT-V.AT-STATUS     TO #AT-STATUS (#I1)
+    #NAME (#I1) := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME,CT-V.LAST-NAME,CT-V.SUFFIX>) /* PM1
+    MOVE CT-V.DATE-OF-BIRTH TO #YYYYMMDD                                                          /* PM1
+    COMPRESS #MM #DD #YYYY INTO #MMDDYYYY-A LEAVING NO
+    MOVE #MMDDYYYY-A        TO #DOB-A  (#I1)
+    MOVE AT-V.PLAN          TO #PLAN   (#I1)
+    COMPUTE #FACE (#I1) = (AT-V.FACE-AMT-UNITS * 1000) + FACE-AMT-DOLS
+*
+    ADD 1 TO #NUM-FNDS
+  END-FIND
+END-FIND                                                       /* PM1
+*
+IF #NUM-FNDS = 0
+  ESCAPE ROUTINE
+END-IF
+*
+IF #NUM-TO-SEL = 0
+  MOVE 1 TO #FST-X
+  MOVE 'No Pending AT"s available' TO #TEXT
+END-IF
+*
+IF #CGA-ORIG-COMMAND = 'AT'
+  MOVE 'Create an additional AT for this Member' TO #NEW-LBL
+  RESET #SEL-NEW-CV
+ELSE
+  IF #NUM-FNDS = 1
+    MOVE #CN  (1) TO #AT-CN #CGA-SCR-ID
+    MOVE #ISN (1) TO #CGA-ISN
+    MOVE TRUE TO #APPL-FOUND
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+INPUT TEXT #TEXT MARK *#SEL (#FST-X) USING MAP 'C1007MAT'
+*
+IF #CGA-SCR-COMMAND NE '*'
+  END TRANSACTION
+  FETCH 'G1000PXX'
+END-IF
+*
+IF (#NUM-FNDS = 1) AND (#SEL-NEW = ' ')
+  MOVE 'X' TO #SEL (1)
+END-IF
+*
+RESET #AT-CN #APPL-FOUND
+FOR #I1 1 TO 10
+  IF #SEL (#I1) NE ' '
+    MOVE #CN (#I1) TO #AT-CN #CGA-SCR-ID
+    MOVE #ISN (#I1) TO #CGA-ISN
+    MOVE TRUE TO #APPL-FOUND
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF   (#CGA-ISN NE 0)
+ AND (#SEL-NEW NE ' ')
+  RESET #CGA-ISN #SEL-NEW
+  REINPUT 'Only 1 selection can be made'
+  MARK *#SEL (1)
+END-IF
+*
+IF (#CGA-ISN = 0) AND (#SEL-NEW = ' ')
+  REINPUT 'A selection must be made'
+  MARK *#SEL (1)
+END-IF
+*
+IF #SEL-NEW NE ' '
+  RESET #APPL-FOUND
+  MOVE TRUE TO #NEW-AT
+END-IF
+*
+END

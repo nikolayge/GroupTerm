@@ -1,0 +1,108 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: DATEADD - Populate Alotment Authorization flag change date
+* in IAS with backfeed from DAL
+* To be run daily as part of daily process (DSDCTH10)
+* Input - file from DAL
+* Output - Update status report
+* Database update - YES
+************************************************************************
+*                       MODIFICATION LOG
+************************************************************************
+DEFINE DATA
+LOCAL
+*
+1 #INPUT      (A50)
+*
+1 ST-V VIEW OF A-STATUS
+  2 MEMBER-KEY
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 ACCESS-AUTH-CODE
+  2 ALOT-CHG-AUTH
+  2 ALOT-CHG-AUTH-DATE
+  2 NAME
+1 ST-V-UPD VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 ACCESS-AUTH-CODE  
+  2 ALOT-CHG-AUTH
+  2 ALOT-CHG-AUTH-DATE
+  2 NAME
+  2 DATE-OTHER-UPDATE
+*
+1 #TAB       (A1) INIT <H'09'>
+1 #I         (N5)
+1 #MEMBER-KEY             (A7)
+1 REDEFINE #MEMBER-KEY
+  2 #ID-NUMBER            (N6)
+  2 #MEMBER-FLAG          (A1)
+1 #COUNTERS
+  2 #REC-READ        (P7)
+  2 #REC-UPDATED     (P7)
+  2 #REC-NOT-FOUND   (P7)
+  2 #REC-NOT-UPDATED (P7)
+*
+1 TR-LOG VIEW OF A-TRANSACTION-REGISTER
+ 2 ID-NUMBER        (N6)
+ 2 PROCESS-IND      (A1)
+ 2 NAME             (A25)
+ 2 DATE-LAST-UPDATE (N8)
+ 2 TERMINAL-ID      (A8)
+ 2 CLERK-ID         (A3)
+ 2 TRANSACTION-DATN (P9)
+ 2 TRANSACTION-TIMN (P7)
+ 2 OLD-DATA         (A125/32)
+ 2 NEW-DATA         (A125/32)
+ 2 REDEFINE NEW-DATA
+  3 NEW-DATA-OCC     (32)
+   4 NEW-DATA-CA      (A3)
+   4 NEW-DATA-REST    (A22)
+*
+1 #TRANSACTION-DATN  (P9)
+1 #TR-LAST-UPDATE    (N8)
+1 #DATN              (N8)
+*
+END-DEFINE
+DEFINE WORK FILE 1 
+      '/usr/SAG/AAFMAA/batch/workfiles/TEMP/datereport.txt' 
+DEFINE WORK FILE 2 
+      '/usr/SAG/AAFMAA/batch/workfiles/TEMP/datereport1.txt'       
+*
+* * * * * * * REPORT HEADER * * * * * *
+*
+READ ST-V BY MEMBER-KEY STARTING FROM '001900' 
+  #ID-NUMBER := ID-NUMBER
+  PERFORM FIND-LAST-UPDATE-DATE   
+  IF #TR-LAST-UPDATE NE 0  
+   GET.
+     GET ST-V-UPD *ISN  
+   ST-V-UPD.ALOT-CHG-AUTH-DATE := #TR-LAST-UPDATE 
+   UPDATE (GET.)
+   END TRANSACTION
+   WRITE WORK FILE 1 
+   #ID-NUMBER ST-V.ALOT-CHG-AUTH ST-V.ALOT-CHG-AUTH-DATE 
+  END-IF         
+END-READ
+*
+DEFINE SUBROUTINE FIND-LAST-UPDATE-DATE
+*
+RESET #TR-LAST-UPDATE #TRANSACTION-DATN
+FIND TR-LOG WITH ID-NUMBER = #ID-NUMBER 
+  EXAMINE NEW-DATA(*) FOR 'CA-AUTH' INDEX #I
+  IF #I NE 0     
+   IF TR-LOG.TRANSACTION-DATN > #TRANSACTION-DATN      
+    #TR-LAST-UPDATE := TR-LOG.TRANSACTION-DATN
+    #TRANSACTION-DATN := TR-LOG.TRANSACTION-DATN
+   END-IF   
+   WRITE WORK FILE 2 
+     #ID-NUMBER NEW-DATA-CA(#I) NEW-DATA-REST(#I) #TR-LAST-UPDATE
+  END-IF   
+END-FIND  
+*  
+END-SUBROUTINE
+*
+END

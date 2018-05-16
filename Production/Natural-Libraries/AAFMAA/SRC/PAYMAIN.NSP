@@ -1,0 +1,502 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*************************************************************************
+* PGM ID : PAYMAIN                                                      *
+*                                                                       *
+* FUNCTION : PAY ALL AMOUNTS DUE PER A CN. FIRST PAY REQUIRED PAYMENTS  *
+*            AND AFTER THAT OPTIONAL. IF THERE IS A LOAN APPLY MONEY TO *
+*            THE PRINCIPAL OF THE LOAN ELSE PAY PREMIUMS IN ADVANCE.    *
+*                                                                       *
+* 01/04/2012 VT  INITIAL CREATION                                       *
+* 09/19/2013 vt1 Add PS payment /ticket 2177/                           *
+*************************************************************************
+DEFINE DATA
+LOCAL
+1 #INPUT-RECORD
+  2 #CN                   (N6)
+  2 #CHQ-AMT              (N7.2)
+LOCAL
+1 #REMAINING-AMT          (N7.2)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER             (N6)
+  2 NAME                  (A25)
+  2 PROCESS-IND
+  2 PLAN                  (9)
+  2 ISSUE-DATE            (9)
+*
+1 #AR  (1:30)
+  2 PROCESS-IND           (A1)
+  2 POLICY-NUMBER         (A16)
+  2 AALP-FLAG             (A1)
+  2 TXN-CODE              (A4)
+  2 TXN-ACCT-NUMBER       (N3)
+  2 MESSAGE-CODE          (A1)
+  2 SG-AMOUNT             (N6.2/1)
+  2 CREDIT-AMOUNT         (P7.2)
+  2 DESCRIPTION           (A20)
+*
+1 CC-PAYMENT
+  2 PARM-DATE             (N8.0)
+  2 ID-NUMBER             (N6.0)
+  2 INSURED-NAME          (A50)
+  2 C@PAY-POLICY          (N2.0)
+  2 PAY-POLICY     (1:9)
+    3 POLICY-NBR          (A16)
+    3 SEGMENT             (I2)                     /* VT
+    3 CAP-POLICY          (A1)
+    3 PLAN-TYPE           (A3)
+    3 ISSUE-DATE          (N8.0)
+    3 FACE-AMOUNT         (N7.2)
+    3 MAX-PREMIUMS        (N4)
+    3 MIN-PREMIUMS        (N2)
+    3 DEFAULT-PREM        (N2)
+    3 C@AVAILABLE-PAYMENT (N2.0)
+    3 AVAILABLE-PAYMENT (1:10)
+      4 PAYMENT-NOTE      (A) DYNAMIC
+      4 CC-PAYABLE        (A1)
+      4 VAR-AMOUNT        (A1)
+      4 EXCEED-AMT        (A1)
+      4 TRAN-TYPE         (A6)                    /* vt1 was a4
+      4 PAID-TO-DATE      (N8.0)
+      4 REDEFINE PAID-TO-DATE
+        5 PAID-TO-DATE-YYYYMM (N6)
+        5 PAID-TO-DATE-DD     (N2)
+      4 PAYMENT-MODE      (A1)
+      4 DEFAULT-AMOUNT    (N6.2)
+      4 DUE-AMOUNT        (N6.2)
+
+1 #ERROR-MESSAGE          (A100)
+1 #ERR-MSG                (A75)
+1 #STATUS-ISN             (P8)
+*
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER             (N6)
+  2 NAME                  (A25)
+  2 TRANSACTION-DATN      (P9)
+  2 TRANSACTION-TIMN      (P7)
+  2 CASH-CODE             (A1)
+  2 CLERK-ID              (A3)
+  2 TERMINAL-ID           (A8)
+  2 PROCESS-IND           (A1)
+  2 POLICY-NUMBER         (A16)
+  2 AALP-FLAG             (A1)
+  2 TXN-CODE              (A4)
+  2 TXN-ACCT-NUMBER       (N3)
+  2 MESSAGE-CODE          (A1)
+  2 SG-AMOUNT             (N6.2/1)
+  2 CREDIT-AMOUNT         (P7.2)
+  2 ACCT-DATE             (N8)
+  2 DEBIT-AMOUNT          (P7.2)
+  2 DESCRIPTION           (A20)
+  2 SG-CATEGORY-1         (15)
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER              /* vt1  \/
+  2 ID-NUMBER (N6)
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 TXN-CODE (A4)
+  2 SEQUENCE-NUM (N1)
+  2 NAME (A25)
+  2 TXN-ACCT-NUMBER (N3)
+  2 ACCT-DATE (N8)
+  2 DATE-LAST-ACCT-UPDATE (N8)
+  2 DEBIT-AMOUNT (P7.2)
+  2 CREDIT-AMOUNT (P7.2)
+  2 DESCRIPTION (A20)
+  2 MESSAGE-CODE (A1)
+  2 AALP-FLAG (A1)
+  2 CLERK-ID (A3)
+  2 TERMINAL-ID (A8)
+  2 CASH-CODE (A1)
+  2 PROCESS-IND (A1)
+  2 USER-COMPANY (A1)
+  2 MONTH-END (A1)
+  2 POLICY-NUMBER (A16)
+  2 ACTIVITY-TYPE (A3)
+  2 STATUS-TYPE (A2)
+  2 C*SUNGARD-INFO
+  2 SUNGARD-INFO (1:15) /* PE
+    3 SG-CATEGORY-1 (A2)
+    3 SG-CATEGORY-2 (A2)
+    3 SG-AMOUNT (N6.2)                                /* vt1  /\
+*
+1 #J                      (I4)
+1 #N                      (I4)
+1 #P                      (I4)                     /* 01112012
+1 #Q                      (I4)
+1 #L                      (I4)
+1 #NBR-MONTHS             (N2/9)
+1 BLANK (A1) CONST <' '>
+1 #DATN                   (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY             (N4)
+  2 #DATN-MM               (N2)
+  2 #DATN-DD               (N2)
+1 #DATN-A                  (A10)
+1 #AMOUNT                  (A10)
+1 #TIMN                   (N7)
+1 #K                      (I4)
+1 #HAS-LOAN               (L)    INIT <FALSE>
+1 #LINKED-CNS             (N6/30)
+1 #TRAN-TYPE-STR          (A) DYNAMIC
+1 #CNT-CN                 (N2)
+1 #TOT-PREM-AMT           (P7.2)
+1 #POL-NBR                (A16)
+1 #LX                     (I2)
+1 #ISSUE-DATE              (N8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-A          (A8)
+1 #1-YR-AGO-A               (A8)
+1 REDEFINE #1-YR-AGO-A
+  2 #1-YR-AGO               (N8)
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY     (N4)
+  2 #MM       (N2)
+  2 #DD       (N2)
+1  REDEFINE #YYYYMMDD
+  2 #YYYYMM     (N6)
+  2 #DDD        (N2)
+1 #PAY          (L/9) INIT<TRUE>
+1 #PAY-BY-MODE  (L/9)
+1 #YYYYMMDD-W  (N8)
+1 REDEFINE #YYYYMMDD-W
+  2 #YYYY-W     (N4)
+  2 #MM-W       (N2)
+  2 #DD-W       (N2)
+1  REDEFINE #YYYYMMDD-W
+  2 #YYYYMM-W     (N6)
+  2 #DDD-W        (N2)
+*
+LOCAL USING C2500AAM
+*
+LOCAL
+1 #OUT-REC            (A100)
+1 #TAB                (A1) INIT <H'09'>
+1 #TRAN-CODE          (A4)
+1 #MONTHLY-TOTAL-DUE-PDR (P7.2/9)
+1 #MODE-TOTAL-DUE-PDR    (P7.2/9)
+
+*
+END-DEFINE
+**********************************************************************************
+*
+DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/R2.TXT'
+  TYPE 'ASCII' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 3 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/R3.TXT'
+  TYPE 'ASCII' ATTRIBUTES 'APPEND'
+*
+INPUT 'ENTER CN' #CN
+  'CHECK' #CHQ-AMT
+*
+#DATN     := *DATN
+#YYYYMMDD := *DATN
+SUBTRACT 1 FROM #YYYYMMDD.#YYYY
+COMPRESS #YYYYMMDD.#MM #YYYYMMDD.#DD #YYYYMMDD.#YYYY INTO #1-YR-AGO-A LEAVING NO
+*
+#REMAINING-AMT := #CHQ-AMT
+*
+IF #REMAINING-AMT LE 0
+  ESCAPE ROUTINE
+END-IF
+*
+CALLNAT 'GETLIST' #CN #LINKED-CNS (*) #CNT-CN
+*
+*      REQUIRED
+*
+IF #REMAINING-AMT GT 0
+  FOR #J 1 TO #CNT-CN
+    IF #LINKED-CNS ( #J ) = 0
+      ESCAPE BOTTOM
+    END-IF
+*   WRITE #LINKED-CNS(#J) '=' #J
+    FIND (1) ST-V WITH ID-NUMBER = #LINKED-CNS ( #J )
+      IF NO
+        WRITE 'NO RECORD'
+        ESCAPE BOTTOM
+      END-NOREC
+      RESET CC-PAYMENT
+      #STATUS-ISN          := *ISN (0216)
+      CC-PAYMENT.ID-NUMBER := ST-V.ID-NUMBER
+      CC-PAYMENT.PARM-DATE := *DATN
+      CALLNAT 'GETDUE' CC-PAYMENT #ERROR-MESSAGE
+*
+* PERFORM ALL REQUIRED PAYMENT IN PRE-DEFINED SEQUENCE
+*
+      RESET #AR (*)
+*     WRITE 'REQUIRED' '=' #LINKED-CNS (*) / '=' TRAN-TYPE (*,*) / '='  DEFAULT-AMOUNT(*,*) / '-'(59) /
+*
+      PERFORM CHECK-MODE-OF-PAYMENT
+*
+      CALLNAT 'PAY-CAP' #REMAINING-AMT
+        #STATUS-ISN
+        CC-PAYMENT
+        #TIMN
+        #ERR-MSG
+      IF #ERR-MSG NE BLANK
+        PRINT #ERROR-MESSAGE
+        ESCAPE BOTTOM
+      END-IF
+
+      CALLNAT 'PAY-FPF' #REMAINING-AMT
+        #STATUS-ISN
+        CC-PAYMENT
+        #TIMN
+        #ERR-MSG
+      IF #ERR-MSG NE BLANK
+        PRINT #ERROR-MESSAGE
+        ESCAPE BOTTOM
+      END-IF
+*
+      CALLNAT 'PAY-RFPF' #REMAINING-AMT
+        #STATUS-ISN
+        CC-PAYMENT
+        #TIMN
+        #ERR-MSG
+      IF #ERR-MSG NE BLANK
+        PRINT #ERROR-MESSAGE
+        ESCAPE BOTTOM
+      END-IF
+*
+      CALLNAT 'PAY-PDRN' #REMAINING-AMT      /* PAY PREM DUE AND RIDER ACCORDING THE MODE
+        #STATUS-ISN
+        CC-PAYMENT
+        #TIMN
+        #ERR-MSG
+      IF #ERR-MSG NE BLANK
+        PRINT #ERR-MSG
+        ESCAPE BOTTOM
+      END-IF
+*
+*       CALLNAT 'PAY-INT' #REMAINING-AMT
+*         #STATUS-ISN
+*         CC-PAYMENT
+*         #TIMN
+*         #ERR-MSG
+*       IF #ERR-MSG NE BLANK
+*         PRINT #ERR-MSG
+*         ESCAPE BOTTOM
+*       END-IF
+    END-FIND
+    END TRANSACTION
+  END-FOR
+END-IF
+*
+*
+*      OPTIONAL OR PAY IN THE FUTURE
+*
+* WRITE 'BEFORE OPTIONAL ' '=' #REMAINING-AMT
+
+IF #REMAINING-AMT GT 0
+  FOR #J 1 TO #CNT-CN
+    IF #LINKED-CNS ( #J ) = 0
+      ESCAPE BOTTOM
+    END-IF
+    FIND (1) ST-V WITH ID-NUMBER = #LINKED-CNS ( #J )
+      IF NO
+        WRITE 'NO RECORD'
+        ESCAPE BOTTOM
+      END-NOREC
+*
+      RESET CC-PAYMENT
+      #STATUS-ISN := *ISN (0298)
+      CC-PAYMENT.ID-NUMBER := ST-V.ID-NUMBER
+      CC-PAYMENT.PARM-DATE := *DATN
+*
+      CALLNAT 'GETDUE' CC-PAYMENT #ERROR-MESSAGE
+*      WRITE 'OPTIONAL ' '=' TRAN-TYPE (*,*) / '=' DEFAULT-AMOUNT(*,*) / '-'(59) /
+*
+      RESET #AR (*)
+*  
+      COMPRESS TRAN-TYPE (*,*) INTO #TRAN-TYPE-STR
+      EXAMINE #TRAN-TYPE-STR FOR 'PRNF' POSITION #N /* PAY PRINCIPAL OF FIXED LOAN
+      EXAMINE #TRAN-TYPE-STR FOR 'PRNV' POSITION #P /* PAY PRINCIPAL OF VAR LOAN
+*  
+      IF #N > 0
+          OR #P > 0
+        CALLNAT 'PAY-CAP' #REMAINING-AMT                   /* 01262012 VT
+          #STATUS-ISN
+          CC-PAYMENT
+          #TIMN
+          #ERR-MSG
+        IF #ERR-MSG NE BLANK
+          PRINT #ERROR-MESSAGE
+          ESCAPE BOTTOM
+        END-IF
+ 
+*
+*         CALLNAT 'PAY-PRNF' #REMAINING-AMT
+*           #STATUS-ISN
+*           CC-PAYMENT
+*           #TIMN
+*           #ERR-MSG
+*         IF #ERR-MSG NE BLANK
+*           PRINT #ERR-MSG
+*           ESCAPE BOTTOM
+*         END-IF
+      END-IF
+*
+*       CALLNAT 'PAY-CAP' #REMAINING-AMT                   /* 01262012 VT
+*         #STATUS-ISN
+*         CC-PAYMENT
+*         #TIMN
+*         #ERR-MSG
+*       IF #ERR-MSG NE BLANK
+*         PRINT #ERROR-MESSAGE
+*         ESCAPE BOTTOM
+*       END-IF
+*
+      CALLNAT 'PAYPREPM' #REMAINING-AMT     /* PAY PREMIUM IN THE FUTURE
+        #STATUS-ISN
+        CC-PAYMENT
+        #TIMN
+        #ERR-MSG
+      IF #ERR-MSG NE BLANK
+        PRINT #ERR-MSG
+        ESCAPE BOTTOM
+      END-IF
+*  
+*      END-IF
+    END-FIND
+    END TRANSACTION
+  END-FOR
+END-IF
+*
+*      CREDIT TRANSACTION
+*
+IF #REMAINING-AMT > 0
+  FIND (1) ST-V WITH ID-NUMBER = #CN
+    #STATUS-ISN := *ISN (0371)
+    CALLNAT 'PAY-ADCR' #REMAINING-AMT
+      #STATUS-ISN
+      CC-PAYMENT
+      #TIMN
+      #ERR-MSG
+    IF #ERR-MSG NE BLANK
+      PRINT #ERROR-MESSAGE
+      ESCAPE ROUTINE
+    END-IF
+  END-FIND
+END-IF
+* 
+*****************
+DEFINE SUBROUTINE WRITE-ACCT-REG
+*****************
+*
+* WRITE '=' #SCR-TRAN-AMT(1)
+
+RESET AR-V
+AR-V.ID-NUMBER               := ST-V.ID-NUMBER
+AR-V.TRANSACTION-DATN        := #DATN
+AR-V.TRANSACTION-TIMN        := #TIMN
+AR-V.ACCT-DATE               := #DATN
+AR-V.CASH-CODE               := 'I'
+AR-V.NAME                    := ST-V.NAME
+AR-V.CLERK-ID                := 'EDS'
+AR-V.TERMINAL-ID             := *INIT-ID
+AR-V.TXN-CODE                := 'PREP'
+AR-V.PROCESS-IND             := ST-V.PROCESS-IND
+AR-V.AALP-FLAG               := #SCR-ALP-CODE  (1)
+AR-V.POLICY-NUMBER           := #POL-NBR
+AR-V.SG-AMOUNT           (1) := #SCR-TRAN-AMT(1)
+AR-V.CREDIT-AMOUNT           := #SCR-TRAN-AMT(1)
+AR-V.MESSAGE-CODE            := '1'
+IF ST-V.PLAN (#LX) = 'SO'
+  AR-V.TXN-ACCT-NUMBER  := 422
+ELSE
+  AR-V.TXN-ACCT-NUMBER  := 420
+END-IF
+*
+IF #TIMN = 0 AND AR-V.TXN-ACCT-NUMBER   NE 999
+  AR-V.TXN-ACCT-NUMBER  := 999
+END-IF
+AR-V.DESCRIPTION             := 'INV'
+*
+IF #ISSUE-DATE GT #1-YR-AGO
+  MOVE '1Y' TO AR-V.SG-CATEGORY-1 (1)
+ELSE
+  MOVE 'RN' TO AR-V.SG-CATEGORY-1 (1)
+END-IF
+STORE AR-V
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE WRITE-REPORT
+*****************
+#TRAN-CODE := 'PREP'
+COMPRESS #DATN-MM '/' #DATN-DD '/' #DATN-YYYY INTO #DATN-A LEAVING NO
+MOVE EDITED #SCR-TRAN-AMT(1) (EM=ZZZZZZ9.99) TO #AMOUNT
+COMPRESS ST-V.ID-NUMBER #TAB
+  #TRAN-CODE              #TAB
+  #AMOUNT                 #TAB
+  #DATN-A                 #TAB
+  INTO #OUT-REC LEAVING NO
+WRITE WORK 3 #OUT-REC
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE CHECK-MODE-OF-PAYMENT
+*****************
+#YYYYMMDD := *DATN
+FOR #P 1 C@PAY-POLICY
+  IF CAP-POLICY(#P) NE 'Y'
+    FOR #Q 1 C@AVAILABLE-PAYMENT (#P)
+      IF TRAN-TYPE(#P,#Q) = 'PREP' OR= 'DUEP' OR= 'RIDP'
+        IF (PAYMENT-MODE(#P,#Q) = 'A' OR = 'S' OR  = 'Q' OR = 'M')
+          DECIDE ON FIRST VALUE OF PAYMENT-MODE(#P,#Q)
+            VALUE 'A'
+              MOVE 12 TO #NBR-MONTHS (#P)
+              #YYYYMM-W := #YYYYMM + 12
+              IF #MM-W GT 12
+                ADD 1 TO #YYYY-W
+                SUBTRACT 12 FROM #MM-W
+              END-IF
+            VALUE 'S'
+              MOVE 6 TO #NBR-MONTHS (#P)
+              #YYYYMM-W := #YYYYMM + 6
+              IF #MM-W GT 12
+                ADD 1 TO #YYYY-W
+                SUBTRACT 12 FROM #MM-W
+              END-IF
+            VALUE 'Q'
+              #YYYYMM-W := #YYYYMM + 3
+              MOVE 3 TO #NBR-MONTHS (#P)
+              IF #MM-W GT 12
+                ADD 1 TO #YYYY-W
+                SUBTRACT 12 FROM #MM-W
+              END-IF
+            VALUE 'M'
+              MOVE 1 TO #NBR-MONTHS (#P)
+              #YYYYMM-W := #YYYYMM + 1
+              IF #MM-W GT 12
+                ADD 1 TO #YYYY-W
+                SUBTRACT 12 FROM #MM-W
+              END-IF
+            NONE VALUE
+              IGNORE
+          END-DECIDE
+
+          IF(PAID-TO-DATE-YYYYMM(#P,#Q) GT #YYYYMM-W)
+
+            RESET  #PAY(#P)
+          END-IF
+        ELSE
+          IF ( PAYMENT-MODE (#P, #Q) = '0' OR = '1' OR = '2' OR = '4'
+              OR = 'G' OR = 'E')
+              AND (PAID-TO-DATE-YYYYMM(#P,#Q) EQ #YYYYMM)
+            RESET #PAY(#P)
+          END-IF
+        END-IF
+        ADD DUE-AMOUNT (#P,#Q) TO #MONTHLY-TOTAL-DUE-PDR(#P)
+        ADD DEFAULT-AMOUNT (#P,#Q) TO #MODE-TOTAL-DUE-PDR(#P)
+      END-IF
+    END-FOR
+  END-IF
+END-FOR
+END-SUBROUTINE
+
+END

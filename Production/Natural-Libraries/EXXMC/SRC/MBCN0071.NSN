@@ -1,0 +1,358 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* MBCN0071 - Member Policy Information 
+* Used for Mobile Website and mobile app
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09012010       Initial Creation
+* PAM    03112011  PM1  Added all owners to report
+* YAK    11142011  YK1  Correct display logic for Paid-Up
+*                       policies
+* YAK    01252012  YK2  Populate Max Renewal Premium starting 
+*                       6 month before renewal    
+* YAK    09122013  YK3  Add DueDate field for MobileApp
+* YAK    03292017  YK4  EB&P III (Payor project)
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0007
+PARAMETER
+1 #ERRORCODE        (A3)
+*
+LOCAL USING OBJAPINF
+LOCAL USING GPRA006N
+LOCAL USING MBCA0072
+LOCAL USING ERROR_L
+LOCAL
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #GET              (A) DYNAMIC CONST <'GET'>
+1 #UPDATE           (A) DYNAMIC CONST <'UPDATE'>
+1 #FLEX-PLAN        (A2)
+1 #FLEX-KEY         (A3)
+1 #TEST             (A78)
+1 #I  (I2)
+1 #I1 (I2)
+1 #J  (I2)
+*
+1 #CURRENT-CN       (N6)
+1 #POL-NUM          (A16)
+1 #NO               (A1) CONST <'N'>
+1 #YES              (A1) CONST <'Y'>
+1 #INT-RATE-KEY     (A7) CONST <'RATE5AB'>
+1 #FIXED            (A) DYNAMIC CONST <'Fixed'>
+1 #VARIABLE         (A) DYNAMIC CONST <'Variable'>
+1 #CAP              (A) DYNAMIC CONST <'CAP'>
+1 #TERM-POLICY      (L)
+1 #TRUE             (A) DYNAMIC CONST <'true'>
+1 #FALSE            (A) DYNAMIC CONST <'false'>
+1 #NONE             (N1) CONST <0>
+1 #AMOUNT           (N7.2)
+1 #AMOUNT-A         (A) DYNAMIC
+1 #P-I              (N7.2)
+1 #CONTACTID        (N8)
+*
+1 #MULTIPLE-OWNER             (L)         /* PM1
+1 #NON-INS-OWNER              (L)         /* PM1
+1 #OWNER-OCC-9                (1:9)       /* PM1
+  2 #OWNER-FLAG               (A1)        /* PM1
+  2 #OWNER-CN                 (N6/10)     /* PM1
+  2 #OWNER-CN-BY-POL          (N6)        /* PM1
+  2 #OWNER-CN-SEG             (I2/9)      /* PM1
+  2 #ISS-DATE                 (N8/9)      /* PM1
+  2 #ISS-DATE-DISP            (A10/9)     /* PM1
+  2 #BENE-TYPE                (A1/2)      /* PM1
+  2 #BENE-TEXT                (A60/10)    /* PM1
+*
+1 #OWN-I                      (I2)        /* PM1
+1 #DISP-OWN                   (A) DYNAMIC /* PM1
+1 #RENEWAL-RATE               (N7.2)      /* YK2
+1 #AGE                        (N2)        /* YK2
+1 #NN                         (N6)        /* YK2
+1 REDEFINE #NN                            /* YK2
+  2 #NN-A (A6)                            /* YK2
+1 #AA  (A2)                               /* YK2
+1 #Owner                 (N2) CONST <2>   /* YK4
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+PERFORM GET-POLICIES
+PERFORM POPULATE-COMMON-INFO
+*
+******************************
+DEFINE SUBROUTINE GET-POLICIES
+******************************
+* Call subprogram that returns all policy numbers this member owns
+PARM-CN := POLICIES.CN
+CALLNAT 'GPRN006N' PARM-CN PARM-MEMBER-CN PARM-POLICIES(*) #Owner     /* YK4    
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE POPULATE-COMMON-INFO
+**************************************
+*
+C@POLICYINFO := *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+IF C@POLICYINFO NE 0 AND PARM-POLICIES.ID-NUMBER(1) <> 0
+  EXPAND ARRAY POLICY TO (1:C@POLICYINFO)
+ELSE 
+  RESET C@POLICYINFO 
+END-IF
+*
+RESET #CURRENT-CN
+FOR #I = 1 TO C@POLICYINFO
+  RESET #FLEX-PLAN #FLEX-KEY
+  IF #CURRENT-CN NE PARM-POLICIES.ID-NUMBER(#I)
+    PERFORM GET-POLICY-INFO
+    PERFORM GET-CALCULATED-VALUES
+    #CURRENT-CN := PARM-POLICIES.ID-NUMBER(#I)
+  END-IF
+  IF #CURRENT-CN NE PARM-CN
+    LINKEDPOLICY(#I) := #YES
+  ELSE
+    LINKEDPOLICY(#I) := #NO
+  END-IF
+  #I1 := POLICY-INDEX(#I)
+  DECIDE FOR FIRST CONDITION
+    WHEN (SUBSTR(PLAN(#I1),2,2) = 'PF' AND PLAN(#I1) NE 'SPF')
+      #FLEX-PLAN := SUBSTR(PLAN(#I1),1,1)
+      #FLEX-KEY  := '99F'
+    WHEN (SUBSTR(PLAN(#I1),3,1) = 'F' AND PLAN(#I1) NE 'SPF')
+      #FLEX-PLAN := SUBSTR(PLAN(#I1),1,2)
+      #FLEX-KEY  := '99F'
+*   WHEN SUBSTR(PLAN(#I1),1,1) = 'U' OR = 'V' OR = 'W'
+    WHEN F-LT2-TRUE(<PLAN(#I1)>)
+      #FLEX-PLAN := SUBSTR(PLAN(#I1),2,2)
+      COMPRESS SUBSTR(PLAN(#I1),1,1) '99' INTO #FLEX-KEY LEAVING NO
+    WHEN ANY
+      POLICYTYPE(#I) := FUNCTION-PLAN(<#FLEX-KEY>)(4)
+      EXAMINE POLICYTYPE(#I) FOR '99' REPLACE #FLEX-PLAN
+      PAYMENTPERIOD(#I) := VAL(#FLEX-PLAN)
+    WHEN NONE
+      POLICYTYPE(#I) := FUNCTION-PLAN(<PARM-POL-INFO.PLAN(#I1)>)(4)
+      EXAMINE PARM-POL-INFO.PLAN(#I1) FOR 'P' POSITION #J
+      IF #J = 0 OR PARM-POL-INFO.PLAN(#I1) = 'SPF' OR PARM-POL-INFO.PLAN(#I1) = 'GPL' OR PARM-POL-INFO.PLAN(#I1) = 'GP2'
+        PAYMENTPERIOD(#I) := #NONE
+      ELSE
+        EXAMINE PARM-POL-INFO.PLAN(#I1) FOR 'P' DELETE
+        PAYMENTPERIOD(#I) := VAL(PARM-POL-INFO.PLAN(#I1))
+      END-IF
+  END-DECIDE
+* 
+  IF PARM-POL-INFO.PAY-STATUS(#I1) >= '40'            /* YK1
+    PAYMENTPERIOD(#I) := #NONE                        /* YK1
+    DueDate(#I)       := #NONE
+  ELSE                                                                       /* YK3  Start
+    CALLNAT 'GPDTOSXX'
+      PARM-POL-INFO.ISSUE-DATE (#I1)
+      PARM-POL-INFO.MONTH-ALLOC-AMT (#I1)
+      PARM-POL-INFO.PAID-TO-DATE (#I1)
+      PARM-POL-INFO.PAID-TO-DATE(#I1)
+    DueDate(#I) := FUNCTION-CALENDAR(<PARM-POL-INFO.PAID-TO-DATE(#I1),'W'>)  /* YK3 end
+  END-IF                                              /* YK1
+*
+  CALLNAT 'GPLNMSXX' #POL-NUM PARM-POLICIES.ID-NUMBER(#I) PARM-POLICIES.POLICY-INDEX(#I)
+  POLICYNUMBER(#I) := #POL-NUM
+  IF PARM-POLICIES.ID-NUMBER(#I) = PARM-CN
+    LINKEDPOLICY(#I) := #NO
+  ELSE
+    LINKEDPOLICY(#I) := #YES
+  END-IF
+*
+  #CONTACTID   := PARM-POL-INFO.MEMBER-CONTACT-ID
+  INSURED(#I)  := 'A*N'
+  CALLNAT 'GPRS0CNT' #CONTACTID INSURED(#I)
+*
+  CALLNAT 'GOWNRSXX' PARM-POLICIES.ID-NUMBER(#I)    /* PM1
+    #NON-INS-OWNER                                  /* PM1
+    #MULTIPLE-OWNER                                 /* PM1
+    #OWNER-OCC-9 (1:9)                              /* PM1
+*
+  IF #OWNER-CN(#I1,1) = 0                           /* PM1
+    OWNER(#I) := INSURED(#I)
+  ELSE                                                              /* PM1
+    FOR #OWN-I 1 TO 10                                              /* PM1
+      IF #OWNER-CN(#I1,#OWN-I) = 0                                  /* PM1
+        ESCAPE BOTTOM                                               /* PM1
+      ELSE                                                          /* PM1
+        #CONTACTID := F-GET-CONTACT-ID(<#OWNER-CN(#I1,#OWN-I)>)     /* PM1
+        #DISP-OWN   := 'A*N'                                        /* PM1
+        CALLNAT 'GPRS0CNT' #CONTACTID #DISP-OWN                     /* PM1
+        IF OWNER(#I) = ' '                                          /* PM1
+          OWNER(#I) := #DISP-OWN                                    /* PM1
+        ELSE                                                        /* PM1
+          COMPRESS OWNER(#I) ',' INTO OWNER(#I) LEAVING NO          /* PM1 
+          COMPRESS OWNER(#I) #DISP-OWN INTO OWNER(#I)               /* PM1
+        END-IF                                                      /* PM1
+      END-IF                                                        /* PM1
+    END-FOR                                                         /* PM1
+  END-IF                                                            /* PM1
+*
+* IF PARM-POLICIES.ID-NUMBER(#I) <> PARM-CN                      /* PM1
+*   #CONTACTID := F-GET-CONTACT-ID(<PARM-CN>)                    /* PM1
+*   OWNER(#I)  := 'A*N'                                          /* PM1
+*   CALLNAT 'GPRS0CNT' #CONTACTID OWNER(#I)                      /* PM1
+* ELSE                                                           /* PM1
+*   OWNER(#I) := INSURED(#I)                                     /* PM1
+*  END-IF                                                        /* PM1
+*
+  ISSUEDATE(#I)           := PARM-POL-INFO.ISSUE-DATE(#I1)
+  ISSUEAGE(#I)            := PARM-POL-INFO.ISSUE-AGE(#I1)
+  NICOTINEUSE(#I)         := PARM-POL-INFO.SMOKER-FLAG(#I1)
+*
+* InitialDeathBenefit - FaceAmount
+  #TERM-POLICY   := FUNCTION-TERM-POLICY(<PLAN(#I1)>)
+  IF #TERM-POLICY
+    TERMPOLICY(#I) := #TRUE
+  ELSE
+    TERMPOLICY(#I) := #FALSE
+  END-IF
+*   IF #TERM-POLICY AND #FACE-AMOUNT(#I1) <> 0
+*     #AMOUNT := #FACE-AMOUNT(#I1)
+*  ELSE
+  #AMOUNT := PARM-POL-INFO.FACE-AMOUNT(#I1)
+*  END-IF
+  MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO INITIALDEATHBENEFIT(#I)
+  INITIALDEATHBENEFIT(#I) := *TRIM(INITIALDEATHBENEFIT(#I))
+* #AMOUNT := PARM-POL-INFO.CASH-VALUE(#I1)
+  #AMOUNT := #CURR-CASH-VALUE(#I1)
+  MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO CURRENTCASHVALUE(#I)
+  CURRENTCASHVALUE(#I) := *TRIM(CURRENTCASHVALUE(#I))
+* #AMOUNT := PARM-POL-INFO.DEATH-BENEFIT(#I1)
+  #AMOUNT := #CURR-DEATH-BENEFIT(#I1)
+  MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO CURRENTDEATHBENEFIT(#I)
+  CURRENTDEATHBENEFIT(#I) := *TRIM(CURRENTDEATHBENEFIT(#I))
+* CALLNAT 'GPYSTSXX' PAY-STATUS (#I1) #SCR-STATUS(#I2) #INVALID #ERR-MSG
+  PAYMENTSTATUS(#I)       := FUNCTION-PAYMENT-STATUS(<PARM-POL-INFO.PAY-STATUS(#I1)>)
+  PAYMENTMETHOD(#I)       := FUNCTION-PAYMENT-MODE(<PARM-POL-INFO.MODE(#I1)>)(3)
+  ANNUALPREMIUM(#I) := QUARTERLYPREMIUM(#I) := MONTHLYPREMIUM(#I) := SEMIANNUALPREMIUM(#I) := #NONE  
+  DECIDE ON FIRST VALUE PARM-POL-INFO.MODE(#I1)
+    VALUE 'A','1'
+      #AMOUNT := PARM-POL-INFO.ANNUAL-PREM(#I1)
+      MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO ANNUALPREMIUM(#I)
+      ANNUALPREMIUM(#I) := *TRIM(ANNUALPREMIUM(#I))
+    VALUE 'S','2'
+      #AMOUNT := PARM-POL-INFO.ANNUAL-PREM(#I1) / 2
+      MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO SEMIANNUALPREMIUM(#I)
+      SEMIANNUALPREMIUM(#I) := *TRIM(SEMIANNUALPREMIUM(#I))
+    VALUE 'Q','4'
+      #AMOUNT := PARM-POL-INFO.ANNUAL-PREM(#I1) / 4
+      MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO QUARTERLYPREMIUM(#I)
+      QUARTERLYPREMIUM(#I) := *TRIM(QUARTERLYPREMIUM(#I))
+    NONE
+      #AMOUNT := PARM-POL-INFO.ANNUAL-PREM(#I1) / 12
+      MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO MONTHLYPREMIUM(#I)
+      MONTHLYPREMIUM(#I) := *TRIM(MONTHLYPREMIUM(#I))
+  END-DECIDE
+* YK2 Start
+  MaximumRenewalPremium(#I) := '0.00' 
+  IF F-LT2PLUS-TRUE(<PARM-POL-INFO.PLAN(#I1)>)
+    PERFORM GET-RENEWAL-RATE 
+  END-IF
+* YK2 End  
+* Assign default values for .NET XML parser
+  RESET LOANISSUEDATE(#I,*)
+  INTERESTRATE(#I,*)        := '0.00'
+  ACCRUEDINTEREST(#I,*)     := '0.00'
+  REMAININGPRINCIPAL(#I,*)  := '0.00'
+  BALANCE(#I,*)             := '0.00'
+*
+  DECIDE FOR EVERY CONDITION
+    WHEN #ACC-INT (#I1) GT 0 OR X-LOAN-AMOUNT (#I1) > 0
+* Process Fixed Rate Loans
+      IF PARM-POL-INFO.CONV-DURATION (#I1) = 999
+        LOANTYPE(#I,1)         := #CAP
+      ELSE
+        LOANTYPE(#I,1)         := #FIXED
+      END-IF
+      MOVE EDITED X-INTEREST-RATE(#I1) (EM=Z9.99) TO INTERESTRATE(#I,1)
+      INTERESTRATE(#I,1) := *TRIM(INTERESTRATE(#I,1))
+      LOANISSUEDATE(#I,1)     := X-LOAN-DATE(#I1)
+      COMPUTE #P-I = #LOAN-BAL (#I1) + #ACC-INT (#I1)
+      MOVE EDITED #P-I           (EM=ZZZZZ9.99) TO BALANCE(#I,1)
+      BALANCE(#I,1) := *TRIM(BALANCE(#I,1))
+      MOVE EDITED #LOAN-BAL(#I1) (EM=ZZZZZ9.99) TO REMAININGPRINCIPAL(#I,1)
+      REMAININGPRINCIPAL(#I,1) := *TRIM(REMAININGPRINCIPAL(#I,1))
+      MOVE EDITED #ACC-INT(#I1)  (EM=ZZZZZ9.99) TO ACCRUEDINTEREST(#I,1)
+      ACCRUEDINTEREST(#I,1) := *TRIM(ACCRUEDINTEREST(#I,1))
+      IF #ACC-INT(#I1) < 0
+        COMPRESS '-' ACCRUEDINTEREST(#I,1) INTO ACCRUEDINTEREST(#I,1) LEAVING NO
+      END-IF
+    WHEN #ACC-INT-2 (#I1) > 0 OR X-LOAN-AMOUNT-2 (#I1) > 0
+* Process Variable Rate Loans
+      LOANTYPE(#I,2)          := #VARIABLE
+      #AMOUNT := FUNCTION-INT-RATE(<#INT-RATE-KEY>)
+      MOVE EDITED #AMOUNT (EM=Z9.99) TO INTERESTRATE(#I,2)
+      INTERESTRATE(#I,2) := *TRIM(INTERESTRATE(#I,2))
+      LOANISSUEDATE(#I,2)     := X-LOAN-DATE-2(#I1)
+      COMPUTE #P-I = #LOAN-BAL-2(#I1) + #ACC-INT-2(#I1)
+      MOVE EDITED #P-I             (EM=ZZZZZ9.99) TO BALANCE(#I,2)
+      BALANCE(#I,2) := *TRIM(BALANCE(#I,2))
+      MOVE EDITED #LOAN-BAL-2(#I1) (EM=ZZZZZ9.99) TO REMAININGPRINCIPAL(#I,2)
+      REMAININGPRINCIPAL(#I,2) := *TRIM(REMAININGPRINCIPAL(#I,2))
+      MOVE EDITED #ACC-INT-2(#I1)  (EM=ZZZZZ9.99) TO ACCRUEDINTEREST(#I,2)
+      ACCRUEDINTEREST(#I,2) := *TRIM(ACCRUEDINTEREST(#I,2))
+      IF #ACC-INT-2(#I1) < 0
+        COMPRESS '-' ACCRUEDINTEREST(#I,2) INTO ACCRUEDINTEREST(#I,2) LEAVING NO
+      END-IF
+    WHEN (LOANTYPE(#I,1) <> ' ' OR LOANTYPE(#I,2) <> ' ') AND DueDate(#I) = '0'    /* YK3
+      DueDate(#I) := FUNCTION-CALENDAR(<PARM-POL-INFO.PAID-TO-DATE(#I1),'W'>)      /* YK3  
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+  
+*
+END-FOR
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-POLICY-INFO
+*********************************
+*
+RESET PARM-POL-INFO
+PARM-POL-INFO.ID-NUMBER := PARM-POLICIES.ID-NUMBER(#I)
+PARM-POL-INFO.#ACTION   := #GET
+C@POLICY_SEGMENT := 1
+EXPAND ARRAY POLICY-SEGMENT TO (*:C@POLICY_SEGMENT)
+CALLNAT 'OBJNPINF' PARM-POL-INFO
+IF PARM-POL-INFO.#RETURN-CODE NE ' '
+  #ERRORCODE := PARM-POL-INFO.#RETURN-CODE
+  BACKOUT TRANSACTION
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE GET-CALCULATED-VALUES
+***************************************
+*
+PDA-CALCULATED-VALUES.#ID-NUMBER := PARM-POL-INFO.ID-NUMBER
+CALLNAT 'MBCN0072' PDA-CALCULATED-VALUES
+*
+END-SUBROUTINE
+**********************************
+DEFINE SUBROUTINE GET-RENEWAL-RATE          /* YK2
+**********************************
+*
+RESET #RENEWAL-RATE
+IF (PAID-UP-DATE(#I1) - #DATN) < 9400
+  #NN := PAID-UP-DATE(#I1) - DATE-OF-BIRTH
+  #AA := SUBSTR(#NN-A,1,2) 
+  #AGE := VAL(#AA)
+  #RENEWAL-RATE := F-LTII-RENEW-RATES(<#AGE>)
+  COMPUTE #RENEWAL-RATE = #RENEWAL-RATE * (PARM-POL-INFO.FACE-AMOUNT(#I1) / 10000)  
+END-IF  
+MOVE EDITED #RENEWAL-RATE (EM=ZZZZZZ9.99) TO Policies.MaximumRenewalPremium(#I)
+Policies.MaximumRenewalPremium(#I) := *TRIM(Policies.MaximumRenewalPremium(#I))
+*
+END-SUBROUTINE
+END

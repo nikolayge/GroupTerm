@@ -1,0 +1,515 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Family Information Business Logic
+*
+*************************************************************************************
+*        MODIFICATION LOG
+*************************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    10202010       Initial Creation
+* YAK    08102011  YK1  Add logic to syncronize fields for Spouses and Former Spouses
+*                       between Contact and Status files
+*                       Add logging changes to transaction log file
+* YAK    05262015  YK2  Correct assigning CN for FIR synchronization
+*************************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0006
+PARAMETER 1 #ErrorCode (A3)
+1 #VALIDATION-RESULT (A) DYNAMIC
+*
+LOCAL USING MBCA0063
+LOCAL USING OBJACONT
+LOCAL USING OBJACTRL
+LOCAL USING OBJAADRL
+LOCAL USING OBJLFINF
+LOCAL USING MBCA0064
+LOCAL USING MBCA0065
+LOCAL USING C2230ACB
+LOCAL USING C2231ACB
+* PDA for common family/personal information validation routine
+LOCAL USING GPRAPINF
+LOCAL USING ERROR_L
+LOCAL
+*
+1 #MEMBER                   (A) DYNAMIC INIT <'MEMBER'>
+1 #MEMBER-CENTER-CLERK      (A) DYNAMIC INIT <'MBR'>
+1 #UPDATE                   (A) DYNAMIC CONST <'UPDATE'>
+1 #ADD                      (A) DYNAMIC CONST <'ADD'>
+1 #HIST-KEY1                (A) DYNAMIC CONST <'HIST-KEY1'>
+1 #HIST-KEY2                (A) DYNAMIC CONST <'HIST-KEY2'>
+1 #DELETE                   (A) DYNAMIC CONST <'DELETE'>
+1 #DELETE-DEP               (A) DYNAMIC CONST <'DELETE-DEP'>
+1 #DELETE-REL               (A) DYNAMIC CONST <'DELETE-REL'>
+1 #GET-CONT-ROLE            (A) DYNAMIC CONST <'GET-CONT-ROLE'>
+1 #GET-ROLE                 (A) DYNAMIC CONST <'GET-ROLE'>
+1 #GET                      (A) DYNAMIC CONST <'GET'>
+1 #SPOUSE                   (A) DYNAMIC CONST <'S'>
+1 #FORMER-SPOUSE            (A) DYNAMIC CONST <'X'>
+1 #FORMER-SPOUSE-STATUS     (A) DYNAMIC CONST <'F'>
+1 #GEN-ROLES                (A) DYNAMIC CONST <'KGD'>
+1 #NO-CODE                  (A) DYNAMIC CONST <'N'>
+1 #INDIVIDUAL               (A) DYNAMIC CONST <'I'>
+1 #MC                       (A) DYNAMIC CONST <'MC'>
+1 #INIT-ACTION              (A) DYNAMIC
+1 #HOLD-ACTION              (A) DYNAMIC
+1 #CURRENT-GEN              (L)
+1 #NEW-GEN                  (L)
+1 #DEP-CONTACT-ID           (N8)
+1 REDEFINE #DEP-CONTACT-ID
+  2 #DEP-CONTACT-ID_A       (A8)
+1 #DATN             (N8)
+1 #TIMN             (N7)
+1 #I                (I2)
+1 #II               (I2)
+1 #I1               (I2)
+1 #ContactID        (N8)
+1 #FIR-ISN          (P9)
+1 #REL              (A1)                        /* YK1
+1 #ErrorDescription (A) DYNAMIC
+1 #DEL              (A) DYNAMIC CONST <';'>
+* Sync with FIR file
+1 FIR-V VIEW OF A-FIRS
+  2 ID-NUMBER
+  2 CONTACT-ID-NUMBER
+  2 MEMBER-FLAG
+  2 WIDOW-FLAG
+  2 C*DEPENDENT-TABLE
+  2 DEPENDENT-TABLE (50)
+    3 DEPN-CONTACT-ID                   (N8)
+    3 REDEFINE DEPN-CONTACT-ID
+      4 DEPN-CI_A                       (A8)
+    3 DEPN-NAME
+    3 DEPN-STATUS-CD                    (A1)    /* G- Grand Child, others - Child
+    3 DEPN-DATE-OF-BIRTH
+    3 DEPN-SSN
+  2  DP-LAST-FM-DATE
+  2  DTS-DATN
+  2  DTS-TIMN
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+IF FamilyInformation.UserID <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<FamilyInformation.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<FamilyInformation.UserID>)(2)
+END-IF
+*
+DECIDE ON FIRST VALUE FamilyInformation.ActionType
+  VALUE '1'
+    PARM-CONTACT.#ACTION := PARM-CONTACT-REL.#ACTION := #ADD
+    #INIT-ACTION := PARM-CONTACT-REL.#ACTION
+  VALUE '2'
+    PARM-CONTACT.#ACTION := PARM-CONTACT-REL.#ACTION := #UPDATE
+    #INIT-ACTION := PARM-CONTACT-REL.#ACTION
+  VALUE '3'
+* Contact ID with CN can not be deleted from Member Center
+    PARM-CONTACT.#ACTION := PARM-CONTACT-REL.#ACTION := #DELETE-DEP
+  NONE VALUE
+    #ErrorCode  := #ACTION-INVALID
+    ESCAPE ROUTINE
+END-DECIDE
+*
+#ContactID := F-GET-CONTACT-ID(<FamilyInformation.MemberCN>)
+*
+* When adding a spouse - check if currently has a spouse
+IF (PARM-CONTACT.#ACTION = #ADD OR PARM-CONTACT.#ACTION = #UPDATE)
+    AND (FamilyInformation.NewRelationshipCode = #SPOUSE
+    OR FamilyInformation.NewRelationshipCode = #FORMER-SPOUSE)
+  PERFORM CHECK-UNIQUE-ROLE
+  DECIDE ON FIRST VALUE FamilyInformation.RelationshipCode
+    VALUE #FORMER-SPOUSE
+*     #PERSONAL-INFO.DATE-OF-MARRIAGE := FamilyInformation.FormerSpouseDateOfMarriage
+      #PERSONAL-INFO.DATE-OF-DIVORCE  := FamilyInformation.FormerSpouseDateOfDivorce
+    VALUE #SPOUSE
+      #PERSONAL-INFO.DATE-OF-MARRIAGE := FamilyInformation.SpouseDateOfMarriage
+*     #PERSONAL-INFO.DATE-OF-DIVORCE  := FamilyInformation.CurrentSpouseDateOfDivorce
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+END-IF
+* Call Business logic program for validation
+#PERSONAL-INFO.DATE-OF-BIRTH    := FamilyInformation.DateOfBirth
+#PERSONAL-INFO.GENDER           := FamilyInformation.GenderCode
+#PERSONAL-INFO.PREFIX           := FamilyInformation.Prefix
+EXPAND ARRAY #ERROR-CODE TO (*:10)
+EXPAND ARRAY #VALIDATE-FLAG TO (*:25)
+RESET #VALIDATE-FLAG(*)
+#VALIDATE-FLAG (1) := 'Y'       /* DOB
+#VALIDATE-FLAG (3) := 'Y'       /* DOM
+#VALIDATE-FLAG (4) := 'Y'       /* DIV
+#VALIDATE-FLAG (6) := 'Y'       /* Gender/Prefix
+#SYSTEM := 'MemberCenter'
+CALLNAT 'GPRNPINF' #PERSONAL-INFO #PERSONAL-OTHERS
+IF #ERROR-CODE(1) <> ' '
+  PERFORM COMPOSE-VALIDATION-ERROR-XML
+  ESCAPE MODULE
+END-IF
+*
+PERFORM GET-BEFORE-IMAGE
+DECIDE FOR FIRST CONDITION
+  WHEN FamilyInformation.ContactId = 0 AND PARM-CONTACT.#ACTION = #UPDATE
+    #ErrorCode  := #MISSING-CONTACT-ID
+    ESCAPE ROUTINE
+  WHEN PARM-CONTACT.#ACTION = #ADD AND FamilyInformation.NewRelationshipCode = ' '
+    #ErrorCode  := #ADD-NO-ROLE
+    ESCAPE ROUTINE
+  WHEN PARM-CONTACT.#ACTION = #DELETE-DEP
+    PERFORM DELETE-CONTACT-REL
+    PERFORM CHECK-CONTACT-REL
+    PERFORM DELETE-CONTACT
+    PERFORM DELETE-ADDRESS-REL
+  WHEN FamilyInformation.ContactId = 0 AND PARM-CONTACT.#ACTION = #ADD
+* Check if contact exist before adding a record
+    CALLNAT 'MBCN0063' FamilyInformation #ErrorCode
+    IF #ErrorCode <> '0'
+      ESCAPE MODULE
+    END-IF
+    IF FamilyInformation.ContactId NE 0
+*     PARM-CONTACT.#ACTION    := #UPDATE
+      FamilyInformation.RelationshipCode        := FamilyInformation.NewRelationshipCode
+      PARM-CONTACT.CONTACT-ID                   := FamilyInformation.ContactId
+      PARM-CONTACT.#ACTION                      := #GET
+      RESET PARM-CONTACT.#RETURN-CODE
+      CALLNAT 'OBJNCONT' PARM-CONTACT
+    ELSE
+      PERFORM UPDATE-CONTACT
+    END-IF
+    PERFORM UPDATE-CONTACT-REL
+  WHEN PARM-CONTACT.#ACTION = #UPDATE
+    PERFORM UPDATE-CONTACT
+    PERFORM UPDATE-CONTACT-REL
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+PERFORM GET-AFTER-IMAGE
+PERFORM SYNC-FILES
+* Write Transaction log
+CALLNAT 'C2230SCB' #OLD-VALUES #NEW-VALUES
+*
+********************************
+DEFINE SUBROUTINE UPDATE-CONTACT
+********************************
+*
+* Note: Contact with CN can not be added
+*
+PARM-CONTACT.CONTACT-ID          := FamilyInformation.ContactId
+PARM-CONTACT.PREFIX-TITLE        := FamilyInformation.Prefix
+PARM-CONTACT.FIRST-NAME          := *TRANSLATE(FamilyInformation.FirstName,UPPER)
+PARM-CONTACT.MIDDLE-NAME         := *TRANSLATE(FamilyInformation.MiddleName,UPPER)
+PARM-CONTACT.LAST-NAME           := *TRANSLATE(FamilyInformation.LastName,UPPER)
+PARM-CONTACT.SUFFIX              := *TRANSLATE(FamilyInformation.Suffix,UPPER)
+PARM-CONTACT.SSN                 := FamilyInformation.SSN
+PARM-CONTACT.GENDER-CD           := FamilyInformation.GenderCode
+PARM-CONTACT.DATE-OF-BIRTH       := FamilyInformation.DateOfBirth
+* YK1 Assign default prefix if not selected
+IF PARM-CONTACT.PREFIX-TITLE = ' '
+  #REL := *TRIM(FamilyInformation.RelationshipCode)
+  PARM-CONTACT.PREFIX-TITLE :=
+    F-DEF-PREFIX(<FamilyInformation.ContactId,#REL,PARM-CONTACT.LAST-NAME,PARM-CONTACT.GENDER-CD,PARM-CONTACT.DATE-OF-BIRTH>)
+END-IF
+* YK1  end
+PARM-CONTACT.LAST-DATE-UPD       := #DATN
+PARM-CONTACT.LAST-TIME-UPD       := #TIMN
+PARM-CONTACT.LAST-USER-UPD       := #MEMBER
+*
+IF PARM-CONTACT.#ACTION = #ADD
+  PARM-CONTACT.CONTACT-TYPE    := #INDIVIDUAL
+  PARM-CONTACT.BIRTH-CERT-CODE := #NO-CODE
+END-IF
+*
+RESET PARM-CONTACT.#RETURN-CODE
+CALLNAT 'OBJNCONT' PARM-CONTACT
+IF PARM-CONTACT.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+IF FamilyInformation.ContactID = 0
+  FamilyInformation.ContactID := PARM-CONTACT.CONTACT-ID
+END-IF
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE SYNC-FILES
+****************************
+*
+IF (FamilyInformation.RelationshipCode = #SPOUSE OR = #FORMER-SPOUSE)
+    OR (FamilyInformation.NewRelationshipCode = #SPOUSE OR = #FORMER-SPOUSE)
+  MOVE BY NAME FamilyInformation TO Status_Sync
+  Status_Sync.CN                       := FamilyInformation.MemberCN
+  Status_Sync.ExistingRelationshipCode := FamilyInformation.RelationshipCode
+  Status_Sync.RelationshipCode         := FamilyInformation.NewRelationshipCode
+  CALLNAT 'MBCN0064' Status_Sync #OLD-VALUES #NEW-VALUES
+  ESCAPE ROUTINE
+END-IF
+RESET #I
+EXAMINE #GEN-ROLES FOR FamilyInformation.RelationshipCode POSITION #I
+IF #I <> 0 #CURRENT-GEN := TRUE END-IF
+RESET #I
+EXAMINE #GEN-ROLES FOR FamilyInformation.NewRelationshipCode POSITION #I
+IF #I <> 0 #NEW-GEN     := TRUE END-IF
+DECIDE FOR FIRST CONDITION
+  WHEN #NEW-GEN
+    MOVE BY NAME FamilyInformation TO Fir_Sync
+    Fir_Sync.RelationshipCode := FamilyInformation.NewRelationshipCode
+    Fir_Sync.ActionType := #UPDATE
+  WHEN #CURRENT-GEN AND (NOT #NEW-GEN)
+    MOVE BY NAME FamilyInformation TO Fir_Sync
+    Fir_Sync.ActionType := #DELETE
+  WHEN ANY
+    Fir_Sync.CN := FamilyInformation.MemberCN                 /* YK2
+    Fir_Sync.SystemSource := #MC
+    CALLNAT 'MBCN0065' Fir_Sync
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE UPDATE-CONTACT-REL
+************************************
+*
+PARM-CONTACT-REL.ROLE-2-CD        := FamilyInformation.NewRelationshipCode
+PARM-CONTACT-REL.CONTACT-1-ID     := #ContactID
+PARM-CONTACT-REL.CONTACT-2-ID     := PARM-CONTACT.CONTACT-ID
+* Check if requested role exists
+IF #INIT-ACTION = #ADD
+  PARM-CONTACT-REL.#ACTION := #GET-CONT-ROLE
+  RESET PARM-CONTACT-REL.#RETURN-CODE
+  CALLNAT 'OBJNCTRL' PARM-CONTACT-REL
+  IF PARM-CONTACT-REL.#RETURN-CODE NE ' ' AND (PARM-CONTACT-REL.#RETURN-CODE NE #CONTACT-REL-NOT-FOUND)
+      AND (PARM-CONTACT-REL.#RETURN-CODE NE #CONTACT-ROLE-NOT-FOUND)
+    #ErrorCode := PARM-CONTACT-REL.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN PARM-CONTACT-REL.#RETURN-CODE = #CONTACT-REL-NOT-FOUND OR
+        PARM-CONTACT-REL.#RETURN-CODE = #CONTACT-ROLE-NOT-FOUND
+      PARM-CONTACT-REL.#ACTION := #ADD
+    WHEN #INIT-ACTION = #ADD AND PARM-CONTACT-REL.ISN NE 0
+      #ErrorCode := #CONTACT-ROLE-EXIST
+      ESCAPE MODULE
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+  PARM-CONTACT-REL.#ACTION := #INIT-ACTION
+ELSE
+  PARM-CONTACT-REL.#CURRENT-ROLE-CD := FamilyInformation.RelationshipCode
+  PARM-CONTACT-REL.#ACTION          := #UPDATE
+END-IF
+* Temporary Code - Replace with function to return reverse relationship
+DECIDE ON FIRST VALUE FamilyInformation.NewRelationshipCode
+  VALUE #SPOUSE
+    PARM-CONTACT-REL.ROLE-1-CD := 'S'
+  VALUE 'K','D'
+    PARM-CONTACT-REL.ROLE-1-CD := 'P'
+  VALUE 'G'
+    PARM-CONTACT-REL.ROLE-1-CD := 'H'
+  VALUE 'H'
+    PARM-CONTACT-REL.ROLE-1-CD := 'G'
+  VALUE #FORMER-SPOUSE
+    PARM-CONTACT-REL.ROLE-1-CD := 'X'
+  NONE
+    PARM-CONTACT-REL.ROLE-1-CD := 'M'
+END-DECIDE
+*
+PARM-CONTACT-REL.LAST-DATE-UPD       := #DATN
+PARM-CONTACT-REL.LAST-TIME-UPD       := #TIMN
+PARM-CONTACT-REL.LAST-USER-UPD       := #MEMBER
+RESET PARM-CONTACT-REL.#RETURN-CODE
+CALLNAT 'OBJNCTRL' PARM-CONTACT-REL
+IF PARM-CONTACT-REL.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT-REL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CHECK-CONTACT-REL
+***********************************
+*
+PARM-CONTACT-REL.#ACTION := #HIST-KEY2
+RESET PARM-CONTACT-REL.#RETURN-CODE
+CALLNAT 'OBJNCTRL' PARM-CONTACT-REL
+IF PARM-CONTACT-REL.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT-REL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+IF PARM-CONTACT-REL.#NUMBER-OF-RECORDS <> 0
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE DELETE-CONTACT
+********************************
+*
+* Note: Contact with CN can not be deleted
+*
+PARM-CONTACT.CONTACT-ID          := FamilyInformation.ContactId
+PARM-CONTACT.LAST-DATE-UPD       := #DATN
+PARM-CONTACT.LAST-TIME-UPD       := #TIMN
+PARM-CONTACT.LAST-USER-UPD       := #MEMBER
+RESET PARM-CONTACT.#RETURN-CODE
+CALLNAT 'OBJNCONT' PARM-CONTACT
+IF PARM-CONTACT.#RETURN-CODE NE ' '
+  IF PARM-CONTACT.#RETURN-CODE = #CONTACT-HAS-CN
+    RESET PARM-CONTACT.#RETURN-CODE
+  ELSE
+    #ErrorCode := PARM-CONTACT.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE DELETE-CONTACT-REL
+************************************
+*
+PARM-CONTACT-REL.#ACTION         := #DELETE-REL
+PARM-CONTACT-REL.CONTACT-1-ID    := #ContactID
+PARM-CONTACT-REL.CONTACT-2-ID    := FamilyInformation.ContactId
+RESET PARM-CONTACT-REL.#RETURN-CODE
+CALLNAT 'OBJNCTRL' PARM-CONTACT-REL
+IF PARM-CONTACT-REL.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT-REL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE DELETE-ADDRESS-REL
+************************************
+* Delete Address relationship for deleted contact
+* Add method to OBJNADRL
+RESET PARM-ADDRESS-REL
+PARM-ADDRESS-REL.#ACTION     := #DELETE-REL
+PARM-ADDRESS-REL.CONTACT-ID  := PARM-CONTACT.CONTACT-ID
+CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+IF PARM-ADDRESS-REL.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-ADDRESS-REL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CHECK-UNIQUE-ROLE
+***********************************
+*
+RESET PARM-CONTACT-REL.#RETURN-CODE
+PARM-CONTACT-REL.#ACTION      := #GET-ROLE
+PARM-CONTACT-REL.CONTACT-1-ID := #ContactID
+PARM-CONTACT-REL.ROLE-2-CD    := FamilyInformation.NewRelationshipCode
+CALLNAT 'OBJNCTRL' PARM-CONTACT-REL
+DECIDE FOR FIRST CONDITION
+  WHEN PARM-CONTACT-REL.#RETURN-CODE = ' '
+    ESCAPE ROUTINE
+  WHEN PARM-CONTACT-REL.#RETURN-CODE NE ' ' AND
+      PARM-CONTACT-REL.#RETURN-CODE NE #UNIQUE-ROLE-EXIST
+    ESCAPE MODULE
+  WHEN PARM-CONTACT.#ACTION = #ADD AND
+      PARM-CONTACT-REL.#RETURN-CODE = #UNIQUE-ROLE-EXIST
+    #ErrorCode := #UNIQUE-ROLE-EXIST
+    ESCAPE MODULE
+  WHEN PARM-CONTACT.#ACTION = #UPDATE AND
+      PARM-CONTACT-REL.#RETURN-CODE = #UNIQUE-ROLE-EXIST AND
+      PARM-CONTACT-REL.CONTACT-2-ID <> FamilyInformation.ContactId
+    #ErrorCode := #UNIQUE-ROLE-EXIST
+    ESCAPE MODULE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-BEFORE-IMAGE
+**********************************
+* YK1 start
+RESET #OLD-VALUES
+IF PARM-CONTACT.#ACTION = #ADD
+  ESCAPE ROUTINE
+END-IF
+#HOLD-ACTION := PARM-CONTACT.#ACTION
+RESET PARM-CONTACT
+PARM-CONTACT.#ACTION := #GET
+PARM-CONTACT.CONTACT-ID := FamilyInformation.ContactId
+CALLNAT 'OBJNCONT' PARM-CONTACT
+IF PARM-CONTACT.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+*  #OLD-VALUES from contact file
+#OLD-ROLE         := FamilyInformation.RelationshipCode
+#OLD-PREFIX-TITLE := PARM-CONTACT.PREFIX-TITLE
+#OLD-GENDER-CD    := PARM-CONTACT.GENDER-CD
+#OLD-LAST-NAME    := PARM-CONTACT.LAST-NAME
+#OLD-FIRST-NAME   := PARM-CONTACT.FIRST-NAME
+#OLD-MIDDLE-NAME  := PARM-CONTACT.MIDDLE-NAME
+#OLD-SUFFIX       := PARM-CONTACT.SUFFIX
+#OLD-SSN          := PARM-CONTACT.SSN
+#OLD-DOB          := PARM-CONTACT.DATE-OF-BIRTH
+#OLD-BCC          := PARM-CONTACT.BIRTH-CERT-CODE
+* #OLD-DOM
+* #OLD-DIV
+* #OLD-MCC
+*
+RESET PARM-CONTACT
+PARM-CONTACT.#ACTION    := #HOLD-ACTION
+PARM-CONTACT.CONTACT-ID := FamilyInformation.ContactId
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-AFTER-IMAGE
+*********************************
+* Populate #NEW-VALUES
+*
+RESET #NEW-VALUES
+#ORIG-COMMAND                    := 'CB'
+#ID-NUMBER                       := FamilyInformation.MemberCN
+IF PARM-CONTACT.#ACTION = #DELETE OR PARM-CONTACT.#ACTION = #DELETE-DEP
+  ESCAPE ROUTINE
+END-IF
+#ST-NAME                         := FUNCTION-CONTACT-NAME(<#ContactID>)
+#CGA-CLERK                       := #MEMBER-CENTER-CLERK
+#ROLE                            := FamilyInformation.NewRelationshipCode
+#FIRST-NAME                      := PARM-CONTACT.FIRST-NAME
+#MIDDLE-NAME                     := PARM-CONTACT.MIDDLE-NAME
+#LAST-NAME                       := PARM-CONTACT.LAST-NAME
+#SUFFIX                          := PARM-CONTACT.SUFFIX
+#PREFIX-TITLE                    := PARM-CONTACT.PREFIX-TITLE
+#DATE-OF-BIRTH                   := PARM-CONTACT.DATE-OF-BIRTH
+#SSN                             := PARM-CONTACT.SSN
+#SEX                             := PARM-CONTACT.GENDER-CD
+#BCC                             := PARM-CONTACT.BIRTH-CERT-CODE
+* #DATE-OF-MARRIAGE
+* #DATE-OF-DIVORCE
+* #MCC
+*
+END-SUBROUTINE
+* YK1 end
+**********************************************
+DEFINE SUBROUTINE COMPOSE-VALIDATION-ERROR-XML
+**********************************************
+#ErrorCode := '1'
+FOR #I = 1 TO *OCCURRENCE(#ERROR-CODE)
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ERROR-CODE(#I)>)
+  COMPRESS #VALIDATION-RESULT #ErrorDescription #DEL
+    INTO #VALIDATION-RESULT LEAVING NO
+END-FOR
+END-SUBROUTINE
+END

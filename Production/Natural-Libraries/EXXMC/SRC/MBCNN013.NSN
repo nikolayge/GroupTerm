@@ -1,0 +1,309 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online - MC II - MBCNN013
+* Member Identification Information
+****************************************************************************
+*        MODIFICATION LOG
+****************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11202014       Initial Creation
+* YAK    01262016  YK1  Changes MCII FIR
+* YAK    01262016  YK2  Add Mortgage and Wealth Management Trust Services
+* YAK    08162016  YK3  Add logic for DV upload from AUC
+* YAK    12012016  YK4  Add Group Term Life Insurance and Complimentary Membership
+* bz-Name 07/05/2017   comment out EDIT_NAME_LOWCASE. Fine names Proj
+****************************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0010
+PARAMETER 1 #ErrorCode (A3)
+*
+LOCAL USING OBJACONT
+LOCAL USING OBJAMINF
+LOCAL USING OBJAWEBU
+LOCAL USING OBJAMB02         /* Member Services file
+LOCAL USING ERROR_L
+LOCAL
+*
+1 #GET-BY-CN        (A) DYNAMIC CONST <'GET-BY-CN'>
+1 #GET              (A) DYNAMIC CONST <'GET'>
+1 #GET-MBR-STATUS   (A) DYNAMIC CONST <'GET-MBR-ST'>
+1 #MEMBER           (A) DYNAMIC CONST <'M'>
+1 #WIDOW            (A) DYNAMIC CONST <'W'>
+1 #EMPLOYEE         (A) DYNAMIC CONST <'E'>
+1 #OWNER            (A) DYNAMIC CONST <'O'>
+1 #PENDING          (A) DYNAMIC CONST <'A'>
+1 #ACTIVE           (A) DYNAMIC CONST <'A'>
+1 #FPR              (A) DYNAMIC CONST <'F'>
+1 #PARTY-CD         (A) DYNAMIC
+1 #Dynamic_Name     (A) DYNAMIC
+1 #I                (I2)
+1 #I1               (I2)
+1 #GF               (L)
+1 #REQUEST          (A) DYNAMIC
+1 #Email            (A) DYNAMIC
+1 #PremierServicesOnly  (A) DYNAMIC CONST <'P'>
+1 #ServiceOnly          (A) DYNAMIC CONST <'S'>
+1 #Grandfathered        (A) DYNAMIC CONST <'G'>
+1 #SAS                  (A) DYNAMIC CONST <'SS'>
+1 #PSM_SAS              (A) DYNAMIC CONST <'PS'>
+1 #ERSurvivor           (A) DYNAMIC CONST <'ER'>
+1 #ERSurvivorIns        (A) DYNAMIC CONST <'IER'>
+1 #WealthMTrustC        (A) DYNAMIC CONST <'WM'>       /* YK2
+1 #Mortgage             (A) DYNAMIC CONST <'MTG'>      /* YK2
+1 #WealthMTrustMortgage (A) DYNAMIC CONST <'WMTG'>     /* YK2
+1 #OptOutMortgage       (A) DYNAMIC CONST <'OMTG'>     /* YK2
+1 #InsuranceOnlyMortgage(A) DYNAMIC CONST <'IMTG'>     /* YK2
+1 #InsurancePlusMortgage(A) DYNAMIC CONST <'PMTG'>     /* YK2
+1 #GroupTermInsurance   (A) DYNAMIC CONST <'GTI'>      /* YK4
+1 #ComplimentMembership (A) DYNAMIC CONST <'CMS'>      /* YK4
+1 #InsuranceOnly        (A) DYNAMIC CONST <'I'>
+1 #InsurancePlus        (A) DYNAMIC CONST <'I+'>
+1 #InsPlusPremierServ   (A) DYNAMIC CONST <'IP'>
+1 #OptOut               (A) DYNAMIC CONST <'O'>
+1 #Inactive             (A) DYNAMIC CONST <'IN'>
+1 #NonMemberOwner       (A) DYNAMIC CONST <'NMO'>
+1 #SERVICE-TYPE     (A3/*)
+* YK1 >
+1 #LOOK-UP-DOC-TYPE     (A) DYNAMIC CONST <'CODE033'>
+1 #LOOK-UP-KEY          (A7)
+1 #LOOK-UP-VALUE        (A) DYNAMIC
+1 #EXCEPTION_IND        (N6/7) INIT <340,620,955,1260,1608,1616,1700>
+* < YK1
+1 #AUC                  (A) DYNAMIC CONST <'AUC'>        /* YK3
+*
+END-DEFINE
+*
+PERFORM GET-CONTACT-INFO
+* YK3 >
+IF MemberInfo.SystemSource = #AUC
+  ESCAPE ROUTINE
+END-IF
+* < YK3
+PERFORM GET-MEMBER-STATUS-INFO
+*
+**********************************
+DEFINE SUBROUTINE GET-CONTACT-INFO
+**********************************
+*
+RESET PARM-CONTACT
+PARM-CONTACT.ID-NUMBER := MemberInfo.CN
+PARM-CONTACT.#ACTION := #GET-BY-CN
+CALLNAT 'OBJNCONT' PARM-CONTACT
+IF PARM-CONTACT.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-CONTACT.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+*
+IF PARM-CONTACT.DATE-OF-BIRTH <> 0
+  MemberInfo.DateOfBirth := FUNCTION-CALENDAR(<PARM-CONTACT.DATE-OF-BIRTH,'V'>)
+END-IF
+*
+RESET #Dynamic_Name
+CALLNAT 'GPRS0CNT' PARM-CONTACT.CONTACT-ID #Dynamic_Name
+* #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >)    /* bz-Name
+MemberInfo.MemberName         := #Dynamic_Name
+* YK1 >
+#Dynamic_Name := 'B'
+CALLNAT 'GPRS0CNT' PARM-CONTACT.CONTACT-ID #Dynamic_Name
+* #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >)  /* bz-Name
+MemberInfo.MemberFormattedName := #Dynamic_Name
+IF NOT (PARM-CONTACT.RANK-PROTECT = 'Y' OR PARM-CONTACT.RANK-ID = #EXCEPTION_IND(*))
+  #Dynamic_Name := 'A R'
+  CALLNAT 'GPRS0CNT' PARM-CONTACT.CONTACT-ID #Dynamic_Name
+  COMPRESS #Dynamic_Name MemberInfo.MemberFormattedName INTO MemberInfo.MemberFormattedName
+END-IF
+
+MemberInfo.MemberFirstName    := PARM-CONTACT.FIRST-NAME
+MemberInfo.MemberSSN          := PARM-CONTACT.SSN
+IF PARM-CONTACT.BIRTH-CERT-CODE <> ' ' AND PARM-CONTACT.BIRTH-CERT-CODE <> 'N'
+  MemberInfo.MemberBirthCertInd := 'true'
+  #LOOK-UP-KEY   := #LOOK-UP-DOC-TYPE
+  #LOOK-UP-VALUE := PARM-CONTACT.BIRTH-CERT-CODE
+  MemberInfo.MemberBirthCertCodeDescription := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)
+ELSE
+  MemberInfo.MemberBirthCertInd := 'false'
+END-IF
+* < YK1
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE GET-MEMBER-STATUS-INFO
+****************************************
+*
+PARM-MEMBER-INFO.ID-NUMBER               := MemberInfo.CN
+PARM-MEMBER-INFO.#ACTION                 := #GET-MBR-STATUS
+*
+CALLNAT 'OBJNMINF' PARM-MEMBER-INFO
+IF PARM-MEMBER-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-MEMBER-INFO.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+* YK1 >
+IF PARM-MEMBER-INFO.MARRIAGE-CERT-CODE <> ' ' AND PARM-MEMBER-INFO.MARRIAGE-CERT-CODE <> 'N'
+  MemberInfo.MemberMarrCertInd  := 'true'
+  #LOOK-UP-KEY   := #LOOK-UP-DOC-TYPE
+  #LOOK-UP-VALUE := PARM-MEMBER-INFO.MARRIAGE-CERT-CODE
+  MemberInfo.MemberMarrCertCodeDescription := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)
+ELSE
+  MemberInfo.MemberMarrCertInd := 'false'
+END-IF
+MemberInfo.MemberSpouseStatusCode := PARM-MEMBER-INFO.STATUS-CODE-SP             /* YK1
+* < YK1
+* MembershipType Member/MemberSpouse/Child/Employee/Other
+DECIDE FOR FIRST CONDITION
+  WHEN PROCESS-IND = 'C' AND INTRO-FLAG = 'A'
+    #PARTY-CD := #PENDING
+  WHEN PROCESS-IND = 'C' AND INTRO-FLAG NE 'A'
+    #PARTY-CD := #OWNER
+  WHEN INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    MOVE INTRO-FLAG TO #PARTY-CD
+  WHEN MILITARY-SERVICE = 'EMP'
+    #PARTY-CD := #EMPLOYEE
+  WHEN PARM-MEMBER-INFO.WIDOW-FLAG = 'Y'
+    #PARTY-CD := #WIDOW
+* Retreive Surviving Spouse name
+    RESET #Dynamic_Name
+    CALLNAT 'GPRS0CNT' PARM-MEMBER-INFO.SPOUSE-CONTACT-ID #Dynamic_Name
+*    #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >    )   /* bz-Name
+    MemberInfo.MemberName := #Dynamic_Name
+* YK1 >
+    #Dynamic_Name := 'B'
+    CALLNAT 'GPRS0CNT' PARM-MEMBER-INFO.SPOUSE-CONTACT-ID #Dynamic_Name
+*    #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >)      /* bz-Name  
+    MemberInfo.WidowFormattedName := #Dynamic_Name
+* < YK1
+  WHEN NONE
+    #PARTY-CD := #MEMBER
+END-DECIDE
+MemberInfo.MembershipTypeCode := #PARTY-CD
+*
+* MemberServiceType  G-f/De-gf/Ins-pls/Optot/Non
+* Check services
+PERFORM CHECK-SERVICES
+*
+EXAMINE #SERVICE-TYPE(*) FOR 'GTI' REPLACE 'MTG'      /* YK4
+EXAMINE #SERVICE-TYPE(*) FOR 'CMS' REPLACE 'MTG'      /* YK4
+DECIDE FOR FIRST CONDITION
+  WHEN (#SERVICE-TYPE(*) = 'AER' OR #SERVICE-TYPE(*) = 'CER' OR #SERVICE-TYPE(*) = 'FER')
+      AND NUMBER-MEMBERSHIPS <> 0
+    MemberInfo.MemberServiceTypeCode := #ERSurvivorIns
+  WHEN #SERVICE-TYPE(*) = 'AER' OR #SERVICE-TYPE(*) = 'CER' OR #SERVICE-TYPE(*) = 'FER'
+      AND NUMBER-MEMBERSHIPS = 0
+    MemberInfo.MemberServiceTypeCode := #ERSurvivor
+  WHEN #SERVICE-TYPE(*) = 'SAS' AND #SERVICE-TYPE(*) = 'PSM'
+    MemberInfo.MemberServiceTypeCode := #PSM_SAS
+  WHEN #SERVICE-TYPE(*) = 'SAS'
+    MemberInfo.MemberServiceTypeCode := #SAS
+  WHEN #SERVICE-TYPE(*) = 'PSM' AND NUMBER-MEMBERSHIPS = 0
+    MemberInfo.MemberServiceTypeCode := #PremierServicesOnly
+  WHEN PARM-MEMBER-INFO.SERVICE-ONLY
+    MemberInfo.MemberServiceTypeCode := #ServiceOnly
+* YK2 >
+  WHEN #SERVICE-TYPE(*) = 'MTG' AND PROCESS-IND = 'O'
+    MemberInfo.MemberServiceTypeCode := #OptOutMortgage
+  WHEN #SERVICE-TYPE(*) = 'MTG' AND
+      (INTRO-FLAG = 'S' OR = 'K' OR = 'G' OR (MILITARY-SERVICE  = 'EMP'))
+      AND NUMBER-MEMBERSHIPS <> 0
+    MemberInfo.MemberServiceTypeCode := #InsuranceOnlyMortgage
+  WHEN (PROCESS-IND = 'D' AND #GF OR PROCESS-IND = 'G') AND NUMBER-MEMBERSHIPS <> 0
+    MemberInfo.MemberServiceTypeCode := #Grandfathered
+  WHEN #SERVICE-TYPE(*) = 'MTG' AND #SERVICE-TYPE(*) = 'PSM'          /* YK4
+    MemberInfo.MemberServiceTypeCode := #PremierServicesOnly          /* YK4
+  WHEN #SERVICE-TYPE(*) = 'MTG' AND NUMBER-MEMBERSHIPS <> 0
+    MemberInfo.MemberServiceTypeCode := #InsurancePlusMortgage
+  WHEN #SERVICE-TYPE(*) = 'WMT' AND #SERVICE-TYPE(*) = 'MTG'
+    MemberInfo.MemberServiceTypeCode := #WealthMTrustMortgage
+  WHEN #SERVICE-TYPE(*) = 'WMT'
+    MemberInfo.MemberServiceTypeCode := #WealthMTrustC
+  WHEN #SERVICE-TYPE(*) = 'MTG'
+    MemberInfo.MemberServiceTypeCode := #Mortgage
+* < YK2
+  WHEN (INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+      OR (MILITARY-SERVICE  = 'EMP'))
+      AND NUMBER-MEMBERSHIPS <> 0
+    MemberInfo.MemberServiceTypeCode := #InsuranceOnly
+*   WHEN PARM-MEMBER-INFO.SERVICE-ONLY
+*     MemberInfo.MemberServiceTypeCode := #ServiceOnly
+  WHEN #SERVICE-TYPE(*) = 'PSM' AND NUMBER-MEMBERSHIPS <> 0
+    MemberInfo.MemberServiceTypeCode := #InsPlusPremierServ
+*   WHEN (PROCESS-IND = 'D' AND #GF OR PROCESS-IND = 'G') AND NUMBER-MEMBERSHIPS <> 0
+*     MemberInfo.MemberServiceTypeCode := #Grandfathered
+  WHEN NUMBER-MEMBERSHIPS <> 0
+    MemberInfo.MemberServiceTypeCode := #InsurancePlus
+  WHEN PROCESS-IND = 'O'
+    MemberInfo.MemberServiceTypeCode := #OptOut
+  WHEN PROCESS-IND = 'C' AND INTRO-FLAG <> 'A'
+    MemberInfo.MemberServiceTypeCode := #NonMemberOwner
+  WHEN PARM-MEMBER-INFO.WIDOW-FLAG = 'Y'
+    MemberInfo.MemberServiceTypeCode := #WIDOW
+*   WHEN #SERVICE-TYPE(*) = 'GTI'                                    /* YK4
+*     MemberInfo.MemberServiceTypeCode := #Mortgage
+*   WHEN #SERVICE-TYPE(*) = 'CMS'                                    /* YK4
+*     MemberInfo.MemberServiceTypeCode := #Mortgage       
+  WHEN NUMBER-MEMBERSHIPS = 0
+    MemberInfo.MemberServiceTypeCode := #Inactive    
+  WHEN NONE
+    IGNORE
+END-DECIDE
+* Get paperless options from Status file
+#Email := F-PREF-EMAIL(<PARM-MEMBER-INFO.MEMBER-CONTACT-ID>)
+DECIDE FOR FIRST CONDITION
+  WHEN DI-BA-MAIL-CD = 'D'
+    MemberInfo.FIRDeliveryFlag := 'W'
+  WHEN DI-BA-MAIL-CD = 'M' OR = 'A'
+    MemberInfo.FIRDeliveryFlag := 'W'
+  WHEN DI-BA-MAIL-CD = 'N'
+    MemberInfo.FIRDeliveryFlag := 'M'
+  WHEN DI-BA-MAIL-CD = ' ' AND #Email <> ' '
+    MemberInfo.FIRDeliveryFlag := 'W'
+  WHEN DI-BA-MAIL-CD = ' ' AND #Email = ' '
+    MemberInfo.FIRDeliveryFlag := 'M'
+  WHEN #SERVICE-TYPE(*) = 'PSM'
+    MemberInfo.FIRDeliveryFlag := 'W'
+  WHEN NONE
+* S, B, C
+    IGNORE
+END-DECIDE
+DECIDE FOR FIRST CONDITION
+  WHEN ANNUAL-RPT-FLAG = 'N'
+    MemberInfo.AnnRepDeliveryFlag := 'W'
+  WHEN ANNUAL-RPT-FLAG = 'F'
+    MemberInfo.AnnRepDeliveryFlag := 'M'
+  WHEN NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CHECK-SERVICES
+********************************
+* Special Processing for De-Grandfathered Members, that are no longer de-grandfathered
+* Add Premier Services
+#REQUEST := #GET-BY-CN
+RESIZE ARRAY #SVC-MEMBER TO (1:1)
+#SVC-MEMBER.SVC-ID-NUMBER(1) := PARM-MEMBER-INFO.ID-NUMBER
+CALLNAT 'OBJNMB02' #MSG #SVC-COUNT #SVC-MEMBER(*)
+EXPAND ARRAY #SERVICE-TYPE TO (1:1)
+FOR #I = 1 TO #SVC-COUNT
+  DECIDE FOR FIRST CONDITION
+    WHEN #SVC-MEMBER.SVC-PLAN(#I) = '3SR' AND #SVC-MEMBER.SVC-STATUS(#I) = #ACTIVE
+      #GF := TRUE
+    WHEN #SVC-MEMBER.SVC-PLAN(#I) = 'SAS' AND (#SVC-MEMBER.SVC-STATUS(#I) = #ACTIVE OR #SVC-MEMBER.SVC-STATUS(#I) = #FPR)
+      IGNORE
+    WHEN #SVC-MEMBER.SVC-STATUS(#I) = #ACTIVE
+      IGNORE
+    WHEN ANY
+      #I1 := #I1 + 1
+      EXPAND ARRAY #SERVICE-TYPE TO (*:#I1)
+      #SERVICE-TYPE(#I1) := #SVC-MEMBER.SVC-PLAN(#I)
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+END-SUBROUTINE
+*
+END

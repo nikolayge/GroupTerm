@@ -1,0 +1,351 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* GPRS0CNT - return Contact Info by CID
+* BZ 05/20/2010 ver. 2.0  
+* Rules:
+* 1.  Contacts with RANK-ID = 1616 or RANK-PROTECT = 'Y' or EXCEPTION-IND = 'Y'
+*     are treated as a civilians
+*
+* Usage 1) CALLNAT 'GPRS0CNT' MEMBER-CONTACT-ID Dynamic_Name
+*       2) CALLNAT 'GPRS0CNT' p_GPRS0CNT
+* 1. First symbol in parm p_Name determines type of Rank return
+*     Blank - no runk   A - Abbriviated;  L - Letter;  S - Salutation;  I - SAS
+*     D - RANK-DESCRIPTION; F add (F) for Cief-of-staff = F
+*    
+* 2. Second symbol in parm p_Name  equal '*' suppress RANK-PROTECT and
+*                                                     EXCEPTION-IND analysis
+*    i.e.  - code A* returns abbriviated rank for anybody with valid rank.
+*    'S' or 'T' produced name in order LFMS instead of FMLS.  
+* 3. Third  symbol in parm p_Name  equal 'N' eliminates ', RET',
+*                                  equal 'R' Returns Rank only
+* 4. Combination of first two symbols 'S1' returns salutation with just last name
+*    Combination of first two symbols 'S0' returns salutation only
+*    Option included for policy print
+* 5. Blank parm p_Name will return <FIRST MIDDLE LAST, SUFFIX> only.
+*
+* 6 To prevent transformation to lower case add '!' before other parm symbols. 
+*
+* Exeptions:
+* 1. Return blank name if contact ID not found
+* 2. RANK-V.EXCEPTION-IND = 'U'  RANK-V.LETTER-ENV => CNT-V.PREFIX-TITLE 
+* 3. CNT-V.RANK-PROTECT   = 'Y'  RANK-V.LETTER-ENV => CNT-V.PREFIX-TITLE, No RET 
+*
+* Recomendation:
+**************************************************************************
+*        MODIFICATION LOG
+**************************************************************************
+* USER   DATE      TAG  REASON
+* NGG  05-18-2011  NG1 Apply rulles from Rank,Name formating
+* YAK  11-21-2011  YK1 Add P_STATUS optional parameter
+* NGG  10-16-2015  NG2 Policy ownership
+* bz-Names   01-25-2017  
+*   1.  Remove double logic 
+*      (Tested: removed logic produced wrong RET for Rank 1616
+*       No other differences found
+*   2.  Add Mixed Case names formatting
+*       Add interpretetion of the first symbol '!' -> No Mixed Case
+*       Do not assigne exception if Last-Name changed
+*
+**************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 P_GPRS0CNT
+  2 p_CID    (N8)
+  2 p_NAME   (A)    DYNAMIC BY VALUE RESULT
+  2 p_DOB_N  (N8)   OPTIONAL
+  2 p_DOB    (A10)  OPTIONAL
+  2 p_DOD_N  (N8)   OPTIONAL
+  2 p_DOD    (A10)  OPTIONAL
+  2 p_SEX    (A1)   OPTIONAL
+  2 p_SSN    (N9)   OPTIONAL
+  2 p_STATUS (A1)   OPTIONAL            /* YK1
+
+LOCAL
+1 CNT-V VIEW OF A-CONTACTS
+  2  ID-NUMBER
+  2  CONTACT-ID
+  2  PREFIX-TITLE
+  2  FULL-NAME
+    3  FIRST-NAME
+    3  MIDDLE-NAME
+    3  LAST-NAME
+    3  SUFFIX
+  2  GENDER-CD
+  2  DATE-OF-BIRTH
+  2  REDEFINE DATE-OF-BIRTH
+    3 CNT_DOB_YYYY (A4)
+    3 CNT_DOB_MM   (A2)
+    3 CNT_DOB_DD   (A2)
+  2  SSN
+  2  DATE-OF-DEATH
+  2  REDEFINE DATE-OF-DEATH
+    3 CNT_DOD_YYYY (A4)
+    3 CNT_DOD_MM   (A2)
+    3 CNT_DOD_DD   (A2)
+  2  RANK-ID        (N6)
+  2  RANK-PROTECT   (A1)
+  2  MILITARY-STATUS (A1)  /* R -RET
+  2  FIRM-ORGANIZATION-NAME
+  2  CONTACT-TYPE
+  2 EX-LAST-NAME           /* formatted  
+*
+1 CNT-SP-V VIEW OF A-CONTACTS
+  2  LAST-NAME
+*
+
+1 RANK-V VIEW OF A-RANK-REFERENCE
+  2 RANK-ID       (N6.0)
+  2 RANK-ABBR     (A25)
+  2 LETTER-ENV    (A75)
+  2 SALUTATION    (A75)
+  2 RANK-IN-SAS   (A3)
+  2 RANK-DESCRIPTION (A50)
+  2 EXCEPTION-IND    (A1)        /* Salute as a civil.
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+
+1 v_RANK           (A) DYNAMIC
+1 v_RET            (A5)
+1 L_CVL            (L)
+1 v_MOD            (A3)
+1 #LETTER          (A6) CONST <'LETTER'>
+1 #SALUTE          (A6) CONST <'SALUTE'>
+1 #TOWHOM          (A6) CONST <'TOWHOM'>
+1 #SCREEN          (A6) CONST <'SCREEN'>
+1 BLANK            (A1) CONST <' '>
+1 l_CAP            (L)
+END-DEFINE
+* ON ERROR                                                        /* --db
+*   WRITE "Err:" *ERROR-NR "Err-ln:" *ERROR-LINE *PROGRAM /       /* --db   
+*   "CN:" CNT-V.ID-NUMBER  "CI:"  CNT-V.CONTACT-ID                /* --db
+* END-ERROR                                                       /* --db  
+ FIND (1) CNT-V WITH CONTACT-ID = p_CID
+   IF NO RECORD FOUND p_NAME := " "  ESCAPE ROUTINE   END-NOREC
+ END-FIND
+*
+ IF p_NAME = MASK('!')
+   l_CAP  := TRUE
+   EXAMINE p_NAME FOR '!' DELETE
+ END-IF    
+
+ IF CONTACT-TYPE = 'O'
+   IF p_NAME = #TOWHOM   /* NG2
+     p_NAME := 'To Whom It May Concern'
+   ELSE
+     p_NAME := FIRM-ORGANIZATION-NAME
+     IF NOT l_CAP
+       p_NAME := EDIT_NAME_LOWCASE(<p_NAME>)
+     END-IF   
+   END-IF
+   ESCAPE ROUTINE
+ END-IF
+
+ IF p_NAME = 'PREFIX'
+   PERFORM GET-PREFIX
+   p_NAME := v_Rank
+   ESCAPE ROUTINE
+ END-IF
+
+ v_Mod := p_NAME
+ DECIDE ON FIRST VALUE OF p_NAME 
+   VALUE #LETTER v_Mod := 'L'   /* [LETTER-ENV] [FIRST] [MIDDLE] [LAST] [, SUFFIX] [, RET]
+   VALUE #SALUTE v_Mod := 'S1'  /* [SALUTATION] [Last Name] 
+   VALUE #TOWHOM v_Mod := 'S1'  /* [SALUTATION] [Last Name] 
+   VALUE #SCREEN v_Mod := 'AS'  /* [PREFIX] [LAST,] [FIRST] [MIDDLE][, SUFFIX][, RET]
+   NONE IGNORE                  
+ END-DECIDE
+
+
+ p_NAME := ' '
+ IF CNT-V.RANK-ID = 0    
+    OR CNT-V.RANK-ID = 1616
+    OR ( ( CNT-V.RANK-PROTECT = 'Y' ) AND v_MOD <> MASK(.'*') )
+   L_CVL := TRUE
+ ELSE
+   FIND RANK-V WITH RANK-ID = CNT-V.RANK-ID
+     IF NO RECORD FOUND v_RANK := ' '
+       ESCAPE BOTTOM
+     END-NOREC
+     IF  EXCEPTION-IND = 'U'   L_CVL := TRUE END-IF
+   END-FIND
+ END-IF
+ IF v_MOD <> ' '
+   IF NOT l_CVL                        /* is Militaty >
+     IF   ( v_MOD <> MASK(..'N') )
+        AND  ( v_MOD <> MASK(..'R') )
+        AND  ( MILITARY-STATUS = 'R' )
+       IF l_CAP            /* Exc  > 
+         v_RET := ', RET'  
+       ELSE
+         v_RET := ', Ret'               
+       END-IF              /* Exc  <
+     END-IF
+     DECIDE FOR FIRST CONDITION
+       WHEN  v_MOD = MASK ('A') v_RANK := RANK-ABBR
+       WHEN  v_MOD = MASK ('L') v_RANK := LETTER-ENV
+       WHEN  v_MOD = MASK ('S')
+         IF ( EXCEPTION-IND = 'Y') AND
+             ( v_MOD <> MASK(.'*'))
+           IF PREFIX-TITLE <> ' '
+             v_RANK := PREFIX-TITLE
+           ELSE
+             PERFORM GET-PREFIX
+           END-IF
+           COMPRESS  'Dear '  v_RANK INTO v_RANK
+         ELSE
+           v_RANK := SALUTATION
+         END-IF
+       WHEN  v_MOD = MASK ('I') v_RANK := RANK-IN-SAS
+       WHEN  v_MOD = MASK ('D') v_RANK := RANK-DESCRIPTION
+       WHEN  v_MOD = MASK ('F') COMPRESS  RANK-ABBR '(F)' INTO v_RANK
+       WHEN NONE v_RANK := " "
+     END-DECIDE
+   ELSE                       /* Rank protected or Exeption U or Civilian
+     IF PREFIX-TITLE <> ' '
+        v_RANK := PREFIX-TITLE
+     ELSE
+        PERFORM GET-PREFIX
+     END-IF
+     IF v_MOD = MASK('S')
+        COMPRESS  'Dear '  v_RANK INTO v_RANK
+     END-IF
+   END-IF                            /*  is Militaty <
+   IF EXCEPTION-IND = 'U'            /*  is Military with Exeption U >
+     IF    ( v_MOD <> MASK(..'N') ) 
+       AND ( v_MOD <> MASK(..'R') )
+       AND ( MILITARY-STATUS = 'R' )
+         IF l_CAP                    /* Exception >  
+            v_RET := ', RET'  
+         ELSE
+            v_RET := ', Ret'  
+         END-IF                      /* Exception <
+     END-IF                         
+   END-IF                            /*  is Military with Exeption U <
+ END-IF    /* v_Mod = ' '  <
+*
+  IF NOT l_CAP                                                     /* Exception >
+       FIRST-NAME := EDIT_NAME_LOWCASE(<FIRST-NAME>)         
+       MIDDLE-NAME := EDIT_NAME_LOWCASE(<MIDDLE-NAME>)         
+    IF EX-LAST-NAME <>  ' ' 
+       AND  CNT-V.LAST-NAME = *TRANSLATE(EX-LAST-NAME, UPPER)       
+         CNT-V.LAST-NAME := EX-LAST-NAME                              
+    ELSE                                                            
+         CNT-V.LAST-NAME := EDIT_NAME_LOWCASE(<CNT-V.LAST-NAME>)      
+    END-IF                                                          
+    SUFFIX    := EDIT_SFX_LOWCASE(<SUFFIX>)                         
+    IF l_CVL 
+           OR  ( ( v_MOD = MASK('S')   ) )
+*            AND ( EXCEPTION-IND = 'Y' ) 
+*            AND ( v_MOD <> MASK(.'*') ) )
+       v_RANK    := EDIT_NAME_LOWCASE(<v_RANK>)                 
+    END-IF  
+  END-IF                                                             /* Exception < 
+ IF v_MOD = MASK(.'T') v_RANK := ' ' END-IF
+ IF ( v_MOD <> MASK(..'R')) AND ( v_MOD <> MASK('S1') )
+   IF v_MOD = MASK(.'S') OR  v_MOD = MASK(.'T')
+     p_NAME := EDIT_NAME_LFMS(<FULL-NAME>)
+   ELSE
+     p_NAME := EDIT_NAME_FMLS(<FULL-NAME>)
+   END-IF
+   COMPRESS p_NAME v_RET   INTO p_NAME LEAVING NO SPACE
+ END-IF
+*
+ DECIDE FOR FIRST CONDITION
+   WHEN  v_MOD = MASK('S1')
+     COMPRESS v_RANK CNT-V.LAST-NAME INTO p_NAME
+   WHEN v_MOD = MASK('S0')
+     p_NAME := v_RANK
+   WHEN NONE
+     COMPRESS v_RANK p_NAME  INTO p_NAME
+ END-DECIDE
+*
+ IF p_DOB_N SPECIFIED  p_DOB_N := CNT-V.DATE-OF-BIRTH   END-IF
+*
+ IF p_DOB SPECIFIED
+   IF DATE-OF-BIRTH = 0     p_DOB := " "
+   ELSE
+     COMPRESS CNT_DOB_MM  CNT_DOB_DD  CNT_DOB_YYYY INTO p_DOB WITH '/'
+   END-IF
+ END-IF
+*
+ IF p_DOD_N SPECIFIED  p_DOD_N := CNT-V.DATE-OF-DEATH   END-IF
+*
+ IF p_DOD SPECIFIED
+   IF DATE-OF-DEATH = 0    p_DOD := " "
+   ELSE
+     COMPRESS CNT_DOD_MM  CNT_DOD_DD  CNT_DOD_YYYY INTO p_DOD WITH '/'
+   END-IF
+ END-IF
+ IF p_SEX SPECIFIED  p_SEX := CNT-V.GENDER-CD END-IF
+ IF p_SSN SPECIFIED  p_SSN := CNT-V.SSN       END-IF
+ IF p_STATUS SPECIFIED p_STATUS := CNT-V.MILITARY-STATUS END-IF        /* YK1
+* ------------------------------------------------------------------------------
+DEFINE SUBROUTINE GET-PREFIX
+*                 ----------
+ DECIDE ON FIRST VALUE OF GENDER-CD
+  VALUE 'M' v_Rank := 'MR'
+  VALUE 'F' v_Rank := 'MS'
+    IF ID-NUMBER <> 0                                      /* Insured >
+      FIND (1) CR-V WITH CR-V.CONTACT-1-ID = CONTACT-ID
+          WHERE ROLE-1-CD = 'S'
+        IF NO RECORD FOUND
+          FIND (1) CR-V WITH CR-V.CONTACT-2-ID = CONTACT-ID
+              WHERE ROLE-1-CD = 'S'
+            IF NO RECORD FOUND
+              FIND (1) CR-V WITH ( CR-V.CONTACT-1-ID = CONTACT-ID ) OR
+                  ( CR-V.CONTACT-2-ID = CONTACT-ID )
+                  WHERE ROLE-1-CD = 'X'
+                ESCAPE ROUTINE
+              END-FIND
+            END-NOREC
+            FIND (1) CNT-SP-V WITH CNT-SP-V.CONTACT-ID = CONTACT-1-ID
+              IF CNT-V.LAST-NAME = CNT-SP-V.LAST-NAME
+                v_Rank := 'MRS'
+                ESCAPE ROUTINE
+              END-IF
+            END-FIND
+          END-FIND
+          ESCAPE BOTTOM
+        END-NOREC
+        FIND (1) CNT-SP-V WITH CNT-SP-V.CONTACT-ID = CONTACT-2-ID
+          IF CNT-V.LAST-NAME = CNT-SP-V.LAST-NAME
+            v_Rank := 'MRS'
+            ESCAPE ROUTINE
+          END-IF
+        END-FIND
+        ESCAPE ROUTINE
+      END-FIND                                        
+    ELSE                                                 /* Insured <
+      FIND (1) CR-V WITH CR-V.CONTACT-2-ID = CONTACT-ID
+          WHERE ROLE-2-CD = 'S'
+        IF NO RECORD FOUND
+          FIND (1) CR-V WITH ( CR-V.CONTACT-1-ID = CONTACT-ID ) OR
+              ( CR-V.CONTACT-2-ID = CONTACT-ID )
+              WHERE ROLE-1-CD = 'X'
+            ESCAPE ROUTINE
+          END-FIND
+        END-NOREC
+        FIND CNT-SP-V WITH CNT-SP-V.CONTACT-ID = CONTACT-1-ID
+          IF CNT-V.LAST-NAME = CNT-SP-V.LAST-NAME
+            v_Rank := 'MRS'
+          END-IF
+          ESCAPE ROUTINE
+        END-FIND
+      END-FIND
+    END-IF
+    IF ( *DATN - DATE-OF-BIRTH ) < 160000 AND DATE-OF-BIRTH <> 0
+      v_Rank := 'MISS'
+    END-IF
+  NONE IGNORE
+ END-DECIDE
+END-SUBROUTINE
+* ------------------------------------------------------------------
+END

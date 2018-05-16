@@ -1,0 +1,483 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPBPEZLN                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Issue EIL (EZPay) CAP loans or Reverse Payments       *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    07282008    None    Program Written                           *
+* PAM    03/13/2009  PM1     Added Bridger file processing             *
+* PAM    10/24/2011  PM2     Added first placement fee error msg       *
+* bz     06/14/2013  bz      Change validation to FIRST condition
+*                            Move bridger ind assigment out of cycle
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX
+LOCAL USING OBJLGENT
+LOCAL USING OBJLUSER
+LOCAL USING GPBAEZRV
+*
+LOCAL
+*
+1 #I1                   (I2)
+1 #I2                   (I2)
+1 #TB1                  (I2)
+1 #SCR-IND              (I2)
+1 #LINE-COUNT           (I2)
+1 #FULL-ACCESS          (L)
+1 #ADMIN-ACCESS         (L)
+1 #PROCESS-LOANS        (L)
+1 #APPROVAL-FLAG        (L)
+1 #RETURN               (L)
+1 #COMPLETE             (L)
+1 #ZERO                 (L)
+1 #KEY-IND              (A1)
+1 #SHCMD                (A250)
+1 #TEXT                 (A78)
+1 #FUNCTION-ATTRIBUTES  (A68)
+1 REDEFINE #FUNCTION-ATTRIBUTES
+  2 #PROGRAM            (A8)
+  2 #SEPARATOR          (A1)
+  2 #FUNCTION-PARM      (A7)
+  2 #HEADER-1           (A50)
+  2 #SECURITY-CODE      (N2)
+1 #SCREEN               (P5)
+1 #SCREEN-COUNT         (P5)
+1 #PROCESS-CNT          (P5)
+1 #REVERSE-CNT          (P5)
+1 #TOTAL-TO-APPLY       (N11.2)
+1 #TOTAL-TO-REVERSE     (N11.2)
+1 #MAX-ENTRY            (N2)    INIT <18>
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 PAD-CODE
+ 2 EZPAY-CAP-LOAN-AMOUNT
+ 2 NAME
+ 2 X-FIRST-PLACE-FEE    (9)                                     /* PM2
+ 2 X-ALT-LP-IND         (9)
+ 2 STATUS               (9)
+ 2 ISSUE-DATE           (9)
+ 2 C*ACTIVE-SEGMENTS
+ 2 BRIDGER-IND                                                  /* PM1
+*
+1 #TABLE
+ 2 #TABLE-OCC           (500)
+  3 #PROCESS-LOAN       (A1)
+  3 #ID-NUMBER          (N6)
+  3 REDEFINE #ID-NUMBER
+   4 #ID-NUMBER-A       (A6)
+  3 #PAD-CODE           (A1)
+  3 #EZPAY-CAP-LOAN-AMT (N7.2)
+  3 #X-FIRST-PLACE-FEE  (N7.2)                                  /* PM2
+  3 #X-ALT-LP-IND       (A1)
+  3 #BRIDGER-IND        (A1)                                    /* PM1
+*
+1 #SCR-ARRAY            (20)
+ 2 #SCR-PROCESS-LOAN    (A1)
+ 2 #SCR-ID-NUMBER       (N6)
+ 2 #SCR-CAP-LOAN-AMT    (N7.2)
+ 2 #SCR-ERROR-1         (A20)
+ 2 #SCR-ERROR-2         (A20)
+ 2 #SCR-CV              (C)
+*
+END-DEFINE
+***********************************************************************
+INCLUDE GONERCXX
+*
+DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/TEMP/PROCESS_CAP_LOAN.TXT'
+*
+DEFINE WINDOW CONFIRMATION-BOX
+   SIZE 12*60
+   BASE 5/7
+*
+IF *DATA NE 0
+  INPUT #FUNCTION-ATTRIBUTES
+END-IF
+*
+RESET #ADMIN-ACCESS #FULL-ACCESS
+IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A'
+  #ADMIN-ACCESS := #FULL-ACCESS := TRUE
+ELSE
+  IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'U'
+    #FULL-ACCESS := TRUE
+  END-IF
+END-IF
+*
+IF NOT #FULL-ACCESS
+  #TEXT := 'User not authorized to perform this function. Browse access only'
+END-IF
+*
+PERFORM LOAD-TABLE
+PERFORM CALCULATE-SCREEN-COUNT
+*
+#KEY-IND := 'S'
+PERFORM SET-KEYS
+*
+PERFORM NEXT-SCREEN
+*
+REPEAT
+*
+  IF #ZERO
+    #TEXT := 'No records to process'
+  END-IF
+  INPUT TEXT #TEXT MARK *#SCR-PROCESS-LOAN (1) USING MAP 'GPBMEZLN'
+  PERFORM SCREEN-EDITS
+*
+  RESET #TEXT #PROCESS-LOANS
+*
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF2'
+      #PROCESS-LOANS := TRUE
+    VALUE 'PF3'
+      FOR #I1 1 TO #TB1
+        IF #PROCESS-LOAN (#I1) = 'Y'
+          PERFORM DISPLAY-CANCEL-SCREEN
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+      #FUNCTION-PARM := 'PROC '
+      #PROGRAM := 'G1000PUI'
+      STACK TOP DATA #FUNCTION-ATTRIBUTES
+      FETCH #PROGRAM
+    VALUE 'PF8', 'PF7'
+      PERFORM NEXT-SCREEN
+    VALUE 'PF12'
+      #CGA-SCR-COMMAND := 'GM'
+      PERFORM CALL-G1000PXX
+    NONE
+      IGNORE
+  END-DECIDE
+*
+  IF NOT #FULL-ACCESS
+    #TEXT := 'User not authorized to perform this function. Browse access only'
+    ESCAPE TOP
+  END-IF
+*
+  IF #ZERO
+    ESCAPE TOP
+  END-IF
+*
+  IF #PROCESS-LOANS
+    PERFORM PROCESS-LOANS
+    IF #COMPLETE
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+END-REPEAT
+*
+#CGA-SCR-COMMAND := 'UI'
+PERFORM CALL-G1000PXX
+*
+***********************************************************************
+DEFINE SUBROUTINE LOAD-TABLE
+***********************************************************************
+*
+RESET #ZERO
+FIND ST-V WITH EZPAY-CAP-LOAN-AMOUNT GT 0
+  ADD +1 TO #TB1
+  #ID-NUMBER (#TB1)             := ST-V.ID-NUMBER
+  #PAD-CODE (#TB1)              := ST-V.PAD-CODE
+  #EZPAY-CAP-LOAN-AMT (#TB1)    := ST-V.EZPAY-CAP-LOAN-AMOUNT
+  #BRIDGER-IND (#TB1)         := ST-V.BRIDGER-IND             /* PM1   bz
+  FOR #I1 1 TO C*ACTIVE-SEGMENTS
+    IF  ST-V.STATUS (#I1)       NE 'D'
+     OR ST-V.X-ALT-LP-IND (#I1) NE 'E'
+      ESCAPE TOP
+    END-IF
+*
+    #X-FIRST-PLACE-FEE (#TB1)   := ST-V.X-FIRST-PLACE-FEE (#I1) /* PM2
+    #X-ALT-LP-IND (#TB1)        := ST-V.X-ALT-LP-IND (#I1)
+
+    ESCAPE BOTTOM
+  END-FOR
+END-FIND
+*
+IF #TB1 = 0
+  #TB1                          := 1
+  #ZERO                         := TRUE
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CALCULATE-SCREEN-COUNT
+***********************************************************************
+*
+#SCREEN-COUNT := (#TB1 / #MAX-ENTRY)
+IF #SCREEN-COUNT * #MAX-ENTRY < #TB1
+  #SCREEN-COUNT := #SCREEN-COUNT + 1
+END-IF
+*
+#SCREEN := 1
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE NEXT-SCREEN
+***********************************************************************
+*
+IF *PF-KEY = 'PF8'
+  IF #SCREEN = #SCREEN-COUNT
+    #TEXT   := 'Last Screen'
+  ELSE
+    #SCREEN := #SCREEN + 1
+  END-IF
+ELSE
+  IF #SCREEN = 1
+    IF #FULL-ACCESS
+      #TEXT   := 'First Screen'
+    END-IF
+  ELSE
+    #SCREEN := #SCREEN - 1
+  END-IF
+END-IF
+*
+PERFORM POPULATE-SCREEN
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE POPULATE-SCREEN
+***********************************************************************
+*
+RESET #SCR-ARRAY(*)
+MOVE (AD=U) TO #SCR-CV(*)
+*
+#I1         := ((#SCREEN - 1) * #MAX-ENTRY) + 1
+#LINE-COUNT := #TB1 - (#SCREEN - 1)*#MAX-ENTRY
+IF #LINE-COUNT > #MAX-ENTRY
+  #LINE-COUNT := #MAX-ENTRY
+ELSE
+  #SCR-IND := #LINE-COUNT + 1
+  FOR #SCR-IND #SCR-IND TO #MAX-ENTRY
+    MOVE (AD=P) TO #SCR-CV (#SCR-IND)
+  END-FOR
+END-IF
+*
+IF NOT #ZERO
+  FOR #SCR-IND = 1 TO #LINE-COUNT
+    #SCR-ID-NUMBER (#SCR-IND)    := #ID-NUMBER (#I1)
+    #SCR-CAP-LOAN-AMT (#SCR-IND) := #EZPAY-CAP-LOAN-AMT (#I1)
+    #SCR-PROCESS-LOAN (#SCR-IND) := #PROCESS-LOAN (#I1)
+*
+    DECIDE FOR FIRST CONDITION   /* was every bz
+      WHEN #PAD-CODE (#I1)          NE 'E'
+        #SCR-ERROR-1 (#SCR-IND)  := 'Pad Code not = "E"'
+      WHEN #X-FIRST-PLACE-FEE (#I1) NE 0                        /* PM2
+        #SCR-ERROR-1 (#SCR-IND)  := 'Has Outstanding FPF'       /* PM2
+      WHEN #X-ALT-LP-IND (#I1)      NE 'E'
+        #SCR-ERROR-2 (#SCR-IND)  := 'EIL does not exist'
+      WHEN #BRIDGER-IND (#I1)       NE 'Y'                      /* PM1
+        #SCR-ERROR-2 (#SCR-IND)  := 'Not Bridger verified'      /* PM1
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+*
+    ADD +1 TO #I1
+  END-FOR
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE PROCESS-LOANS
+***********************************************************************
+*
+FOR #I1 1 TO #TB1
+  DECIDE FOR FIRST CONDITION
+    WHEN #PROCESS-LOAN (#I1) = 'Y'
+      ADD +1 TO #PROCESS-CNT
+      ADD #EZPAY-CAP-LOAN-AMT (#I1) TO #TOTAL-TO-APPLY
+      WRITE WORK 1 #ID-NUMBER (#I1)
+    WHEN #PROCESS-LOAN (#I1) = 'N'
+      ADD +1 TO #REVERSE-CNT
+      ADD #EZPAY-CAP-LOAN-AMT (#I1) TO #TOTAL-TO-REVERSE
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+*
+IF #PROCESS-CNT EQ 0
+ AND #REVERSE-CNT EQ 0
+  REINPUT 'No members selected to process'
+  MARK *#SCR-PROCESS-LOAN (1)
+END-IF
+*
+CLOSE WORK 1
+*
+SET WINDOW 'CONFIRMATION-BOX'
+#KEY-IND := 'C'
+PERFORM SET-KEYS
+*
+  INPUT USING MAP 'GPBMEZL2'
+*
+  RESET #COMPLETE
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF5'
+      #COMPLETE := TRUE
+    VALUE 'PF4'                      /* PM99
+      #COMPLETE := TRUE              /* PM99
+    VALUE  'PF3'
+      SET WINDOW OFF
+      PERFORM DISPLAY-CANCEL-SCREEN
+      RESET #PROCESS-CNT #REVERSE-CNT
+            #TOTAL-TO-APPLY #TOTAL-TO-REVERSE
+      PERFORM CALCULATE-SCREEN-COUNT
+      PERFORM NEXT-SCREEN
+      #KEY-IND := 'S'
+      PERFORM SET-KEYS
+    NONE
+      REINPUT 'Please select "F3" to Quit or "F5" to submit'
+  END-DECIDE
+SET WINDOW OFF
+*
+IF #COMPLETE
+  PERFORM REVERSE-EZPAY-PAYMENTS
+  IF #PROCESS-CNT GT 0
+    PERFORM CALL-SHCMD
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE REVERSE-EZPAY-PAYMENTS
+***********************************************************************
+*
+FOR #I1 1 TO #TB1
+  IF #PROCESS-LOAN (#I1) = 'N'
+    FIND (1) ST-V WITH MEMBER-KEY = #ID-NUMBER-A (#I1)
+      FOR #I2 1 TO C*ACTIVE-SEGMENTS
+        IF  ST-V.STATUS (#I2)       = 'D'
+         OR ST-V.X-ALT-LP-IND (#I2) = 'E'
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+*
+      IF #I2 GT 9
+        #I2                    := 1
+      END-IF
+      #GPBAEZRV-MEM-CN         := ST-V.ID-NUMBER
+      #GPBAEZRV-EZPAY-AMOUNT   := ST-V.EZPAY-CAP-LOAN-AMOUNT
+      #GPBAEZRV-ISSUE-DATE     := ST-V.ISSUE-DATE (#I2)
+      #GPBAEZRV-NAME           := ST-V.NAME
+      #GPBAEZRV-DATE-OF-UPDATE := *DATN
+      #GPBAEZRV-TIME-OF-UPDATE := *TIMN
+      #GPBAEZRV-CLERK          := #CGA-CLERK
+      #GPBAEZRV-CASH-CODE      := '$'
+      #GPBAEZRV-CAP-X          := #I2
+*
+      CALLNAT 'GPBSEZRV'
+        #PDA-GPBAEZRV
+*
+      RESET ST-V.EZPAY-CAP-LOAN-AMOUNT
+      UPDATE (0359)
+    END-FIND
+*
+    END TRANSACTION
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SCREEN-EDITS
+***********************************************************************
+*
+#I1 := ((#SCREEN - 1) * #MAX-ENTRY) + 1
+*
+FOR #SCR-IND 1 TO #LINE-COUNT
+  IF NOT #SCR-PROCESS-LOAN (#SCR-IND) = ' ' OR = 'Y' OR = 'N'
+    REINPUT 'Please select "Y" to process CAP loan or "N" to reverse EZPay payment'
+    MARK *#SCR-PROCESS-LOAN (#SCR-IND)
+  END-IF
+*
+  IF #SCR-PROCESS-LOAN (#SCR-IND) = 'Y'
+   AND #SCR-ERROR-2 (#SCR-IND)    = 'EIL does not exist'
+    REINPUT 'A loan cannot be processed if an EIL does not exist'
+    MARK *#SCR-PROCESS-LOAN (#SCR-IND)
+  END-IF
+*
+  IF #SCR-PROCESS-LOAN (#SCR-IND) = 'Y'                            /* PM1
+   AND #SCR-ERROR-2 (#SCR-IND)    = 'Not Bridger verified'         /* PM1
+    REINPUT 'A loan cannot be processed if account isn"t verified' /* PM1
+    MARK *#SCR-PROCESS-LOAN (#SCR-IND)                             /* PM1
+  END-IF                                                           /* PM1
+*
+  #PROCESS-LOAN (#I1) := #SCR-PROCESS-LOAN (#SCR-IND)
+  ADD +1 TO #I1
+END-FOR
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SET-KEYS
+***********************************************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #KEY-IND = 'S'
+    SET KEY PF1  = HELP
+    SET KEY PF2  NAMED 'Submt'
+    SET KEY PF3  NAMED 'Retrn'
+    SET KEY PF5  = OFF
+    SET KEY PF12 NAMED 'Quit'
+    SET KEY PF7  NAMED 'Up'
+    SET KEY PF8  NAMED 'Down'
+  WHEN #KEY-IND = 'C'
+    SET KEY PF1  = OFF
+    SET KEY PF2  = OFF
+    SET KEY PF5 NAMED 'Accpt'
+    SET KEY PF4 NAMED 'Accpt'
+    SET KEY PF3 NAMED 'Retrn'
+    SET KEY PF12 = OFF
+    SET KEY PF7  = OFF
+    SET KEY PF8  = OFF
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE DISPLAY-CANCEL-SCREEN
+***********************************************************************
+*
+SET WINDOW 'CONFIRMATION-BOX'
+  INPUT USING MAP 'GPBMEZL3'
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CALL-G1000PXX
+***********************************************************************
+*
+SET KEY OFF
+FETCH 'G1000PXX'
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CALL-SHCMD
+***********************************************************************
+*
+#SHCMD := '/usr/SAG/cronus/.scripts/T4CYCPLN.bsh >/dev/null'
+CALL 'SHCMD' #SHCMD
+*
+SET WINDOW 'CONFIRMATION-BOX'
+  INPUT USING MAP 'GPBMDFAC'
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+END

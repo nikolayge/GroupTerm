@@ -1,0 +1,254 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPOTCH - Outstanding Checks Processing
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* YAK    08272008          New process to clear outstanding checks     *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING ATHLTMRF
+LOCAL
+*
+1 #INPUT       (A150)
+1 #NAME        (A25)
+1 #CN          (A10)
+1 #AMOUNT      (A15)
+1 #DESCRIPTION (A50)
+1 #NOTE        (A100)
+1 #EXT1        (A20)
+1 #EXT2        (A20)
+1 #EXT3        (A20)
+1 #REPORT-LINE (A130)
+*
+1 #NAME-FML    (A25)
+1 #LAST        (A25)
+1 #FIRST-20    (A20)
+1 #MI          (A1) 
+1 #AMT-8       (A8)
+1 #DB-CR-AMOUNT (N5.2)
+1 #TAB       (A1) INIT <H'09'>     
+1 #PEACHTREE  (A130)
+1 #INT        (I2) INIT <1> 
+*
+1 #ST-ISN   (P8)
+1 #ST-NOT-FOUND   (L)
+*
+1 #COMMA    (A1) INIT <','>
+1 #ERR-MSG  (A60)
+1 #TOT-CHECKS-AMOUNT    (P7.2)
+1 #NOTE-TEXT (A60/10)
+*
+1 NT-V VIEW OF A-NOTES
+ 2 NOTE-CLERK-ID (A3/60)
+ 2 NOTE-LINE-NUM (N1/60)
+ 2 NOTE-DATE     (N8/60)
+ 2 REDEFINE NOTE-DATE
+  3 NOTE-DATE-OCC  (60)
+   4 NOTE-DATE-YYYY  (N4)
+   4 NOTE-DATE-MMDD  (N4)
+ 2 NOTE-TEXT     (A60/60)
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER      (N6)
+ 2 REDEFINE ID-NUMBER
+   3 ID-NBR       (A6)
+ 2 DTS-DATN
+ 2 DTS-TIMN
+ 2 DATE-ACCT-UPDATE
+ 2 WIDOW-FLAG     (A1)
+ 2 ALOT-AMT
+ 2 PROCESS-IND    (A1)
+ 2 NAME
+ 2 DATE-OF-DEATH                                                  
+ 2 PAD-CODE
+ 2 INTRO-FLAG
+ 2 DEBIT-CREDIT-AMT
+ 2 X-BILL-ADJUST    (9) 
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+ 2 ID-NUMBER             (N6)
+ 2 PROCESS-IND           (A1)
+ 2 TRANSACTION-DATN      (P9)
+ 2 TRANSACTION-TIMN      (P7)
+ 2 TXN-CODE              (A4)
+ 2 SEQUENCE-NUM          (N1)
+ 2 NAME                  (A25)
+ 2 TXN-ACCT-NUMBER       (N3)
+ 2 ACCT-DATE             (N8)
+ 2 DATE-LAST-ACCT-UPDATE (N8)
+ 2 DEBIT-AMOUNT          (P7.2)
+ 2 CREDIT-AMOUNT         (P7.2)
+ 2 DESCRIPTION           (A20)
+ 2 MESSAGE-CODE          (A1)
+ 2 AALP-FLAG             (A1)
+ 2 CLERK-ID              (A3)
+ 2 TERMINAL-ID           (A8)
+ 2 CASH-CODE             (A1)
+ 2 SG-CATEGORY-1         (A2/15)
+ 2 SG-CATEGORY-2         (A2/15)
+ 2 SG-AMOUNT             (N6.2/15)
+*
+1 #COUNTERS
+ 2 #REC-READ        (N5)
+ 2 #REC-NOT-FOUND   (N5)
+ 2 #REC-CHECKS      (N5)
+ 2 #I1              (I2)
+ 2 #I2              (I2)
+*
+1 #TODAY-MMDDYYYY (N8)
+1 REDEFINE #TODAY-MMDDYYYY
+ 2 #TODAY-MMDDYYYY-A (A8)
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMMDD-A    (A8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY          (N4)
+ 2 #MM            (N2)
+ 2 #DD            (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A        (A4)
+ 2 #MM-A          (A2)
+ 2 #DD-A          (A2)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/TEMP/OUTSTANDING-CHECKS.TXT'
+DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/TEMP/PEACHTREE.TXT'
+FORMAT (2) LS=133 PS=76
+FORMAT (1)  LS=133 PS=76
+WRITE (1) NOTITLE 'PROGRAM ' *PROGRAM 5X
+'Outstanding Checks processing ' 5X 'DATE: '*DAT4U 5X 'TIME: ' *TIMX
+FORMAT (2) LS=133 PS=76
+WRITE (2) NOTITLE 'PROGRAM: ' *PROGRAM 5X
+       'PROGRAM EXCEPTIONS'
+                      5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+COMPRESS '1,2,3,4,5,6,7,8,9,10' INTO #PEACHTREE LEAVING NO       
+WRITE WORK 2 #PEACHTREE
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #TODAY-MMDDYYYY-A LEAVING NO
+*
+READ WORK 1 RECORD #INPUT  
+*
+  IF #INPUT = MASK ('CN')
+    ESCAPE TOP
+  END-IF
+  #REC-READ := #REC-READ + 1
+  SEPARATE #INPUT INTO #CN #AMOUNT #DESCRIPTION #NOTE #EXT1 #EXT2 #EXT3 
+        WITH DELIMITER #TAB
+  #DB-CR-AMOUNT := VAL(#AMOUNT)
+*
+  RESET #ST-NOT-FOUND
+  FIND (1) ST-V WITH MEMBER-KEY = #CN
+    IF NO RECORD FOUND
+      MOVE TRUE TO #ST-NOT-FOUND
+      #REC-NOT-FOUND := #REC-NOT-FOUND + 1
+      ESCAPE BOTTOM
+    END-NOREC
+    MOVE *ISN TO #ST-ISN
+  END-FIND
+*
+  IF #ST-NOT-FOUND
+    WRITE (2) #CN 'Bypassed - CN not found'
+    ESCAPE TOP
+  END-IF
+*
+  GET ST-V #ST-ISN
+* 
+  MOVE ST-V.NAME TO #NAME
+  RESET #LAST #MI #FIRST-20
+  CALLNAT 'GFMLNSXX' /* split name
+   #NAME
+   #FIRST-20
+   #MI
+   #LAST
+   #ERR-MSG
+   COMPRESS #FIRST-20 #MI #LAST INTO #NAME-FML
+*
+  #REC-CHECKS := #REC-CHECKS + 1
+  DEBIT-CREDIT-AMT := DEBIT-CREDIT-AMT + #DB-CR-AMOUNT
+  #TOT-CHECKS-AMOUNT := #TOT-CHECKS-AMOUNT + #DB-CR-AMOUNT  
+*
+  MOVE *DATN TO ST-V.DATE-ACCT-UPDATE
+  MOVE *DATN TO ST-V.DTS-DATN
+  MOVE *TIMN TO ST-V.DTS-TIMN
+*
+  PERFORM ACCT-REG-AND-NOTE
+*
+  PERFORM PEACHTREE
+*
+  UPDATE (0163)
+  END TRANSACTION
+  COMPRESS ST-V.ID-NUMBER #TAB ST-V.NAME #TAB #AMOUNT #TAB #DESCRIPTION #TAB #NOTE 
+               INTO #REPORT-LINE LEAVING NO
+  WRITE (1) NOTITLE #REPORT-LINE
+END-WORK
+*
+  MOVE EDITED #TOT-CHECKS-AMOUNT (EM=ZZZZZZ.99) TO #AMOUNT
+NEWPAGE (1)
+ WRITE (1) 'Total records read        = ' #REC-READ
+ WRITE (1) 'Total records not found   = ' #REC-NOT-FOUND
+ WRITE (1) 'Total credits applied     = ' #REC-CHECKS 
+ WRITE (1) 'Total AMOUNT applied      = ' #AMOUNT 
+ 
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE PEACHTREE
+* * * * * * * * * * * * * *
+*
+EXAMINE #NAME-FML FOR ',' REPLACE ' '
+EXAMINE #LAST     FOR ',' REPLACE ' '
+MOVE EDITED #DB-CR-AMOUNT (EM=ZZZZZ.99) TO #AMT-8
+MOVE LEFT #AMT-8 TO #AMT-8                                        
+*
+COMPRESS     /* first field is blank                              
+  #COMMA #NAME-FML                   /* col 2
+  #COMMA #NAME-FML                   /* col 3
+  #COMMA #TODAY-MMDDYYYY-A           /* col 4
+  #COMMA 'Credit CN' ST-V.ID-NUMBER  /* col 5
+  #COMMA '1010 - 00'                 /* col 6
+  #COMMA '1'                         /* col 7
+  #COMMA #LAST 'CN' ST-V.ID-NUMBER   /* col 8
+  #COMMA '2236 - 00'                 /* col 9                     
+  #COMMA #AMT-8                      /* col 10
+  INTO #PEACHTREE LEAVING NO
+*
+ WRITE WORK 2 #PEACHTREE
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCT-REG-AND-NOTE
+* * * * * * * * * * * * * *
+*
+RESET ACCT-REG-V
+MOVE ST-V.ID-NUMBER        TO ACCT-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND      TO ACCT-REG-V.PROCESS-IND 
+MOVE *DATN                 TO ACCT-REG-V.TRANSACTION-DATN
+MOVE *TIMN                 TO ACCT-REG-V.TRANSACTION-TIMN
+MOVE *INIT-ID              TO ACCT-REG-V.TERMINAL-ID
+MOVE 'EDS'                 TO ACCT-REG-V.CLERK-ID
+MOVE ST-V.NAME             TO ACCT-REG-V.NAME
+MOVE '$'                   TO ACCT-REG-V.CASH-CODE   
+MOVE *DATN                 TO ACCT-REG-V.ACCT-DATE
+MOVE 'ADCR'                TO ACCT-REG-V.TXN-CODE
+MOVE *DATN                 TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+MOVE #DB-CR-AMOUNT         TO ACCT-REG-V.DEBIT-AMOUNT
+MOVE 450                   TO ACCT-REG-V.TXN-ACCT-NUMBER
+MOVE #DESCRIPTION          TO ACCT-REG-V.DESCRIPTION 
+STORE ACCT-REG-V
+*
+MOVE #NOTE TO #NOTE-TEXT(1)
+MOVE 'EDS' TO #CGA-CLERK
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,198 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Program POSLOAD.
+/**
+/** :author nguentchev
+/*
+DEFINE DATA
+LOCAL
+1 #SSN-SPOUSE-TABLE               (1:*)
+  2 #SPOUSE-SSN                    (A9)
+  2 #SPOUSE-REF-NUMBER             (N6)
+  2 #SPOUSE-CONTACT-ID             (N8)
+1 #SPOUSES                        (P11)
+*
+1 #SSN-DEP-TABLE                  (1:*)
+  2 #DEP-SSN                       (A9)
+  2 #DEP-REF-NUMBER                (N6)
+  2 #DEP-CONTACT-ID                (N8)
+1 #DEPS                           (P11)
+*
+1 #MSG     (A) DYNAMIC
+1 #SSN                            (N9)
+1 REDEFINE #SSN
+  2 #SSN-A                        (A9)
+1 #REF-NUMBER                     (N6)
+1 #CONTACT-ID                     (N8)
+1 CN                              (N6/2)
+1 #ISN                            (P8)
+1 #BENEISN                        (P8)
+1 #TIMX                           (T)
+1 #TIMXS                          (T) 1 REDEFINE #TIMXS
+  2 #TIMXP  (P13)
+1 #timsa                          (A12)
+1 TN                              (I2)
+1 SLICE                           (I4)
+1 BENE-F-V VIEW OF A-BENE-FINAL
+  2 ID-NUMBER
+1 DRAFT-V VIEW OF A-BENE-DRAFT
+  2 ID-NUMBER
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 DATE-OF-DEATH
+*
+1 #S (A1/6)
+1 #RELOAD (A1)
+1 #FORMATED (A1/6)
+1 BLANK  (A1) CONST <' '>
+1 #DRAFT-LEGACY       (L)
+END-DEFINE
+*
+DEFINE WORK FILE 1 '/usr/SAG/tmp/BeneSpouse.txt' TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 '/usr/SAG/tmp/BeneDepnds.txt' TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 4 '/usr/SAG/tmp/POSLoadLog.txt' TYPE 'ASCII-COMPRESSED'
+*
+MOVE *TIMX TO #TIMX #TIMXS
+PRINT 'START TIME' *TIMX
+RESET #S (*) #ISN
+/* GET COLUMN NAMES
+CALLNAT 'POSN0009' #ISN #MSG
+  #FORMATED (*)
+*
+INPUT (AD=M)
+  // 'PLEASE ENTER Start CN and End CN(Optional):' CN (1) CN (2)
+  / 'WHAT SEGMENT'
+  / 'Insured:' #S(1)
+  / 'Owner..:' #S(2)
+  / 'Member.:' #S(3)
+  / 'Bene...:' #S(4)
+  / 'Payer..:' #S(5)
+  / 'Pending:' #S(6)
+  / 'Initial load (N) or Reload (Y):' #RELOAD
+DECIDE FOR FIRST CONDITION
+  WHEN CN (1) = 0 AND CN (2) = 0
+    CN (1) := 1900
+    CN (2) := 250000
+  WHEN CN (2) = 0
+    CN (2) := CN (1)
+  WHEN NONE IGNORE
+END-DECIDE
+IF CN (2) = 0
+  CN (2) := 250000
+END-IF
+/*
+IF CN (1) = CN (2)
+  REPEAT
+    FL2.
+    FIND ST-V WITH ID-NUMBER = CN (1)
+      IF NO RECORDS FOUND
+        PRINT 'NO STATUS RECORD' CN (1)
+        ESCAPE BOTTOM
+      END-NOREC
+      #ISN := *ISN (FL2.)
+      CALLNAT 'POSNDEL' ST-V.ID-NUMBER #MSG
+      PERFORM LOAD-SEGMENTS
+    END-FIND
+    END TRANSACTION
+    INPUT CN (1)
+    UNTIL CN (1) = 0
+  END-REPEAT
+ELSE
+  IF #S(6) NE BLANK
+      AND #S(1:5) EQ BLANK
+    PERFORM LOAD-PENDING
+  ELSE
+    RL2.
+    READ MULTI-FETCH OF 10 ST-V BY ID-NUMBER
+        STARTING FROM CN (1) THRU CN (2)
+*       IF ST-V.DATE-OF-DEATH > 0
+*         ESCAPE TOP
+*       END-IF
+      ADD 1 TO TN
+      ADD 1 TO SLICE
+      IF #RELOAD = 'Y'
+        CALLNAT 'POSNDEL' ST-V.ID-NUMBER #MSG
+      END-IF
+      #ISN := *ISN (RL2.)
+      PERFORM LOAD-SEGMENTS
+      IF TN > 64
+        END TRANSACTION
+        RESET TN
+        #TIMXS := *TIMX - #TIMXS
+        move edited #TIMXS (em=HH:II:SS.T) to #timsa
+        write work 4 ST-V.ID-NUMBER ' : ' #timsa
+        #TIMXS := *TIMX
+      END-IF
+      IF SLICE > 1000
+        PRINT
+          'STAT:' ST-V.ID-NUMBER
+          'TIME:' *TIMX
+        RESET SLICE
+      END-IF
+    END-READ
+    END TRANSACTION
+  END-IF
+END-IF
+*
+#TIMXS := *TIMX - #TIMX
+PRINT 'END OF POLICY OWNERSHIP DATA LOAD'
+  / 'BENE:' BENE-F-V.ID-NUMBER
+  / 'STAT:' ST-V.ID-NUMBER
+  / 'TIME:' #TIMXS
+*
+DEFINE LOAD-SEGMENTS
+/*     -------------
+IF #S (4) NE BLANK
+  RESET #MSG
+  FL1.
+  FIND BENE-F-V WITH ID-NUMBER = ST-V.ID-NUMBER
+    IF NO RECORDS FOUND
+      ESCAPE BOTTOM
+    END-NOREC
+    #BENEISN := *ISN (FL1.)
+/*  Check beneficiary for every policy
+    RESET #DRAFT-LEGACY
+    CALLNAT 'POSN0004' #DRAFT-LEGACY
+      #BENEISN #MSG
+      #FORMATED (*)
+    CALLNAT 'POSN0009' #BENEISN #MSG
+      #FORMATED (*)
+  END-FIND
+END-IF
+IF #S (1) NE BLANK
+* Loads Insured for every policy
+  CALLNAT 'POSN0006' #ISN #MSG
+END-IF
+IF #S (2) NE BLANK
+* Loads Owner of every policy
+  CALLNAT 'POSN0002' #ISN #MSG
+END-IF
+IF #S (3) NE BLANK
+* Loads Member Linked to every policy
+  CALLNAT 'POSN0007' #ISN #MSG
+END-IF
+* IF #S (5) NE BLANK  NO payer role for legacy data
+* * Loads Payer to every policy
+*   CALLNAT 'POSN0003' #ISN #MSG
+* END-IF
+END-SUBROUTINE
+/*
+DEFINE LOAD-PENDING
+/*     ------------
+#DRAFT-LEGACY := TRUE
+RL3.
+READ DRAFT-V BY ID-NUMBER
+  #ISN := *ISN (RL3.)
+  CALLNAT 'POSN0004' #DRAFT-LEGACY
+    #ISN #MSG
+    #FORMATED (*)
+  CALLNAT 'POSN0008' #ISN #MSG
+    #FORMATED (*)
+  END TRANSACTION
+END-READ
+END-SUBROUTINE
+/*
+END

@@ -1,0 +1,252 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID : CFPFPSAM
+*
+* UPDATER FOR AM FPFP TRAN (FST PLACEMENT FEE PMT - OLD TRAN CODE 412)
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  03052005 DW1  Add AL (Annuity Life) PROCESSING
+* DRW 08/28/2008 DW2 Gen Plus Processing
+* PAM ??/??/2009 PM3 Modified to hanlde batch processing
+* YAK 11/04/2009 YK1 Fix error processing for BATCH
+* YAK 10/15/2012 YK2 Use function to identify Level Term II plans 
+* YAK 11/08/2012 YK3 Add No Medical Term plan (EZ)           
+* YAK 10/15/2014 YK4 Replace 'AL' with function 
+*******************************************
+*
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #ST-V-STATUS            (A1/9)
+1 #ST-V-PAY-STATUS        (A2/9)
+1 #ST-V-MODE              (A1/9)
+1 #ST-V-PLAN              (A3/9)
+1 REDEFINE #ST-V-PLAN
+ 2 #ST-V-PLAN-OCC  (9)
+  3 #ST-V-PLAN-A1    (A1)
+  3 #ST-V-PLAN-A2    (A2)
+*
+1 #ST-V-ISSUE-DATE        (N8/9)
+1 REDEFINE #ST-V-ISSUE-DATE
+ 2 #ST-V-ISSUE-DATE-GR    (9)
+  3 #ST-V-ISSUE-DATE-YYYY  (N4)
+  3 #ST-V-ISSUE-DATE-MM    (N2)
+  3 #ST-V-ISSUE-DATE-DD    (N2)
+*
+1 #ST-V-PAID-TO-DATE      (N8/9)
+1 REDEFINE #ST-V-PAID-TO-DATE
+ 2 #ST-V-PAID-TO-DATE-GR  (9)
+  3 #ST-V-PAID-TO-DATE-YYYY (N4)
+  3 #ST-V-PAID-TO-DATE-MM   (N2)
+  3 #ST-V-PAID-TO-DATE-DD   (N2)
+*
+1 #ST-V-PAID-UP-DATE      (N8/9)
+1 REDEFINE #ST-V-PAID-UP-DATE
+ 2 #ST-V-PAID-UP-DATE-GR  (9)
+  3 #ST-V-PAID-UP-DATE-YYYY (N4)
+  3 #ST-V-PAID-UP-DATE-MM   (N2)
+  3 #ST-V-PAID-UP-DATE-DD   (N2)
+*
+1 #ST-V-ANNUAL-PREM       (P5.2/9)
+1 #ST-V-MTD-ACV-PREM-ADJ  (P7.2/9)
+1 #ST-V-FIRST-PLACE-FEE   (P7.2/9)
+*
+1 #ILN1       (I2)
+1 #ILN2       (I2)
+1 #UPDATE-MODE (L)
+1 #SG-TBL (15)
+ 2 #SG-CAT1 (A2)
+ 2 #SG-CAT2 (A2)
+ 2 #SG-AMT  (N6.2)
+1 #LX        (I2)
+1 #ERROR-MESSAGE (A75) OPTIONAL    /* YK1
+*
+LOCAL
+*
+1 #WORK-ISSUE-DATE (N8)            /* PM3
+1 REDEFINE #WORK-ISSUE-DATE        /* PM3
+ 2 #ISSUE-YYYY (N4)                /* PM3
+ 2 #ISSUE-MM   (N2)                /* PM3
+ 2 #ISSUE-DD   (N2)                /* PM3
+*
+1 #TERM        (L)                 /* PM3
+*
+1 #SG-YEAR      (A2)
+1 #SG-PLAN      (A2)
+1 #I1           (I2)
+1 #I2           (I2)
+1 #I3           (I2)
+1 #POLICY-FOUND (L)    /* TO INDICATE IF MATCHING POLICY WAS FOUND
+1 #DISP-MSG            (A75)    /* ERROR LINE MESSAGES
+1 #TOTAL-AMT-DISP      (A11)
+1 #LAST-ID-READ        (P6)
+1 #ACV-ADJ-AMT    (P5.2/9)
+1 #POLI           (I2)
+1 #LAST-ISS-DT    (P8)
+*
+END-DEFINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+RESET #LAST-ISS-DT
+FOR #I1 1 TO 9
+  IF   (#ST-V-STATUS (#I1) = 'D')
+   AND (#ST-V-PAY-STATUS (#I1) = '12' OR = '20' OR = '47')
+    IF   (#ST-V-ISSUE-DATE (#I1) = #LAST-ISS-DT)
+     AND (NOT #SCR-ALP-CODE (#ILN1) = 'W' OR = 'T' OR = 'N')
+*
+      #DISP-MSG := 'W/T in ALP-CODE must be used to ind Whole-life or Term'
+      IF *DEVICE = 'BATCH'                         /* YK1
+        #ERROR-MESSAGE := #DISP-MSG                /* YK1
+        ESCAPE ROUTINE IMMEDIATE                   /* YK1
+      ELSE    
+        IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+          BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+        END-IF                           /* *********************
+*
+        REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-CODE (#ILN1)
+      END-IF                                       /* YK1
+    END-IF
+*
+    MOVE #ST-V-ISSUE-DATE (#I1) TO #LAST-ISS-DT
+  END-IF
+END-FOR
+*
+FOR #I1 1 TO 9
+  #WORK-ISSUE-DATE := #ST-V-ISSUE-DATE (#I1)                      /* PM3
+  #TERM            := FUNCTION-TERM-POLICY (<#ST-V-PLAN (#I1)>)   /* PM3
+*
+  IF  (#ST-V-STATUS (#I1) = 'D')
+*  AND (#ST-V-ISSUE-DATE-YYYY (#I1) = #SCR-ISS-DT-YYYY (#ILN1))   /* PM3
+*  AND (#ST-V-ISSUE-DATE-MM   (#I1) = #SCR-ISS-DT-MM   (#ILN1))   /* PM3
+*  AND (#ST-V-ISSUE-DATE-DD   (#I1) = #SCR-ISS-DT-DD   (#ILN1))   /* PM3
+   AND (#ISSUE-YYYY  = #SCR-ISS-DT-YYYY (#ILN1))                  /* PM3
+   AND (#ISSUE-MM    = #SCR-ISS-DT-MM   (#ILN1))                  /* PM3
+   AND (#ISSUE-DD    = #SCR-ISS-DT-DD   (#ILN1))                  /* PM3
+    IF   (#SCR-ALP-CODE (#ILN1) = ' ')
+*
+     OR ((#SCR-ALP-CODE (#ILN1) = 'W' OR = 'N') AND NOT #TERM)    /* PM3
+*     AND (NOT #ST-V-PLAN (#I1) = 'RT' OR = 'LT')   /* WHOLE LIFE /* PM3
+*     AND ((#ST-V-PLAN-A1(#I1) LT 'U') OR (#ST-V-PLAN-A1(#I1) GT 'Z'))) /* PM3
+*
+     OR ((#SCR-ALP-CODE (#ILN1) = 'T') AND #TERM)                 /* PM3
+*    AND ((#ST-V-PLAN (#I1) = 'RT' OR = 'LT')       /* TERM INS   /* PM3
+*    OR ((#ST-V-PLAN-A1(#I1) GE 'U') AND (#ST-V-PLAN-A1(#I1) LE 'Z')))) /* PM3
+      MOVE #I1 TO #POLI
+      MOVE TRUE TO #POLICY-FOUND
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+END-FOR
+*
+IF NOT #POLICY-FOUND
+*
+  COMPRESS 'Iss-Date not found' INTO #DISP-MSG
+  IF *DEVICE = 'BATCH'                         /* YK1
+    #ERROR-MESSAGE := #DISP-MSG                /* YK1
+    ESCAPE ROUTINE IMMEDIATE                   /* YK1
+  ELSE                                         /* YK1
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+*
+    REINPUT #DISP-MSG
+    MARK *#SCR-ISS-DT (#ILN1)
+  END-IF                                       /* YK1
+END-IF
+*
+IF #SCR-TRAN-AMT (#ILN1) GT #ST-V-FIRST-PLACE-FEE (#POLI)
+*
+  MOVE EDITED #ST-V-FIRST-PLACE-FEE (#POLI) (EM=ZZZ,ZZZ.99)
+          TO #TOTAL-AMT-DISP
+  COMPRESS 'Tran amt exceeds FPF of' #TOTAL-AMT-DISP INTO #DISP-MSG
+*
+  IF *DEVICE = 'BATCH'                         /* YK1
+    #ERROR-MESSAGE := #DISP-MSG                /* YK1
+    ESCAPE ROUTINE IMMEDIATE                   /* YK1
+  ELSE                                         /* YK1
+*
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+*
+    REINPUT #DISP-MSG
+    MARK *#SCR-TRAN-AMT (#ILN1)
+  END-IF                                       /* YK1
+END-IF
+*
+IF #SCR-TRAN-AMT (#ILN1) = #ST-V-FIRST-PLACE-FEE (#POLI)
+  IF #ST-V-MODE (#POLI) = 'G'                 /* IF GOVT ALLOT
+    IF (#ST-V-PAY-STATUS (#POLI) = '12')      /* IF FPF NOT PD/NOT PP
+      MOVE '21' TO #ST-V-PAY-STATUS (#POLI)   /* MAKE FPF PAID/NOT PP
+    END-IF
+*
+    IF #ST-V-PAY-STATUS (#POLI) = '20'        /* IF FPF NOT PAID/PP
+      MOVE '22' TO #ST-V-PAY-STATUS (#POLI)   /* MAKE FPF PAID/PP
+    END-IF
+  ELSE
+    IF #ST-V-PAY-STATUS (#POLI) = '12' OR = '20'
+      MOVE '22' TO #ST-V-PAY-STATUS (#POLI)        /* MAKE PP
+    END-IF
+  END-IF
+END-IF
+*
+* IF (NOT #ST-V-PLAN   (#POLI) = 'LT' OR = 'RT')                           /* YK2  
+*   AND ((#ST-V-PLAN-A1(#POLI) LT 'U') OR (#ST-V-PLAN-A1(#POLI) GT 'Z'))   /* YK2
+IF (NOT FUNCTION-TERM-POLICY(<#ST-V-PLAN(#POLI)>))                         /* YK2
+  IF #POLI NE 1            /* FILLUP PRECEEDING MULTIPLE FIELDS
+    COMPUTE #I3 = #POLI - 1
+    FOR #I2 1 TO #I3
+      IF #ST-V-MTD-ACV-PREM-ADJ (#I2) = 0
+        MOVE 9999999.99 TO #ST-V-MTD-ACV-PREM-ADJ (#I2)
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF #ST-V-MTD-ACV-PREM-ADJ (#POLI) = 9999999.99
+    RESET #ST-V-MTD-ACV-PREM-ADJ (#POLI)
+  END-IF
+*
+  ADD #SCR-TRAN-AMT (#ILN1) TO #ST-V-MTD-ACV-PREM-ADJ (#POLI)
+  IF #ST-V-MTD-ACV-PREM-ADJ (#POLI) = 0
+    MOVE 9999999.99 TO #ST-V-MTD-ACV-PREM-ADJ (#POLI)
+  END-IF
+END-IF
+*
+SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-FIRST-PLACE-FEE (#POLI)
+*
+IF #ST-V-PAY-STATUS (#POLI) = '47'
+  MOVE 'SP' TO #SG-YEAR
+ELSE
+  MOVE '1Y' TO #SG-YEAR
+END-IF
+*
+IF #ST-V-PLAN (#POLI) = 'OL' OR = '20P' OR = '30P' OR = '7P' OR = 'SPF'
+    OR = 'GPL' OR = 'EZ'                                 /* DW2  /* YK3
+*   OR = 'RT' OR = 'LT' OR = 'SO' OR = 'FSO' OR = 'AL'   /* DW1
+    OR = 'RT' OR = 'LT' OR = 'SO' OR = 'FSO' OR IS-ANNUITY-LIFE(<#ST-V-PLAN(#POLI)>)      /* YK4
+  MOVE #ST-V-PLAN (#POLI) TO #SG-PLAN
+ELSE
+* IF (#ST-V-PLAN-A1(#POLI) GE 'U') AND (#ST-V-PLAN-A1(#POLI) LE 'Z')   /* YK2
+  IF F-LT2-TRUE(<#ST-V-PLAN(#POLI)>)                                   /* YK2
+    MOVE 'VT' TO #SG-PLAN
+  ELSE
+    MOVE 'FL' TO #SG-PLAN
+  END-IF
+END-IF
+*
+IF #ST-V-PLAN (#POLI) = 'SO'  /* SO IS REALLY DUES SO NO BREAKDOWN
+  MOVE '**' TO #SG-YEAR #SG-PLAN
+END-IF
+*
+MOVE #SG-YEAR TO #SG-CAT1 (1)
+MOVE #SG-PLAN TO #SG-CAT2 (1)
+MOVE #SCR-TRAN-AMT (#ILN1) TO #SG-AMT (1)
+*
+END

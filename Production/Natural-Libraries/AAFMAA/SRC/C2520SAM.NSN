@@ -1,0 +1,595 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2520SAM    *** Accounting File processing
+********************************************************************************
+*            MODIFICATION LOG                                                  *
+* USER   DATE      TAG REASON                                                  *
+*                                                                              *
+* PAM    07192004  PM1 Use #SCR-CASH-CODE to indicate combo type               *
+*                      so Accounting/Transaction Register can                  *
+*                      include it in the description.                          *
+* DRW    11032004  DW2 Use #SCR-CASH-CODE to indicate batch CRED CD            *
+* DRW    11292004  DW3 Allow Addl pols after SO policy                         *
+* DRW    05122005  DW4 Add #CMBX to pass Combo code                            *
+* PAM    06092005  PM5 Add #CMBX logic for ADCR/RDCR transactions              *
+* DRW    06162005  DW6 Add Int Rate to DESC for loan trans                     *
+* DRW    07152005  DW7 Make BADJ a ACCT TR not a MAINT TR                      *
+* DRW    07182005  DW8 Remove 'CAP MBR' in desc to make room                   *
+* DRW    07182005  DW9 ADD Descriptions (CMBX) for Misc Adjustments            *
+* DRW    08182005 DW10 ADD Desc (CMBX) (COLL) Sent to  Collections             *
+* DRW 01/30/2008  DW11 ADD TRAN Code DUEA                                      *
+* DRW 02/20/2008  DW12 Fix +/- logic on DUER/DUEA/FPDR                         *
+* DRW 04/03/2008  DW13 make WOFF be a debit and store Iss-date in Descr        *
+* DRW 04/08/2008  DW14 Add SUSP & SUSR and CMBX 'CONV' Description             *
+* DRW 04/08/2008  DW15 Add CSV TR trans if ALP CODE = Y on ADCR/RDCR(removed)  *
+* DRW 04/09/2008  DW16 Chg WOFF to LWOF and SUSR to SUSP                       *
+* DRW 04/09/2008  DW17 Add APPD Accounting Trans                               *
+* DRW 04/12/2008  DW18 Put Policy Number on TR ACCT REG                        *
+* DRW 04/15/2008  DW19 Bypass Term policies if conveesion                      *
+* DRW 04/16/2008  DW20 Add Cash-code NSF (N)                                   *
+* PAM 04/24/2008  PM21 Added LWOF/LWOV - added XFR/PAY transaction types       *
+* DRW 05/09/2008  DW22 Add SUSP Tran Code                                      *
+* DRW 05/30/2008  DW23 add '999' to TR file for Partial pdup's from ATHS05PA   *
+* DRW 07/09/2008  DW24 move 'Y' to ACCT REG MONTH-END if CRED CARD from M/E    *
+* PAM 02/26/2009  PM25 Added Defered Revenue (DREV) account                    *
+* DRW 04/16/2009  DW26 Move "Y" to ACCT REG MONTH-END IF FROM ATHIPALA         *
+*                      or ATHPRTCK or ATHPTMVC                                 *
+* PAM 06/18/2009  PM27 Added activity type and status type                     *
+* PAM 07/19/2009  PM28 Added ACH Phase II                                      *
+* PAM 08/13/2009  PM29 Fix RIDR accounting - ACH Phase III                     *
+* PAM 12/10/2010  PM30 Added INVOICE process - check scanning                  *
+* PAM 01/07/2011  PM31 Added SAWO account                                      *
+* PAM 04/12/2011  PM32 Adde RTRC/ATRC - term refund debit/credit               *
+* vxt 09/24/2012  vt1  Added LWOR transactions  /Ticket 1259/                  *
+* YAK 10/15/2012  YK1  Use function to identify Level Term II plans            *
+* NGG 02/26/2013  NG1  Add NHPW Nursing Home transaction                       *
+* YAK 03/28/2013  YK2  Add Accelerated Death benefit processing                *
+* YAK 04/09/2014  YK3  Add cash code for electronic checks                     *
+* vxt 08/11/2014  vt2  Change the PWOF was created /Ticket 2950/               *
+* vxt 04/12/2015  vt3  Add a segment field to the parms passed to the program /Ticket 2973/ *
+* vxt 02/03/2015  vt4  /Ticket 3318 /                                          *
+* YAK 06/25/2015  YK4  Add rejection code for NSF to description               *
+* bz  10/9/2014      OI-3078 (Change for cash code assigment)
+********************************************************************************
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #ST-V-ID-NUMBER        (N6)
+1 REDEFINE #ST-V-ID-NUMBER
+  2 #ST-V-ID-NUMBER-A     (A6)
+1 #ST-V-PROCESS-IND      (A1)  /* PM - 06/2000 - SPLIT COMPANIES
+1 #ST-V-INTRO-FLAG       (A1)
+1 #ST-V-NAME             (A25)
+1 #ST-V-PLAN             (A3/9)
+1 REDEFINE #ST-V-PLAN
+  2 #ST-V-PLAN-OCC        (9)
+    3 #ST-V-PLAN-A1        (A1)
+    3 #ST-V-PLAN-A2        (A2)
+1 #ST-V-DEBIT-CREDIT-AMT (P7.2)
+1 #ST-V-DATE-ACCT-UPDATE (N8)
+1 #DATE-OF-UPDATE        (N8)
+1 #TIME-OF-UPDATE        (N7)
+1 #ILN1                  (I2)
+1 #HOLD-CUR-ACCT-UPDT    (N8)
+1 #CGA-CLERK             (A3)
+1 #EXTRA-STOP            (L)
+1 #SG-TBL                (15)
+  2 #SG-CAT1              (A2)
+  2 #SG-CAT2              (A2)
+  2 #SG-AMT               (N6.2)
+1 #CMBX                  (A4)            /* DW4
+1 #ACTIVITY-TYPE         (A3) OPTIONAL   /* PM27
+1 #STATUS-TYPE           (A2) OPTIONAL   /* PM27
+1 #LX-PASSED             (I2) OPTIONAL   /* vt3
+*
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+  2 ISSUE-DATE            (9)
+  2 X-INTEREST-RATE       (9)             /* DW6
+  2 CONV-DURATION         (9)             /* DW6
+  2 plan                  (9)       /* vt3 01/14/2015 \/
+  2 pay-status            (9)
+  2 status                (9)
+  2 id-number
+1 #plan              (a3)
+1 redefine #plan
+  2 #plan-2       (a2)
+  2 #plan-1       (a1)               /* vt3 01/14/2015 /\
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER             (N6)
+  2 PROCESS-IND           (A1)            /* PM - 06/2000 - SPLIT COMPANIES
+  2 TRANSACTION-DATN      (P9)
+  2 TRANSACTION-TIMN      (P7)
+  2 TXN-CODE              (A4)
+  2 SEQUENCE-NUM          (N1)
+  2 NAME                  (A25)
+  2 TXN-ACCT-NUMBER       (N3)
+  2 ACCT-DATE
+  2 POLICY-NUMBER         (A16)           /* DW18
+  2 MONTH-END             (A1)            /* DW24
+  2 DATE-LAST-ACCT-UPDATE (N8)
+  2 DEBIT-AMOUNT          (P7.2)
+  2 CREDIT-AMOUNT         (P7.2)
+  2 DESCRIPTION           (A20)
+  2 MESSAGE-CODE          (A1)
+  2 AALP-FLAG             (A1)
+  2 CLERK-ID              (A3)
+  2 TERMINAL-ID           (A8)
+  2 CASH-CODE             (A1)
+  2 ACTIVITY-TYPE         (A3)            /* PM27
+  2 STATUS-TYPE           (A2)            /* PM27
+  2 SG-CATEGORY-1         (A2/15)
+  2 SG-CATEGORY-2         (A2/15)
+  2 SG-AMOUNT             (N6.2/15)
+*
+1 #I1   (I2)
+1 #LX   (I2)
+1 #WYYYYMMDD
+  2 #WYYYY   (N4)
+  2 #WMM     (N2)
+  2 #WDD     (N2)
+1 REDEFINE #WYYYYMMDD
+  2 #WYYYYMMDD-N (N8)
+*
+1 #WMMDDYYYY
+  2 #WMM   (N2)
+  2 #WDD   (N2)
+  2 #WYYYY (N4)
+1 REDEFINE #WMMDDYYYY
+  2 #WMMDDYYYY-A (A8)
+*
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY     (N4)
+  2 #MM       (N2)
+  2 #DD       (N2)
+*
+1 #RATE-DISP  (A6)     /* DW6
+1 #ISSUE-DATE (N8)
+1 #1-YR-AGO   (N8)
+1 #POL-NUM    (A16)
+1 #type-pol   (a1)     /* vt3 01/13/2015
+1 #alp-code (a1)       /* vt3 04/07/2015
+*
+END-DEFINE
+********************************************************************************
+*
+* write 'top of C2520sam' #ST-V-ID-NUMBER #scr-tran-code (#iln1) 'ILN=' #iln1 '=' #lx-passed
+* '=' #pol-nbr /* kec
+*  'Iss-date=' #scr-iss-dt (1) '=' #pol-nbr
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 1 FROM #YYYY
+MOVE #YYYYMMDD TO #1-YR-AGO
+*
+MOVE #SCR-ISS-DT-YYYY (#ILN1) TO #YYYY    /* DW3
+MOVE #SCR-ISS-DT-MM   (#ILN1) TO #MM
+MOVE #SCR-ISS-DT-DD   (#ILN1) TO #DD
+MOVE #YYYYMMDD TO #ISSUE-DATE
+*
+move #scr-alp-code (#iln1) to #alp-code              /* vt3 04/07/2015
+*
+FIND (1) ST-V WITH MEMBER-KEY = #ST-V-ID-NUMBER-A   /* DW3
+  for1. FOR #I1 1 TO 9
+    IF   (#CMBX = 'CONV')  /* Must be a whole Life                   /* DW19
+*    AND  ((#ST-V-PLAN (#I1) = 'LT' OR = 'RT')     /* TERM policy              /* YK1
+*      OR ((#ST-V-PLAN-A1 (#I1) GE 'U') AND (#ST-V-PLAN-A1 (#I1) LE 'Z')))     /* YK1
+        AND FUNCTION-TERM-POLICY(<#ST-V-PLAN(#I1)>)                               /* YK1
+      ESCAPE TOP    /* Skip Term Policies
+    END-IF
+*
+    if st-v.pay-status(#i1) lt '40'                                /* vt3 01/14/2015 \/
+        and st-v.status (#i1) = 'D'
+      move st-v.plan (#i1) to #plan
+    else
+      escape top
+    end-if
+*
+    if function-term-policy(<st-v.plan(#i1)>)
+      move 'T' to #type-pol
+    else
+      move 'W' to #type-pol
+    end-if
+*
+    if #issue-date = st-v.issue-date(#i1)
+      if ( #sg-cat2(#iln1) = #plan-2 )
+          or (#sg-cat2(#iln1) = 'VT' and #type-pol='T')
+          or (#alp-code = #type-pol)                             /* vt3 04/07/2015
+        MOVE #I1 TO #LX
+        escape bottom
+      else
+        escape top
+      end-if
+    end-if                                                /* vt3 01/14/2015 \/
+*
+  END-FOR
+*
+END-FIND
+*
+if #lx-passed specified                      /* vt4 04/10/2015 \/
+    and #lx-passed ne 0
+  move #lx-passed to #lx
+else                                         /* vt4 04/10/2015 /\
+  IF (#LX = 0) OR (#I1 GT 9)     /* DW3
+    MOVE 1 TO #LX
+  END-IF
+end-if                                      /* vt4 04/10/2015
+*
+* WRITE 'top of c2520sam iln1=' #ILN1 'tran code=' #scr-tran-code (#iln1)
+* 'Scr- cash-code=' #scr-cash-code (#iln1)
+RESET ACCT-REG-V
+MOVE #ST-V-ID-NUMBER        TO ACCT-REG-V.ID-NUMBER
+MOVE #ST-V-PROCESS-IND      TO ACCT-REG-V.PROCESS-IND /* PM - 06/2000
+MOVE #DATE-OF-UPDATE        TO ACCT-REG-V.TRANSACTION-DATN
+MOVE #TIME-OF-UPDATE        TO ACCT-REG-V.TRANSACTION-TIMN
+MOVE *INIT-ID               TO ACCT-REG-V.TERMINAL-ID
+MOVE #CGA-CLERK             TO ACCT-REG-V.CLERK-ID
+MOVE #ST-V-NAME             TO ACCT-REG-V.NAME
+MOVE #SCR-CASH-CODE (#ILN1) TO ACCT-REG-V.CASH-CODE
+MOVE #SCR-ALP-CODE  (#ILN1) TO ACCT-REG-V.AALP-FLAG
+MOVE #SCR-EFF-DT (#ILN1) TO #WMMDDYYYY-A
+MOVE BY NAME #WMMDDYYYY TO #WYYYYMMDD
+MOVE #WYYYYMMDD-N TO ACCT-REG-V.ACCT-DATE
+DECIDE FOR FIRST CONDITION                                          /* PM27
+  WHEN #STATUS-TYPE NOT SPECIFIED OR #ACTIVITY-TYPE NOT SPECIFIED   /* PM27
+    IGNORE                                                          /* PM27
+  WHEN NONE                                                         /* PM27
+    ACCT-REG-V.STATUS-TYPE     := #STATUS-TYPE                      /* PM27
+    ACCT-REG-V.ACTIVITY-TYPE   := #ACTIVITY-TYPE                    /* PM27
+END-DECIDE
+*
+CALLNAT 'GPLNMSXX' #POL-NUM #ST-V-ID-NUMBER #LX /* build POL-#  /* DW18    /* vt3 was   #i1
+
+*
+MOVE #POL-NUM TO ACCT-REG-V.POLICY-NUMBER
+*
+* if below is changed C2500PAM must also change
+IF (#SCR-TRAN-CODE (#ILN1) = 'STOP') AND (#EXTRA-STOP)
+  IF #ST-V-DEBIT-CREDIT-AMT LT 0
+    MOVE 'RDCR' TO ACCT-REG-V.TXN-CODE
+    MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.DEBIT-AMOUNT
+  ELSE
+    MOVE 'ADCR' TO ACCT-REG-V.TXN-CODE
+    MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.CREDIT-AMOUNT
+  END-IF
+*
+  IF #ST-V-DATE-ACCT-UPDATE = 0
+    MOVE #DATE-OF-UPDATE        TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+  ELSE
+    MOVE #ST-V-DATE-ACCT-UPDATE TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+  END-IF
+*
+  MOVE 450 TO TXN-ACCT-NUMBER
+ELSE
+  MOVE #SCR-TRAN-CODE (#ILN1) TO ACCT-REG-V.TXN-CODE
+*
+  IF #HOLD-CUR-ACCT-UPDT = 0
+    MOVE #DATE-OF-UPDATE     TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+  ELSE
+    MOVE #HOLD-CUR-ACCT-UPDT TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'AIAF' OR = 'PADF' OR = 'IADF'
+      OR = 'AIAV' OR = 'PADV' OR = 'IADV'
+      OR = 'CADF' OR = 'CADV' OR = 'BADJ' OR = 'FPFR'
+      OR = 'FPDR' OR = 'FPRR'
+      OR = 'DUER' OR = 'DUEA' OR = 'FPDR'      /* DW12
+      OR = 'SUSP' /* SUSPENCE TRANS            /* DW16
+      OR = 'APPD' /* ADDL PREM PAID            /* DW17
+      OR = 'SUSP' OR = 'APFR' OR = 'RIDR'      /* DW22 PM27 PM29
+      or = 'LWOR'                              /* vt1
+      OR = 'NHPW'                              /* NG1
+    IF #SCR-TRAN-CODE (#ILN1) = 'APPD'                       /* DW17
+      IF   (*DEVICE = 'BATCH')      /* Partial PDUP trans       DW23
+          AND (#TIME-OF-UPDATE = 0)    /* from ATHS05PA
+          AND (#SCR-CASH-CODE (1) = 'G') /* We don't want 999 for all else
+          AND (ACCT-REG-V.TXN-ACCT-NUMBER NE 999)
+        MOVE 999 TO ACCT-REG-V.TXN-ACCT-NUMBER               /* DW23
+        WRITE #ST-V-ID-NUMBER 'Move 999 to txn-acct-number on Partial PD UP'
+      END-IF
+*
+      IF #SCR-ADJ (#ILN1) = '-'  /* APPD is backwards fron all else
+        MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.DEBIT-AMOUNT
+        MOVE 'PRER' TO ACCT-REG-V.TXN-CODE
+      ELSE
+        MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.CREDIT-AMOUNT
+        MOVE 'PREP' TO ACCT-REG-V.TXN-CODE
+      END-IF
+*
+      IF #ISSUE-DATE GT #1-YR-AGO
+        MOVE '1Y' TO SG-CATEGORY-1 (1)
+      ELSE
+        MOVE 'RN' TO SG-CATEGORY-1 (1)
+      END-IF
+      MOVE #SCR-TRAN-AMT (#ILN1) TO SG-AMOUNT (1)
+    ELSE                                                            /* END DW17
+      IF #SCR-ADJ (#ILN1) = '-'
+        MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.CREDIT-AMOUNT
+      ELSE
+        MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.DEBIT-AMOUNT
+      END-IF
+    END-IF
+  ELSE
+*    IF #SCR-TRAN-CODE (#ILN1) = 'RDCR' OR = 'PRER' OR = 'DUER'     /* DW12
+*            OR = 'FPDR' OR = 'STOP' or = 'DUEA'                    /* DW11
+    IF (#SCR-TRAN-CODE (#ILN1) = 'RDCR' OR = 'PRER' OR = 'RTRC'     /* DW12 PM32
+        OR = 'STOP' OR = 'LWOF' OR = 'LWOV'
+*            OR = 'PWOF'                                                               /* vt2
+        OR = 'SAWO' OR = 'ACDB') /* DW13  DW14  PM21 PM28 PM31 YK2
+        OR (#SCR-TRAN-CODE (#ILN1) = 'DREV' AND #SCR-ADJ (#ILN1) = '-')/* PM25
+        or (#scr-tran-code (#iln1) = 'PWOF' and (#scr-adj(#iln1) = '+' or = ' '))         /* vt2
+      MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.DEBIT-AMOUNT
+    ELSE
+      MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.CREDIT-AMOUNT
+    END-IF
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'PRER' OR = 'PREP' OR = 'BADJ'  /* DW7
+    IF #ST-V-PLAN (#LX) = 'SO'       /* DW3
+      MOVE 422 TO TXN-ACCT-NUMBER
+      IF #SCR-TRAN-CODE (#ILN1) = 'PRER'
+        MOVE 'DUER' TO TXN-CODE
+      ELSE
+        MOVE 'DUEP' TO TXN-CODE
+      END-IF
+    ELSE
+      MOVE 420 TO TXN-ACCT-NUMBER
+    END-IF
+  END-IF
+*
+
+  IF #ST-V-PLAN (#LX) = 'SO'                                      /* vt4
+    move #st-v-plan(#lx) to  #SG-CAT1 (1)                         /* vt4
+  end-if                                                          /* vt4
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'DUER' OR = 'DUEP' OR = 'DUEA'    /* DW11
+    MOVE 422 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'RTRC' OR = 'ATRC'                /* PM32
+    MOVE 111 TO ACCT-REG-V.TXN-ACCT-NUMBER                      /* PM32
+  END-IF                                                        /* PM32
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'FPFR' OR = 'FPFP'
+    IF #ST-V-PLAN (#LX) = 'SO'      /* DW3
+      MOVE 432 TO TXN-ACCT-NUMBER
+      IF #SCR-TRAN-CODE (#ILN1) = 'FPFR'
+        MOVE 'FPDR' TO TXN-CODE
+      ELSE
+        MOVE 'FPDP' TO TXN-CODE
+      END-IF
+    ELSE
+      MOVE 430 TO TXN-ACCT-NUMBER
+    END-IF
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'RIDR' OR = 'RIDP'
+    MOVE 434 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'FPRR' OR = 'FPRP'
+    MOVE 436 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'FPDP' OR = 'FPDR'
+    MOVE 432 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'STRT' OR = 'STOP'
+    MOVE 440 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'RDCR' OR = 'ADCR'
+    MOVE 450 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'INTF' OR = 'INPF' OR = 'IADF'
+      OR = 'INTV' OR = 'INPV' OR = 'IADV'
+      OR = 'FLNF' OR = 'FLNV'
+    MOVE 410 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'AIAF' OR = 'AIAV'
+    MOVE 190 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'PRNF' OR = 'CAPF'
+      OR = 'PRNV' OR = 'CAPV'
+    MOVE 110 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'PADF' OR = 'CADF'
+      OR = 'PADV' OR = 'CADV'
+    MOVE 115 TO ACCT-REG-V.TXN-ACCT-NUMBER
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'DREV'                           /* PM25
+    MOVE 999 TO ACCT-REG-V.TXN-ACCT-NUMBER                     /* PM25
+  END-IF                                                       /* PM25
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'APFR'                           /* PM27
+    ACCT-REG-V.DESCRIPTION      := 'EZPAY CAP LOAN PAYMENT'    /* PM27
+    ACCT-REG-V.TXN-ACCT-NUMBER  := 500                         /* PM27
+    ACCT-REG-V.MESSAGE-CODE     := 'E'                         /* PM27
+  END-IF                                                       /* PM27
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'PREP' OR = 'PRNF'               /* PM25
+      AND *DEVICE = 'BATCH'                                       /* PM25
+      AND #TIME-OF-UPDATE = 0                                     /* PM25
+      AND #SCR-CASH-CODE (1) = 'C'                                /* PM25
+      AND ACCT-REG-V.TXN-ACCT-NUMBER NE 999                       /* PM25
+    MOVE 999 TO ACCT-REG-V.TXN-ACCT-NUMBER                     /* PM25
+  END-IF                                                       /* PM25
+END-IF
+*
+IF #ST-V-PLAN (#LX) = 'SO'     /* DW3
+  MOVE 'SO MBR' TO ACCT-REG-V.DESCRIPTION
+* ELSE
+* IF CONV-DURATION (#LX) = 999                     /* DW8
+*   MOVE 'CAP MBR' TO ACCT-REG-V.DESCRIPTION
+* END-IF
+END-IF
+*
+IF (#SCR-TR-CD-3 (#ILN1) = 'SAL' OR = 'INT' OR = 'INP' OR = 'IAD'
+    OR = 'AIA' OR = 'PRN' OR = 'CAP' OR = 'PAD' OR = 'CAD'
+    OR = 'FLN' OR = 'CMB' OR = 'BAD'               /* DW7
+    OR = 'WOF' OR = 'LWO')                         /* DW13 PM21
+    OR (#SCR-TR-CD-2 (#ILN1) = '33' OR = '44'
+    OR = '11' OR = '22' OR = '88') /* PREP/FPFP/RIDP
+    OR ((#SCR-TRAN-CODE (#ILN1) = 'ADCR' OR = 'RDCR')      /* DW7
+    AND (#SCR-ISS-DT (#ILN1) NE ' '))
+  COMPRESS ACCT-REG-V.DESCRIPTION #SCR-ISS-DT (#ILN1)
+    INTO ACCT-REG-V.DESCRIPTION
+END-IF
+*
+IF   (#SCR-TRAN-CODE (#ILN1) = 'PRNF' OR = 'INTF' OR = 'AIAF'     /* DW6
+    OR = 'INPF' OR = 'FLNF' OR = 'PADF')    /* DW6
+    AND (CONV-DURATION (#LX) NE 999)
+    AND (X-INTEREST-RATE (#LX) NE 0)
+  MOVE EDITED X-INTEREST-RATE (#LX) (EM=ZZ.99) TO #RATE-DISP
+  COMPRESS #RATE-DISP '%' INTO #RATE-DISP LEAVING NO             /* DW6
+  COMPRESS ACCT-REG-V.DESCRIPTION #RATE-DISP INTO ACCT-REG-V.DESCRIPTION
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'APPD'      /* DW17
+  MOVE 'APPD W ACV ADJ' TO ACCT-REG-V.DESCRIPTION
+END-IF
+*
+IF #SCR-CASH-CODE(#ILN1) = 'C' OR = 'H' OR = 'I' OR = 'N' OR = 'X' OR = 'P'                    /* bz OI-3078
+  COMPRESS CASHCD(<#SCR-CASH-CODE(#ILN1)>) INTO ACCT-REG-V.DESCRIPTION LEAVING NO SPACE      /* bz OI-3078
+  DECIDE ON FIRST VALUE OF #SCR-CASH-CODE(#ILN1)                    /* DW2
+    VALUE 'C'                                                       /* DW2
+      IF ACCT-REG-V.CLERK-ID = 'EDS' /* From ATHPCCRD on last day of month DW24
+        MOVE 'Y' TO ACCT-REG-V.MONTH-END
+      END-IF
+    VALUE 'N'           /* NSF                                      /* DW20
+      COMPRESS ACCT-REG-V.DESCRIPTION '-' ACCT-REG-V.ACTIVITY-TYPE /* YK4
+      INTO ACCT-REG-V.DESCRIPTION LEAVING NO                     /* YK4
+    NONE IGNORE                                                    /* DW2
+  END-DECIDE                                                        /* DW2
+END-IF                                                                                          /* bz OI-3078             
+*
+DECIDE ON FIRST VALUE OF #CMBX                                    /* DW4
+  VALUE 'CMB1'                                                    /* DW4
+    COMPRESS ACCT-REG-V.DESCRIPTION '-C1'                         /* DW4
+      INTO ACCT-REG-V.DESCRIPTION                                 /* DW4
+  VALUE 'CMB2'                                                    /* DW4
+    COMPRESS ACCT-REG-V.DESCRIPTION '-C2'                         /* DW4
+      INTO ACCT-REG-V.DESCRIPTION                                 /* DW4
+  VALUE 'CMB3'                                                    /* DW4
+    COMPRESS ACCT-REG-V.DESCRIPTION '-C3'                         /* DW4
+      INTO ACCT-REG-V.DESCRIPTION                                 /* DW4
+  VALUE 'CMB4'                                                    /* DW4
+    COMPRESS ACCT-REG-V.DESCRIPTION '-C4'                         /* DW4
+      INTO ACCT-REG-V.DESCRIPTION                                 /* DW4
+  VALUE 'FPFP'                                                    /* PM5
+    MOVE '1'               TO ACCT-REG-V.MESSAGE-CODE             /* PM5
+  VALUE 'APPW'                                                    /* PM5
+    MOVE 'APP WITHDRAWN'   TO ACCT-REG-V.DESCRIPTION              /* PM5
+    MOVE '1'               TO ACCT-REG-V.MESSAGE-CODE             /* PM5
+  VALUE 'ADCR'                                                    /* PM5
+    MOVE 'CREDIT FROM APP' TO ACCT-REG-V.DESCRIPTION              /* PM5
+    MOVE '1'               TO ACCT-REG-V.MESSAGE-CODE             /* PM5
+  VALUE 'RDCR'                                                    /* PM5
+    MOVE 'CREDIT TO APP'   TO ACCT-REG-V.DESCRIPTION              /* PM5
+    MOVE '1'               TO ACCT-REG-V.MESSAGE-CODE             /* PM5
+  VALUE 'PDTO'                                     /* DW7
+    COMPRESS ACCT-REG-V.DESCRIPTION 'PD TO CHG'
+      INTO ACCT-REG-V.DESCRIPTION
+  VALUE 'SPMM'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'STOP-MODE-M'
+      INTO ACCT-REG-V.DESCRIPTION
+    IF ACCT-REG-V.CLERK-ID = 'EDS' /* From ATHPIALA on last day of month DW26
+      MOVE 'Y' TO ACCT-REG-V.MONTH-END
+    END-IF
+  VALUE 'SPMQ'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'STOP-MODE-Q'
+      INTO ACCT-REG-V.DESCRIPTION
+    IF ACCT-REG-V.CLERK-ID = 'EDS' /* From ATHPIALA on last day of month DW26
+      MOVE 'Y' TO ACCT-REG-V.MONTH-END
+    END-IF
+  VALUE 'STPT'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'STRT-PD-TO'
+      INTO ACCT-REG-V.DESCRIPTION
+    IF ACCT-REG-V.CLERK-ID = 'EDS' /* From ATHPIALA on last day of month DW26
+      MOVE 'Y' TO ACCT-REG-V.MONTH-END
+    END-IF
+  VALUE 'STBA'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'STRT-BADJ'
+      INTO ACCT-REG-V.DESCRIPTION
+    IF ACCT-REG-V.CLERK-ID = 'EDS' /* From ATHPIALA on last day of month DW26
+      MOVE 'Y' TO ACCT-REG-V.MONTH-END
+    END-IF
+  VALUE 'DETH'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'DEATH-ADJ'
+      INTO ACCT-REG-V.DESCRIPTION
+  VALUE 'CSV '                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'CSV/RSG ADJ'
+      INTO ACCT-REG-V.DESCRIPTION
+  VALUE 'RTAD'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'RT/RENU ADJ'
+      INTO ACCT-REG-V.DESCRIPTION
+  VALUE 'TMCV'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'TERM CONV  '
+      INTO ACCT-REG-V.DESCRIPTION
+    IF ACCT-REG-V.CLERK-ID = 'EDS' /* From ATHPTMCV on last day of month DW26
+      MOVE 'Y' TO ACCT-REG-V.MONTH-END
+    END-IF
+  VALUE 'RTCK'                                     /* DW9
+    COMPRESS ACCT-REG-V.DESCRIPTION 'RT/RENEWAL '
+      INTO ACCT-REG-V.DESCRIPTION
+    IF ACCT-REG-V.CLERK-ID = 'EDS' /* From ATHPRTCK on last day of month DW26
+      MOVE 'Y' TO ACCT-REG-V.MONTH-END
+    END-IF
+  VALUE 'COLL'                                     /* DW10
+    COMPRESS ACCT-REG-V.DESCRIPTION 'SENT TO COLL'
+      INTO ACCT-REG-V.DESCRIPTION LEAVING NO
+  VALUE 'CONV'                                     /* DW14
+    COMPRESS ACCT-REG-V.DESCRIPTION 'PLAN CONV'
+      INTO ACCT-REG-V.DESCRIPTION LEAVING NO
+  VALUE 'NHPW'                                     /* NG1
+    COMPRESS ACCT-REG-V.DESCRIPTION 'NURSING HOME WAIVER'
+      INTO ACCT-REG-V.DESCRIPTION
+    IF ACCT-REG-V.CLERK-ID = 'EDS' /* From GPBPTMCV on last day of month DW26
+      MOVE 'Y' TO ACCT-REG-V.MONTH-END
+    END-IF
+  VALUE 'ACDB'                                     /* YK2
+    IF TXN-CODE = 'BADJ'
+      COMPRESS ACCT-REG-V.DESCRIPTION 'ACDB ADJ'
+        INTO ACCT-REG-V.DESCRIPTION
+    ELSE
+      COMPRESS ACCT-REG-V.DESCRIPTION 'ACDB PAYMENT'
+        INTO ACCT-REG-V.DESCRIPTION
+    END-IF
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+FOR #I1 1 TO 15
+  IF #SG-CAT1 (#I1) NE ' '
+    MOVE #SG-CAT1 (#I1) TO SG-CATEGORY-1 (#I1)
+    MOVE #SG-CAT2 (#I1) TO SG-CATEGORY-2 (#I1)
+    MOVE #SG-AMT  (#I1) TO SG-AMOUNT     (#I1)
+  END-IF
+END-FOR
+*
+* IF #SCR-TRAN-CODE (#ILN1) = 'APPD'                        /* DW17
+*   move 'SUSP' to ACCT-REG-V.TXN-CODE
+*   IF #SCR-ADJ (#ILN1) = '-'
+*     MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.DEBIT-AMOUNT
+*     reset ACCT-REG-V.CREDIT-AMOUNT
+*   ELSE
+*     MOVE #SCR-TRAN-AMT (#ILN1) TO ACCT-REG-V.CREDIT-AMOUNT
+*     reset ACCT-REG-V.DEBIT-AMOUNT
+*   END-IF
+* end-if
+*
+STORE ACCT-REG-V
+*
+*
+END

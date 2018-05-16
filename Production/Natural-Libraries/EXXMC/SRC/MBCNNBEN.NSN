@@ -1,0 +1,122 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************
+* MBCNNBEN - Get Beneficiary information for the policy from
+*            the old structure
+**************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG  REASON
+* YAK    07302015       Initial Creation (ownership project)
+**************************************************************
+DEFINE DATA
+PARAMETER USING MBCA0BEN
+LOCAL USING GPRA0003      /* Error Log file
+LOCAL
+1 #I2             (I2)
+1 #I3             (I2)
+1 #I4             (I2)
+1 #I5             (I2)
+1 #I6             (I2)
+1 #FREE-TEXT      (A) DYNAMIC CONST <'Beneficiary on file'>
+1 #NOT-COMPLETED  (A) DYNAMIC CONST <'Beneficiary designation not finalized'>
+*
+1 BENE-F-V VIEW OF A-BENE-FINAL
+  2 ID-NUMBER          (N6)        /* let D = bene designation (1-4)
+  2 NOTE-DATE          (N8/60)     /* LET P/A = PRINCIPAL/ALTERNATE DESING
+  2 REDEFINE NOTE-DATE             /* let L = linked policies
+    3 BENE-DATES-6-POLS (6)
+      4 BENE-ISS-DT       (N6/7)   /* (D, L)
+      4 BENE-SPLIT-IND    (N1/7)   /* (D, L)
+      4 BENE-LST-UPD      (N8)     /* (D)
+      4 BENE-STRT-PEND    (N8)     /* (D)
+      4 BENE-FOL-UP-IND   (N1)     /* (D)
+      4 BENE-OWN-TRNSF-DT (N8)     /* (D)
+      4 BENE-SUC-OWN      (N1)     /* (d)
+      4 BENE-NEW-LAYOUT   (N1)     /* (d)
+      4 BENE-FIL1         (A4)
+  2 NOTE-CLERK-ID       (A3/60)
+  2 REDEFINE NOTE-CLERK-ID
+    3 BENE-MISC-6-POLS  (6)
+      4 BENE-STATUS      (A1)     /* (D)
+      4 BENE-RESTRICT    (A1)     /* (D)
+      4 BENE-MISC-PRIM-SEC (2)
+        5 BENE-TYPE        (A1)    /* (D, P/A)
+        5 BENE-SHARE-TYP   (A1)    /* (D, P/A)
+        5 BENE-MISC-FIL-2  (A12)
+  2 NOTE-TEXT          (A60/60)
+  2 REDEFINE NOTE-TEXT
+    3 BENE-TEXTS-6-POLS (6)
+      4 BENE-TEXT-PRIM-SEC (2)
+        5 BENE-TEXT-OCC    (5)
+          6 BENE-TEXT        (A60)   /* (D, P/A, text-line)
+          6 REDEFINE BENE-TEXT
+            7 BENE-NAME    (A25)
+            7 BENE-SSN     (A9)
+            7 BENE-REL     (A1)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 SPLIT-IND          (9)
+  2 ISSUE-DATE         (9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DATE-OCC   (9)
+      4 ISSUE-DATE-CENT  (N2)
+      4 ISSUE-DATE-YYMMDD (N6)
+*
+END-DEFINE
+*
+FIND (1) ST-V WITH ID-NUMBER = BENEFICIARY-INFORMATION.CN
+END-FIND
+*
+FIND BENE-F-V WITH ID-NUMBER = BENEFICIARY-INFORMATION.CN
+  IF NO RECORD FOUND
+    MESSAGE := 'Not on file'
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+*
+LB1. FOR #I2 1 TO 6
+  FOR #I3 1 TO 7
+    IF   (ST-V.ISSUE-DATE-YYMMDD (POL-SEG) NE 0)
+        AND (ST-V.ISSUE-DATE-YYMMDD (POL-SEG) = BENE-ISS-DT    (#I2, #I3))
+        AND (ST-V.SPLIT-IND         (POL-SEG) = BENE-SPLIT-IND (#I2, #I3))
+*
+      IF BENE-NEW-LAYOUT (#I2) = 1   /* Bene is formatted
+        BENEFICIARY-INFORMATION.BEN-COMPLETED := TRUE
+        RESET #I6
+        FOR #I4 1 TO 2
+          IF (#I4 = 2) AND (BENE-F-V.BENE-TYPE (#I2, 2) NE 'C')
+            ESCAPE BOTTOM
+          END-IF
+*
+          FOR #I5 1 TO 5
+            ADD 1 TO #I6
+            IF BENE-F-V.BENE-TEXT(#I2, #I4, #I5) <> ' '
+            IF BENE-F-V.BENE-SSN(#I2, #I4, #I5) = MASK(NNNNNNNNN) OR = ' '
+              C@BENEFICIARY-LINE := C@BENEFICIARY-LINE + 1
+              BENEFICIARY-LINE(C@BENEFICIARY-LINE) := BENE-F-V.BENE-NAME(#I2, #I4, #I5)
+              BENEFICIARY-LINE(C@BENEFICIARY-LINE) := EDIT_NAME_LOWCASE (< BENEFICIARY-LINE(C@BENEFICIARY-LINE) >)
+            END-IF
+            END-IF
+          END-FOR
+        END-FOR
+      ELSE
+        BENEFICIARY-INFORMATION.BEN-COMPLETED := TRUE
+        ESCAPE BOTTOM
+      END-IF
+    END-IF
+  END-FOR
+END-FOR
+*
+IF C@BENEFICIARY-LINE = 0
+  IF BENEFICIARY-INFORMATION.BEN-COMPLETED
+    MESSAGE := #FREE-TEXT
+  ELSE
+    MESSAGE := #NOT-COMPLETED
+  END-IF  
+END-IF
+*
+END

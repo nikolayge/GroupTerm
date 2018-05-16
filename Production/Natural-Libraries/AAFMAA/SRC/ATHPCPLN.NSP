@@ -1,0 +1,1268 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PGM-ID: ATHPCPLN  Give new CAP members a CAP loan
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE     TAG     REASON                                       *
+*                                                                      *
+* DRW    09142004  PM1   Create new program                            *
+* DRW    04032006  DW2   Force time to 01:20  AM                       *
+* DRW    05072006  DW3   Remove ALOT-SW logic AM                       *
+* DRW  01/22/2008  DW4   Add CAP Loan-Only Loan create logic           *
+* PAM    02282008  PM5   Include Sungard entry                         *
+* DRW  03/11/2008  DW6   Add CAP ENTRY DATE ON LOAN ONLY               *
+* DRW  03/29/2008  DW7   Add cash code "$" to ACCT TR file             *
+* DRW  03/30/2008  DW8   Fix TOT-Amount-needed in AIL Calc             *
+* DRW  07/02/2008  DW9   Add AFB file new CAP LOAN creation            *
+* DRW  07/07/2008  DW10  Load POL # onto TRANS file                    *
+* DRW  07/07/2008  DW11  Bypass NEWL SEQ 1 & 2 records                 *
+* DRW  07/09/2008  DW12  Make NEWL trans have MONTH-END = 'Y'          *
+* DRW  07/23/2008  DW13  Make Wacc Ind "A" to sync Intro flag to AFSC  *
+* PAM  07/28/2008  PM14  Added EIL processing                          *
+* PAM  10/22/2008  PM15  Fix ME indicator                              *
+* DRW  11/03/2008  DW16  Check paid in future pols when calcing tot-amt*
+*                        due                                           *
+* DRW  12/01/2008  DW17 Do not use the AT Loan Pmt if a loan-only case *
+* DRW  12/10/2008  DW18 Add AT AIP-ADJ to linkage to                   *
+*                       Function-loan-payment                          *
+* PAM  02/26/2009  PM19 Added CAP credit card processing               *
+* PAM  03/13/2009  PM20 Added CAP Bridger file processing              *
+* DRW  09/22/2009  DW21 SVC-FEE CALC  /  PROCESS-IND /                 *
+*                       Number-memberships /600000                     *
+* vxt  05/23/2011
+* PAM  06/17/2011  PM22 Changed EZPay loan date to 1rst of month       *
+*                       Create automatic interest adjustment           *
+* vxt  07/27/2011  vt2  Remove APPEND from e-fail definition and change*
+*                       the definition of #E-mail field.               *
+* vxt 01/24/2012   vt3  Change the value of cash-code from $ to 'M'    *
+* YAK 10/09/2012   YK1  Use function to identify Level Term II plans   *
+* VXT 01/07/2013   VT4  Remove hardcoded 5000 for CAp-loan amount and
+*                       add logic to get the CAP-LOAN amount from AT file
+* vxt 07/22/2013   vt5  mark the member as a CAP when issue the loan   *
+* vxt 08/06/2013   vt6  /Ticket 2135/
+* vxt 12/24/2015   vt7  /Ticket 4059 / - fix allotment allocations
+* TMT 02/08/2017   TT1  Add a note during the issue of a cap loan      *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING G3500AAD
+LOCAL USING GONERLXX
+LOCAL USING GPRA0005                  /* Fields to be passed to EmailCreator  vt1
+LOCAL USING GPRL0001                  /* Init properties                      vt1
+LOCAL USING CAPL0001
+LOCAL
+1 #INT-RATE   (N2.3) INIT <1.5>
+1 #AIL-LOAN-ONLY    (L)               /* DW4
+1 #EIL-LOAN-ONLY    (L)               /* PM14
+1 #CIL-LOAN-ONLY    (L)               /* PM19
+1 #CURR-ALOT-A    (A7)
+1 REDEFINE #CURR-ALOT-A
+  2 #CURR-ALOT     (N5.2)
+1 #NEW-ALOT       (N5.2)              /* DW4
+*
+1 PARM           (A10)                /* 2nd parm
+1 REDEFINE PARM
+  2 PARM-MM       (N2)
+  2 PARM-X1       (A1)
+  2 PARM-DD       (N2)
+  2 PARM-X2       (A1)
+  2 PARM-YYYY     (N4)
+*
+1 #PARM-YYYYMMDD (N8)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYY    (N4)
+  2 #PARM-MM      (N2)
+  2 #PARM-DD      (N2)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYY-A    (A4)
+  2 #PARM-MM-A      (A2)
+  2 #PARM-DD-A      (A2)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYYMM  (N6)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-CENT-1  (N2)
+  2 #PARM-YYMMDD  (N6)
+*
+1 #PARAMETER-TYPE (A1)                 /* PM14
+1 #INPUT-RECORD   (A6)                 /* PM14
+*
+1 #1-MON-AGO-YYYYMMDD  (N8)            /* DW6
+1 REDEFINE #1-MON-AGO-YYYYMMDD
+  2 #1-MON-AGO-YYYYMM (N6)
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 SSN
+  2 INTRO-FLAG
+  2 ACTION-FLAG
+  2 CAP-IND
+  2 CAP-TYPE                 /* PM19
+  2 CAP-LOAN-AMT
+  2 CAP-TERM                 /* DW16
+  2 ALLOT-STRT-AMT           /* DW18
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID                 /* vt1
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 PROCESS-IND
+  2 DATE-ACCT-UPDATE
+  2 SSN
+  2 REDEFINE SSN
+    3 SSN-A               (A9)
+  2 NAME
+  2 MILITARY-STATUS
+  2 INTRO-FLAG
+  2 CAP-ENTRY-DATE           /* DW6
+  2 ALOT-AMT
+  2 ALOT-SW                    /* now WACC IND    DW13
+  2 DUES-ALL-PAID-IND
+  2 EZPAY-CAP-LOAN-AMOUNT                      /* PM14
+  2 POLICY-ID (9)                           /* TT1
+  2 X-LOAN-AMOUNT (9)
+  2 X-INTEREST-RATE (9)
+  2 X-ACCUM-INTEREST (9)
+  2 X-NXT-YR-ACCUM-INT  (9)
+  2 X-INTEREST-RECEIVED (9)
+  2 X-BILL-INTEREST-AMT (9)
+  2 X-BILL-SW           (9)
+  2 X-LOAN-DATE   (9)
+  2 X-ALT-LP-AMT  (9)
+  2 X-ALT-LP-IND  (9)
+  2 x-alt-lp-date (9)           /* vt7
+  2 CONV-DURATION (9)
+  2 STATUS        (9)
+  2 ISSUE-DATE    (9)
+  2 MODE          (9)
+  2 PLAN          (9)
+  2 REDEFINE PLAN
+    3 PLAN-OCC     (9)
+      4 PLAN-A2      (A2)
+      4 REDEFINE PLAN-A2
+        5 PLAN-N2     (N2)
+      4 REDEFINE PLAN-A2
+        5 PLAN-A1     (A1)
+      4 PLAN-A3      (A1)
+  2 ANNUAL-PREM   (9)
+  2 PAY-STATUS    (9)
+  2 PAID-TO-DATE  (9)              /* DW16
+  2 REDEFINE PAID-TO-DATE
+    3 PAID-TO-DATE-OCC   (9)
+      4 PAID-TO-DATE-YYYYMM (N6)
+      4 PAID-TO-DATE-DD     (N2)
+  2 INS-MAIL-CODE                    /* vt1
+  2 RANK                             /* vt1
+  2 x-first-place-fee         (9)    /* vt1   06202011
+*
+  2 PAID-UP-DATE  (9)
+  2 REDEFINE PAID-UP-DATE
+    3 PAID-UP-DATE-OCC   (9)
+      4 PAID-UP-DATE-YYYYMM (N6)
+      4 PAID-UP-DATE-DD     (N2)
+  2 MONTH-ALLOC-AMT   (9)
+  2 RID-PLAN          (9)
+  2 BRIDGER-IND                    /* PM20
+*
+1 CT-V VIEW OF A-CONTACTS          /* PM22
+  2 FIRST-NAME                      /* PM22
+  2 MIDDLE-NAME                     /* PM22
+  2 LAST-NAME                       /* PM22
+  2 SUFFIX                          /* PM22
+*
+1 ACCT-REG VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 TXN-CODE
+  2 SEQUENCE-NUM
+  2 NAME
+  2 CASH-CODE                           /* DW7
+  2 MONTH-END                           /* DW12
+  2 TXN-ACCT-NUMBER
+  2 ACCT-DATE
+  2 DATE-LAST-ACCT-UPDATE
+  2 DEBIT-AMOUNT
+  2 CREDIT-AMOUNT
+  2 DESCRIPTION
+  2 REDEFINE DESCRIPTION
+    3 DESC-LIT            (A4)
+    3 DESC-RATE           (N2.3)
+    3 DESC-SPACE          (A1)
+    3 DESC-ISSUE-DATE     (A10)
+  2 MESSAGE-CODE
+  2 POLICY-NUMBER                      /* DW10
+  2 AALP-FLAG
+  2 CLERK-ID
+  2 TERMINAL-ID
+  2 SG-CATEGORY-1       (A2/15)            /* PM5
+  2 SG-CATEGORY-2       (A2/15)            /* PM5
+  2 SG-AMOUNT           (N6.2/15)          /* PM5
+*
+1 TR-REG-V VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 NAME
+  2 DATE-LAST-UPDATE
+  2 TERMINAL-ID
+  2 CLERK-ID
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 OLD-DATA               (1)
+  2 NEW-DATA               (1)
+*
+1 #TR-LOG-FIL-MNT-DESC  (A125)
+1 REDEFINE #TR-LOG-FIL-MNT-DESC
+  2 #TR-L-SALP-LB1 (A12)
+  2 #TR-L-SALP-FLG (A2)
+  2 #TR-L-SALP-LB2 (A8)
+  2 #TR-L-SALP-AMT (A9)
+  2 #TR-L-BRID-LBL (A8)                          /* PM20
+  2 #TR-L-BRID     (A1)                          /* PM20
+  2 #TR-L-SALP-F1  (A85)                         /* PM20
+*
+1 #TOT-AIP-AMT    (N9.2)
+1 #TOT-CIP-AMT    (N9.2)                        /* PM19
+1 #TOT-LOAN-AMT   (N9.2)
+1 #FOUND-NEW-CAP  (L)
+1 #FOUND-AT       (L)
+1 #HAS-FBR        (L)
+1 #SUBMIT         (L)                           /* PM14
+1 #CAP-X          (I2)
+1 #FST-X          (I2)
+1 #CNT-2          (P5)
+1 #TOT-AMT-NEEDED (P5.2)
+1 #TOT-AMT-NEEDED-EXCLUDING-FUTURE   (P5.2)     /* DW16
+1 #TOT-PREMS-ONLY                    (P5.2)
+1 #TOT-PREMS-ONLY-EXCLUDING-FUTURE   (P5.2)
+1 #EXCLUDED-FUTURE                   (L)
+1 #LOAN-PMT  (N3.2)                             /* DW16
+1 #AIP-AMT        (P5.2)
+1 #CIP-AMT        (P5.2)                        /* PM19
+1 #POL-NUM        (A16)
+1 #SCN-ADD-ROW1   (A75)
+1 #SCN-ADD-ROW2   (A75)
+1 #SCN-ADD-ROW3   (A75)
+1 #SCN-ADD-ROW4   (A75)
+1 #SCN-ADD-ROW5   (A75)
+1 #SCN-ADD-ROW6   (A75)
+1 #SCN-ADD-ROW7   (A75)
+1 #SCN-ADDR1      (A36)
+1 #SCN-ADDR2      (A36)
+1 #SCN-ADDR3      (A36)
+1 #SCN-DATE       (A17)
+1 #SCN-LETR-NAME  (A40)
+1 #SCN-SALUT      (A48)
+*
+* below is linkage to GRIDCSXX
+1 #ID         (N6)
+1 REDEFINE #ID
+  2 #ID-A      (A6)
+* THE FOLLOWING INPUT IS PASSED ONLY ON AN "AT" FOR A NEW RIDER
+1 #AT-RID-ATTACH-FAC-AMT (N6.2) /* Only if attached to the new "AT"
+1 #AT-RID-ATTACH-PLAN    (A3)   /*    policy not yet created
+1 #AT-RID-PLAN           (A2/5) /* New rider plan
+1 #AT-RID-ATTACH-ISS-DT  (N8/5) /* Only if attached to an existing pol
+* output below  (ex = existing)
+1 #AT-TOT-FBR-PREM        (N3.2)
+1 #EX-FBR-PREM-BY-LINE    (N3.2/9)
+1 #EX-SPS-DB-BY-LINE      (N6/9)
+1 #EX-DEP-DB-BY-LINE      (N6/9)
+1 #EX-EACH-DEP-DB-BY-LINE (N6/9)
+1 #NUM-ELIG-CHILDREN      (N2)
+1 #NUM-ELIG-CHILDREN-UNDER-6-MON (N2)
+1 #TOT-CHILD-DB      (N6)
+1 #RID-TEXT          (A78)
+* above is linkage to GRIDCSXX
+*
+1 #SVC-FEE    (N2.2)
+1 #SVC-FEE-SP (N3.2) INIT <450.00>
+1 #SVC-FEE-2P (N2.2) INIT <18.50>
+1 #SVC-FEE-3P (N2.2) INIT <12.50>
+1 #SVC-FEE-4P (N1.2) INIT <9.50>
+1 #SVC-FEE-5P (N1.2) INIT <7.50>
+1 #SVC-FEE-6P (N1.2) INIT <6.50>
+1 #SVC-FEE-7P (N1.2) INIT <6.00>
+1 #SVC-FEE-10 (N1.2) INIT <4.50>
+1 #SVC-FEE-20 (N1.2) INIT <3.00>
+1 #SVC-FEE-30 (N1.2) INIT <2.50>
+1 #SVC-FEE-OL (N1.2) INIT <2.00>
+1 #SVC-FEE-TM (N1.2) INIT <2.00>
+*
+1 #SUBTYPE    (A1)
+*
+1 #ID-N     (N6)
+1 REDEFINE #ID-N
+  2 #ID-A   (A6)
+1 #CAP-INT      (A7)
+1 #ISS-DT-DISP  (A10)
+1 #ISS-DT-DISP-PER  (A11)
+1 #I2        (I2)
+1 #I3        (I2)
+1 #I4        (I2)
+1 #X1        (I2)
+1 #I1       (I2)
+1 #HOLD-ACCTG-DATE    (N8)
+1 #HOLD-EDIT    (A9)
+*
+1 #SCN-CORR-NAME   (A20)
+1 #CLERK-ABB-PASS  (A3)
+1 #CLERK-ABB-NAME-PASS (A20)
+1 #INVALID (L)
+*
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY   (N4)
+    3 #MM     (N2)
+  2 #DD     (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A (A4)
+  2 #MM-A   (A2)
+  2 #DD-A   (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A (A8)
+*
+1 #AMT-7    (A7)
+1 #LAST    (A25)
+* 1 #NAME    (A25)
+1 #FIRST-20 (A20)
+1 #MI       (A1)
+1 #ERR-MSG      (A60)
+1 #TAB       (A1) INIT <H'09'>
+1 #AFB-FILE    (A100)
+1 #EXCEPTION-RECORD (A100)                                       /* PM20
+*
+1 #PROCESS-NAME    (A) DYNAMIC                                 /* vt1 \/
+1 #ID-NUMBER       (A) DYNAMIC
+1 #ORDER-LIST      (A) DYNAMIC
+1 #POLICY-NUMBER   (A) DYNAMIC
+1 #ERROR-CODE      (A1)
+1 #LOAN-FUNDED     (A3) INIT<'LOF'>
+1 #E-MAIL          (A) DYNAMIC                 /* vt2 was (A16)
+1 #CONTACT-ID      (N8)
+1 #INS-MAIL-CODE   (A1)
+1 #RESTRICTED-EMAIL                 (A3) CONST <'XXX'>
+1 #RESTRICTED-MAIL-CODE             (A1) CONST <'E'>
+1 #PASS-COMMAND           (A2)
+
+1 #EDIT-INVALID                        (L)
+1 #RANK-LITERAL                        (A23)
+1 #DISPL                               (P2)
+
+1 #RANK-ABBR                           (A) DYNAMIC
+1 #LETTER-ENV                          (A) DYNAMIC
+1 #SALUTATION                          (A) DYNAMIC
+1 #SALUTATION-WITH-NAME                (A) DYNAMIC           /* vt1 /\                           /* vt1 /\
+*
+1 #INTEREST                            (P5.2)     /* PM22
+1 #LOAN-2                              (P7.2)     /* PM22  /* TT1 changed name
+1 #DATN                                (N8)       /* PM22
+
+1 #UPDATE                              (I4) CONST <2> /* TT1
+1 #ISN                                 (P10) /* TT1
+*
+1 AT view of A-appl-tracking                                                       /* vt4 \/
+  2 member-cn
+  2 ssn
+  2 cap-loan-amt
+  2 cap-ind
+  2 action-date                                                                   /* vt6
+  2 action-flag                                                                   /* vt6
+1 #id-number-a                        (a6)                                        /* vt4 /\
+1 #last-6-mon                         (n8)
+1 #work-date                          (n8)                                        /* vt5 \/
+1 redefine #work-date
+  2 #work-date-yyyymm                   (n6)
+  2 #work-date-dd                       (n2)                                      /* vt5 /\
+*
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER (N6.0)
+  2 DTS-DATN (P9.0)
+  2 DTS-TIMN (P7.0)
+  2 C*NOTE-TABLE
+  2 NOTE-DATE (N8.0/100)
+  2 NOTE-CLERK-ID (A3/100)
+  2 NOTE-LINE-NUM (P1.0/100)
+  2 NOTE-TEXT (A60/100)
+*
+1 I (I4)      /* TT1
+1 #POS (I4)   /* TT1
+1 #NOTES-TEXT   (A60/10) /* TT1
+1 #HOLD-NOTE (A) DYNAMIC
+1 #INT         (I2)
+END-DEFINE
+************************************************************************
+*
+DEFINE WORK FILE 5 #EMAIL-MONTHLY-FILE TYPE 'ASCII-COMPRESSED'    /* vt1
+* DEFINE WORK FILE 3 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/AFBCAPS.TXT' TYPE 'ASCII-COMPRESSED'
+* DEFINE WORK FILE 4 '/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ATH/LOANS_SKIPPED.TXT' TYPE 'ASCII-COMPRESSED'
+* DEFINE WORK FILE 10 '/usr/SAG/tmp/Month_End/ATHPICTX/Month_End/all_capss.txt' TYPE 'ASCII-COMPRESSED'
+* DEFINE WORK FILE 11 '/usr/SAG/tmp/Month_End/ATHPICTX/Month_End/all_capss.txt' TYPE 'ASCII-COMPRESSED'
+*****  ATTRIBUTES 'APPEND'                                               /* vt1   /* vt2
+*
+INCLUDE GONERCXX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Cap Members getting new loans'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=76                                          /* PM14
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X                    /* PM14
+  'Cap Members getting new loans'                        /* PM14
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX        /* PM14
+*
+INPUT #PARAMETER-TYPE                                            /* PM14
+IF #PARAMETER-TYPE = 'E'                                         /* PM14
+  MOVE *DATN TO #PARM-YYYYMMDD                                   /* PM14
+  #PARM-DD := 01                                                 /* PM22
+ELSE
+  READ WORK 2 ONCE RECORD PARM   /* date etc (09/01/1999)
+*   PARM := '09/01/2017'
+  MOVE PARM-MM TO #PARM-MM
+  MOVE PARM-DD TO #PARM-DD
+  MOVE PARM-YYYY TO #PARM-YYYY
+END-IF                                                           /* PM14
+*
+WRITE 'parm date is ' #PARM-YYYYMMDD
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD                                 /* DW6
+SUBTRACT 1 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+*
+move *datn to #work-date                                         /* vt5
+MOVE #YYYYMMDD TO #1-MON-AGO-YYYYMMDD                            /* DW6
+#DATN := *DATN                                                   /* PM22
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD                                 /* vt6 \/
+SUBTRACT 6 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #last-6-mon                                   /* vt6 /\
+*
+COMPRESS 'SSN'                                                   /* DW9
+  #TAB 'LNAME'
+  #TAB 'FNAME'
+  #TAB 'MNAME'
+  #TAB 'ACCOUNT'
+  #TAB 'CHECK'
+  #TAB 'TRANCODE'
+  #TAB 'AMOUNT'
+  #TAB 'EFFDATE'
+  #TAB 'DESC'
+  INTO #AFB-FILE LEAVING NO
+WRITE WORK 3 #AFB-FILE
+*
+MOVE 'ELB' TO #CLERK-ABB-PASS
+MOVE ' ' TO #CLERK-ABB-NAME-PASS
+CALLNAT 'GCKNMSXX' #CLERK-ABB-PASS
+  #INVALID
+  #CLERK-ABB-NAME-PASS
+MOVE #CLERK-ABB-NAME-PASS TO #SCN-CORR-NAME
+*
+DISPLAY #PARAMETER-TYPE
+DECIDE FOR FIRST CONDITION                                       /* PM14
+  WHEN #PARAMETER-TYPE = 'A'                                     /* PM14
+    #EXCEPTION-RECORD := 'HEADER'                                /* PM14
+    WRITE WORK 4 #EXCEPTION-RECORD                               /* PM14
+    RESET #EXCEPTION-RECORD                                      /* PM14
+    PERFORM ISSUE-ME-LOANS                                       /* PM14
+  WHEN #PARAMETER-TYPE = 'E'                                     /* PM14
+    #EIL-LOAN-ONLY := TRUE                                       /* PM14
+    PERFORM ISSUE-EIL-LOANS                                      /* PM14
+  WHEN NONE                                                      /* PM14
+    IGNORE                                                       /* PM14
+END-DECIDE                                                       /* PM14
+*
+************************************************************************
+DEFINE SUBROUTINE ISSUE-ME-LOANS                                 /* PM14
+************************************************************************
+*
+XX.
+READ ST-V BY NAME-KEY
+* FIND ST-V WITH ST-V.ID-NUMBER = 30200
+* OR = 199621
+* OR = 105526
+* OR = 107638
+* OR = 137517
+* OR = 213824
+
+* WRITE 'just read' ST-V.NAME ST-V.ID-NUMBER
+  RESET #FOUND-NEW-CAP
+  RESET #AIL-LOAN-ONLY #CIL-LOAN-ONLY #CIP-AMT #AIP-AMT          /* DW4 PM19
+*
+  FOR #I1 1 TO 9
+    IF  X-ALT-LP-IND(#I1) = '*' /*Set in ATHPIALA on a start if ALP IND is L /*DW4
+      MOVE 'BTR' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX /* BTR returns amt from FA /* DW4
+*                   and gets 'Current" (not 2 months from now) alot amt needed
+*
+      MOVE *ISN TO #CGA-ISN
+      MOVE 'FA' TO #CGA-SCR-COMMAND      #CGA-ORIG-COMMAND
+      MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID
+      RESET #CGA-MF-SCR-PARM-1-N
+      FETCH RETURN 'C2800PFA'           /* GET NEW ALOT
+*
+      COMPUTE #NEW-ALOT = #CGA-MF-SCR-PARM-1-N / 100
+      MOVE #CGA-MF-ORIG-PARM-1 TO #CURR-ALOT-A
+*
+      #AIP-AMT := #CURR-ALOT - #NEW-ALOT                            /* VT1
+*     MOVE X-ALT-LP-AMT (#I1) TO #AIP-AMT /* Already entered        /* DW17 VT1
+      MOVE TRUE TO #AIL-LOAN-ONLY
+      MOVE #I1 TO #CAP-X
+      WRITE ST-V.ID-NUMBER 'Build Loan-Only CAP Ln FA curr-amt=' #CURR-ALOT
+        'new-alot=' #NEW-ALOT 'alot-amt=' X-ALT-LP-AMT (#I1) 'indx=' #CAP-X '=' #ail-loan-only      /* vt7
+      ESCAPE BOTTOM
+    END-IF                                                        /* END DW4
+*
+    IF  X-ALT-LP-IND(#I1) = '!' /* Set in ATHPCCIN on app credit cards  PM19
+      MOVE X-ALT-LP-AMT (#I1) TO #CIP-AMT                            /* PM19
+      MOVE TRUE TO #CIL-LOAN-ONLY                                    /* PM19
+      MOVE #I1 TO #CAP-X                                             /* PM19
+      ESCAPE BOTTOM                                                  /* PM19
+    END-IF                                                           /* PM19
+*
+    IF   (INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q')
+        AND (CONV-DURATION (#I1) = 999)
+        AND (ST-V.ISSUE-DATE    (#I1) = #PARM-YYYYMMDD)
+        AND (MODE          (#I1) = 'G' OR = '0')                        /* PM19
+        AND (X-LOAN-AMOUNT (#I1) = 0)
+        AND ((X-LOAN-DATE   (#I1) = 0) or ( st-v.x-alt-lp-date(#i1) ge #1-mon-ago-yyyymmdd and st-v.x-alt-lp-date(#i1) lt #parm-yyyymmdd) )   /* vt7
+      MOVE TRUE TO #FOUND-NEW-CAP
+      MOVE #I1 TO #CAP-X
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  write '=' st-v.id-number  '=' #found-new-cap '=' st-v.bridger-ind
+  IF ST-V.BRIDGER-IND NE 'Y'             /* PM20
+      AND (#AIL-LOAN-ONLY OR #CIL-LOAN-ONLY)/* PM20
+    DECIDE FOR FIRST CONDITION           /* PM20
+      WHEN #AIL-LOAN-ONLY                /* PM20
+        X-ALT-LP-IND (#CAP-X) := 'L'     /* PM20
+      WHEN #CIL-LOAN-ONLY                /* PM20
+        X-ALT-LP-IND (#CAP-X) := 'C'     /* PM20
+      WHEN NONE                          /* PM20
+        IGNORE                           /* PM20
+    END-DECIDE                           /* PM20
+*
+    PERFORM CREATE-EXCEPTION-FILE        /* PM20
+    UPDATE (XX.)                        /* PM20
+    END TRANSACTION                      /* PM20
+    ESCAPE TOP                           /* PM20
+  END-IF                                 /* PM20
+*
+  IF #AIL-LOAN-ONLY OR #CIL-LOAN-ONLY                                /* DW4 PM19
+    MOVE 'P' TO ST-V.INTRO-FLAG
+    MOVE 'A' TO ALOT-SW    /* make info go to AFSC to sync Intro-Flag  DW13
+    MOVE #1-MON-AGO-YYYYMM TO CAP-ENTRY-DATE                         /* DW6
+    MOVE 999 TO ST-V.CONV-DURATION (#CAP-X)
+
+
+*    MOVE 5000 TO AT-V.CAP-LOAN-AMT    /* Setup as if an AT Matched                             /* vt4 \/ 20130102 \/
+*
+    move st-v.id-number to #id-number-a
+    find at with at.ssn = st-v.ssn
+      if no                                                                                    /* vt6
+        at-v.cap-loan-amt := 4000.00                                                           /* vt6
+        escape bottom                                                                          /* vt6
+      end-norec                                                                                /* vt6
+      if at.action-flag = 'A' and at.action-date ge #last-6-mon                                /* vt6
+        if at.member-cn = #id-number-a and at.cap-ind = 'Y'
+          if at.cap-loan-amt le 4000.00                                                         /* vt6
+            move at.cap-loan-amt to at-v.cap-loan-amt
+            escape bottom
+          else                                                                                  /* vt6
+            move 4000.00 to at-v.cap-loan-amt                                                   /* vt6
+            escape bottom                                                                       /* vt6
+          end-if
+        end-if
+      end-if
+    end-find                                                                                   /* vt4 /\ 20130102 /\
+*
+    if at-v.cap-loan-amt = 0.00                                                             /* vt5 \/
+      at-v.cap-loan-amt := 4000.00
+    end-if                                                                                  /* vt5 /\
+*
+    IF #AIL-LOAN-ONLY                                                /* PM19
+      ADD #AIP-AMT TO #TOT-AIP-AMT
+      WRITE ST-V.ID-NUMBER' perform create-cap-loan' X-ALT-LP-AMT (#CAP-X)
+        'aip-amt=' #AIP-AMT
+
+    ELSE                                                             /* PM19
+      ADD #CIP-AMT TO #TOT-CIP-AMT                                   /* PM19
+    END-IF                                                           /* PM19
+*    MOVE #NEW-ALOT TO #TOT-AMT-NEEDED
+*
+* write st-v.id-number 'before call to create-cap-loan'
+    PERFORM CREATE-CAP-LOAN
+    UPDATE (XX.)
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF                                                      /* END DW4
+*
+  IF NOT #FOUND-NEW-CAP
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  RESET #FOUND-AT
+  READ AT-V BY SSN FROM ST-V.SSN
+    IF AT-V.SSN NE ST-V.SSN
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF   (AT-V.INTRO-FLAG NE 'V')
+        AND (AT-V.ACTION-FLAG = 'A')
+        AND (AT-V.CAP-IND = 'Y')
+      MOVE TRUE TO #FOUND-AT
+      ESCAPE BOTTOM
+    END-IF
+  END-READ
+*
+  IF NOT #FOUND-AT
+    WRITE ST-V.ID-NUMBER 'AT not found'
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF ST-V.BRIDGER-IND NE 'Y'             /* PM20
+    PERFORM CREATE-EXCEPTION-FILE        /* PM20
+    END TRANSACTION                      /* PM20
+    ESCAPE TOP                           /* PM20
+  END-IF                                 /* PM20
+*
+  IF NOT AT-V.CAP-LOAN-AMT = 1000 OR = 2000 OR = 2500
+      OR = 3000 OR = 4000 OR = 5000
+      AND NOT #AIL-LOAN-ONLY      /* DW4
+    WRITE  ST-V.ID-NUMBER 'AT Cap loans must be $1K,2K,2.5K,3K,4K,or 5K'
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF AT-V.CAP-TYPE = 'G'                                         /* PM19
+    PERFORM CALC-TOTAL-AMT-NEEDED
+*
+    RESET #EXCLUDED-FUTURE                                       /* DW16
+    IF ALOT-AMT LT #TOT-AMT-NEEDED
+      MOVE TRUE TO #EXCLUDED-FUTURE
+      WRITE ST-V.ID-NUMBER 'Used amt needed excluding future dated pols'
+      MOVE #TOT-AMT-NEEDED-EXCLUDING-FUTURE TO #TOT-AMT-NEEDED
+      MOVE #TOT-PREMS-ONLY-EXCLUDING-FUTURE TO #TOT-PREMS-ONLY
+    END-IF                                                       /* END DW16
+*
+*   IF ALOT-AMT LE #TOT-AMT-NEEDED
+    IF ALOT-AMT LE #TOT-PREMS-ONLY                               /* DW16
+      WRITE ST-V.ID-NUMBER 'ALOT AMT of' ALOT-AMT
+*       'less than prem due of' #TOT-AMT-NEEDED 'AIP not started'
+        ' less than prem due of' #TOT-PREMS-ONLY 'AIP not started' /* DW16
+      RESET #AIP-AMT
+    ELSE
+*     COMPUTE #AIP-AMT = ALOT-AMT - #TOT-AMT-NEEDED
+      COMPUTE #AIP-AMT = ALOT-AMT - #TOT-PREMS-ONLY              /* DW16
+      IF #EXCLUDED-FUTURE
+        WRITE ST-V.ID-NUMBER 'New AIP amt is' #AIP-AMT
+      END-IF                                                     /* END DW16
+      ADD #AIP-AMT TO #TOT-AIP-AMT
+    END-IF
+  ELSE                                                           /* PM19
+    #CIP-AMT := FUNCTION-LOAN-PAYMENT(<at-v.CAP-LOAN-AMT,CAP-TERM,ALLOT-STRT-AMT>) /* PM19                 /* vt2
+    ADD #CIP-AMT TO #TOT-CIP-AMT                                 /* PM19
+  END-IF                                                         /* PM19
+
+  PERFORM CREATE-CAP-LOAN                          /* DW4
+  UPDATE (XX.)
+  END TRANSACTION
+END-READ
+* END-FIND
+*
+WRITE (2) 'tot-new-loan-amt' #TOT-LOAN-AMT
+WRITE (2) 'tot-new-AIP-amt'  #TOT-AIP-AMT
+*
+END-SUBROUTINE
+*
+*************************************************************************
+DEFINE SUBROUTINE ISSUE-EIL-LOANS                                /* PM14
+************************************************************************
+*
+READ WORK 6 #INPUT-RECORD
+  write '=' #input-record
+  FIND (1) ST-V WITH MEMBER-KEY = #INPUT-RECORD
+    IF NO RECORDS FOUND
+      WRITE 'Record not found = ' #INPUT-RECORD
+    END-NOREC
+*
+    RESET #CAP-X #SUBMIT
+    FOR #I1 1 TO 9
+      IF  X-ALT-LP-IND (#I1) = 'E'
+          and st-v.x-first-place-fee(#i1) = 0        /* vt1 06202011
+        MOVE #I1 TO #CAP-X
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    IF #CAP-X = 0
+      WRITE 'Didn"t find policy' #INPUT-RECORD
+      ESCAPE BOTTOM
+    ELSE
+      #SUBMIT := TRUE
+    END-IF
+*
+    write 'right before real update' st-v.id-number
+    MOVE 'P'  TO ST-V.INTRO-FLAG
+    MOVE 'A'  TO ALOT-SW
+    MOVE '4'  TO ST-V.X-ALT-LP-IND (#CAP-X)
+    MOVE #1-MON-AGO-YYYYMM TO CAP-ENTRY-DATE
+    MOVE 999  TO ST-V.CONV-DURATION (#CAP-X)
+    move 'P'  to st-v.intro-flag                                                             /*
+    if st-v.cap-entry-date = 0
+      move #work-date-yyyymm to st-v.cap-entry-date                                           /* vt5
+*    move *datn to st-v.cap-entry-date                                                        /* vt5
+    end-if                                                                                    /* vt5
+*    MOVE 5000 TO AT-V.CAP-LOAN-AMT                                                          /* vt4 \/ 20130102 \/
+*
+    move st-v.id-number to #id-number-a
+    find at with at.ssn = st-v.ssn
+      if no                                                                                    /* vt6
+        at-v.cap-loan-amt := 4000.00                                                           /* vt6
+        escape bottom                                                                          /* vt6
+      end-norec                                                                                /* vt6
+      if at.action-flag = 'A' and at.action-date ge #last-6-mon                                /* vt6
+        if at.member-cn = #id-number-a and at.cap-ind = 'Y'
+          if at.cap-loan-amt le 4000.00                                                         /* vt6
+            move at.cap-loan-amt to at-v.cap-loan-amt
+            escape bottom
+          else                                                                                  /* vt6
+            move 4000.00 to at-v.cap-loan-amt                                                   /* vt6
+            escape bottom                                                                       /* vt6
+          end-if                                                                                /* vt6
+        end-if
+      end-if
+    end-find                                                                                   /* vt4 /\ 20130102 /\
+*
+    if at-v.cap-loan-amt = 0.00                                                             /* vt5 \/
+      at-v.cap-loan-amt := 4000.00
+    end-if                                                                                  /* vt5 /\
+*
+    PERFORM CREATE-CAP-LOAN
+    write 'after create-cap-loan'
+    PERFORM ADJUST-INTEREST      /* PM22
+    UPDATE (0699)
+    write 'after updateof the processed record'
+  END-FIND
+*
+  END TRANSACTION
+*
+  IF #SUBMIT
+    #CGA-CLERK := 'EDS'
+    CALLNAT 'GPBSEZLP'
+      ST-V.ID-NUMBER
+      #CAP-X
+      #CGA-CLERK
+  END-IF
+END-WORK
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALC-TOTAL-AMT-NEEDED
+************************************************************************
+*
+FOR #FST-X 1 TO 9   /* get 1st active pol
+  IF ST-V.STATUS (#FST-X) = 'D'
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF #FST-X GT 9
+  MOVE 1 TO #FST-X
+END-IF
+*
+RESET #TOT-AMT-NEEDED #HAS-FBR
+RESET #TOT-AMT-NEEDED-EXCLUDING-FUTURE                        /* DW16
+*
+FOR #I1 1 TO 9
+  IF   (ST-V.STATUS (#I1) = 'D')
+      AND (ST-V.RID-PLAN (#I1) NE ' ')
+    MOVE TRUE TO #HAS-FBR
+  END-IF
+END-FOR
+*
+IF #HAS-FBR
+  MOVE ST-V.ID-NUMBER TO #ID
+  CALLNAT 'GRIDCSXX' USING
+    #ID
+    #AT-RID-ATTACH-FAC-AMT
+    #AT-RID-ATTACH-PLAN
+    #AT-RID-PLAN            (1:5)
+    #AT-RID-ATTACH-ISS-DT   (1:5)
+    #AT-TOT-FBR-PREM
+    #EX-FBR-PREM-BY-LINE    (1:9)
+    #EX-SPS-DB-BY-LINE      (1:9)
+    #EX-DEP-DB-BY-LINE      (1:9)
+    #EX-EACH-DEP-DB-BY-LINE (1:9)
+    #NUM-ELIG-CHILDREN
+    #NUM-ELIG-CHILDREN-UNDER-6-MON
+    #TOT-CHILD-DB
+    #RID-TEXT
+*
+  IF #RID-TEXT NE ' '
+    WRITE ST-V.ID-NUMBER 'FBR ERROR MESSAGE' #RID-TEXT
+  END-IF
+END-IF
+*
+FOR #I1 1 TO 9
+  IF   (ST-V.STATUS (#I1) = 'D')
+      AND (ST-V.PAY-STATUS (#I1) LE '40')
+      AND (ST-V.PAID-UP-DATE-YYYYMM (#I1) GE #PARM-YYYYMM) /* not pd-up
+    IF   (ST-V.PAID-UP-DATE-YYYYMM (#I1) = #PARM-YYYYMM) /*  pd-up
+      IGNORE
+    ELSE
+*     IF ST-V.MODE (#I1) = 'G' OR = 'M' OR = 'A' OR = 'S' OR = 'Q'  /* DW8
+      IF ST-V.MODE (#I1) = 'G'                                      /* DW8
+        ADD (ST-V.ANNUAL-PREM (#I1) / 12) TO #TOT-AMT-NEEDED
+*
+        IF ST-V.PAID-TO-DATE-YYYYMM (#I1) LT #PARM-YYYYMM /*Not Paid in adv DW16
+          ADD (ST-V.ANNUAL-PREM (#I1) / 12) TO #TOT-AMT-NEEDED-EXCLUDING-FUTURE
+        END-IF                                               /* END DW16
+      END-IF
+*
+      IF #HAS-FBR
+        ADD #EX-FBR-PREM-BY-LINE(#I1) TO #TOT-AMT-NEEDED
+        ADD #EX-FBR-PREM-BY-LINE(#I1) TO #TOT-AMT-NEEDED-EXCLUDING-FUTURE /*DW16
+      END-IF
+*
+      PERFORM CALC-DUES
+      ADD #SVC-FEE TO #TOT-AMT-NEEDED
+      ADD #SVC-FEE TO #TOT-AMT-NEEDED-EXCLUDING-FUTURE    /* DW16
+    END-IF
+  END-IF
+END-FOR
+*
+RESET #LOAN-PMT  /* GET AIP AMOUNT from AT record                 /* DW16
+*
+IF #FOUND-AT                    /* Get Loan Pmt needed from AT record
+  IF at-v.CAP-IND = 'Y' AND (at-v.CAP-LOAN-AMT NE 0)                                                  /* vt2
+    #LOAN-PMT :=
+      FUNCTION-LOAN-PAYMENT(<at-v.CAP-LOAN-AMT,CAP-TERM,ALLOT-STRT-AMT>) /* DW18                      /* vt2
+  END-IF
+END-IF
+*
+MOVE #TOT-AMT-NEEDED                   TO #TOT-PREMS-ONLY
+MOVE #TOT-AMT-NEEDED-EXCLUDING-FUTURES TO #TOT-PREMS-ONLY-EXCLUDING-FUTURES
+ADD #LOAN-PMT TO #TOT-AMT-NEEDED
+ADD #LOAN-PMT TO #TOT-AMT-NEEDED-EXCLUDING-FUTURE              /* END DW16
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-CAP-LOAN                                /* DW4
+************************************************************************
+*
+PERFORM GET-NAME-ADDR
+*
+* * * *UPDATE-RECORD
+*
+MOVE #CAP-X TO #X1
+*
+MOVE  ST-V.DATE-ACCT-UPDATE TO #HOLD-ACCTG-DATE
+MOVE #PARM-YYYYMMDD TO ST-V.DATE-ACCT-UPDATE
+MOVE *DATN TO ST-V.DTS-DATN
+MOVE *TIMN TO ST-V.DTS-TIMN
+*
+RESET  ST-V.X-ACCUM-INTEREST    (#X1)
+RESET  ST-V.X-NXT-YR-ACCUM-INT  (#X1)
+RESET  ST-V.X-INTEREST-RECEIVED (#X1)
+RESET  ST-V.X-BILL-INTEREST-AMT (#X1)
+MOVE 1.5               TO ST-V.X-INTEREST-RATE (#X1)
+MOVE #PARM-YYYYMMDD    TO ST-V.X-LOAN-DATE     (#X1)
+MOVE AT-V.CAP-LOAN-AMT TO ST-V.X-LOAN-AMOUNT   (#X1)
+ADD AT-V.CAP-LOAN-AMT  TO #TOT-LOAN-AMT
+MOVE '0'               TO ST-V.X-BILL-SW       (#X1)
+*
+IF #AIP-AMT NE 0
+  MOVE #AIP-AMT TO ST-V.X-ALT-LP-AMT    (#X1)
+  MOVE '2'      TO ST-V.X-ALT-LP-IND    (#X1)
+END-IF
+*
+IF #CIP-AMT NE 0                                        /* PM19
+  ST-V.X-ALT-LP-AMT (#X1) := #CIP-AMT                   /* PM19
+  ST-V.X-ALT-LP-IND (#X1) := '8'                        /* PM19
+END-IF                                                  /* PM19
+*
+PERFORM UPDATE-LOAN-STATUS                             /* TT1
+*
+RESET ST-V.BRIDGER-IND                                  /* PM20
+*
+ASSIGN ACCT-REG.ID-NUMBER = ST-V.ID-NUMBER
+ASSIGN ACCT-REG.NAME = ST-V.NAME
+*
+CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #X1     /* DW10
+MOVE #POL-NUM TO ACCT-REG.POLICY-NUMBER            /* DW10
+*
+IF #HOLD-ACCTG-DATE > 0
+  ASSIGN ACCT-REG.DATE-LAST-ACCT-UPDATE = #HOLD-ACCTG-DATE
+ELSE
+  ASSIGN ACCT-REG.DATE-LAST-ACCT-UPDATE = #PARM-YYYYMMDD
+END-IF
+*
+RESET ACCT-REG.SG-CATEGORY-1 (*)                 /* PM5
+  ACCT-REG.SG-CATEGORY-2 (*)                 /* PM5
+  ACCT-REG.SG-AMOUNT     (*)                 /* PM5
+*
+* MOVE #PARM-YYYYMMDD TO ACCT-REG.TRANSACTION-DATN /* to be next month  PM22
+IF #EIL-LOAN-ONLY                                /* PM14
+  ACCT-REG.TRANSACTION-DATN := #DATN             /* PM22
+  MOVE #DATN TO ACCT-REG.ACCT-DATE               /* PM22
+  ACCT-REG.TRANSACTION-TIMN := *TIMN             /* PM14
+  RESET ACCT-REG.MONTH-END                       /* PM14
+ELSE                                             /* PM14
+  MOVE #PARM-YYYYMMDD TO ACCT-REG.TRANSACTION-DATN /* to be next month  PM22
+  RESET                ACCT-REG.TRANSACTION-TIMN
+  MOVE #PARM-YYYYMMDD TO ACCT-REG.ACCT-DATE      /* PM22
+  MOVE 'Y' TO ACCT-REG.MONTH-END                 /* DW12
+END-IF                                           /* PM14
+*
+MOVE 'EDS'          TO ACCT-REG.CLERK-ID
+MOVE *INIT-ID       TO ACCT-REG.TERMINAL-ID
+MOVE #PARM-YYYYMMDD TO ACCT-REG.DESC-ISSUE-DATE
+ASSIGN ACCT-REG.DESC-LIT = 'IRT '
+ASSIGN ACCT-REG.DESC-RATE = #INT-RATE
+*
+ASSIGN ACCT-REG.TXN-CODE = 'NEWL'
+*
+* ASSIGN ACCT-REG.DEBIT-AMOUNT  = 0           /* DW11
+* ASSIGN ACCT-REG.CREDIT-AMOUNT = 0
+* ASSIGN ACCT-REG.SEQUENCE-NUM  = 1
+* MOVE 110 TO ACCT-REG.TXN-ACCT-NUMBER
+* move '$' to ACCT-REG.CASH-CODE                     /* DW7
+* STORE ACCT-REG
+*
+* ASSIGN ACCT-REG.DEBIT-AMOUNT = 0
+* ASSIGN ACCT-REG.CREDIT-AMOUNT = 0
+* ASSIGN ACCT-REG.TXN-ACCT-NUMBER = 410
+* ASSIGN ACCT-REG.SEQUENCE-NUM = 2
+* STORE ACCT-REG                            /* END DW11
+*
+*** MOVE '$' TO ACCT-REG.CASH-CODE                     /* DW7   /* vt3
+move 'M' to acct-reg.cash-code                                  /* vt3
+* MOVE 'Y' TO ACCT-REG.MONTH-END                     /* DW12 PM15
+ASSIGN ACCT-REG.DESC-RATE = #INT-RATE
+ASSIGN ACCT-REG.CREDIT-AMOUNT = 0
+ASSIGN ACCT-REG.DEBIT-AMOUNT = AT-V.CAP-LOAN-AMT
+ASSIGN ACCT-REG.TXN-ACCT-NUMBER = 110
+ASSIGN ACCT-REG.SEQUENCE-NUM = 3
+ASSIGN ACCT-REG.SG-CATEGORY-1 (1) = 'CP'                 /* PM5
+ASSIGN ACCT-REG.SG-CATEGORY-2 (1) = '**'                 /* PM5
+ASSIGN ACCT-REG.SG-AMOUNT     (1) = AT-V.CAP-LOAN-AMT    /* PM5
+*
+STORE ACCT-REG
+*
+RESET TR-REG-V
+RESET #TR-LOG-FIL-MNT-DESC
+MOVE 'ALP AMT' TO #TR-L-SALP-LB2
+*
+DECIDE FOR FIRST CONDITION                               /* PM14
+  WHEN #AIL-LOAN-ONLY                                    /* DW4
+    #TR-L-SALP-FLG := 'L'                                /* DW4
+  WHEN #EIL-LOAN-ONLY                                    /* PM14
+    #TR-L-SALP-FLG := 'E'                                /* PM14
+  WHEN #CIL-LOAN-ONLY                                    /* PM19
+    #TR-L-SALP-FLG := 'C'                                /* PM19
+  WHEN NONE
+    #TR-L-SALP-FLG := ' '
+END-DECIDE
+*
+IF #EIL-LOAN-ONLY OR #CIL-LOAN-ONLY                      /* PM14 PM19
+  MOVE EDITED ST-V.X-ALT-LP-AMT (#CAP-X) (EM=ZZZZ9.99)   /* PM14
+    TO #TR-L-SALP-AMT                                 /* PM14
+  TR-REG-V.TRANSACTION-DATN := *DATN                     /* PM14
+  TR-REG-V.TRANSACTION-TIMN := *TIMN                     /* PM14
+ELSE                                                     /* PM14
+  MOVE '0' TO #TR-L-SALP-AMT
+  MOVE #PARM-YYYYMMDD TO TR-REG-V.TRANSACTION-DATN /* to be next month
+  MOVE 0120000 TO TR-REG-V.TRANSACTION-TIMN /* force tim to 01:20am DW2
+END-IF                                                   /* PM14
+*
+MOVE 'AM-SALF ALP FLG'          TO #TR-L-SALP-LB1
+*
+#TR-L-BRID-LBL := 'BRIDGER'                              /* PM20
+#TR-L-BRID     := 'Y'                                    /* PM20
+*
+MOVE #TR-LOG-FIL-MNT-DESC       TO TR-REG-V.OLD-DATA (1)
+MOVE ST-V.X-ALT-LP-IND (#CAP-X) TO #TR-L-SALP-FLG
+MOVE EDITED ST-V.X-ALT-LP-AMT (#CAP-X)(EM=Z,ZZZ.99-) TO #TR-L-SALP-AMT
+#TR-L-BRID     := 'N'                                    /* PM20
+*
+MOVE #TR-LOG-FIL-MNT-DESC       TO TR-REG-V.NEW-DATA (1)
+*
+MOVE ST-V.ID-NUMBER             TO TR-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND           TO TR-REG-V.PROCESS-IND
+MOVE #NAME                      TO TR-REG-V.NAME
+MOVE #HOLD-ACCTG-DATE           TO TR-REG-V.DATE-LAST-UPDATE
+MOVE *INIT-ID                   TO TR-REG-V.TERMINAL-ID
+MOVE 'EDS'                      TO TR-REG-V.CLERK-ID
+STORE TR-REG-V
+*
+ADD 1 TO #CNT-2
+IF #EIL-LOAN-ONLY                                /* PM14
+  DISPLAY (3)        #CNT-2                      /* PM14
+    'CN'             ST-V.ID-NUMBER              /* PM14
+    'ISS-DT'         ST-V.ISSUE-DATE (#CAP-X)    /* PM14
+    'AT/Loan-amt'    AT-V.CAP-LOAN-AMT           /* PM14
+    'Amount Applied' ST-V.EZPAY-CAP-LOAN-AMOUNT  /* PM14
+    'NEW/EIP/IND'    ST-V.X-ALT-LP-IND (#CAP-X)  /* PM14
+    'NEW/EIP/AMT'    ST-V.X-ALT-LP-AMT (#CAP-X)  /* PM14
+ELSE                                             /* PM14
+  DISPLAY (2) #CNT-2
+    'CN'       ST-V.ID-NUMBER
+    'ISS-DT'   ST-V.ISSUE-DATE (#CAP-X)
+    'AT/Loan-amt' AT-V.CAP-LOAN-AMT
+    'AMT/NEEDED'  #TOT-AMT-NEEDED
+    'AMT/NEEDED/excluding/future'  #TOT-AMT-NEEDED-EXCLUDING-FUTURE  /* DW16
+    'ALOT/AMT'    ST-V.ALOT-AMT
+    'NEW/AIP/IND' ST-V.X-ALT-LP-IND (#CAP-X)
+    'NEW/AIP/AMT' ST-V.X-ALT-LP-AMT (#CAP-X)
+END-IF                                           /* PM14
+*
+FIND (1) CT-V WITH CT-V.CONTACT-ID = ST-V.MEMBER-CONTACT-ID     /* PM22
+  #NAME := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME,CT-V.LAST-NAME,CT-V.SUFFIX>) /* PM22
+END-FIND                                                        /* PM22
+
+* MOVE ST-V.NAME TO #NAME    /* Create AFB File of New CAP Loans   PM22 DW9
+*
+* RESET #LAST #MI #FIRST-20
+* CALLNAT 'GFMLNSXX' /* split name
+*   #NAME
+*   #FIRST-20
+*   #MI
+*   #LAST
+*   #ERR-MSG
+*
+MOVE EDITED ST-V.X-LOAN-AMOUNT (#X1)(EM=ZZZZ.99) TO #AMT-7
+*
+COMPRESS ST-V.SSN-A
+  #TAB CT-V.LAST-NAME    /* PM22
+  #TAB CT-V.FIRST-NAME   /* PM22
+  #TAB CT-V.MIDDLE-NAME  /* PM22
+  #TAB
+  #TAB
+  #TAB
+  #TAB #AMT-7
+  #TAB #PARM-MM-A #PARM-DD-A #PARM-YYYY-A
+  #TAB
+  INTO #AFB-FILE LEAVING NO
+WRITE WORK 3 #AFB-FILE                       /* End DW9
+*
+write 'right before request for pol print and create-e-mail'
+PERFORM REQUEST-POLICY-PRINT                                 /* vt1
+write 'before creating the e-mail'
+PERFORM CREATE-EMAIL                                         /* vt1
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE GET-NAME-ADDR
+************************************************************************
+*
+MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID
+MOVE #CAP-X TO #CONTACT-SEG
+CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD /*get owner nam/addr
+COMPRESS #FULL-RANK #LAST-NAME INTO #SCN-SALUT
+COMPRESS #SCN-SALUT ':' INTO #SCN-SALUT LEAVING NO
+MOVE #EXT-FORMATED-NAME  TO #SCN-LETR-NAME
+MOVE #FIRST-ADDRESS  TO #SCN-ADDR1
+MOVE #SECOND-ADDRESS TO #SCN-ADDR2
+MOVE #THIRD-ADDRESS  TO #SCN-ADDR3
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALC-DUES
+************************************************************************
+*
+RESET #SVC-FEE
+IF  (ST-V.ISSUE-DATE (#I1) LT 19970101)
+    OR (ST-V.MONTH-ALLOC-AMT (#I1) = 999.99)
+    OR (ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    OR = 'O' OR = 'P' OR = 'Q')
+    OR (ST-V.DUES-ALL-PAID-IND = 'Y')
+    OR (#I1 NE #FST-X)
+    OR (ST-V.PROCESS-IND NE 'G')           /* MUST BE G/F         DW21
+  ESCAPE ROUTINE
+END-IF
+*
+DECIDE ON FIRST VALUE ST-V.PLAN-A2 (#I1)
+  VALUE 'OL' MOVE #SVC-FEE-OL TO #SVC-FEE
+* VALUE 'RT' MOVE #SVC-FEE-TM TO #SVC-FEE     /* YK1
+* VALUE 'LT' MOVE #SVC-FEE-TM TO #SVC-FEE     /* YK1
+  VALUE 'SP' MOVE #SVC-FEE-SP TO #SVC-FEE
+  VALUE '2P' MOVE #SVC-FEE-2P TO #SVC-FEE
+  VALUE '3P' MOVE #SVC-FEE-3P TO #SVC-FEE
+  VALUE '4P' MOVE #SVC-FEE-4P TO #SVC-FEE
+  VALUE '5P' MOVE #SVC-FEE-5P TO #SVC-FEE
+  VALUE '6P' MOVE #SVC-FEE-6P TO #SVC-FEE
+  VALUE '7P' MOVE #SVC-FEE-7P TO #SVC-FEE
+  VALUE '8P' MOVE #SVC-FEE-7P TO #SVC-FEE
+  VALUE '9P' MOVE #SVC-FEE-7P TO #SVC-FEE
+  VALUE '20' MOVE #SVC-FEE-20 TO #SVC-FEE
+  VALUE '30' MOVE #SVC-FEE-30 TO #SVC-FEE
+  NONE        IGNORE
+END-DECIDE
+*
+* IF (ST-V.PLAN-A1 (#I1) GE 'U') AND (ST-V.PLAN-A1 (#I1) LE 'Z')    /* YK1
+IF FUNCTION-TERM-POLICY(<ST-V.PLAN(#I1)>)                           /* YK1
+  MOVE #SVC-FEE-TM TO #SVC-FEE
+END-IF
+*
+IF (#SVC-FEE = 0) AND (ST-V.PLAN-A2 (#I1) = MASK (NN))
+  IF ST-V.PLAN-N2 (#I1) LE 19 MOVE #SVC-FEE-10 TO #SVC-FEE ELSE
+    IF ST-V.PLAN-N2 (#I1) LE 29 MOVE #SVC-FEE-20 TO #SVC-FEE ELSE
+      IF ST-V.PLAN-N2 (#I1) LE 34 MOVE #SVC-FEE-30 TO #SVC-FEE ELSE
+        MOVE #SVC-FEE-OL TO #SVC-FEE
+      END-IF END-IF END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-EXCEPTION-FILE                          /* PM20
+************************************************************************
+*
+MOVE EDITED ST-V.ID-NUMBER (EM=999999) TO #EXCEPTION-RECORD
+WRITE WORK 4 #EXCEPTION-RECORD
+RESET #EXCEPTION-RECORD
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE REQUEST-POLICY-PRINT                       /* vt1 \/
+*****************
+*
+#PROCESS-NAME    := 'POLPRINT'
+#ID-NUMBER       := #POL-NUM
+#ORDER-LIST      := 'LoanOnly'
+
+CALLNAT 'GPRN0001' #PROCESS-NAME #ID-NUMBER #ORDER-LIST #ERROR-CODE
+*
+END-SUBROUTINE                                               /* vt1 /\
+*
+*****************
+DEFINE SUBROUTINE CREATE-EMAIL                                      /* vt1 \/
+*****************
+*
+RESET EMAIL-INFORMATION #CONTACT-ID #NAME #E-MAIL
+*
+#INS-MAIL-CODE := INS-MAIL-CODE       /* YK3
+MOVE ST-V.MEMBER-CONTACT-ID TO #CONTACT-ID
+*
+CALLNAT 'RANKN001'
+  #PASS-COMMAND
+  ST-V.RANK
+  #MIL-SERVICE
+  #EDIT-INVALID
+  #DISPL
+  #RANK-LITERAL
+  #RANK-5
+*
+  #CONTACT-ID
+  #RANK-ABBR
+  #LETTER-ENV
+  #SALUTATION
+  #SALUTATION-WITH-NAME
+*
+#NAME := #SALUTATION-WITH-NAME
+*
+#E-MAIL := FUNCTION-PREFFERED-EMAIL (< #CONTACT-ID >)
+*
+TEMPLATE-TYPE   := #LOAN-FUNDED
+PENDING-CN      := ST-V.ID-NUMBER
+INSURED-NAME    := #NAME
+OWNER-EMAIL     := #E-MAIL
+DAL-CN          := PENDING-CN
+EMAIL-INFORMATION.POLICY-NUMBER   := #POL-NUM
+IF #INS-MAIL-CODE = #RESTRICTED-MAIL-CODE
+  OWNER-EMAIL     := #RESTRICTED-EMAIL
+END-IF
+WRITE WORK FILE 5 EMAIL-INFORMATION
+*
+END-SUBROUTINE                                                     /* vt1 /\
+*
+************************************************************************
+DEFINE SUBROUTINE ADJUST-INTEREST                                  /* PM22
+************************************************************************
+*
+#LOAN-2       := ST-V.X-LOAN-AMOUNT (#X1)                                                                     /* TT1
+#INTEREST   := FUNCTION-CALCULATE-INTEREST(<ST-V.X-INTEREST-RATE(#X1),#LOAN-2,#DATN,ST-V.X-LOAN-DATE(#X1),    /* TT1
+  ST-V.X-ACCUM-INTEREST(#X1),ST-V.X-NXT-YR-ACCUM-INT(#X1)>)
+*
+SUBTRACT #INTEREST FROM ST-V.X-NXT-YR-ACCUM-INT (#X1)
+*
+END-SUBROUTINE
+*
+********************************************
+DEFINE SUBROUTINE UPDATE-LOAN-STATUS /* TT1
+********************************************
+RESET #ISN #POS #HOLD-NOTE
+*
+FND1.
+FIND LNS-V WITH ID-NUMBER = ST-V.ID-NUMBER
+  IF LOAN-STATUS = 'P'
+    #ISN := *ISN
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+* Update
+IF #ISN > 0
+  GT1.
+  GET LNS-V #ISN
+  LNS-V.LOAN-STATUS           := 'C'
+  LNS-V.LOAN-ISSUE-DATE       := X-LOAN-DATE(#X1)
+  LNS-V.LOAN-INITIAL-AMOUNT   := 4000
+  LNS-V.LAST-UPD-USER         := *PROGRAM
+  LNS-V.LAST-UPD-DATE         := *DATN
+  LNS-V.LAST-UPD-TIME         := *TIMN
+  UPDATE (GT1.)
+  PERFORM UPDATE-NOTE
+END-IF
+*
+**************
+END-SUBROUTINE
+**************
+
+******************************
+DEFINE SUBROUTINE UPDATE-NOTE /* TT1
+******************************
+FND2.
+FIND(1) NT-V WITH NT-V.ID-NUMBER = ST-V.ID-NUMBER
+END-FIND
+*
+GT2.
+GET NT-V *ISN(FND2.)
+FOR I NT-V.C*NOTE-TABLE TO 1 STEP -1
+  COMPRESS 'Issued' PARM INTO #HOLD-NOTE
+  EXAMINE NOTE-TEXT(I) FOR 'Pending' REPLACE WITH #HOLD-NOTE GIVING POSITION #POS
+  IF #POS = 0
+    ESCAPE TOP
+  END-IF
+  NOTE-DATE(I)     := *DATN
+  NOTE-CLERK-ID(I) := 'EDS'
+  UPDATE(GT2.)
+  ESCAPE BOTTOM
+END-FOR
+*
+**************
+END-SUBROUTINE
+**************
+
+END

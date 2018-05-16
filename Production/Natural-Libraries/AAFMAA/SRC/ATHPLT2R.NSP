@@ -1,0 +1,208 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPLTII- LOAD LT II rates from 4 sets of files
+*
+*
+DEFINE DATA
+LOCAL
+*
+1 #WORK-REC-IN
+ 2 #ISSUE-AGE             (A2)
+ 2 #1ST-TAB               (A1)
+ 2 #PREMS-X     (A1/400)
+*
+1 #PREM-A           (A5)
+1 REDEFINE #PREM-A
+ 2 #PREM-X         (A1/5)
+1 REDEFINE #PREM-A
+ 2 #PREM-N          (N3.2)
+*
+1 #KEY          (A5)
+1 REDEFINE #KEY
+ 2 #KEY-TYPE           (A2)     /* (ST/SE/SS)
+ 2 #KEY-SMOKER-FLAG    (A1)     /* N or S
+ 2 #KEY-ISSUE-AGE      (A2)     /* age 18 to 65  /* max 48 rates
+*
+1 VT-V VIEW OF A-PRODUCT-RATES
+ 2 VAR-TERM-KEY           (A5)
+* 2 VAR-TERM-RATE          (P3.2/65)
+* 2 VAR-TERM-RATE-2005     (P3.2/65)
+* 2 VAR-TERM-RATE-2005-06-FEMALE (P3.2/65)
+*
+ 2 VAR-TERM-RATE-2008-MALE-NS-SS  (N3.2/65)
+*
+1 VT-18-V VIEW OF A-PRODUCT-RATES
+ 2 VAR-TERM-KEY           (A5)
+* 2 VAR-TERM-RATE          (P3.2/65)
+* 2 VAR-TERM-RATE-2005     (P3.2/65)
+* 2 VAR-TERM-RATE-2005-06-FEMALE (P3.2/65)
+*
+ 2 VAR-TERM-RATE-2008-MALE-NS-SS  (N3.2/65)
+
+1 #TAB       (A1) INIT <H'09'>
+*
+1 #I1                     (I2)
+1 #I2                     (I2)
+1 #I3                     (I2)
+1 #I4                     (I2)
+1 #I5                     (I2)
+*
+1 #MALE-FEMALE            (A1)
+1 #VT-FOUND               (L)
+1 #VT-ISN                 (P8)
+1 #LAST-PREM-N            (N3.2)
+*
+END-DEFINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+*
+ON ERROR
+    WRITE (2) '*E R R O R - N R    ' *ERROR-NR
+            / '*E R R O R - L I N E' *ERROR-LINE
+            / 'C U R R E N T  R C D'
+END-ERROR
+*
+* FORMAT (2) LS=66 PS=133
+
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+* read vt-v 
+*   for #i1 1 to 65 
+*     if VT-V.VAR-TERM-RATE-2008-MALE-NS-SS (#i1) ne 0 
+*       display (2) vt-v.var-term-key 
+*                   vt-v.VAR-TERM-RATE-2008-MALE-NS-SS (#i1) 
+*                    #i1 
+*       reset vt-v.VAR-TERM-RATE-2008-MALE-NS-SS (#i1) 
+*    end-if 
+*  end-for 
+* 
+*   update (0071) 
+*   end transaction 
+* end-read 
+* 
+READ WORK FILE 1 #WORK-REC-IN     /* STANDARD NON-SMOKER Male
+  IF #ISSUE-AGE NE MASK (NN)      /* END of FILE
+    ESCAPE BOTTOM
+  END-IF
+*
+  COMPRESS 'SS' 'N' #ISSUE-AGE INTO #KEY LEAVING NO
+  MOVE 'M' TO #MALE-FEMALE
+  PERFORM BUILD-PREMS
+END-WORK
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE BUILD-PREMS
+* * * * * * * * * * * * * * *
+*
+MOVE TRUE TO #VT-FOUND
+FIND VT-V WITH VAR-TERM-KEY = #KEY
+  IF NO RECORDS FOUND
+    RESET #VT-FOUND
+  END-NOREC
+*
+  MOVE *ISN TO #VT-ISN
+END-FIND
+*
+IF #VT-FOUND
+  GET VT-V #VT-ISN
+ELSE
+  RESET VT-V
+END-IF
+*
+MOVE #KEY TO VT-V.VAR-TERM-KEY
+*
+MOVE 4 TO #I2     /* Terms start at 5
+*
+FOR #I1 1 TO 400    /* Parse thru input
+*  if #prems-x (#i1) = #tab
+*    write 'tab #I1=' #i1 'I2=' #i2 'Iss-age=' #issue-age
+*  else
+*    write #prems-x (#i1) 'I1=' #i1 'I2=' #i2 'iss-age=' #issue-age
+*  end-if
+*
+  IF ((#PREMS-X (#I1) = #TAB) AND (#PREMS-X (#I1 - 1) = #TAB)) /* Back to back TABS
+   OR (#I2 = 30)                                               /* End of STANDARD
+*   write 'END-OF-DATA I1 =' #i1 'nxt' #prems-x (#i1 + 1) 'I2=' #i2
+    ESCAPE BOTTOM   /* End of data
+  END-IF
+*
+  IF #PREMS-X (#I1) = #TAB OR = ' '   /* Beg of next prem or end of data
+    COMPUTE #I4 = #I1 - 1      /* Rightmost starting point of Input
+    ADD 1 TO #I2      /* TERM INDEX
+    RESET #PREM-N
+    FOR #I3 5 TO 1 STEP -1    /* build Prem Index
+      IF #PREMS-X (#I4)  = '.'      /* decimal point
+        ADD 1 TO #I3
+      ELSE
+        MOVE #PREMS-X (#I4) TO #PREM-X (#I3)
+      END-IF
+      SUBTRACT 1 FROM #I4
+*
+      IF  (#I4 = 0)
+       OR (#PREMS-X (#I4) = #TAB)   /* At left-most pos of Input
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*
+    IF   (#I2 GT 5)
+     AND (#PREM-N LT #LAST-PREM-N)
+      WRITE 'Next TERM rate lower than last one' #KEY #I2 #PREM-N 'last=' #LAST-PREM-N
+    END-IF
+    MOVE #PREM-N TO #LAST-PREM-N
+*
+    MOVE #PREM-N TO VT-V.VAR-TERM-RATE-2008-MALE-NS-SS (#I2)
+  END-IF
+END-FOR
+*
+IF #VT-FOUND
+  WRITE 'Updating Key=' #KEY   /* vt-v.lt2-rate-2008-band1 (*)
+  UPDATE (0109)
+ELSE
+  WRITE 'Creating Key=' #KEY   /* vt-v.lt2-rate-2008-band1 (*)
+  STORE VT-V
+END-IF
+*
+END TRANSACTION
+*
+IF #KEY-ISSUE-AGE = '20'  /* Issue age 18 and 19 have the same rates as issue age 20
+  MOVE '19' TO #KEY-ISSUE-AGE
+  FIND VT-18-V WITH VAR-TERM-KEY = #KEY
+    IF NO RECORDS FOUND
+      MOVE #KEY TO VT-18-V.VAR-TERM-KEY
+      MOVE VT-V.VAR-TERM-RATE-2008-MALE-NS-SS (*)
+        TO VT-18-V.VAR-TERM-RATE-2008-MALE-NS-SS (*)
+      STORE VT-18-V
+      WRITE 'Storing' #KEY
+      ESCAPE BOTTOM
+    END-NOREC
+*
+   MOVE VT-V.VAR-TERM-RATE-2008-MALE-NS-SS (*) TO VT-18-V.VAR-TERM-RATE-2008-MALE-NS-SS (*)
+*
+    UPDATE (0171)
+    WRITE 'Updating' #KEY
+  END-FIND
+*
+  MOVE '18' TO #KEY-ISSUE-AGE
+  FIND VT-18-V WITH VAR-TERM-KEY = #KEY
+    IF NO RECORDS FOUND
+      MOVE #KEY TO VT-18-V.VAR-TERM-KEY
+      MOVE VT-V.VAR-TERM-RATE-2008-MALE-NS-SS (*)
+        TO VT-18-V.VAR-TERM-RATE-2008-MALE-NS-SS (*)
+      STORE VT-18-V
+      WRITE 'Storing' #KEY
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    MOVE VT-V.VAR-TERM-RATE-2008-MALE-NS-SS(*) TO VT-18-V.VAR-TERM-RATE-2008-MALE-NS-SS (*)
+    UPDATE (0188)
+    WRITE 'Updating' #KEY
+  END-FIND
+END-IF
+*
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+END

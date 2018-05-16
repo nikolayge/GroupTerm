@@ -1,0 +1,465 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* MIB-PARS
+* Sept 9, 2016
+*
+DEFINE DATA
+PARAMETER
+ 1 RESP                 (A)  DYNAMIC
+ 1 p_Records#           (N2)
+ 1 p_Records(20)                        /* Assumption: Nine records max 
+   2 p_R-Match          (A3)        /* HIT/TRY
+   2 p_R-Forms#         (N2)
+   2 p_R-Coded#         (N2)        /* Forms with Code 
+   2 p_R-Notes#         (N2)        /* Forms with Note
+   2 p_R-Disputed#      (N2)        /* Forms Disputed
+   2 p_Forms (19)                   /* FormInstance 
+     3 p_Ref            (N2)        /* Form Ref#  
+     3 p_Type           (A4)        /* Code/Note/Disp (dispute note) 
+     3 p_Date           (A10)
+     3 p_Code#          (N2)
+     3 p_Text           (A120)      /* Code / Note 
+*
+ 1 p_Person     (20)
+   2 pp_State           (A)  DYNAMIC   /*  1
+   2 pp_Country         (A)  DYNAMIC   /*  2
+   2 pp_ZIP             (A)  DYNAMIC   /*  3        
+   2 pp_FN              (A)  DYNAMIC   /*  4       
+   2 pp_MN              (A)  DYNAMIC   /*  5       
+   2 pp_LN              (A)  DYNAMIC   /*  6         
+   2 pp_PX              (A)  DYNAMIC   /*  7        
+   2 pp_SX              (A)  DYNAMIC   /*  8         
+   2 pp_Occ             (A)  DYNAMIC   /*  9         
+   2 pp_Sex             (A)  DYNAMIC   /* 10         
+   2 pp_BD              (A)  DYNAMIC   /* 11         
+*
+ 1 p_Alt
+  2 alt_Name#           (N1)
+  2 alt_Names(5)
+    3 alt_FN            (A)  DYNAMIC
+    3 alt_MN            (A)  DYNAMIC
+    3 alt_LN            (A)  DYNAMIC
+  2 alt_DOB#            (N1)
+  2 alt_DOB             (A10/5)     
+
+ 1 p_Msg                (A)  DYNAMIC   
+ 1 p_RC                 (N4)        /* 1 xml error
+LOCAL
+ 1 v_Forms 
+   2 p_Ref              (N2)        /* Form Ref#  
+   2 p_Type             (A4)        /* Code/Note/Disp (dispute note) 
+   2 p_Date             (A10)
+   2 p_Code#            (N2)
+   2 p_Text             (A120)      /* Code / Note 
+*
+ 1 #r                   (I2)
+ 1 #i                   (I2)
+ 1 #j                   (I2)
+ 1 #k                   (I2)
+ 1 #fi                  (I2)
+ 1 #Cd                  (I2)
+
+ 1 v_A                  (A) DYNAMIC
+ 1 v_B                  (A) DYNAMIC
+ 1 RESP_Rec             (A) DYNAMIC 
+ 1 pars_B               (I2)
+ 1 pars_E               (I2)
+ 1 pars_L               (I2)
+ 1 pars_RB              (I2)
+ 1 pars_RE              (I2)
+ 1 pars_RL              (I2)
+ 1 pars_EK              (I2)  /* for key values
+*
+1 N01                   (N1)
+END-DEFINE
+
+ON ERROR
+    PRINT '-'(60)
+    / 'Error. Please notify MSS' 
+    / 'Pgm:' *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+    / '='#r
+    / '='#i
+    / '='#j
+    / '='pars_B  '='pars_RB
+    / '='pars_E  '='pars_RE
+    / '='pars_L  '='pars_RL
+    / '-'(60)
+    p_RC := 11
+    ESCAPE ROUTINE
+END-ERROR
+* PRINT *PROGRAM 'Ver-1'
+ EXAMINE RESP FOR '<TransResult>'  POSITION pars_B
+ EXAMINE RESP FOR '</TransResult>' POSITION pars_E
+ pars_B := pars_B + 13
+ pars_L := pars_E - pars_B
+ v_A := SUBSTR(RESP,pars_B, pars_L)
+
+ EXAMINE v_A FOR '<ResultCode'    POSITION pars_B
+ EXAMINE v_A FOR '</ResultCode>'  POSITION pars_E
+ pars_B := pars_B + 17
+ pars_L := pars_E - pars_B
+ v_B := SUBSTR(v_A, pars_B, pars_L)       /* Result: [ Success / Failure ]
+ IF v_B <> 'Success' 
+   EXAMINE RESP FOR '<ResultInfoDesc>'  POSITION pars_B
+   IF pars_B <> 0
+     EXAMINE RESP FOR '</ResultInfoDesc>' POSITION pars_E
+     pars_B := pars_B + 16
+     pars_L := pars_E - pars_B
+     p_Msg := SUBSTR(RESP,pars_B, pars_L)
+     p_RC := 2
+   ELSE
+     p_Msg := 'Parsing Error'
+     p_RC := 1
+   END-IF  
+   ESCAPE ROUTINE
+ END-IF  
+ 
+/*  Now r_ResultCode = 'Success'      */ 
+ 
+ EXAMINE v_A FOR '<RecordsFound>'   POSITION pars_B
+ EXAMINE v_A FOR '</RecordsFound>'  POSITION pars_E
+ pars_B := pars_B + 14
+ pars_L := pars_E - pars_B
+ v_B :=  SUBSTR(v_A,pars_B, pars_L)        /* Records: [ 3 ]
+ IF v_B = '0'
+    p_Records#    := 0
+    ESCAPE ROUTINE
+ END-IF
+* IF NOT v_B is (N1) Error -----------
+ p_Records# := val(v_B)
+
+ EXAMINE RESP FOR '<OLifE'     POSITION pars_B
+ EXAMINE RESP FOR '</OLifE>'   POSITION pars_E
+   pars_E := pars_E + 8
+   pars_L := pars_E - pars_B
+   RESP := SUBSTR(RESP, pars_B, pars_L) 
+* --------------------------------------------------------------------
+ FOR #r = 1 TO p_Records#
+     #fi := 0
+*    PRINT '--1- Record:' '[' #r  'of'  p_Records# ']'
+     COMPRESS '<Party id=Person_1_1_' #r INTO v_A  LEAVING NO SPACE
+*     PRINT '---This Party:' '[' v_A ']'
+     EXAMINE RESP FOR v_A GIVING POSITION pars_RB
+     IF #r < p_Records#
+       N01 := #r + 1
+       COMPRESS '<Party id=Person_1_1_' N01 INTO v_A  LEAVING NO SPACE
+*       PRINT '---Next Party:' '[' v_A ']'
+       EXAMINE RESP FOR v_A GIVING   POSITION pars_RE
+     ELSE                             /* Last Record
+        pars_RE := *LENGTH(RESP)      
+     END-IF
+     pars_RL := pars_RE - pars_RB                /* The length of the next records
+     RESP_Rec := SUBSTR(RESP, pars_RB, pars_RL)  /* Delete the next records        
+
+   /* -------------- Now r_Records <> 0 -------------- */       
+   
+   PERFORM sbr_Person
+   
+   /* -Type of find
+   EXAMINE RESP_Rec FOR '<RelationRoleCode'    POSITION pars_B
+   EXAMINE RESP_Rec FOR '</RelationRoleCode>'  POSITION pars_E
+   pars_B := pars_B + 26
+   pars_L := pars_E - pars_B
+   v_A := SUBSTR(RESP_Rec,pars_B, pars_L)
+   p_R-Match(#r) := v_A     /*  RelationRoleCode: [ HIT/TRY ]
+
+  /* ------------------ Many ------------------- #Forms */
+  EXAMINE RESP_Rec FOR '</FormInstance>'              NUMBER p_R-Forms#(#r)
+  EXAMINE RESP_Rec FOR 'MIB/Checking/CodedReport'     NUMBER p_R-Coded#(#r)
+  EXAMINE RESP_Rec FOR 'MIB/Checking/MiscNotesReport' NUMBER p_R-Notes#(#r)
+  EXAMINE RESP_Rec FOR 'MIB/Checking/DisputedReport'  NUMBER p_R-Disputed#(#r)
+*  PRINT '='p_Forms#(#r) '='p_Coded#(#r) '='p_Notes#(#r) '='p_Disputed#(#r)
+    FOR #i = 1 TO p_R-Forms#(#r)
+*      PRINT '--2- Instance:' '[' #i 'of' p_Forms#(#r) 'for' #r 'of' p_Records# ']'
+      EXAMINE RESP_Rec FOR '<FormInstance'    POSITION pars_B
+      EXAMINE RESP_Rec FOR '</FormInstance>'  POSITION pars_E
+      pars_B := pars_B + 13
+      pars_L := pars_E - pars_B
+      v_A := SUBSTR(RESP_Rec, pars_B, pars_L)
+
+      PERFORM sbr_Ref    /* Ref */
+
+      pars_E:= pars_E + 14
+      RESP_Rec := SUBSTR (RESP_Rec, pars_E)            /*  remove v_A from RESP_Rec
+
+      EXAMINE v_A FOR '<FormName>'   POSITION pars_B
+      EXAMINE v_A FOR '</FormName>'  POSITION pars_E
+      pars_B := pars_B + 10
+      pars_L := pars_E - pars_B
+      v_B := SUBSTR(v_A,pars_B, pars_L)
+*      PRINT 'FormName:' v_B  
+      DECIDE ON FIRST VALUE OF v_B
+        VALUE 'MIB/Checking/CodedReport'
+          p_Records.p_Type(#r, #i)  := 'Code'
+          EXAMINE v_A FOR '<SubmitDate>'    POSITION pars_B
+          EXAMINE v_A FOR '</SubmitDate>'  POSITION pars_E
+          pars_B := pars_B + 12
+          pars_L := pars_E - pars_B
+          p_Records.p_Date(#r,#i) := SUBSTR(v_A,pars_B, pars_L)         /*  Got Date
+          EXAMINE v_A FOR '</ResponseData>' NUMBER #Cd
+          p_Records.p_Code#(#r, #i) := #Cd
+          /* ------------------ Many ------------------ #Codes */
+          FOR #j = 1 TO #Cd
+             EXAMINE v_A FOR '<ResponseData>'   POSITION pars_B
+             EXAMINE v_A FOR '</ResponseData>'  POSITION pars_E
+             pars_B := pars_B + 14
+             pars_L := pars_E - pars_B
+             v_B := SUBSTR(v_A,pars_B, pars_L)
+             COMPRESS p_Records.p_Text(#r,#i) v_B INTO p_Records.p_Text(#r,#i)
+             IF #j < #Cd
+               pars_E := pars_E + 15
+               v_A := SUBSTR(v_A, pars_E) 
+             END-IF  
+          END-FOR
+        VALUE 'MIB/Checking/MiscNotesReport'
+          p_Records.p_Type(#r, #i)  := 'Note'
+          PERFORM sbr_Text
+        VALUE 'MIB/Checking/DisputedReport'
+          p_Records.p_Type(#r, #i)  := 'Disp'
+          PERFORM sbr_Text
+        ANY  
+           pars_E := pars_E + 15
+           v_A := SUBSTR(v_A, pars_E)    
+        NONE IGNORE /* ? Log new form found ? 
+      END-DECIDE
+    END-FOR
+ END-FOR
+ PERFORM sbr_Sort  
+* --------------------------------------------------------------
+DEFINE sbr_Ref
+* ------------
+ EXAMINE v_A FOR '>'   POSITION #k
+ #k := #k - 2 
+ v_B := SUBSTR(v_A,#k,2)
+ EXAMINE v_B FOR '_' DELETE
+ p_Records.p_Ref(#r, #i) := val(v_B)
+END-SUBROUTINE
+* --------------------------------------------------------------
+DEFINE sbr_Text
+* -------------
+  EXAMINE v_A FOR '<ResponseText>'   POSITION pars_B
+  EXAMINE v_A FOR '</ResponseText>'  POSITION pars_E
+  pars_B := pars_B + 14
+  pars_L := pars_E - pars_B
+  p_Records.p_Text(#r, #i) := SUBSTR(v_A ,pars_B, pars_L)
+END-SUBROUTINE  
+* --------------------------------------------------------------
+DEFINE sbr_Sort
+* ------------
+FOR #r = 1 TO p_Records# 
+ FOR #i = 1 TO p_R-Forms#(#r)
+   FOR #j = 1 TO (p_R-Forms#(#r) - 1)
+     IF p_Records.p_Ref(#r, #j) > p_Records.p_Ref(#r, #j + 1)
+        MOVE BY NAME p_Forms(#r, #j) TO v_Forms
+        MOVE BY NAME p_Forms(#r, #j + 1) TO p_Forms(#r, #j)
+        MOVE BY NAME v_Forms TO  p_Forms(#r, #j + 1)
+     END-IF    
+   END-FOR  
+ END-FOR
+END-FOR 
+END-SUBROUTINE
+* --------------------------------------------------------------
+DEFINE sbr_Person
+* ---------------
+   /* -Person
+      /* -- ResidenceState 
+      IF ( RESP_Rec = SCAN '<ResidenceState/>' ) OR ( RESP_Rec = SCAN '<ResidenceState tc=0/>' )
+         pp_State(#r) := ' '
+      ELSE         
+         EXAMINE RESP_Rec FOR '<ResidenceState'    POSITION pars_B
+         EXAMINE RESP_Rec FOR '</ResidenceState>'  POSITION pars_E
+         pars_B := pars_B + 15
+         pars_L := pars_E - pars_B
+         v_A := SUBSTR(RESP_Rec, pars_B, pars_L)
+         SEPARATE v_A INTO v_B pp_State(#r) IGNORE WITH DELIMITER '>'
+      END-IF  
+*      PRINT '='pp_State(#r)
+
+      /* -- ResidenceCountry
+      IF ( RESP_Rec = SCAN '<ResidenceCountry/>' ) OR ( RESP_Rec = SCAN '<ResidenceCountry tc=0/>' )
+         pp_Country(#r) := ' '
+      ELSE   
+         EXAMINE RESP_Rec FOR '<ResidenceCountry'    POSITION pars_B
+         EXAMINE RESP_Rec FOR '</ResidenceCountry>'  POSITION pars_E
+         pars_B := pars_B + 17
+         pars_L := pars_E - pars_B
+         v_A := SUBSTR(RESP_Rec, pars_B, pars_L)
+         SEPARATE v_A INTO v_B pp_Country(#r) IGNORE WITH DELIMITER '>'
+      END-IF 
+*      PRINT '='pp_Country(#r)
+      
+      /* -- FirstName
+      IF RESP_Rec = SCAN '<FirstName/>'
+         pp_FN(#r):= ' '
+      ELSE   
+         EXAMINE RESP_Rec FOR '<FirstName>'   POSITION pars_B
+         EXAMINE RESP_Rec FOR '</FirstName>'  POSITION pars_E
+         pars_B := pars_B + 11
+         pars_L := pars_E - pars_B
+         pp_FN(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+*      PRINT '='pp_FN(#r)   
+   
+      /* -- MiddleName
+      IF RESP_Rec = SCAN '<MiddleName/>' 
+         pp_MN(#r) := ' '
+      ELSE   
+         EXAMINE RESP_Rec FOR '<MiddleName>'   POSITION pars_B
+         EXAMINE RESP_Rec FOR '</MiddleName>'  POSITION pars_E
+         pars_B := pars_B + 12
+         pars_L := pars_E - pars_B
+         pp_MN(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+*      PRINT '='pp_MN(#r)   
+
+      /* -- LastName
+      IF RESP_Rec = SCAN '<LastName/>' 
+         pp_LN(#r) := ' '
+      ELSE    
+         EXAMINE RESP_Rec FOR '<LastName>'   POSITION pars_B
+         EXAMINE RESP_Rec FOR '</LastName>'  POSITION pars_E
+         pars_B := pars_B + 10
+         pars_L := pars_E - pars_B
+         pp_LN(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+*      PRINT '='pp_LN(#r)   
+
+      /* -- Prefix
+      IF RESP_Rec = SCAN '<Prefix/>' 
+         pp_PX(#r) := ' '
+      ELSE   
+         EXAMINE RESP_Rec FOR '<Prefix>'   POSITION pars_B
+         EXAMINE RESP_Rec FOR '</Prefix>'  POSITION pars_E
+         pars_B := pars_B + 8
+         pars_L := pars_E - pars_B
+         pp_PX(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+*      PRINT '='pp_PX(#r)   
+
+      /* -- Suffix
+      IF RESP_Rec = SCAN '<Suffix/>' 
+         pp_SX(#r) := ' '
+      ELSE   
+         EXAMINE RESP_Rec FOR '<Suffix>'   POSITION pars_B
+         EXAMINE RESP_Rec FOR '</Suffix>'  POSITION pars_E
+         pars_B := pars_B + 8
+         pars_L := pars_E - pars_B
+         pp_SX(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+*      PRINT '='pp_SX(#r)   
+
+      /* -- Occupation
+      IF RESP_Rec = SCAN '<Occupation/>' 
+         pp_Occ(#r) := ' '
+      ELSE   
+         EXAMINE RESP_Rec FOR '<Occupation>'   POSITION pars_B
+         EXAMINE RESP_Rec FOR '</Occupation>'  POSITION pars_E
+         pars_B := pars_B + 12
+         pars_L := pars_E - pars_B
+         pp_Occ(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+*      PRINT '='pp_Occ(#r) 
+
+      /* -- Gender
+      IF RESP_Rec = SCAN '<Gender>/>' 
+         pp_Sex(#r) := ' '
+      ELSE 
+         EXAMINE RESP_Rec FOR '<Gender'    POSITION pars_B
+         EXAMINE RESP_Rec FOR '</Gender>'  POSITION pars_E
+         pars_B := pars_B + 13
+         pars_L := pars_E - pars_B
+         pp_Sex(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+*      PRINT '='pp_Sex(#r) 
+
+      /* -- BirthDate
+      IF RESP_Rec = SCAN '<BirthDate>/>' 
+         pp_BD(#r) := ' '
+      ELSE 
+         EXAMINE RESP_Rec FOR '<BirthDate>'   POSITION pars_B
+         EXAMINE RESP_Rec FOR '</BirthDate>'  POSITION pars_E
+         pars_B := pars_B + 11
+         pars_L := pars_E - pars_B
+         pp_BD(#r) := SUBSTR(RESP_Rec, pars_B, pars_L)
+      END-IF   
+ /* -- Alt Name
+      EXAMINE RESP_Rec FOR '<PriorName>'  NUMBER alt_Name# POSITION  pars_B
+      EXAMINE DIRECTION  BACKWARD RESP_Rec  FOR '</PriorName>' POSITION pars_E
+      IF alt_Name# <> 0
+        pars_L := 12 + pars_E - pars_B 
+        v_A := SUBSTR(RESP_Rec, pars_B, pars_L) 
+      END-IF
+      IF alt_Name# > 5 alt_Name# := 5 END-IF  
+      FOR #i = 1 TO alt_Name#
+         EXAMINE v_A FOR '<PriorName>'   POSITION pars_B
+         EXAMINE v_A FOR '</PriorName>'  POSITION pars_E
+         pars_B := pars_B + 11
+         pars_L := pars_E - pars_B
+         v_B := SUBSTR(v_A, pars_B, pars_L)
+         IF #i <> alt_Name#
+            pars_E := pars_E + 12
+            v_A := SUBSTR(v_A, pars_E)
+         END-IF 
+        
+*         PRINT v_B
+      /* -- FirstName
+         IF v_B = SCAN '<FirstName/>'
+            alt_FN(#i):= ' '
+         ELSE
+            EXAMINE v_B FOR '<FirstName>'   POSITION pars_B
+            EXAMINE v_B FOR '</FirstName>'  POSITION pars_E
+            pars_B := pars_B + 11
+            pars_L := pars_E - pars_B
+            alt_FN(#i) := SUBSTR(v_B, pars_B, pars_L)
+         END-IF
+*         PRINT '='alt_FN(#i)               
+      /* -- MiddleName
+         IF v_B = SCAN '<MiddleName/>' 
+            alt_MN(#i) := ' '
+         ELSE 
+            EXAMINE v_B FOR '<MiddleName>'   POSITION pars_B
+            EXAMINE v_B FOR '</MiddleName>'  POSITION pars_E
+            pars_B := pars_B + 12
+            pars_L := pars_E - pars_B
+            alt_MN(#i) := SUBSTR(v_B, pars_B, pars_L)
+         END-IF   
+*         PRINT '='alt_MN(#i)   
+      /* -- LastName
+         IF v_B = SCAN '<LastName/>' 
+            alt_LN(#r) := ' '
+         ELSE 
+            EXAMINE v_B FOR '<LastName>'   POSITION pars_B
+            EXAMINE v_B FOR '</LastName>'  POSITION pars_E
+            pars_B := pars_B + 10
+            pars_L := pars_E - pars_B
+            alt_LN(#r) := SUBSTR(v_B, pars_B, pars_L)
+         END-IF   
+*          PRINT '='alt_LN(#i)   
+      END-FOR    
+      EXAMINE RESP_Rec FOR 'MIBAltBirthDate'  NUMBER alt_DOB# POSITION pars_B
+      IF alt_DOB# <> 0
+        IF alt_DOB# > 5 alt_DOB# := 5 END-IF
+        v_A := SUBSTR(RESP_Rec, pars_B)
+        FOR #i = 1 TO alt_DOB#
+            EXAMINE v_A FOR '<KeyValue>'   POSITION pars_B
+            EXAMINE v_A FOR '</KeyValue>'  POSITION pars_E
+            pars_B := pars_B + 10
+            pars_L := 10 + pars_E - pars_B
+            alt_DOB(#i) := SUBSTR(v_A, pars_B, pars_L)
+*           PRINT alt_DOB(#i)
+            IF #i < alt_DOB#
+               v_A := SUBSTR(v_A, pars_E)
+               EXAMINE v_A FOR 'MIBAltBirthDate'     POSITION pars_B
+               v_A := SUBSTR(V_A, pars_B)
+            END-IF   
+        END-FOR
+      END-IF
+
+END-SUBROUTINE
+* --------------------------------------------------------------
+*    A10000 := '----0----' WRITE WORK FILE 2 A10000
+*    A10000 := RESP  WRITE WORK FILE 2 A10000
+END

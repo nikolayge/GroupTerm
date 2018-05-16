@@ -1,0 +1,139 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* CLASS  NATURAL <XML TOOLKIT>
+* PMBP0002 - Portamedic Response Processing Driver
+* (to be replaced with EntireX call)
+* DESCRIPTION
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRL0001      /* General Processes Property
+LOCAL USING PMDL0001      /* Portal Med Application Property
+LOCAL USING OBJLAPTR      /* Application Tracking File
+LOCAL
+1 #INPUT-RECORD               (A500)
+1 #APPLICATION-NUMBER         (A) DYNAMIC
+1 #RESPONSE-CODE-TC           (A) DYNAMIC
+1 #RESPONSE-CODE-DESCRIPTION  (A) DYNAMIC
+1 #RESULT-INFO-DESCRIPTION    (A) DYNAMIC
+1 #NOTE-LINE                  (A75/4)
+1 #UNIX-FILE-NAME      (A) DYNAMIC
+1 #WINDOWS-FILE-NAME   (A) DYNAMIC
+1 #TEXT           (A) DYNAMIC
+1 #I              (I4)
+1 #II             (I4)
+1 #I1             (I4)
+1 #LINES          (I4)
+1 #TAB (A1) INIT <H'09'>
+1 #ID-NUMBER      (N6)
+1 #DATN           (N8)
+1 #DATE           (N8)
+1 REDEFINE #DATE
+  2 #YYYY         (A4)
+  2 #MM           (A2)
+  2 #DD           (A2)
+*
+END-DEFINE
+*
+COMPRESS #UNIX-DIR #PORTAMED-RESPONSE-FILE #RESPONSE-FILE-EXTENSION
+        INTO #UNIX-FILE-NAME LEAVING NO
+COMPRESS #WINDOWS-RESPONSE-DIR #WINDOWS-RESPONSE-FILE #RESPONSE-FILE-EXTENSION
+        INTO #WINDOWS-FILE-NAME LEAVING NO
+DEFINE WORK FILE 1 #UNIX-FILE-NAME
+*
+CALLNAT 'GPRN0002' #GET-SCRIPT-NAME #WINDOWS-FILE-NAME #UNIX-FILE-NAME
+*
+WRITE 'begin process...'
+*
+* READ WORK FILE 1 ONCE #INPUT-RECORD
+READ WORK FILE 1 #INPUT-RECORD
+ IF SUBSTR(#INPUT-RECORD,1,9) = 'PolNumber'
+   ESCAPE TOP
+ END-IF 
+ SEPARATE #INPUT-RECORD INTO #APPLICATION-NUMBER #RESPONSE-CODE-TC #RESPONSE-CODE-DESCRIPTION
+          #RESULT-INFO-DESCRIPTION IGNORE WITH DELIMITER #TAB
+DECIDE ON FIRST VALUE #RESPONSE-CODE-TC
+  VALUE '1'
+    #TEXT := 'Portamedic request processed successfully'
+  VALUE '2'
+    #TEXT := 'Portamedic request processed successfully with warning'
+  VALUE '3'
+    #TEXT := 'Portamedic request will be processed as soon as possible'
+  VALUE '4'
+    #TEXT := 'Portamedic request is pending with information'
+  VALUE '5'
+    #TEXT := 'Portamedic request was not processed.'
+  NONE VALUE
+    IGNORE
+END-DECIDE
+RESET #LINES
+IF #RESULT-INFO-DESCRIPTION NE ' '
+  EXAMINE #RESULT-INFO-DESCRIPTION FOR 'Result:' POSITION #I
+  IF #I NE 0
+     #RESULT-INFO-DESCRIPTION := SUBSTR(#RESULT-INFO-DESCRIPTION, #I)
+     #LINES := *LENGTH(#RESULT-INFO-DESCRIPTION) / 75
+     IF #LINES * 75 < *LENGTH(#RESULT-INFO-DESCRIPTION)
+       #LINES := #LINES + 1
+     END-IF
+  END-IF
+END-IF
+*
+PERFORM UPDATE-APPLICATION-TRACKING
+END-WORK
+*
+CLOSE WORK FILE 1
+* Rename existing Porta Med Response file on UNIX Server
+COMPRESS #PORTAMED-RESPONSE-FILE #RESPONSE-FILE-EXTENSION INTO #PORTAMED-RESPONSE-FILE LEAVING NO
+CALLNAT 'GPRN0002' #MV-SCRIPT-NAME #UNIX-DIR #PORTAMED-RESPONSE-FILE
+* Rename existing Porta Med Response file on Windows Server
+COMPRESS #WINDOWS-RESPONSE-DIR #WINDOWS-RESPONSE-FILE INTO #WINDOWS-FILE-NAME LEAVING NO
+CALLNAT 'GPRN0002' #CLEAN-FILE-SCRIPT-NAME #WINDOWS-FILE-NAME #RESPONSE-FILE-EXTENSION
+WRITE 'process ended'
+*
+*********************************************
+DEFINE SUBROUTINE UPDATE-APPLICATION-TRACKING
+*********************************************
+*
+#DATE := *DATN
+#APPLICATION-NUMBER := SUBSTR(#APPLICATION-NUMBER,3)
+#ID-NUMBER := VAL(#APPLICATION-NUMBER)
+FIND AT-V WITH ID-NUMBER = #ID-NUMBER
+  PM-STATUS := #RESPONSE-CODE-DESCRIPTION
+  FOR #I = 1 TO C*PORTAMEDIC-REQUEST
+    IF #I = 1
+      COMPRESS 'Initial Request:' PM-CODE(#I) PM-REMARK(#I) INTO #NOTE-LINE(#I)
+    ELSE
+      COMPRESS FULL '                ' PM-CODE(#I) PM-REMARK(#I) INTO #NOTE-LINE(#I)
+    END-IF
+  END-FOR
+*
+  #I1 := C*NOTES + #LINES + 1 + C*PORTAMEDIC-REQUEST
+  IF #I1 >= 40                /* delete oldest note 
+    #II := #I1 - 39            /* number old notes to delete 
+    FOR #I = (#II + 1) TO 40
+      MOVE NOTES (#I) TO NOTES (#I - #II)
+    END-FOR
+     #I1 := 41 - #II
+  END-IF
+  COMPRESS '*' 'EDS' '-' #MM '/' #DD '/' #YYYY #TEXT
+     INTO NOTES(#I1) LEAVING NO
+       FOR #I = 1 TO C*PORTAMEDIC-REQUEST
+         NOTES(#I1 + #I ) := #NOTE-LINE(#I)
+       END-FOR
+       #I1 := #I1 + C*PORTAMEDIC-REQUEST
+       FOR #I = 1 TO #LINES
+         NOTES(#I1 + #I ) := SUBSTR(#RESULT-INFO-DESCRIPTION,1)
+         IF *LENGTH(#RESULT-INFO-DESCRIPTION) > 75
+            #RESULT-INFO-DESCRIPTION := SUBSTR(#RESULT-INFO-DESCRIPTION,76)
+         END-IF
+       END-FOR
+  UPDATE
+  END TRANSACTION
+END-FIND
+END-SUBROUTINE
+*
+END

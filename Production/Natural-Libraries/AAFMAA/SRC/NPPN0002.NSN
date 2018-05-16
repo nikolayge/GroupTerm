@@ -1,0 +1,292 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* SUBPROGRAM-ID: NPPN0002 - Subprogram to create
+* Certificate of Insurance information by calling
+* existing process and pass it back to the process driver.
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+* USER   DATE      TAG  REASON
+* YAK    07012008       Initial Creation
+* YAK    10032012  YK2  Use function to identify Level II Term plan
+*                       Add lines for Level Term II+
+* YAK    11062012  YK3  Add new EZ Term plan
+* YAK    01062015  YK4  Change a text for GP2
+* YAK    01142016  YK5  Remove logic to adjust number of lines for Value Projection
+*                       Move logic to NPPN0004 
+**********************************************************
+DEFINE DATA
+PARAMETER USING NPPA0001
+PARAMETER
+1 #ID-NUMBER     (N6)
+1 #POLICY-INDEX  (N2)
+1 #ISN        (P8)
+LOCAL USING C2060ANC
+LOCAL
+1 #COMMAND-ID (A2) INIT <'NC'>
+1 #I1         (I4)
+1 #I2         (I4)
+1 #AGE        (A10)
+1 #DEATH-BENEFIT (A20)
+1 #SPACE-9    (A9) INIT <'         '>
+1 #SPACE-10   (A10)INIT <'          '>
+1 #SPACE-12   (A12)INIT <'            '>
+1 #SPACE      (A6) INIT <'      '>
+1 #SPACE-3    (A3) INIT <'   '>
+1 #EMPTY-LINE (A200) INIT <' '>
+1 #PLAN       (A3)
+1 #WORK-LINE  (A) DYNAMIC
+1 #LINE-LENGTH (N3) INIT <115>
+1 #BEG         (N3) INIT <0>
+* C2150NPO communication area
+1 #FACE-AMOUNT       (P7.2)
+1 #AGE-N             (N2)
+1 #VT-TERM           (N2)
+1 #EXTENT            (N2)
+1 #CURRENT-QUOTE     (N5.2/1:90)
+1 #GUARANTEED-QUOTE  (N5.2/1:90)
+1 #AGE-QUOTE         (N2/1:90)
+1 #GPL-OWNERSHIP-STATEMENT (A) DYNAMIC CONST
+  <'Ownership of this Contract automatically transfers to the insured on insured"s 21st birthday.'>
+END-DEFINE
+*
+FORMAT LS=128
+#PDA-SCR-COMMAND := #COMMAND-ID
+#PDA-SCR-ID:= #ID-NUMBER
+#PDA-ISN   := #ISN
+#INS-INDEX := #POLICY-INDEX
+RESET #PDA-SCR-SUFFIX
+*
+CALLNAT 'C2060SNC'
+  #PDA-SCR-COMMAND
+  #PDA-SCR-ID
+  #PDA-SCR-SUFFIX
+  #PDA-ISN
+  #PDA-AREA-C2060ANC
+*
+#PLAN := PLAN-TYPE
+* IF (SUBSTR(PLAN-TYPE,1,1) GE 'U') AND (SUBSTR(PLAN-TYPE,1,1) LE 'Z')   /* YK2
+IF F-LT2-TRUE(<PLAN-TYPE>)
+  #PLAN := 'VT'         /* Level Term II - Variable Term
+END-IF
+ISSUE-DATE := #SCN-DATE-ENTERED      /* exist in nppn0001
+EFFECTIVE-DATE := #SCN-DATE          /* exist in nppn0001
+NICOTINE-USE   := #SMOKER-LBL        /* add to nppn0001
+INITIAL-DEATH-BENEFIT := #SCN-FACE   /* add to nppn0001
+INIT-INSURED-AGE := #SCN-AGE         /* add to nppn0001
+EXAMINE #DESC2 FOR 'Certificate of Membership' NUMBER #I1
+IF #I1 NE 0
+  MEMBERSHIP-DATE := ISSUE-DATE
+END-IF
+DECIDE ON FIRST VALUE #PLAN
+  VALUE 'RT'
+    C@PLAN-PRE-NOTE := 2
+    RESIZE ARRAY PLAN-PRE-NOTE TO (*:C@PLAN-PRE-NOTE)
+    PLAN-PRE-NOTE(1) :=
+      'This Certificate is guaranteed renewable in five year intervals, as defined in Terms and Conditions.'
+    PLAN-PRE-NOTE(2) :=
+      '                          The options at the first renewal point are:'
+    C@PLAN-NOTE := 2
+    RESIZE ARRAY PLAN-NOTE TO (*:C@PLAN-NOTE)
+    COMPRESS #SCN-LINES(1) #SCN-LINES(2) INTO #WORK-LINE
+    PLAN-NOTE(1) := SUBSTR(#WORK-LINE,1,121)
+    PLAN-NOTE(2) := SUBSTR(#WORK-LINE,122)
+    C@PLAN-INFORMATION := 10                                 /* YK1 from 9
+    RESIZE ARRAY PLAN-INFORMATION TO (*:C@PLAN-INFORMATION)
+    COMPRESS FULL '                      Increasing               Level'
+      '                   Level                 Decreasing' INTO PLAN-INFORMATION(1)
+    COMPRESS FULL '        Age   Monthly Premium    Death Benefit'
+      '   Monthly Premium   Death Benefit' INTO PLAN-INFORMATION(2)
+    FOR #I1 1 TO 7
+      COMPRESS FULL #SPACE #SCN-YEARS(#I1) #SPACE #SCN-VALUE(#I1) #SPACE-9 #RT-DB-1(#I1)
+        #SPACE-9 #RT-PREM-2(#I1) #SPACE-10 #RT-DB-2(#I1)
+        INTO PLAN-INFORMATION(#I1 + 2)
+      IF PLAN-INFORMATION(#I1 + 2) = '                         '
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  VALUE 'EZ'                                           /* YK3   Start
+    C@PLAN-PRE-NOTE := 3
+    RESIZE ARRAY PLAN-PRE-NOTE TO (*:C@PLAN-PRE-NOTE)
+    PLAN-PRE-NOTE(1) :=
+      'This Certificate is guaranteed renewable in five year intervals as defined in Terms and Conditions.'
+    PLAN-PRE-NOTE(2) :=
+      'The Death Benefit of this Policy remains level; premiums increase as illustrated in the schedule below:'
+    COMPRESS FULL '    Attained Age of Insured*                  Monthly Premium                 Level Death Benefit'    INTO PLAN-PRE-NOTE(3)
+    C@PLAN-NOTE := 3
+    RESIZE ARRAY PLAN-NOTE TO (*:C@PLAN-NOTE)
+    PLAN-NOTE(1) := '*An insured"s initial and subsequent premium increases as the insured gets older and advances through each five year'
+    PLAN-NOTE(2) := 'age period.'
+    COMPRESS PLAN-NOTE(2) #SCN-LINES(13) 'Death Benefit is payable upon death of the Insured' INTO PLAN-NOTE(2)
+    PLAN-NOTE(3) := 'while this Certificate is in force.'
+    C@PLAN-INFORMATION := 6                                 /* YK1 from 9
+    RESIZE ARRAY PLAN-INFORMATION TO (*:C@PLAN-INFORMATION)
+*   COMPRESS FULL '  Attained Age of Insured*  Monthly Premium   Level Death Benefit'    INTO PLAN-INFORMATION(1)
+    FOR #I1 1 TO 6
+      PLAN-INFORMATION(#I1) := #SCN-LINES(#I1 + 4)
+*       IF PLAN-INFORMATION(#I1 + 2) = '                         '
+*         ESCAPE BOTTOM
+*       END-IF
+    END-FOR                                             /* YK3 end
+  VALUE 'LT'
+    FOR #I1 = 1 TO 3
+      COMPRESS #WORK-LINE #SCN-LINES(#I1) INTO #WORK-LINE
+    END-FOR
+    PERFORM FORMAT-NOTE-LINES
+    C@PLAN-PRE-NOTE := C@PLAN-NOTE
+    RESIZE ARRAY PLAN-PRE-NOTE TO (*:C@PLAN-PRE-NOTE)
+    PLAN-PRE-NOTE(*) := PLAN-NOTE(*)
+    RESET C@PLAN-NOTE PLAN-NOTE(*)
+    C@PLAN-INFORMATION := 9                                 /* YK1 from 7
+    RESIZE ARRAY PLAN-INFORMATION TO (*:C@PLAN-INFORMATION)
+    PLAN-INFORMATION(1) := PLAN-TYPE-DESCRIPTION-3
+    #AGE := SUBSTR(#SCN-LINES(5),17,10)
+    #DEATH-BENEFIT := SUBSTR(#SCN-LINES(5),38,20)
+    COMPRESS FULL #SPACE-10 #AGE #SPACE-10 #SPACE #DEATH-BENEFIT INTO
+      PLAN-INFORMATION(5 - 3)
+    FOR #I1 = 6 TO 7
+      #AGE := SUBSTR(#SCN-LINES(#I1),17,10)
+      #DEATH-BENEFIT := SUBSTR(#SCN-LINES(#I1),38,20)
+      COMPRESS FULL #SPACE-10 #AGE #SPACE-10 #SPACE-10 #DEATH-BENEFIT INTO
+        PLAN-INFORMATION(#I1 - 3)
+    END-FOR
+    #AGE := SUBSTR(#SCN-LINES(8),17,10)
+    #DEATH-BENEFIT := SUBSTR(#SCN-LINES(8),38,20)
+    COMPRESS FULL #SPACE-10 #AGE #SPACE-10 #SPACE-12 #DEATH-BENEFIT INTO
+      PLAN-INFORMATION(8 - 3)
+    RESET #WORK-LINE
+    FOR #I1 = 9 TO 12
+      COMPRESS #WORK-LINE #SCN-LINES(#I1) INTO #WORK-LINE
+    END-FOR
+    PERFORM FORMAT-NOTE-LINES
+  VALUE 'VT'
+    C@PLAN-PRE-NOTE := 1                                    /* YK1 FROM 1
+    RESIZE ARRAY PLAN-PRE-NOTE TO (*:C@PLAN-PRE-NOTE)
+    COMPRESS 'Premium Rate Classification:' PLAN-TYPE-DESCRIPTION-2 PREMIUM-RATE-CLASS
+      INTO PLAN-PRE-NOTE(1)
+    C@PLAN-INFORMATION := 0
+    C@PLAN-NOTE := 12                                       /* YK2 Start
+    RESIZE ARRAY PLAN-NOTE TO (*:C@PLAN-NOTE)
+    FOR #I1 = 1 TO C@PLAN-NOTE
+      COMPRESS FULL #SPACE-10 #SCN-LINES(#I1) INTO PLAN-NOTE(#I1)
+    END-FOR
+    IF F-LT2PLUS-TRUE(<PLAN-TYPE>)
+      C@PLAN-NOTE := 11
+      RESIZE ARRAY PLAN-NOTE TO (*:C@PLAN-NOTE)
+      PERFORM POPULATE-RATE-PAGE
+    END-IF                                                  /* YK2 end
+  NONE VALUE                /* 'OL', 'AL' 'NNP' 'NNF' 'SP' 'SPF' 'GPL' 'GP2'
+    C@PLAN-PRE-NOTE := 1
+    RESIZE ARRAY PLAN-PRE-NOTE TO (*:C@PLAN-PRE-NOTE)
+    COMPRESS 'Payment Plan: ' PLAN-TYPE-DESCRIPTION-2 PREMIUM-RATE-CLASS INTO PLAN-PRE-NOTE(1)
+    C@PLAN-INFORMATION := 9
+    RESIZE ARRAY PLAN-INFORMATION TO (*:C@PLAN-INFORMATION)
+    PLAN-INFORMATION(1) := PLAN-TYPE-DESCRIPTION-3
+    FOR #I1 = 2 TO 8
+      IF #SCN-LINES(#I1) = ' '
+        ESCAPE BOTTOM
+      END-IF
+      PLAN-INFORMATION(#I1) := #SCN-LINES(#I1)
+    END-FOR
+    RESET #WORK-LINE
+* YK5 - Move logic for number of lines on the Value Projection form to NPPN0004
+* YK4 - Certificate for GP2 needs additional line in the middle of the "NC" text
+    IF PLAN-TYPE = 'GP2'
+      #WORK-LINE := 'This whole life certificate includes a guaranteed death benefit which doubles on the insured"s 18th birthday.'
+      COMPRESS #WORK-LINE #GPL-OWNERSHIP-STATEMENT INTO #WORK-LINE
+      COMPRESS #WORK-LINE 'Death Benefit is payable upon' INTO #WORK-LINE
+      FOR #I1 = 11 TO 13
+        COMPRESS #WORK-LINE #SCN-LINES(#I1) INTO #WORK-LINE
+      END-FOR
+    ELSE
+      FOR #I1 = 9 TO 13
+        COMPRESS #WORK-LINE #SCN-LINES(#I1) INTO #WORK-LINE
+      END-FOR
+    END-IF
+    PERFORM FORMAT-NOTE-LINES
+END-DECIDE
+*
+DEFINE SUBROUTINE FORMAT-NOTE-LINES
+C@PLAN-NOTE := *LENGTH(#WORK-LINE) / #LINE-LENGTH
+IF C@PLAN-NOTE * #LINE-LENGTH < *LENGTH(#WORK-LINE)
+  C@PLAN-NOTE := C@PLAN-NOTE + 1
+END-IF
+RESIZE ARRAY PLAN-NOTE TO (*:C@PLAN-NOTE)
+FOR  #I1 = 1 TO C@PLAN-NOTE
+  IF #I1 = C@PLAN-NOTE
+    PLAN-NOTE(#I1) := SUBSTR(#WORK-LINE,1)
+  ELSE
+    #BEG := #LINE-LENGTH + 1
+    IF SUBSTR(#WORK-LINE,#LINE-LENGTH,1) NE ' ' AND
+        SUBSTR(#WORK-LINE,#BEG,1) NE ' '
+      EXAMINE DIRECTION BACKWARD SUBSTR(#WORK-LINE,1,#LINE-LENGTH)
+      FOR ' ' GIVING POSITION #I2
+      PLAN-NOTE(#I1) := SUBSTR(#WORK-LINE,1,#I2)
+      #BEG := #I2 + 1
+      #WORK-LINE := SUBSTR(#WORK-LINE,#BEG)
+    ELSE
+      PLAN-NOTE(#I1) := SUBSTR(#WORK-LINE,1,#LINE-LENGTH)
+      #WORK-LINE := SUBSTR(#WORK-LINE,#BEG)
+    END-IF
+  END-IF
+  IF SUBSTR(PLAN-NOTE(#I1),1,1) = ' '
+    PLAN-NOTE(#I1) := SUBSTR(PLAN-NOTE(#I1),2)
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE POPULATE-RATE-PAGE
+************************************
+*
+EXAMINE #SCN-FACE FOR '$' DELETE
+EXAMINE #SCN-FACE FOR ',' DELETE
+#FACE-AMOUNT := VAL(#SCN-FACE)
+#AGE-N       := VAL(POLICY-INFORMATION.INIT-INSURED-AGE)
+#PLAN        := SUBSTR(POLICY-INFORMATION.PLAN-TYPE,2,2)
+#VT-TERM     := VAL(#PLAN)
+#EXTENT      := 90
+*
+CALLNAT 'C2150NPO'
+  #FACE-AMOUNT
+  #AGE-N
+  #VT-TERM
+  #EXTENT
+  #CURRENT-QUOTE(*)
+  #GUARANTEED-QUOTE(*)
+  #AGE-QUOTE(*)
+*
+FOR #I1 = 1 TO 90
+  IF #AGE-QUOTE(#I1) = 0
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+#I1 := #I1 - 1
+C@AR-RATE-TABLE := #I1  /* *OCCURRENCE(#AGE-QUOTE)
+C@AR-RATE-TABLE := C@AR-RATE-TABLE / 2
+IF C@AR-RATE-TABLE * 2 <> #I1
+  C@AR-RATE-TABLE := C@AR-RATE-TABLE + 1
+END-IF
+RESIZE ARRAY AR-RATE-TABLE TO (0:C@AR-RATE-TABLE)
+FOR #I1 = 1 TO C@AR-RATE-TABLE
+  #I2 := #I1 + C@AR-RATE-TABLE
+  POLICY-INFORMATION.INSURED-AGE-L(#I1)  := #AGE-QUOTE(#I1)
+  MOVE EDITED #GUARANTEED-QUOTE(#I1) (EM=ZZZ,ZZ9.99) TO POLICY-INFORMATION.MONTHLY-RATE-L(#I1)
+  COMPRESS '$' POLICY-INFORMATION.MONTHLY-RATE-L(#I1) INTO POLICY-INFORMATION.MONTHLY-RATE-L(#I1) LEAVING NO
+  POLICY-INFORMATION.INSURED-AGE-R(#I1)  := #AGE-QUOTE(#I2)
+  MOVE EDITED #GUARANTEED-QUOTE(#I2) (EM=ZZZ,ZZ9.99) TO POLICY-INFORMATION.MONTHLY-RATE-R(#I1)
+  COMPRESS '$' POLICY-INFORMATION.MONTHLY-RATE-R(#I1) INTO POLICY-INFORMATION.MONTHLY-RATE-R(#I1) LEAVING NO
+END-FOR
+IF #AGE-QUOTE(#I2) = 0
+  RESET POLICY-INFORMATION.MONTHLY-RATE-R(C@AR-RATE-TABLE) POLICY-INFORMATION.INSURED-AGE-R(C@AR-RATE-TABLE)
+END-IF
+IF C@AR-RATE-TABLE < 33
+  C@AR-RATE-TABLE := 33
+  RESIZE ARRAY AR-RATE-TABLE TO (0:C@AR-RATE-TABLE)
+END-IF
+*
+END-SUBROUTINE
+END

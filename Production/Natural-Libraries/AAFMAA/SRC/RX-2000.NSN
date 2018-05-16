@@ -1,0 +1,241 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* RX-20 RX Retrieve Result Summary
+* bz Aug 29, 2017. Ver-1(08/29/2017)
+* --------------------------------------
+* f_Template: Retrieve XML Template
+* f_Retrieve: SOAP Retrieve xml
+* f_Result:   HTTP request response /* used to recreate report and resubmit DAL
+* -- Submit Retrieve
+*  Compile HTTP request
+*  Call shell
+*  Save Summary results in f_Result file
+*  Assigne response to p_Message for details parsing
+DEFINE DATA
+PARAMETER USING RX000PDA
+LOCAL USING RX000LDA
+LOCAL
+
+1 f_Template            (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/Retrieve.xml'>
+1 f_Retrieve            (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/RESULT/@@AT_Retrieve.xml'>
+1 f_Result              (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/RESULT/@@AT_Result.xml'>
+* -----------------
+1 CMD                    (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/RX_HTTP @@FN @@ENV R'>
+1 FNC                    (A) DYNAMIC
+1 RESP                   (A) DYNAMIC
+* -----------------
+1 XML                   (A) DYNAMIC
+1 #i                    (I2)
+1 #b                    (I2)
+1 #e                    (I2)
+1 #l                    (I4)
+1 v_A                   (A) DYNAMIC
+1 l_Test                (L)
+1 L@                    (L)
+1 http_cd               (A3)
+* -----------------
+1 v_RC                  (I4)
+1 elm  (A/10)  DYNAMIC INIT
+  <'<Result>',             /*  1
+  '<OrderResultStatus>',   /*  2
+  '<OrderResultsURL>',     /*  3
+  '<EligibilityCount>',    /*  4
+  '<RxCount>',             /*  5
+  '<MaxPriority>',         /*  6     !! Elig only <MaxPriority />
+  '<HighRxCount>',         /*  7
+  '<MediumRxCount>',       /*  8
+  '<LowRxCount>',          /*  9
+  '<Comments>'>            /* 10
+1 Result                (A)  DYNAMIC
+1 Comments              (A)  DYNAMIC
+/*    RX-STATUS           (A16) /* H-Drugs, C-Clear Elg only, N-NoInfo, E-Error, In Process
+/*    RX-URL              (A100)
+/*       S-ELIG           (N2)
+/*       S-RX             (N2)
+/*       S-MAX-PRI        (A1)
+/*       S-HIGH           (N2)
+/*       S-MEDIUM         (N2)
+/*       S-LOW            (N2)
+* -----------------------------------------
+1 elm_E (A) DYNAMIC
+1 elm_L  (N2)
+END-DEFINE
+
+ON ERROR
+  PRINT NOTITLE *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /                    /* --db
+    '***' p_AT 'i:' #i(EM=z9) 'elm:' elm(#i) 'elm_E' elm_E 'b:'#b 'e:' #e            /* --db
+  COMPRESS *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR INTO p_Message
+  p_RC := 9
+  ESCAPE ROUTINE
+END-ERROR
+* - - - - - - - - - - - - - - - - - -
+IF p_Mode = 'T' l_Test := TRUE  END-IF
+
+IF l_Test
+  IF F-IS-DEV(<>)                           /* Server determined URL     
+     EXAMINE CMD FOR '@@ENV' REPLACE 'Test'
+  ELSE
+     EXAMINE CMD FOR '@@ENV' REPLACE 'Prod'
+  END-IF  
+  COMPRESS p_AT '-T' INTO v_A LEAVING NO SPACE
+ELSE
+  EXAMINE CMD FOR '@@ENV' REPLACE 'Prod'
+  v_A := p_AT
+END-IF
+EXAMINE f_Retrieve FOR '@@AT' REPLACE v_A
+EXAMINE f_Result   FOR '@@AT' REPLACE v_A
+EXAMINE CMD FOR '@@FN' REPLACE f_Retrieve
+* WRITE WORK FILE 2 VARIABLE f_Retrieve H'0A' f_Result
+
+FN.
+FIND NUMBER RX-V WITH RX-AT = p_AT
+IF *NUMBER(FN.) = 0
+  v_RC := 1
+  p_Message := 'No RX records found. Repeat order'
+  ESCAPE ROUTINE
+END-IF
+
+FIND(1) RX-V WITH RX-AT = p_AT
+  IF RX-TRACK = ' '
+    v_RC := 1
+    p_Message := 'No tracking id for order'
+    ESCAPE ROUTINE
+  END-IF
+  PERFORM sbr_Retrieve
+  PERFORM sbr_Pars
+  IF p_RC <> 0 ESCAPE ROUTINE END-IF
+  UPDATE
+  p_Message := RESP    /* for RX-2001 / RX-3000
+END-FIND
+
+* -------------------------------------------------------------------------------
+DEFINE sbr_Retrieve
+*      ------------
+* =====================================================           /* --db
+*  DEFINE WORK FILE 1 f_Result TYPE 'UNFORMATTED'                   /* --db
+*  READ WORK 1 ONCE RESP                                            /* --db
+*  CLOSE WORK 1                                                     /* --db
+*  EXAMINE RESP FOR '&lt;'  REPLACE '<'                             /* --db
+*  EXAMINE RESP FOR '&gt;'  REPLACE '>'                             /* --db
+*  EXAMINE RESP FOR '&amp;' REPLACE '&'                             /* --db
+*  EXAMINE RESP FOR H'0A' DELETE                                    /* --db
+*  EXAMINE RESP FOR H'0D' DELETE                                    /* --db
+*  ESCAPE ROUTINE                                                   /* --db
+* =====================================================           /* --db
+DEFINE WORK FILE 1 f_Template TYPE 'UNFORMATTED'
+READ WORK 1 ONCE XML
+CLOSE WORK 1
+EXAMINE XML FOR '@@TRACK' REPLACE RX-TRACK
+
+DEFINE WORK FILE 1 f_Retrieve TYPE 'UNFORMATTED'
+L@ := FN_Exist(<f_Retrieve,1>)
+WRITE WORK FILE 1 VARIABLE XML
+CLOSE WORK FILE 1
+*  PRINT '-'(30) /  CMD  /'-'(30)               /* --db
+CALL INTERFACE4 'CMDX' CMD RESP FNC
+IF RET('CMDX') <> 0
+*  PRINT 'Error:' CMD RESP                   /* --db
+  p_Message := 'Request Retrieve Error'
+  p_RC := 3
+  ESCAPE ROUTINE
+ELSE
+  #l := *LENGTH(RESP)
+  #l := #l - 2
+  http_cd := SUBSTRING(RESP,#l,3)
+  IF http_cd <> '200' /* assume --write-out
+    p_Message := 'Vendor Service Error'
+    p_RC := 3
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*  WRITE WORK FILE 2 VARIABLE CMD H'0A'
+
+EXAMINE RESP FOR '&lt;'  REPLACE '<'
+EXAMINE RESP FOR '&gt;'  REPLACE '>'
+EXAMINE RESP FOR '&amp;' REPLACE '&'
+EXAMINE RESP FOR H'0A' DELETE
+EXAMINE RESP FOR H'0D' DELETE
+
+*  WRITE WORK FILE 2 VARIABLE RESP H'0A'
+*  PRINT '-'(30) /  RESP  /'-'(30)               /* --db
+DEFINE WORK FILE 1 f_Result TYPE 'UNFORMATTED'
+L@ := FN_Exist(<f_Result,1>)
+WRITE WORK 1 VARIABLE RESP
+CLOSE WORK 1
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Pars
+*      ---------
+v_A := ' '
+FOR #i = 1 TO 10
+  EXAMINE RESP FOR elm(#i) POSITION #b
+  IF #b = 0
+    v_A := ' '
+  ELSE
+    elm_L     := *LENGTH(elm(#i))
+    elm_E     := elm(#i)
+    EXAMINE elm_E  FOR '<' REPLACE '</'
+    EXAMINE RESP FOR elm_E   POSITION #e
+    IF #e = 0
+      COMPRESS 'xml Error' elm_E INTO p_Message
+      p_RC := 2
+      ESCAPE MODULE
+    END-IF
+
+    #b := #b + elm_L
+    #l := #e - #b
+    v_A := SUBSTRING(RESP, #b, #l)
+  END-IF
+
+  DECIDE ON FIRST VALUE OF #i
+    VALUE 1 Result := v_A
+    VALUE 2 RX-STATUS := v_A            /*    PRINT 'RX-STATUS:' '[' RX-STATUS ']'
+      DECIDE ON FIRST VALUE RX-STATUS
+        VALUE 'H' RX-STATUS := 'Drugs found'
+        VALUE 'C' RX-STATUS := 'Eligibility only'
+        VALUE 'N' RX-STATUS := 'No information'
+        VALUE 'In Process'                       ESCAPE BOTTOM
+        NONE IGNORE
+      END-DECIDE
+
+    VALUE  3  RX-URL    := v_A
+    VALUE  4  IF v_A IS (N3) MOVE EDITED v_A TO S-ELIG(EM=ZZZ)   END-IF
+    VALUE  5  IF v_A IS (N4) MOVE EDITED v_A TO S-RX(EM=ZZZ)     END-IF
+    VALUE  6  S-MAX     := v_A
+    VALUE  7  IF v_A IS (N3) MOVE EDITED v_A TO S-HIGH(EM=ZZZ)   END-IF
+    VALUE  8  IF v_A IS (N3) MOVE EDITED v_A TO S-MEDIUM(EM=ZZZ) END-IF
+    VALUE  9  IF v_A IS (N3) MOVE EDITED v_A TO S-LOW(EM=ZZZ)    END-IF 
+              ESCAPE BOTTOM
+    VALUE 10  Comments := v_A
+    NONE IGNORE
+  END-DECIDE
+END-FOR
+IF Result = '0'
+  IF (RX-STATUS = ' ' OR = 'In Process') AND Comments = ' ' /* error
+    p_RC := 22
+    p_Message := 'Result is not ready'
+    RX-STATUS := 'In Process'
+  ELSE
+    p_RC := 21
+    p_Message := Comments
+  END-IF
+END-IF
+END-SUBROUTINE
+END
+* * Not found ---------------------------------------------------
+*  <Result>1</Result>
+*  <Order>
+*    <OrderResultStatus>N</OrderRes
+* * Not Ready ---------------------------------------------------
+*  <Result>0</Result>
+*  <Order>
+*    <OrderResultStatus>In Process</OrderResultStatus>
+* * Error --------------------------------------------------------
+*  <Result>0</Result>
+*  <Comments>
+*             Error Message: There is no row at position 0.
+*             time taken: 0 seconds
+*  </Comments>

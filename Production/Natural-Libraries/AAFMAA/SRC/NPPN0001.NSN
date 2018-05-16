@@ -1,0 +1,1237 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* SUBPROGRAM-ID: NPPN0001 - Subprogram to populate
+* parameter data area with the new
+* Policy Information for Package printing
+*************************************************************
+*        MODIFICATION LOG
+*************************************************************
+* USER   DATE      TAG  REASON
+* YAK    06232008  Initial Creation
+* YK1    05082009  Check for duplicate numbers in the
+*                  NUM-MBRSHIPS field to prevent printing of
+*                  the wrong policy
+* YK2    09172009  Split CAP processing to Loan/No loan
+*                  Do not use Rank/Salutaion for Contact CN
+* YK3    01202010  Adjust Plan search for '1PF-9PF' type
+* YK4    01212010  Adjust calculation of deposit amount for
+*                  credit card payments
+* YK5    02192010  Use correct military status when compose
+*                  POLICY-INFORMATION.OWNER-NAME-FORMATTED
+* YK6    03092010  Log error when there is no match between
+*                  plans on AT and ST files
+* YK7    05032010  Read dependents information from Contact file
+*                  (not from FIR file)
+* YK8    07082010  Skip Billing Notice for the Trade-Up policies
+* YK9    09162010  Temporary add "California" message after address page
+* NGG    20101026  Changes for Address Pool and Rank
+* YK10   20101115  Correct changes for Address Pool
+* YK11   20101201  Correct date for Cap Cover Letter
+* YK12   20110205  Add warnings for empty addresses/names
+* YK13   20110520  Add CAP Loan only process
+* YK14   20110721  Populate Spouse name from Contact file
+* YK15   20111003  Populate additional fields for Information Sheet OI-480
+* YK16   20111117  Remove Addresss Page for Loan Only package OI-610
+* YK17   20120106  Get correct Insured SSN from contact file
+*                  (may be different from member SSN).
+*                  Cosmetic fix when SSN is 0 for dependents - Rider and Information Sheet
+* YK18   20120117  Changes for Premier Services
+* YK19   20120823  Remove SAS page OI-1035
+* YK20   10032012  Use function to identify Level II Term plan, add LTII+
+* YK21   11062012  Add No Medical Term policy (EZ)
+* YK22   03092013  Correct Max init age OI-1911
+* YK23   05172013  Add Arizona statement page - OI-1982
+* YK24   06242013  Correct matching ST to AT when more than 1 policy issued
+*                  with the same plan on the same day - match face amount as well
+*                  to get correct billing notice - OI-2062
+* YK25   01022014  Add GP2 (Generation Plus 2)
+* YK26   09302014  Search Accounting Register for FPF payment
+* YK27   10162014  Add POLICY-INFORMATION.SUPPRESS-COMMUNICATION = 'N' when FPF not paid
+*                  or 'R' if this is a reprint of the old policy
+* YK28   11042014  Correct logic for Statement/Due date on Billing Notice
+* TT1    11192014  Adding new Policy type Annuity life 2
+* YK29   06192015  Add Oregon statement page - OI-3610
+* YK30   08012015  Replace function for owner - get Owner CN from new structure
+* YK31   11032015  Keep reprint flag if populated (do not override)
+* BZ     10-04-206    OI-4701 Bypass Bil.Notes for conversion
+* bz-Name 07/07/2017     Fine Names
+* YK32   08252017  Do not create Policy Print package if Owner is not populated
+*                  Change logic how policy index is found (use Policy ID)  
+* vt1    01/30/2018 /Ticket HD-7502/
+****************************************************************
+DEFINE DATA
+PARAMETER USING NPPA0001      /* Policy Data
+PARAMETER USING NPPA0003      /* Email data
+PARAMETER
+1 #DOCUMENT-LIST(A) DYNAMIC
+1 #CONVERSION   (A1) BY VALUE
+1 #ERROR        (A1)
+LOCAL USING OBJLSTAT          /* Status file data
+LOCAL USING OBJLCONT          /* Contact file data                 YK7
+LOCAL USING OBJLCTRL          /* Contact-Relationships file data   YK7
+LOCAL USING NPPL0001          /* Policy Print properties
+LOCAL USING GPRA0003          /* Error Log file
+LOCAL USING ADDA0001          /* Address parameter area ADDN0001
+LOCAL USING INVA0001          /* Check scan file data              YK3
+LOCAL USING OBJLCOPH          /* Phone file                        YK15
+LOCAL USING OBJAMB01          /* Services file LDA                 YK18
+LOCAL USING ERROR_L           /* Error messages                    YK18
+LOCAL USING OBJLACRG          /* Accounting Register               YK26
+LOCAL
+
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER
+  2 SSN
+  2 INTRO-FLAG
+  2 ACTION-FLAG
+  2 ACTION-DATE
+  2 PLAN
+  2 DEP-RCVD
+  2 FIRST-PLACE-FEE
+  2 EZP-WAITING
+  2 E-DEPOSIT-AMT             /* YK4
+  2 EXCH-1035
+  2 LUMP-SUM
+  2 APPL-SOURCE               /* YK8
+  2 FACE-AMT-UNITS
+  2 FACE-AMT-DOLS
+  2 RIDER-PLAN(9)             /* YK18
+  2 RIDER-ATT-POL(9)          /* YK18
+*
+1 #SEQ-NUMBER     (A1)
+1 #ISSUE-DATE     (N8)
+1 #DATN           (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY    (N4)
+  2 #DATN-MM      (N2)
+  2 #DATN-DD      (N2)
+1 #DATE-ENTERED   (N8)
+1 REDEFINE #DATE-ENTERED
+  2 #YEAR-MONTH-ENTERED (N6)
+1 #CAP-ENTRY-DATE    (N6)
+1 REDEFINE #CAP-ENTRY-DATE
+  2 #CAP-YEAR-ENTRY (N4)
+  2 #CAP-MONTH-ENTRY (N2)
+1 #ID-NUMBER      (N6)
+1 #FAMILY-RIDER   (L)
+1 #MEC            (L)
+1 #CAP-POLICY     (L)                         /* YK2
+1 #CAP-POLICY-LOAN (L)                        /* YK2
+1 #CAP-MONTHLY-PAYMENT  (N5.2) INIT <107.25>
+1 #CAP-INTEREST-RATE    (N2.3) INIT <1.5>
+1 #CAP-LOAN-DATE    (N8)                      /* YK13
+1 REDEFINE #CAP-LOAN-DATE                     /* YK13
+  2 #CAP-PMT-DATE   (N6)
+1 #ANNUAL-PREMIUM (N5.2)
+1 #FACE-AMOUNT    (N7.2)
+1 #PRINT-AMOUNT  (N7.2)
+* 1 #FPF-BAR-CODE  (A2) INIT <'22'>           /* YK13
+1 #FPF-BILL-TYPE (A2) CONST <'FP'>            /* YK13
+1 #FPF-TRANSACTION (A15)                      /* YK13
+1 #FPF-TRAN-CODE   (A4) CONST <'FPFP'>        /* YK13
+1 #FPF-SERV-TRAN-CODE (A4) CONST <'DUEP'>     /* YK18
+1 #DETAIL-RECORD   (A1) CONST <'D'>
+1 #TOTAL-DUE     (A8)
+1 #PROCESS-ISN   (P8)
+1 #POLICY-INDEX  (N2)
+1 #SSN           (N9)
+1 #INSURED-SSN   (N9)                         /* YK17
+1 #MODE          (A1)
+1 #PREM-RATING   (A1)
+1 #SHORT-FORM    (A1) CONST <'S'>
+1 #FULL-FORM     (A1) CONST <'F'>
+1 #2-MONTHS      (A1) CONST <'1'>
+1 #TRUST-OWNER   (L)
+1 #FLEX-PLAN     (A2)
+1 #FLEX-KEY      (A3)
+*
+1 #TAB            (A1) INIT <H'09'>
+1 #I              (I4)
+1 #I1             (I4)
+1 #NN             (N2)
+1 #NNN            (N2)
+1 #TOT-DUE        (N7.2)          /* NG99
+1 #DEP-RCVD       (N7.2)
+1 #FPF            (N7.2)
+1 #EZP-WAITING    (A1)
+1 #MEMBER-CARD-INFO (A75)
+1 #CONTACT-ID       (N8)
+1 #OWNER-CONTACT-ID (N8)           /* YK13
+1 #MEMBER-CONTACT-ID (N8)          /* YK13
+1 #OWNER-CN         (N6)           /* YK13
+1 #BEN-COMPLETED    (L)
+1 #NUMBER           (N2)
+1 #INDEX-FOUND      (L)            /* YK1
+1 #CONTACT-CN       (L)            /* YK2
+1 #AT-ST-PLAN-MATCH (L)            /* YK6
+1 #WL-POLICY        (L)            /* YK13
+1 #MILITARY-STATUS  (A1)
+1 #MILITARY-SERVICE (A3)           /* YK15
+1 #DATE-OF-BIRTH    (N8)           /* YK15
+1 #MODE-DESCRIPTION (A) DYNAMIC
+1 #CREDIT-MESSAGE   (A100) INIT
+  <'*** The credit of CREDIT-AMOUNT will be used to reduce the next payment due.'>
+1 #ALLOTMENT-CREDIT-MESSAGE (A120) INIT
+  <'*** The credit of CREDIT-AMOUNT will be refunded to you when your allotment will be received.'>
+1 #EZ-PAY-DUE-MESSAGE (A120) INIT
+  <'*** If we do not receive the total amount due by DUE-DATE it will be added to your next EZ-Pay draft.'>
+1 #EZ-PAY-CREDIT-MESSAGE (A120) INIT
+  <'*** Your credit in the amount of CREDIT-AMOUNT will be reflected on your first EZ-Pay draft.'>
+1 #CC-PAY-DUE-MESSAGE (A120) INIT
+  <'*** The total amount due will be charged to your credit card at the end of the next month.'>
+1 #ALLOTMENT-HEADER-MESSAGE    (A50)  INIT
+  <'PLEASE SIGN AND MAIL PROMPTLY TO:'>
+1 #CALIFORNIA-MESSAGE (A) DYNAMIC CONST <'CaliforniaWarning'>             /* YK9
+1 #ARIZONA-STATEMENT  (A) DYNAMIC CONST <'ArizonaStatement'>              /* YK9
+1 #OREGON-STATEMENT   (A) DYNAMIC CONST <'OregonStatement'>               /* YK29
+1 #LoanOnly           (A) DYNAMIC CONST <'LoanOnly'>                      /* YK13
+1 #PolicyPackage      (A) DYNAMIC CONST <'Policy'>                        /* YK13
+1 #CAPBatch           (A) DYNAMIC CONST <'CAPBatch'>                      /* YK13
+1 #CAP-LOAN-ONLY      (L)                                                 /* YK13
+1 #POLICY             (L)                                                 /* YK13
+1 #CAP-BATCH          (L)                                                 /* YK13
+1 #ROLE-KEY           (A7) CONST <'CODE041'>
+1 #PLAN-GROUP-KEY     (A7) CONST <'CODETCD'>                              /* YK15
+1 #LOOK-UP-KEY        (A7)
+1 #LOOK-UP-VALUE      (A) DYNAMIC                                         /* YK15
+1 #Dynamic_Name       (A) DYNAMIC                                         /* YK13
+* 1 #PolicyNumber       (A) DYNAMIC                                       /* YK30
+* 1 #Owner              (A) DYNAMIC                                       /* YK30
+1 #RID-SPOUSE         (L)                                                 /* YK14
+1 #FAMILY-INFO        (L)                                                 /* YK15
+1 #DEL                (A1) CONST <'-'>                                    /* YK15
+1 #HOME               (A1) CONST <'H'>                                    /* YK15
+1 #BUSINESS           (A1) CONST <'B'>                                    /* YK15
+1 #CELL               (A1) CONST <'C'>                                    /* YK15
+1 #MEMBER             (A) DYNAMIC CONST <'Member'>                        /* YK15
+1 #SPOUSE             (A) DYNAMIC CONST <'Spouse'>                        /* YK15
+1 #AT-NUMBER          (N6)                                                /* YK18
+1 #AT-FBR             (L)                                                 /* YK18
+1 #RIDER-DATE         (N8)                                                /* YK18
+1 #SERV-ATTACHED      (L)                                                 /* YK18
+1 #SVC-AT-NUMBER      (N6)                                                /* YK18
+1 #FPF-S              (N7.2)                                              /* YK18
+1 #REQUEST            (A) DYNAMIC                                         /* YK18
+1 #MSG                (A) DYNAMIC                                         /* YK18
+1 #SVC-PLAN           (A3)                                                /* YK18
+1 #ACTIVE             (A) DYNAMIC CONST<'A'>
+1 #EZ-TERM            (A3) CONST <'EZ'>                                   /* YK21
+1 #WORK               (A2)                                                /* YK21
+1 #MAX-INIT-AGE       (A2)                                                /* YK21
+1 REDEFINE #MAX-INIT-AGE                                                  /* YK21
+  2 #MAX-INIT-AGE-N   (N2)                                                /* YK21
+1 #PAID-AMOUNT        (N7.2)                                              /* YK26
+1 #DO-NOT-SEND        (A1) CONST <'N'>                                    /* YK27
+1 #REPRINT            (A1) CONST <'R'>                                    /* YK27
+1 #START-DATE         (N8) CONST <20141009>
+*
+END-DEFINE
+*
+ON ERROR
+  PERFORM PROCESS-ERROR
+END-ERROR
+*
+DECIDE ON FIRST VALUE #DOCUMENT-LIST
+  VALUE #LoanOnly
+    #CAP-LOAN-ONLY := TRUE
+  VALUE #PolicyPackage
+    #POLICY := TRUE
+  VALUE #CAPBatch
+    #CAP-BATCH := TRUE
+  NONE VALUE
+    IGNORE
+END-DECIDE
+RESET #DOCUMENT-LIST
+*
+EXPAND ARRAY CAP-LOAN-AMORTIZATION TO (*:1)
+EXPAND ARRAY DEPENDENT-INFO TO (*:1)
+*
+#DATN := *DATN                                        /* YK11
+*
+PERFORM GET-POLICY-DATA
+PERFORM GET-SERVICE-DATA                              /* YK18
+IF #ERROR = 'Y'
+  ESCAPE ROUTINE IMMEDIATE
+END-IF
+*
+DECIDE FOR EVERY CONDITION                            /* YK13 Start
+  WHEN #CAP-LOAN-ONLY
+*   #DOCUMENT-LIST := ADDRESS-LABEL                   /* YK16
+    PERFORM GET-POLICY-OWNER
+    PERFORM GET-FORMAT-NAMES
+    PERFORM GET-CAP-LOAN-AMORTIZATION-SCHEDULE
+    PERFORM FORMAT-COVER-LETTER
+    ESCAPE ROUTINE
+  WHEN #POLICY OR #CAP-BATCH
+    #DOCUMENT-LIST := ADDRESS-LABEL
+    PERFORM FORMAT-COMMON-INFO
+    PERFORM GET-POLICY-OWNER
+    PERFORM GET-FORMAT-NAMES
+    PERFORM GET-CERTIFICATE-INFORMATION
+    PERFORM FORMAT-COVER-LETTER
+    PERFORM GET-TERMS-CONDITIONS
+  WHEN (NOT #CAP-BATCH)
+    PERFORM GET-BILLING-NOTICE-DATA
+    PERFORM GET-BENEFICIARY-INFORMATION
+  WHEN #WL-POLICY
+    PERFORM GET-VA-PROJECTION-DATA
+  WHEN (#CAP-BATCH AND #CAP-POLICY-LOAN)
+    PERFORM GET-CAP-LOAN-AMORTIZATION-SCHEDULE
+  WHEN #FAMILY-RIDER AND (NOT #CAP-LOAN-ONLY)
+    PERFORM GET-DEPENDENTS-DATA
+  WHEN NONE
+    IGNORE
+END-DECIDE                                         /* YK13 End
+*
+**********************************
+DEFINE SUBROUTINE GET-FORMAT-NAMES
+**********************************
+* Call generic routine to format names and salutation
+#Dynamic_Name := '!'                                                  /*  bz-Name
+CALLNAT 'GPRS0CNT' #MEMBER-CONTACT-ID #Dynamic_Name
+  #DATE-OF-BIRTH 4X #SSN #MILITARY-STATUS                             /* YK15
+POLICY-INFORMATION.MEMBER-NAME  := #Dynamic_Name
+RESET #Dynamic_Name                                                   /* YK15
+MOVE EDITED #SSN (EM=999-99-9999) TO #Dynamic_Name                    /* YK15
+POLICY-INFORMATION.MEMBER-SSN := FUNCTION-MASK(<#Dynamic_Name,'X'>)   /* YK15
+#Dynamic_Name := '!'                                                  /*  bz-Name
+CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name 5X #INSURED-SSN          /* YK17
+POLICY-INFORMATION.INSURED-NAME := #Dynamic_Name
+#Dynamic_Name := '!'                                                  /*  bz-Name
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+POLICY-INFORMATION.OWNER-NAME   := #Dynamic_Name
+#Dynamic_Name := 'S1'
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+* #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >)               /*  bz-Name
+POLICY-INFORMATION.SALUTATION := #Dynamic_Name
+#Dynamic_Name := '!L'                                                  /*  bz-Name
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+POLICY-INFORMATION.OWNER-NAME-FORMATTED := #Dynamic_Name
+* YK15
+#Dynamic_Name := '!L'                                                  /*  bz-Name
+CALLNAT 'GPRS0CNT' #MEMBER-CONTACT-ID #Dynamic_Name
+POLICY-INFORMATION.MEMBER-NAME-FORMATTED := #Dynamic_Name
+#Dynamic_Name := '!A*R'                                                /*  bz-Name
+CALLNAT 'GPRS0CNT' #MEMBER-CONTACT-ID #Dynamic_Name
+POLICY-INFORMATION.MEMBER-RANK := #Dynamic_Name
+* YK12
+IF POLICY-INFORMATION.OWNER-NAME = ' ' OR POLICY-INFORMATION.INSURED-NAME = ' '
+  COMPRESS 'Problem with Insured/Owner names for Policy Number '
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-IF
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-POLICY-OWNER
+**********************************
+* YK30 >
+* #Owner := #ID-NUMBER
+* #Owner := F-OWNER-CN(<POLICY-INFORMATION.POLICY-NUMBER,#Owner>)
+* IF #Owner IS (N6)
+*   #OWNER-CN := VAL(#Owner)
+* ELSE
+#OWNER-CN := GET-POLICY-OWNER(<POLICY-INFORMATION.POLICY-NUMBER>)
+* > YK30
+IF #OWNER-CN = 0
+  COMPRESS 'Owner CN is blank for Policy Number '
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+  #ERROR := 'Y'                           /* YK32
+  ESCAPE MODULE                           /* YK32
+END-IF
+*
+IF #OWNER-CN <> #ID-NUMBER
+  #OWNER-CONTACT-ID := F-GET-CONTACT-ID(<#OWNER-CN>)
+ELSE
+  #OWNER-CONTACT-ID := #CONTACT-ID
+END-IF
+POLICY-INFORMATION.OWNER-EMAIL := F-PREF-EMAIL(<#OWNER-CONTACT-ID>)
+POLICY-INFORMATION.OWNER-CN := #OWNER-CN
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-POLICY-DATA
+*********************************
+*
+SEPARATE POLICY-INFORMATION.POLICY-NUMBER
+  INTO POLICY-INFORMATION.INSURED-CN #SEQ-NUMBER WITH DELIMITER '-'
+* #I := #POLICY-INDEX := VAL(#SEQ-NUMBER)          /* YK32
+#ID-NUMBER := VAL(POLICY-INFORMATION.INSURED-CN)
+FIND(1) ST-V WITH ID-NUMBER = #ID-NUMBER
+  IF NO RECORDS FOUND
+    COMPRESS 'No records for CN = ' #ID-NUMBER
+      POLICY-INFORMATION.POLICY-NUMBER 'not created' INTO ERROR-MESSAGE
+    ERROR-PROGRAM := *PROGRAM
+    #ERROR := 'Y'
+    CALLNAT 'GPRN0003' ERROR-LOG
+    ESCAPE ROUTINE IMMEDIATE
+  END-NOREC
+  PERFORM FIND-POLICY-INDEX
+  IF #ERROR = 'Y'
+    ESCAPE ROUTINE IMMEDIATE
+  END-IF
+  #PROCESS-ISN     := *ISN
+  #CONTACT-ID      := ST-V.MEMBER-CONTACT-ID
+  #MODE            := MODE(#I)
+  #PREM-RATING     := PREM-RATING(#I)
+  #DATE-ENTERED    := DATE-ENTERED(#I)        /* policy issue date
+  #ISSUE-DATE      := ST-V.ISSUE-DATE(#I)     /* policy effective date
+* YK27 >
+  IF #DATE-ENTERED < #START-DATE
+    POLICY-INFORMATION.SUPPRESS-COMMUNICATION := #REPRINT
+  END-IF
+* > YK27
+  IF ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    POLICY-INFORMATION.MEMBER-CN := ST-V.LINKED-CN(1)
+    #MEMBER-CONTACT-ID := F-GET-CONTACT-ID(<POLICY-INFORMATION.MEMBER-CN>)
+  ELSE
+    POLICY-INFORMATION.MEMBER-CN := ST-V.ID-NUMBER
+    #MEMBER-CONTACT-ID           := #CONTACT-ID
+  END-IF
+  IF CONV-DURATION (#I) = 777 OR = 611 OR = 612
+    #TRUST-OWNER := TRUE
+  END-IF
+  IF CONV-DURATION (#I) = 999
+    DECIDE FOR FIRST CONDITION
+      WHEN #CAP-LOAN-ONLY                                /* YK13
+        #CAP-MONTHLY-PAYMENT := X-ALT-LP-AMT(#I)         /* YK13
+        #CAP-INTEREST-RATE   := X-INTEREST-RATE(#I)      /* YK13
+        #CAP-LOAN-DATE       := X-LOAN-DATE(#I)          /* YK13
+      WHEN (X-LOAN-AMOUNT(#I) = 0  AND X-LOAN-DATE(#I) NE 0)
+        IGNORE
+      WHEN (X-LOAN-AMOUNT(#I) = 0 AND X-LOAN-DATE(#I) = 0 )
+        #CAP-POLICY := TRUE
+      WHEN NONE
+        #CAP-ENTRY-DATE := #YEAR-MONTH-ENTERED    /* Discuss for CAP-GUARD
+        IF #CAP-MONTH-ENTRY = 1
+          #CAP-MONTH-ENTRY := 12
+          #CAP-YEAR-ENTRY := #CAP-YEAR-ENTRY - 1
+        ELSE
+          #CAP-MONTH-ENTRY := #CAP-MONTH-ENTRY - 1
+        END-IF
+        IF CAP-ENTRY-DATE >= #CAP-ENTRY-DATE
+          #CAP-POLICY-LOAN     := TRUE
+          #CAP-MONTHLY-PAYMENT := X-ALT-LP-AMT(#I)
+          #CAP-INTEREST-RATE   := X-INTEREST-RATE(#I)
+          #CAP-PMT-DATE        := CAP-ENTRY-DATE
+        END-IF
+    END-DECIDE
+  END-IF
+  #ANNUAL-PREMIUM := ANNUAL-PREM(#I)
+  POLICY-INFORMATION.PLAN-TYPE := PLAN(#I)
+  #FACE-AMOUNT    := FACE-AMOUNT(#I)                                 /* YK24
+* If Pay Status = 47 - it means that this is SP policy
+* Proceed with SP plan
+  IF PLAN(#I) = 'OL' AND PAY-STATUS(#I) = '47'
+    POLICY-INFORMATION.PLAN-TYPE := 'SP'
+  ELSE
+    POLICY-INFORMATION.PLAN-TYPE := PLAN(#I)
+  END-IF
+  IF MEC-IND(#I) = 'Y'
+    #MEC := TRUE
+  END-IF
+  IF RID-PLAN (#I) NE ' '
+    #FAMILY-RIDER     := TRUE
+    POLICY-INFORMATION.NUMBER-OF-UNITS   := SUBSTR(RID-PLAN(#I),2,1)
+    IF SUBSTR(RID-PLAN(#I),1,1) NE 'C'                                /* YK14
+      #RID-SPOUSE := TRUE                                             /* YK14
+    END-IF                                                            /* YK14
+  END-IF
+
+*
+END-FIND
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE GET-SERVICE-DATA       /* YK18
+**********************************
+*
+#REQUEST := 'GET_BY_DATE'
+RESET #MSG #SVC-MEMBER
+#SVC-MEMBER.SVC-ID-NUMBER    := #ID-NUMBER
+#SVC-MEMBER.SVC-ISSUE-DATE   := #ISSUE-DATE
+CALLNAT 'OBJNMB01' #REQUEST #MSG #SVC-MEMBER
+IF #SVC-MEMBER.SVC-STATUS = #ACTIVE
+  #SERV-ATTACHED := TRUE
+  #FPF-S         := #SVC-MEMBER.SVC-FIRST-PLACE-FEE
+  #SVC-AT-NUMBER := #SVC-MEMBER.SVC-AT-NUMBER
+  #SVC-PLAN      := #SVC-MEMBER.SVC-PLAN
+END-IF
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE FORMAT-COMMON-INFO
+************************************
+*
+MOVE EDITED #ANNUAL-PREMIUM (EM=ZZZ,ZZ9.99) TO ANNUAL-PREMIUM
+COMPRESS '$' ANNUAL-PREMIUM INTO ANNUAL-PREMIUM LEAVING NO
+#PRINT-AMOUNT := #ANNUAL-PREMIUM / 12
+MOVE EDITED #PRINT-AMOUNT (EM=ZZZ,ZZ9.99) TO INITIAL-MONTHLY-PREMIUM
+COMPRESS '$' INITIAL-MONTHLY-PREMIUM INTO INITIAL-MONTHLY-PREMIUM LEAVING NO
+*
+PLAN-TYPE-DESCRIPTION   := F-PLAN-DESCRIPTION(<POLICY-INFORMATION.PLAN-TYPE>)(1)
+PLAN-TYPE-DESCRIPTION-2 := F-PLAN-DESCRIPTION(<POLICY-INFORMATION.PLAN-TYPE>)(2)
+PLAN-TYPE-DESCRIPTION-3 := F-PLAN-DESCRIPTION(<POLICY-INFORMATION.PLAN-TYPE>)(3)
+*
+IF POLICY-INFORMATION.PLAN-TYPE = 'SP' OR ='SPF' OR IS-ANNUITY-LIFE(<POLICY-INFORMATION.PLAN-TYPE>)
+  RESET #MODE
+END-IF
+MOVE EDITED FUNCTION-INT-RATE(<'RATE2AA'>) (EM=9.99) TO CREDITING-RATE             /* vt1 was (em=Z9.9)
+COMPRESS CREDITING-RATE '%' INTO CREDITING-RATE LEAVING NO SPACE
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE FORMAT-COVER-LETTER
+*************************************
+* STREET
+* CITY, STATE, ZIP
+* SALUTION
+*
+POLICY-INFORMATION.ISSUE-DATE-FULL := FUNCTION-CALENDAR(<#DATN,#FULL-FORM>)   /* YK11
+*
+#ADD-CONTACT-ID := #OWNER-CONTACT-ID
+#ADD-TYPE       := 'P'  /* Primary
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+POLICY-INFORMATION.STREET   := #ADD-LINE-1
+POLICY-INFORMATION.STREET-2 := #ADD-LINE-2             /* YK10
+POLICY-INFORMATION.CITY-STATE-ZIP := #ADD-LINE-3       /* YK10
+* Check for empty or long addresses                    /* YK12
+IF POLICY-INFORMATION.STREET = ' ' OR POLICY-INFORMATION.STREET-2 = ' '
+  COMPRESS 'Address Line is empty for Policy Number '
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-IF
+* YK12
+POLICY-INFORMATION.STREET := *TRIM(POLICY-INFORMATION.STREET)
+POLICY-INFORMATION.STREET-2 := *TRIM(POLICY-INFORMATION.STREET-2)
+IF *length(POLICY-INFORMATION.STREET) > 50 OR *length(POLICY-INFORMATION.STREET-2) > 50
+  COMPRESS 'Long Address Line for Policy Number '
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-IF
+*
+IF #ADD-STATE = 'CA' AND (NOT #CAP-LOAN-ONLY)                           /* YK9   /* YK16
+  COMPRESS #DOCUMENT-LIST #TAB #CALIFORNIA-MESSAGE INTO #DOCUMENT-LIST  /* YK9
+END-IF                                                                  /* YK9
+IF #ADD-STATE = 'AZ' AND (NOT #CAP-LOAN-ONLY)                           /* YK23
+  COMPRESS #DOCUMENT-LIST #TAB #ARIZONA-STATEMENT INTO #DOCUMENT-LIST   /* YK23
+END-IF                                                                  /* YK23
+IF #ADD-STATE = 'OR' AND (NOT #CAP-LOAN-ONLY)                           /* YK29
+  COMPRESS #DOCUMENT-LIST #TAB #OREGON-STATEMENT INTO #DOCUMENT-LIST    /* YK29
+END-IF                                                                  /* YK29
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #CAP-LOAN-ONLY
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-CAP-LOAN-ONLY
+      INTO #DOCUMENT-LIST
+  WHEN #CAP-POLICY-LOAN AND #CAP-BATCH
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-CAP-LOAN-MBR-BATCH
+      INTO #DOCUMENT-LIST
+  WHEN #CAP-POLICY AND #CAP-BATCH
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-CAP-MEMBER-BATCH
+      INTO #DOCUMENT-LIST
+  WHEN #CAP-POLICY OR #CAP-POLICY-LOAN                    /* not #CAP-BATCH
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-CAP-MEMBER
+      INTO #DOCUMENT-LIST
+  WHEN IS-ANNUITY-LIFE(<PLAN-TYPE>)   /* TT1
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-ANNUITY
+      INTO #DOCUMENT-LIST
+* sps/sps owned; sps/gen mbr owned, non-member owner
+  WHEN (POLICY-INFORMATION.MEMBER-CN NE #ID-NUMBER) OR (#OWNER-CN NE #ID-NUMBER)
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-ALT-OWNER
+      INTO #DOCUMENT-LIST
+  WHEN MEMBERSHIP-DATE NE ' '
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-NM
+      INTO #DOCUMENT-LIST
+  WHEN NONE
+    COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-ADD
+      INTO #DOCUMENT-LIST
+END-DECIDE
+*
+* IF #SERV-ATTACHED AND #SVC-PLAN = 'PSM'                        /* YK18
+*   COMPRESS #DOCUMENT-LIST #TAB COVER-LETTER-PREMIER-SERVICES   /* YK18
+*     INTO #DOCUMENT-LIST                                        /* YK18
+* END-IF                                                         /* YK18
+END-SUBROUTINE
+*
+*********************************************
+DEFINE SUBROUTINE GET-CERTIFICATE-INFORMATION
+*********************************************
+*
+*   ADDITIONAL-INFORMATION
+*   C@OPTION-NUMBERS (N2.0)
+*   OPTION-NUMBERS (A50/1:*)
+*   INSURANCE-NOTE (A10)
+*   #POLICY-INDEX
+*   #PROCESS-ISN
+*
+IF #PREM-RATING NE ' '
+  COMPRESS 'Class' #PREM-RATING INTO POLICY-INFORMATION.PREMIUM-RATE-CLASS
+END-IF
+*
+CALLNAT 'NPPN0002'
+  POLICY-INFORMATION
+  #ID-NUMBER
+  #POLICY-INDEX
+  #PROCESS-ISN
+*
+IF MEMBERSHIP-DATE NE ' '
+  COMPRESS #DOCUMENT-LIST #TAB CERTIFICATE-OF-MEMBERSHIP INTO #DOCUMENT-LIST
+  COMPRESS #DOCUMENT-LIST #TAB INFORMATION-SHEET INTO #DOCUMENT-LIST              /* YK15
+* COMPRESS #DOCUMENT-LIST #TAB SAS-BENEFITS INTO #DOCUMENT-LIST                   /* YK19
+  PERFORM GET-MILITARY-INFORMATION                                                /* YK15
+* Call generic routine to format Member name
+  #Dynamic_Name := 'A*'
+  CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name
+  COMPRESS POLICY-INFORMATION.MEMBER-CN #TAB #Dynamic_Name INTO #MEMBER-CARD-INFO
+  WRITE WORK FILE 5 #MEMBER-CARD-INFO
+* phones - YK15
+  POLICY-INFORMATION.MEMBER-HOME-PHONE := F-FORMATTED-PHONE(<#CONTACT-ID,#HOME>)
+  POLICY-INFORMATION.MEMBER-WORK-PHONE := F-FORMATTED-PHONE(<#CONTACT-ID,#BUSINESS>)
+  POLICY-INFORMATION.MEMBER-CELL-PHONE := F-FORMATTED-PHONE(<#CONTACT-ID,#CELL>)
+  POLICY-INFORMATION.MEMBER-EMAIL-ADDRESS := F-PREF-EMAIL(<#CONTACT-ID>)
+* Get Family Information for Information Sheet - YK15
+  #FAMILY-INFO := TRUE
+  PERFORM GET-FAMILY-INFORMATION
+  PERFORM GET-MILITARY-INFORMATION
+END-IF
+*
+IF #OWNER-CN <> #ID-NUMBER
+  COMPRESS #DOCUMENT-LIST #TAB SUCCESSOR-OWNER-FORM INTO #DOCUMENT-LIST
+END-IF
+DECIDE FOR FIRST CONDITION
+  WHEN POLICY-INFORMATION.PLAN-TYPE = #EZ-TERM                                    /* YK21 start
+    COMPRESS #DOCUMENT-LIST #TAB CERTIFICATE-OF-INSURANCE-V INTO #DOCUMENT-LIST
+    CERT-DB-LABEL   := 'Death Benefit'
+    CERT-PREM-LABEL := 'Initial Monthly Premium (Until age 99)*'
+    #MAX-INIT-AGE   := SUBSTR(POLICY-INFORMATION.PLAN-INFORMATION(2),9,2)         /* YK22
+    EXAMINE CERT-PREM-LABEL FOR '99' REPLACE WITH #MAX-INIT-AGE
+  WHEN F-LT2PLUS-TRUE(<POLICY-INFORMATION.PLAN-TYPE>)
+    COMPRESS #DOCUMENT-LIST #TAB CERTIFICATE-OF-INSURANCE-V INTO #DOCUMENT-LIST
+    CERT-DB-LABEL   := 'Death Benefit'
+    CERT-PREM-LABEL := 'Initial Monthly Premium'
+  WHEN NONE
+    COMPRESS #DOCUMENT-LIST #TAB CERTIFICATE-OF-INSURANCE INTO #DOCUMENT-LIST
+    CERT-DB-LABEL   := 'Initial Death Benefit'
+    CERT-PREM-LABEL := 'Monthly Premium'
+END-DECIDE                                                                        /* YK21 end
+IF F-LT2PLUS-TRUE(<POLICY-INFORMATION.PLAN-TYPE>)                                 /* YK20
+  COMPRESS #DOCUMENT-LIST #TAB RENEWABLE-TERM-RATES INTO #DOCUMENT-LIST           /* YK20
+END-IF                                                                            /* YK20
+COMPRESS #DOCUMENT-LIST #TAB ACCESS-AUTHORIZATION INTO #DOCUMENT-LIST
+*
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE GET-BILLING-NOTICE-DATA
+*****************************************
+*
+*   AMOUNT-PAID
+*   AMOUNT-REQUIRED
+*   AMOUNT-DUE
+*   TOTAL-DUE
+*   LAPSE-DATE
+*   STATEMENT-DATE
+*   DUE-DATE
+*
+* POLICY-INFORMATION.STATEMENT-DATE := FUNCTION-CALENDAR(< #DATN,#SHORT-FORM>)  /* today date
+* POLICY-INFORMATION.DUE-DATE := FUNCTION-CALENDAR(< #DATN,#2-MONTHS >)
+IF #CONVERSION = 'Y' ESCAPE ROUTINE END-IF
+POLICY-INFORMATION.STATEMENT-DATE := FUNCTION-CALENDAR(< #ISSUE-DATE,#SHORT-FORM>)    /* YK28
+POLICY-INFORMATION.DUE-DATE       := FUNCTION-CALENDAR(< #ISSUE-DATE,#2-MONTHS >)     /* YK28
+*
+FIND NUMBER AT-V WITH SSN = #INSURED-SSN                            /* YK17
+#NUMBER := *NUMBER
+IF #NUMBER = 0
+  FIND NUMBER AT-V WITH SSN = #ID-NUMBER
+  #NUMBER := *NUMBER
+  IF #NUMBER NE 0
+    #INSURED-SSN := #ID-NUMBER                                      /* YK17
+  END-IF
+END-IF
+*
+RESET #AT-ST-PLAN-MATCH                                             /* YK6
+FIND AT-V WITH SSN = #INSURED-SSN                                   /* YK17
+  IF  (AT-V.INTRO-FLAG = 'V')
+      OR (AT-V.ACTION-FLAG NE 'A')
+    ESCAPE TOP
+  END-IF
+* Translate AT plan type to ST plan type                            /* YK2
+  IF AT-V.PLAN = MASK (N) OR AT-V.PLAN = MASK (NN)                  /* YK2
+    DECIDE ON FIRST VALUE AT-V.PLAN                                 /* YK2
+      VALUE '7','20','30'                                           /* YK2
+        COMPRESS AT-V.PLAN 'P' INTO AT-V.PLAN LEAVING NO            /* YK2
+      VALUE '7P'                                                    /* YK2
+        IGNORE                                                      /* YK2
+      NONE VALUE                                                    /* YK2
+        COMPRESS AT-V.PLAN  'F' INTO AT-V.PLAN LEAVING NO           /* YK2
+    END-DECIDE                                                      /* YK2
+  END-IF
+  IF AT-V.PLAN = 'SP' AND (EXCH-1035 NE 0 OR LUMP-SUM NE 0)
+    COMPRESS AT-V.PLAN  'F' INTO AT-V.PLAN LEAVING NO
+  END-IF
+  IF #NUMBER > 1 AND
+      (AT-V.PLAN NE PLAN-TYPE OR AT-V.ACTION-DATE NE #DATE-ENTERED
+      OR AT-V.FACE-AMT-UNITS * 1000 + FACE-AMT-DOLS <> #FACE-AMOUNT) /* YK24
+    ESCAPE TOP
+  END-IF
+* Skip Billing Notice for Trade-Up                                  /* YK8
+  IF AT-V.APPL-SOURCE = 'TU'                                        /* YK8
+    ESCAPE ROUTINE                                                  /* YK8
+  END-IF                                                            /* YK8
+* If there is only one application get data from there
+  #AT-ST-PLAN-MATCH := TRUE
+  #AT-NUMBER        := AT-V.ID-NUMBER                               /* YK18
+  #DEP-RCVD         := AT-V.DEP-RCVD + AT-V.E-DEPOSIT-AMT          /* YK4
+  #FPF              := AT-V.FIRST-PLACE-FEE
+  #EZP-WAITING      := AT-V.EZP-WAITING
+  IF #FAMILY-RIDER AND AT-V.RIDER-PLAN(*) = ' '                     /* YK18
+    PERFORM FIND-RIDER-APPLICATION                                  /* YK18
+  END-IF                                                            /* YK18
+  ESCAPE BOTTOM
+END-FIND
+**======================================
+DEFINE SUBROUTINE FIND-RIDER-APPLICATION
+**======================================
+* If has a Rider, and different application for the Rider - find Rider application and add to FPF
+RESET AT-V
+FIND AT-V WITH SSN = #INSURED-SSN
+  FOR #I = 1 TO 5
+    IF RIDER-PLAN(#I) <> ' ' AND RIDER-ATT-POL(#I) = #ISSUE-DATE
+      #FPF := #FPF + AT-V.FIRST-PLACE-FEE
+      #DEP-RCVD := #DEP-RCVD + AT-V.E-DEPOSIT-AMT
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FIND
+END-SUBROUTINE
+**============
+*
+* Get Services FPF according to Pay-to-date for insurance policy    /* YK18
+IF #SERV-ATTACHED AND #SVC-AT-NUMBER = #AT-NUMBER                   /* YK18
+  IGNORE                                                            /* YK18
+ELSE                                                                /* YK18
+  RESET #FPF-S                                                      /* YK18
+END-IF                                                              /* YK18
+*
+IF NOT #AT-ST-PLAN-MATCH   /* Log Error                             /* YK6
+  COMPRESS 'AT data do not match ST data for Policy Number -'
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-IF
+*
+IF #MODE = 'Q' AND #EZP-WAITING = 'Y'
+  #MODE := 'E'
+END-IF
+*
+IF #MODE = 'G'
+  PERFORM GET-ALLOTMENT-INFORMATION
+END-IF
+IF #MODE <> ' '
+  #MODE-DESCRIPTION := FUNCTION-PAYMENT-MODE(<#MODE>)(1)
+  EXAMINE #MODE-DESCRIPTION FOR ' ' POSITION #I
+  BILLING-FREQUENCY := SUBSTR(#MODE-DESCRIPTION,1,#I)
+  #I := #I + 1
+  BILLING-METHOD    := SUBSTR(#MODE-DESCRIPTION,#I)
+END-IF
+* YK26 <
+* Add logic to check if First placement fee was paid, but not reflected on AT record (E-DEPOSIT-AMT)
+IF #DEP-RCVD = 0
+  PERFORM SEARCH-POLICY-PAYMENTS
+END-IF
+**======================================
+DEFINE SUBROUTINE SEARCH-POLICY-PAYMENTS
+**======================================
+*
+FIND ACCT-REG-V WITH ID-NUMBER = #ID-NUMBER
+  ACCEPT IF ((ACCT-REG-V.TXN-CODE = 'FPFP' OR = 'FPFR' OR = 'FPRP' OR = 'FPRR')
+    AND ACCT-REG-V.POLICY-NUMBER = POLICY-INFORMATION.POLICY-NUMBER)
+*     OR (AR-V.TXN-CODE = 'DUEP' AND (AR-V.SG-CATEGORY-1(1) = 'SS' OR = 'PS') AND =  )
+* add Rider logic
+  IF C*SUNGARD-INFO = 0
+    IF ACCT-REG-V.CREDIT-AMOUNT NE 0
+      #PAID-AMOUNT := ACCT-REG-V.CREDIT-AMOUNT * -1
+    ELSE
+      #PAID-AMOUNT := ACCT-REG-V.DEBIT-AMOUNT
+    END-IF
+  ELSE
+    FOR #I = 1 TO C*SUNGARD-INFO
+      IF ACCT-REG-V.CREDIT-AMOUNT NE 0
+        #PAID-AMOUNT := ACCT-REG-V.SG-AMOUNT(#I)
+      ELSE
+        #PAID-AMOUNT := ACCT-REG-V.SG-AMOUNT(#I) * (-1)
+      END-IF
+    END-FOR
+  END-IF
+END-FIND
+#DEP-RCVD := #PAID-AMOUNT
+END-SUBROUTINE
+**============
+* > YK26
+* #DEP-RCVD - Payment with Application
+* YK27 <
+IF #DEP-RCVD = 0 AND POLICY-INFORMATION.SUPPRESS-COMMUNICATION <> #REPRINT     /* YK31
+  POLICY-INFORMATION.SUPPRESS-COMMUNICATION := #DO-NOT-SEND
+END-IF
+* > YK27
+MOVE EDITED #DEP-RCVD (EM=ZZZ,ZZ9.99-) TO POLICY-INFORMATION.AMOUNT-PAID
+COMPRESS '$' POLICY-INFORMATION.AMOUNT-PAID INTO POLICY-INFORMATION.AMOUNT-PAID
+* #FPF       Amount due based on issue date and payment selection
+MOVE EDITED #FPF (EM=ZZZ,ZZ9.99-) TO POLICY-INFORMATION.INS-AMOUNT-DUE
+COMPRESS '$' POLICY-INFORMATION.INS-AMOUNT-DUE INTO POLICY-INFORMATION.INS-AMOUNT-DUE
+MOVE EDITED #FPF-S (EM=ZZZ,ZZ9.99-) TO POLICY-INFORMATION.SRV-AMOUNT-DUE           /* YK18
+COMPRESS '$' POLICY-INFORMATION.SRV-AMOUNT-DUE INTO POLICY-INFORMATION.SRV-AMOUNT-DUE  /* YK18
+#TOT-DUE := #FPF + #FPF-S - #DEP-RCVD
+MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9.99) TO POLICY-INFORMATION.AMOUNT-DUE-CREDIT
+COMPRESS '$' POLICY-INFORMATION.AMOUNT-DUE-CREDIT INTO POLICY-INFORMATION.AMOUNT-DUE-CREDIT
+POLICY-INFORMATION.CREDIT-MESSAGE := '                               '
+DECIDE FOR FIRST CONDITION
+  WHEN #TOT-DUE < 0
+    POLICY-INFORMATION.TITLE-DUE-CREDIT := 'CREDIT AMOUNT'
+    DECIDE ON FIRST VALUE #MODE
+      VALUE 'G'
+        #CREDIT-MESSAGE := #ALLOTMENT-CREDIT-MESSAGE
+      VALUE 'E'
+        #CREDIT-MESSAGE := #EZ-PAY-CREDIT-MESSAGE
+      NONE VALUE
+        IGNORE
+    END-DECIDE
+    EXAMINE #CREDIT-MESSAGE FOR 'CREDIT-AMOUNT' REPLACE WITH
+      POLICY-INFORMATION.AMOUNT-DUE-CREDIT
+    COMPRESS POLICY-INFORMATION.AMOUNT-DUE-CREDIT '***' INTO
+      POLICY-INFORMATION.AMOUNT-DUE-CREDIT
+    POLICY-INFORMATION.CREDIT-MESSAGE := #CREDIT-MESSAGE
+    POLICY-INFORMATION.TOTAL-DUE := '$ 0.00'
+    POLICY-INFORMATION.DUE-DATE  := ' '
+  WHEN #TOT-DUE > 0
+    POLICY-INFORMATION.TITLE-DUE-CREDIT := 'AMOUNT DUE'
+    POLICY-INFORMATION.TOTAL-DUE := POLICY-INFORMATION.AMOUNT-DUE-CREDIT
+    DECIDE ON FIRST VALUE #MODE
+      VALUE 'E'
+        EXAMINE #EZ-PAY-DUE-MESSAGE FOR 'DUE-DATE'
+          REPLACE WITH POLICY-INFORMATION.DUE-DATE
+        POLICY-INFORMATION.CREDIT-MESSAGE := #EZ-PAY-DUE-MESSAGE
+      VALUE '0','1','2','4'
+        POLICY-INFORMATION.CREDIT-MESSAGE := #CC-PAY-DUE-MESSAGE
+      NONE VALUE
+        PERFORM CREATE-EMAIL-REMINDER-RECORD
+    END-DECIDE
+    MOVE EDITED #TOT-DUE (EM=ZZZZ9.99) TO #TOTAL-DUE
+* Write check scan file                                                            /* YK13 start
+    RESET #INV-INVOICE-LINE
+    #INV-MEMBER-NUM        := POLICY-INFORMATION.INSURED-CN
+    #INV-POL-NUM           := POLICY-INFORMATION.POLICY-NUMBER
+    #INV-LINE-TYPE         := #DETAIL-RECORD
+    #INV-TYPE              := #FPF-BILL-TYPE
+    #INV-DATE              := #DATN
+    #INV-PAYOR-NAME        := POLICY-INFORMATION.OWNER-NAME
+    #INV-AMOUNT            := #TOTAL-DUE
+    #INV-TRAN-CODE(1)      := #FPF-TRAN-CODE
+* Subtract Service FPF amount to have a separate invoice item
+    #TOT-DUE               := #TOT-DUE - #FPF-S
+    MOVE EDITED #TOT-DUE (EM=99999999.99) TO #INV-TRAN-AMOUNT (1)
+    IF #FPF-S <> 0
+      #INV-TRAN-CODE(2)      := #FPF-SERV-TRAN-CODE
+      MOVE EDITED #FPF-S (EM=99999999.99) TO #INV-TRAN-AMOUNT (2)
+    END-IF
+*
+    CALLNAT 'INVN0001' #INVOICE-RECORD #INV-LINE-TYPE #INV-I #INV-INVOICE-LINE
+    BILLING-BAR-CODE := #INV-SCAN-LINE
+    WRITE WORK FILE 8 #INVOICE-RECORD
+  WHEN #TOT-DUE = 0
+    POLICY-INFORMATION.TITLE-DUE-CREDIT := 'AMOUNT DUE'
+    POLICY-INFORMATION.TOTAL-DUE := '$ 0.00'
+    POLICY-INFORMATION.DUE-DATE  := ' '
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+COMPRESS #DOCUMENT-LIST #TAB BILLING-NOTICE INTO #DOCUMENT-LIST
+*
+END-SUBROUTINE
+*
+**********************************************
+DEFINE SUBROUTINE CREATE-EMAIL-REMINDER-RECORD
+**********************************************
+*
+EMAIL-FLAG := TRUE
+MOVE BY NAME POLICY-INFORMATION TO EMAIL-INFORMATION
+*  POLICY-NUMBER
+*  SALUTATION
+*  INSURED-NAME
+*  ISSUE-DATE
+DAL-CN                           := POLICY-INFORMATION.INSURED-CN
+EMAIL-INFORMATION.FPF-AMOUNT-DUE := POLICY-INFORMATION.TOTAL-DUE
+EMAIL-INFORMATION.OWNER-EMAIL    := POLICY-INFORMATION.OWNER-EMAIL
+EMAIL-INFORMATION.CREATION-DATE  := #DATE-ENTERED
+COMPRESS POLICY-INFORMATION.BILLING-FREQUENCY POLICY-INFORMATION.BILLING-METHOD
+  INTO EMAIL-INFORMATION.PAYMENT-MODE
+*
+END-SUBROUTINE
+*******************************************
+DEFINE SUBROUTINE GET-ALLOTMENT-INFORMATION
+*******************************************
+*
+CALLNAT 'NPPN0007'
+  POLICY-INFORMATION
+  #PROCESS-ISN
+  #MILITARY-STATUS
+*
+IF #MILITARY-STATUS = 'R'
+  COMPRESS #DOCUMENT-LIST #TAB ALLOTMENT-FORM-RETIRED INTO #DOCUMENT-LIST
+ELSE
+  COMPRESS #DOCUMENT-LIST #TAB ALLOTMENT-FORM-ACTIVE INTO #DOCUMENT-LIST
+END-IF
+*
+END-SUBROUTINE
+*********************************************
+DEFINE SUBROUTINE GET-BENEFICIARY-INFORMATION
+*********************************************
+*
+CALLNAT 'NPPN0006'
+  POLICY-INFORMATION
+  #ID-NUMBER
+  #POLICY-INDEX
+  #PROCESS-ISN
+  #BEN-COMPLETED
+*
+IF #BEN-COMPLETED
+  COMPRESS #DOCUMENT-LIST #TAB BENEFICIARY-DESIGNATION-FORM
+    INTO #DOCUMENT-LIST
+END-IF
+*
+END-SUBROUTINE
+*
+****************************************************
+DEFINE SUBROUTINE GET-CAP-LOAN-AMORTIZATION-SCHEDULE
+****************************************************
+*
+*  LOAN-AMOUNT
+*  LOAN-INTEREST-RATE
+*  LOAN-REPAYMENT-PERIOD
+*  LOAN-MONTHLY-PAYMENT
+*  C@CAP-LOAN-AMORTIZATION
+*  CAP-LOAN-AMORTIZATION
+*     3 MONTH (A10)
+*     3 INTEREST (A10)
+*     3 PRINCIPAL (A10)
+*     3 BALANCE (A10)
+*
+IF #CAP-MONTHLY-PAYMENT = 0 OR #CAP-INTEREST-RATE = 0
+    OR #CAP-PMT-DATE = 0
+  COMPRESS 'Loan data is incomplete. Skipping loan package for Policy Number '
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+  #ERROR := 'Y'
+  ESCAPE MODULE
+END-IF
+*
+CALLNAT 'NPPN0008'
+  POLICY-INFORMATION
+  #SSN
+  #CAP-MONTHLY-PAYMENT
+  #CAP-INTEREST-RATE
+  #CAP-PMT-DATE
+*
+IF #DOCUMENT-LIST <> ' '                                                      /* YK16
+  COMPRESS #DOCUMENT-LIST #TAB CAP-AMORTIZATION-SCHEDULE INTO #DOCUMENT-LIST
+ELSE                                                                          /* YK16
+  #DOCUMENT-LIST := CAP-AMORTIZATION-SCHEDULE                                 /* YK16
+END-IF                                                                        /* YK16
+END-SUBROUTINE
+*
+* YK15 Start
+******************************************
+DEFINE SUBROUTINE GET-MILITARY-INFORMATION
+******************************************
+*
+CALLNAT 'NPPN0009' POLICY-INFORMATION
+*
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE GET-FAMILY-INFORMATION
+****************************************
+*
+*   FAMILY-MEMBER-INFO
+*   FAMILY-MEMBER-NAME
+*   FAMILY-MEMBER-BIRTH-DATE
+*   FAMILY-MEMBER-SSN
+*   FAMILY-MEMBER-ROLE
+*
+C@FAMILY-INFO := 99
+EXPAND ARRAY FAMILY-INFO TO (*:C@FAMILY-INFO)
+EXPAND ARRAY FAMILY-EMPTY-LINE TO (*:1)
+#NN := 1
+POLICY-INFORMATION.FAMILY-MEMBER-NAME(1)      := POLICY-INFORMATION.MEMBER-NAME
+POLICY-INFORMATION.FAMILY-MEMBER-BIRTH-DATE(1):= FUNCTION-CALENDAR(<#DATE-OF-BIRTH,#SHORT-FORM>)
+POLICY-INFORMATION.FAMILY-MEMBER-SSN(1)       := POLICY-INFORMATION.MEMBER-SSN
+POLICY-INFORMATION.FAMILY-MEMBER-ROLE(1)      := #MEMBER
+* YK7 start
+FIND(1) CT-V WITH CT-V.ID-NUMBER = #ID-NUMBER   /* ST-V.ID-NUMBER
+  FIND CR-V WITH CONTACT-1-ID = CT-V.CONTACT-ID
+    ACCEPT IF ROLE-2-CD = 'K' OR ROLE-2-CD = 'G' OR ROLE-2-CD = 'D' OR ROLE-2-CD = 'S'
+    CT-1.
+    FIND(1) CT-V WITH CONTACT-ID = CR-V.CONTACT-2-ID
+      #NN := #NN + 1
+      POLICY-INFORMATION.FAMILY-MEMBER-NAME(#NN) := EDIT_NAME_FMLS(<CT-V.FULL-NAME>)
+      IF CT-V.DATE-OF-BIRTH NE 0
+        FAMILY-MEMBER-BIRTH-DATE(#NN):= FUNCTION-CALENDAR(<CT-V.DATE-OF-BIRTH,#SHORT-FORM>)
+      END-IF
+      IF CT-V.SSN <> 0                                                   /* YK17
+        MOVE EDITED CT-V.SSN (EM=999-99-9999) TO #Dynamic_Name
+        POLICY-INFORMATION.FAMILY-MEMBER-SSN(#NN) := FUNCTION-MASK(<#Dynamic_Name,'X'>)
+      END-IF                                                             /* YK17
+      #LOOK-UP-KEY   := #ROLE-KEY
+      #LOOK-UP-VALUE := CR-V.ROLE-2-CD
+      FAMILY-MEMBER-ROLE(#NN)  := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)
+    END-FIND
+  END-FIND
+END-FIND
+C@FAMILY-INFO := #NN
+IF C@FAMILY-INFO <> 0
+  RESIZE ARRAY FAMILY-INFO TO (*:C@FAMILY-INFO)
+ELSE
+  RESIZE ARRAY FAMILY-INFO TO (*:1)
+END-IF
+* Following paragraph to have empty lines in the final pdf document
+* if there is no family information
+DECIDE ON FIRST VALUE #NN
+  VALUE 0 C@FAMILY-EMPTY-LINE := 7
+  VALUE 1 C@FAMILY-EMPTY-LINE := 6
+  VALUE 2 C@FAMILY-EMPTY-LINE := 5
+  VALUE 3 C@FAMILY-EMPTY-LINE := 4
+  VALUE 4 C@FAMILY-EMPTY-LINE := 3
+  VALUE 5 C@FAMILY-EMPTY-LINE := 2
+  NONE VALUE
+    C@FAMILY-EMPTY-LINE := 0
+END-DECIDE
+IF C@FAMILY-EMPTY-LINE <> 0
+  RESIZE ARRAY FAMILY-EMPTY-LINE TO (*:C@FAMILY-EMPTY-LINE)
+END-IF
+END-SUBROUTINE
+*************************************
+DEFINE SUBROUTINE GET-DEPENDENTS-DATA
+*************************************
+*
+*   DEPENDENT-INFO
+*   DEPENDENT-NAME
+*   DEPENDENT-BIRTH-DATE
+*   DEPENDENT-SSN
+*   DEPENDENT-ROLE
+*
+IF NOT #FAMILY-INFO
+  PERFORM GET-FAMILY-INFORMATION
+END-IF
+IF #NN NE 0
+  EXPAND ARRAY DEPENDENT-INFO TO (*:#NN)
+*
+  FOR #I = 1 TO #NN
+    IF POLICY-INFORMATION.FAMILY-MEMBER-ROLE(#I) = #MEMBER
+      ESCAPE TOP
+    END-IF
+    IF POLICY-INFORMATION.FAMILY-MEMBER-ROLE(#I) = #SPOUSE AND (NOT #RID-SPOUSE)
+      ESCAPE TOP
+    END-IF
+    #NNN := #NNN + 1
+    POLICY-INFORMATION.DEPENDENT-NAME(#NNN)       := POLICY-INFORMATION.FAMILY-MEMBER-NAME(#I)
+    IF POLICY-INFORMATION.FAMILY-MEMBER-SSN(#I) <> ' '                                          /* YK17
+      POLICY-INFORMATION.DEPENDENT-SSN(#NNN)      := POLICY-INFORMATION.FAMILY-MEMBER-SSN(#I)   /* YK17
+    ELSE                                                                                        /* YK17
+      POLICY-INFORMATION.DEPENDENT-SSN(#NNN)      := 'Not on file'                              /* YK17
+    END-IF                                                                                      /* YK17
+    POLICY-INFORMATION.DEPENDENT-BIRTH-DATE(#NNN) := POLICY-INFORMATION.FAMILY-MEMBER-BIRTH-DATE(#I)
+    POLICY-INFORMATION.DEPENDENT-ROLE(#NNN)       := POLICY-INFORMATION.FAMILY-MEMBER-ROLE(#I)
+  END-FOR
+END-IF
+* Following paragraph to adjust page size in the final pdf document
+IF #NNN <> 0
+  DECIDE ON FIRST VALUE #NNN
+    VALUE 1 C@DEPENDENT-INFO := 5
+    VALUE 2 C@DEPENDENT-INFO := 4
+    NONE VALUE
+      C@DEPENDENT-INFO := #NNN
+  END-DECIDE
+  RESIZE ARRAY DEPENDENT-INFO TO (*:C@DEPENDENT-INFO)
+  COMPRESS #DOCUMENT-LIST #TAB RIDER-CERTIFICATE INTO #DOCUMENT-LIST
+* Warning message (check credit card deposit for rider FPF)
+  COMPRESS 'Rider for Policy Number '
+    POLICY-INFORMATION.POLICY-NUMBER 'was issued ' INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+ELSE
+  RESIZE ARRAY DEPENDENT-INFO TO (*:1)
+  COMPRESS 'No dependents found. Rider for Policy Number '
+    POLICY-INFORMATION.POLICY-NUMBER 'not created' INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-IF
+END-SUBROUTINE
+*
+* YK15 End
+**************************************
+DEFINE SUBROUTINE GET-TERMS-CONDITIONS
+**************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #CAP-LOAN-ONLY
+    IGNORE
+  WHEN PLAN-TYPE = 'RT'
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-RT
+      INTO #DOCUMENT-LIST
+    PLAN-TYPE-GROUP := 'RT'                                       /* YK15
+  WHEN PLAN-TYPE = 'EZ'                                           /* YK21
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-EZ          /* YK21
+      INTO #DOCUMENT-LIST                                         /* YK21
+    PLAN-TYPE-GROUP := 'EZ'                                       /* YK21
+  WHEN PLAN-TYPE = 'LT'
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-LTI
+      INTO #DOCUMENT-LIST
+    PLAN-TYPE-GROUP := 'LTI'                                      /* YK15
+  WHEN F-LT2PLUS-TRUE(<PLAN-TYPE>)                                /* YK20
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-LTII-PLUS
+      INTO #DOCUMENT-LIST
+    PLAN-TYPE-GROUP := 'LTII+'                                  /* YK20
+    PLAN-TERM       := SUBSTR(PLAN-TYPE,2,2)                    /* YK20
+    IF SUBSTR(PLAN-TERM,1,1) = '0'                              /* YK20
+      PLAN-TERM := SUBSTR(PLAN-TERM,2)                          /* YK20
+    END-IF                                                      /* YK20
+* WHEN SUBSTR(PLAN-TYPE,1,1) GE 'U' AND SUBSTR(PLAN-TYPE,1,1) LE 'Z'   /* YK20
+  WHEN F-LT2-TRUE(<PLAN-TYPE>)                                    /* YK20 not LTII+
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-LTII
+      INTO #DOCUMENT-LIST
+    PLAN-TYPE-GROUP := 'LTII'                                   /* YK15
+    PLAN-TERM       := SUBSTR(PLAN-TYPE,2,2)                    /* YK20
+  WHEN IS-ANNUITY-LIFE(<PLAN-TYPE>)                             /* TT1
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-AL
+      INTO #DOCUMENT-LIST
+    #WL-POLICY := TRUE
+    PLAN-TYPE-GROUP := 'AL'                                       /* YK15
+  WHEN PLAN-TYPE = 'GPL'
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-GPL
+      INTO #DOCUMENT-LIST
+    #WL-POLICY := TRUE
+    PLAN-TYPE-GROUP := 'GPL'                                      /* YK15
+  WHEN PLAN-TYPE = 'GP2'                                          /* YK25
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-GP2
+      INTO #DOCUMENT-LIST
+    #WL-POLICY := TRUE
+    PLAN-TYPE-GROUP := 'GP2'
+/* 7P, 20P, 30P, '2P' '3P' '4P' '5P' '6P' '7P' '8P' '9P' 'OL'
+  WHEN PLAN-TYPE = 'SP' OR PLAN-TYPE = 'SPF' OR PLAN-TYPE = 'OL'
+      OR (PLAN-TYPE >= '1P'  AND PLAN-TYPE <= '9P')
+      OR (PLAN-TYPE >= '1PF' AND PLAN-TYPE <= '9PF')      /* YK3
+      OR (PLAN-TYPE >= '10F' AND PLAN-TYPE <= '19P')
+      OR (PLAN-TYPE >= '20F' AND PLAN-TYPE <= '29P')
+      OR (PLAN-TYPE >= '30F' AND PLAN-TYPE <= '34P')
+      OR (PLAN-TYPE >= '35F' AND PLAN-TYPE <= '99P')
+    COMPRESS #DOCUMENT-LIST #TAB TERMS-AND-CONDITIONS-WL
+      INTO #DOCUMENT-LIST
+    #WL-POLICY := TRUE
+    PLAN-TYPE-GROUP := 'OL'                                       /* YK15
+  WHEN NONE
+    IGNORE
+END-DECIDE
+#LOOK-UP-KEY   := #PLAN-GROUP-KEY                                 /* YK15
+#LOOK-UP-VALUE := POLICY-INFORMATION.PLAN-TYPE-GROUP              /* YK15
+TERM-COND-EFF-DATE := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)  /* YK15
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE GET-VA-PROJECTION-DATA
+****************************************
+*   2 C@VALUE-PROJECTION (N2.0)
+*   2 VALUE-PROJECTION (1:*)
+*     3 VA-DATE (A10)
+*     3 INSURED-AGE (A10)
+*     3 YEARS-IN-FORCE (A10)
+*     3 MINIMUM-CASH-VALUE (A10)
+*     3 DEATH-BENEFIT (A10)
+*     3 TOTAL-PREMIUMS-PAID (A10)
+*     3 CASH-VALUE (A10)
+*     3 TOTAL-DEATH-BENEFIT (A10)
+*
+*
+CALLNAT 'NPPN0004'
+  POLICY-INFORMATION
+  #ID-NUMBER
+  #POLICY-INDEX
+  #PROCESS-ISN
+*
+* DECIDE ON FIRST VALUE PLAN-TYPE                           /* TT1 BEGIN
+DECIDE FOR FIRST CONDITION
+* VALUE 'AL'
+  WHEN IS-ANNUITY-LIFE(<PLAN-TYPE>)
+    COMPRESS #DOCUMENT-LIST #TAB ANNUITY-LIFE-PROJECTION
+      #TAB VALUE-PROJECTION-TABLE INTO #DOCUMENT-LIST
+* VALUE 'GP2'
+  WHEN PLAN-TYPE = 'GP2'
+    COMPRESS #DOCUMENT-LIST #TAB GENERATIONS-PLUS-PROJECTION
+      #TAB VALUE-PROJECTION-TABLE INTO #DOCUMENT-LIST
+* NONE VALUE
+  WHEN NONE
+    COMPRESS #DOCUMENT-LIST #TAB WHOLE-LIFE-PROJECTION
+      #TAB VALUE-PROJECTION-TABLE INTO #DOCUMENT-LIST
+END-DECIDE                                                  /* TT1 END
+IF #MEC
+  COMPRESS #DOCUMENT-LIST #TAB ME-CONTRACT INTO #DOCUMENT-LIST
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE FIND-POLICY-INDEX
+***********************************
+*
+RESET #INDEX-FOUND
+FOR #I1 = 1 TO 9
+* YK32 >
+  IF ST-V.POLICY-ID(#I1) = POLICY-INFORMATION.POLICY-NUMBER AND ST-V.STATUS(#I1) = 'D'
+    #INDEX-FOUND := TRUE
+    #POLICY-INDEX := #I1
+  END-IF
+* < YK32  
+END-FOR
+#I := #POLICY-INDEX
+IF NOT #INDEX-FOUND
+  COMPRESS 'Policy number NOT FOUND on the database'
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+  #ERROR := 'Y'
+  ESCAPE ROUTINE IMMEDIATE
+END-IF
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE PROCESS-ERROR
+*******************************
+*
+IF *ERROR-NR = 1320
+  COMPRESS 'Policy Number field is not valid - '
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+ELSE
+  COMPRESS 'Error in processing Policy Number -'
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+END-IF
+ERROR-PROGRAM := *PROGRAM
+ERROR-NUMBER  := *ERROR-NR
+ERROR-LINE    := *ERROR-LINE
+CALLNAT 'GPRN0003' ERROR-LOG
+#ERROR := 'Y'
+ESCAPE ROUTINE IMMEDIATE
+END-SUBROUTINE
+*
+END

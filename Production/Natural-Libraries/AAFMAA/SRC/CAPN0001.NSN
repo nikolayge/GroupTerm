@@ -1,0 +1,274 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: CAPN0001                                                     *
+* FUNCTION : Create or update the Loan file                            *
+*                                                                      *
+*                       MODIFICATION LOG                               *
+************************************************************************
+* USER  DATE      TAG     REASON                                       *
+* vxt   01082018  vt1     /Ticket 6490/                                *
+************************************************************************/*
+DEFINE DATA
+PARAMETER USING CAPA0001
+LOCAL USING CAPL0001
+LOCAL
+*
+* 1 NT-V VIEW OF A-NOTES
+*   2 ID-NUMBER (N6.0)
+*   2 DTS-DATN (P9.0)
+*   2 DTS-TIMN (P7.0)
+*   2 C*NOTE-TABLE
+*   2 NOTE-DATE (N8.0/100)
+*   2 NOTE-CLERK-ID (A3/100)
+*   2 NOTE-LINE-NUM (P1.0/100)
+*   2 NOTE-TEXT (A60/100)
+*
+1 #GET              (I4) CONST <0>
+1 #ADD              (I4) CONST <1>
+1 #UPDATE           (I4) CONST <2>
+1 #DELETE           (I4) CONST <3>
+1 #REINSTATE        (I4) CONST <4>     /* vt1
+* 1 #CHECKFORUPDATES (I4) CONST <4>
+1 BLANK             (A1) CONST <' '>
+1 #UPDATED          (L)
+1 #HOLD-LOAN-NUM    (I4)
+1 #HOLD-ISN         (P10)
+1 #HOLD-LOAN-STATUS (A1)
+1 #NEXT-LOAN-NUM    (I4)
+1 #MAX-CAPS         (I4) CONSTANT <9>
+*
+1 #CLERK-ID         (A3)
+1 #CAP-NUM          (N2)
+1 I                 (I4)
+1 #POS              (I4)
+END-DEFINE
+*
+DECIDE ON FIRST VALUE OF #ACTION-TYPE
+  VALUE #REINSTATE         /* vt1
+    PERFORM REINSTATE-LOAN
+  VALUE #GET
+    PERFORM GET-LOAN-BY-CN
+  VALUE #ADD
+    PERFORM ADD-CAP
+  VALUE #UPDATE
+    PERFORM UPDATE-LOAN-RECORD
+  NONE VALUE
+    IGNORE
+END-DECIDE
+
+********************************
+DEFINE SUBROUTINE REINSTATE-LOAN                 /* vt1 \/
+********************************
+IF #HOLD-ISN = 0
+  PERFORM GET-LOAN-BY-CN
+END-IF
+*
+IF #HOLD-ISN = 0
+/* NO LOAN TO REINSTATE
+  ESCAPE ROUTINE
+END-IF
+
+REINL.
+GET LNS-V #HOLD-ISN
+*
+LNS-V.LAST-UPD-USER := *USER
+LNS-V.LAST-UPD-DATE := *DATN
+LNS-V.LAST-UPD-TIME := *TIMN
+LNS-V.LOAN-STATUS   := 'R'   /*   R -reinstated  CURRENT      was 'C'
+UPDATE (REINL.)
+
+PERFORM ADD-NOTES
+END-SUBROUTINE                                  /* vt1 /\
+
+********************************
+DEFINE SUBROUTINE GET-LOAN-BY-CN
+********************************
+IF #LOAN.ID-NUMBER <> 0
+  FIND LNS-V WITH LNS-V.ID-NUMBER = #LOAN.ID-NUMBER
+    IF NO RECORDS FOUND
+      #RETURN-MSG:= 'No loan records found'
+*       PERFORM CHECK-NOTES
+      ESCAPE BOTTOM
+    END-NOREC
+    IF LNS-V.LOAN-NUMBER > #HOLD-LOAN-NUM
+      #HOLD-LOAN-NUM    := LNS-V.LOAN-NUMBER
+      #HOLD-ISN         := *ISN
+      #HOLD-LOAN-STATUS := LNS-V.LOAN-STATUS
+      #NEXT-LOAN-NUM    := LNS-V.LOAN-NUMBER + 1
+    END-IF
+  END-FIND
+ELSE
+  #RETURN-MSG := 'Missing Loan Number'
+END-IF
+IF #HOLD-LOAN-NUM > #MAX-CAPS
+  COMPRESS 'Cannot have more than' #MAX-CAPS 'total CAP loans.' INTO #RETURN-MSG
+END-IF
+**************
+END-SUBROUTINE
+**************
+
+*************************
+DEFINE SUBROUTINE ADD-CAP
+*************************
+RESET LNS-V
+*
+IF #RETURN-MSG <> 'No loan records found'
+  PERFORM GET-LOAN-BY-CN
+END-IF
+*
+IF #RETURN-MSG = ' '
+  IF #HOLD-LOAN-STATUS <> 'Q' /* Last loan was paid off
+    PERFORM UPDATE-LOAN-RECORD
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF #NEXT-LOAN-NUM <= 0
+  #NEXT-LOAN-NUM := 1
+END-IF
+#LOAN.LOAN-NUMBER := #NEXT-LOAN-NUM
+*
+DECIDE FOR EVERY CONDITION
+  WHEN #LOAN.ADD-USER = BLANK
+    #LOAN.ADD-USER := *USER
+  WHEN #LOAN.ADD-DATE = 0
+    #LOAN.ADD-DATE := *DATN
+  WHEN #LOAN.ADD-TIME = 0
+    #LOAN.ADD-TIME := *TIMN
+  WHEN #LOAN.LAST-UPD-USER = BLANK
+    #LOAN.LAST-UPD-USER := *USER
+  WHEN #LOAN.LAST-UPD-DATE = 0
+    #LOAN.LAST-UPD-DATE := *DATN
+  WHEN #LOAN.LAST-UPD-TIME = 0
+    #LOAN.LAST-UPD-TIME := *TIMN
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+MOVE BY NAME #LOAN TO LNS-V
+STORE LNS-V
+*
+PERFORM ADD-NOTES
+*
+**************
+END-SUBROUTINE
+**************
+
+*****************************
+* DEFINE SUBROUTINE DELETE-LOAN            /* vt1 \/
+* *****************************
+* IGNORE
+* **************
+* END-SUBROUTINE                           /* vt1 /\
+* **************
+
+************************************
+DEFINE SUBROUTINE UPDATE-LOAN-RECORD
+************************************
+IF #HOLD-ISN = 0
+  PERFORM GET-LOAN-BY-CN
+END-IF
+*
+IF #HOLD-ISN = 0
+  PERFORM ADD-CAP
+  ESCAPE BOTTOM
+END-IF
+*
+LNS.
+GET LNS-V #HOLD-ISN
+*
+LNS-V.LAST-UPD-USER := *USER
+LNS-V.LAST-UPD-DATE := *DATN
+LNS-V.LAST-UPD-TIME := *TIMN
+*
+IF #LOAN.LOAN-ISSUE-DATE <> 0
+  LNS-V.LOAN-ISSUE-DATE := #LOAN.LOAN-ISSUE-DATE
+END-IF
+*
+IF #LOAN.LOAN-INITIAL-AMOUNT <> 0
+  LNS-V.LOAN-INITIAL-AMOUNT := #LOAN.LOAN-INITIAL-AMOUNT
+END-IF
+*
+IF #LOAN.LOAN-PAYOFF-DATE <> 0
+  LNS-V.LOAN-PAYOFF-DATE := #LOAN.LOAN-PAYOFF-DATE
+END-IF
+*
+LNS-V.LOAN-STATUS := #LOAN.LOAN-STATUS
+UPDATE (LNS.)
+
+PERFORM ADD-NOTES
+**************
+END-SUBROUTINE
+**************
+
+
+
+******************************
+DEFINE SUBROUTINE CHECK-EXISTS
+******************************
+FIND LNS-V WITH LNS-V.LOAN-POLICY-NUMBER = #LOAN.LOAN-POLICY-NUMBER
+  IF NO RECORDS FOUND
+    #RETURN-MSG:= 'No loan records found'
+  END-NOREC
+END-FIND
+**************
+END-SUBROUTINE
+**************
+
+***************************
+DEFINE SUBROUTINE ADD-NOTES
+***************************
+#CAP-NUM  := LNS-V.LOAN-NUMBER
+#CLERK-ID := FUNCTION-CLERK(<LNS-V.LAST-UPD-USER>)
+*
+IF *DEVICE = 'BATCH'
+  #CLERK-ID := 'EDS'
+ELSE
+  IF #CLERK-ID = ' '
+    #CLERK-ID := 'MBR'
+  END-IF
+END-IF
+*
+**** write *program '=' #hold-loan-status
+IF #HOLD-LOAN-STATUS = 'P'               /* vt1 01/17/2017
+  #ACTION-TYPE := #UPDATE
+ELSE
+  #ACTION-TYPE := #ADD
+END-IF
+*
+*** write *program '=' #hold-loan-status
+if #hold-loan-status NE 'R'              /* vt1 01172017
+  CALLNAT 'CAPN0002'
+    #ACTION-TYPE
+    #CLERK-ID
+    LNS-V.ID-NUMBER
+    #CAP-NUM
+    LNS-V.LOAN-STATUS
+*   LNS-V.LOAN-ISSUE-DATE
+end-if                                   /* vt1 01172017
+**************
+END-SUBROUTINE
+**************
+
+* *****************************
+* DEFINE SUBROUTINE CHECK-NOTES
+* *****************************
+* FIND NT-V WITH NT-V.ID-NUMBER = #LOAN.ID-NUMBER
+*   FOR I NT-V.C*NOTE-TABLE TO 1 STEP -1
+*     EXAMINE NOTE-TEXT(I) FOR '*CAP2' GIVING POSITION #POS
+*     IF #POS = 0
+*       ESCAPE TOP
+*     END-IF
+*     #NEXT-LOAN-NUM := 3
+*     ESCAPE BOTTOM
+*   END-FOR
+* END-FIND
+* *
+* **************
+* END-SUBROUTINE
+* **************
+
+END

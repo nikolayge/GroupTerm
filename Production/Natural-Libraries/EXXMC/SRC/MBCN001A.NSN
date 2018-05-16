@@ -1,0 +1,163 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* External Payer Login
+* Object name - MBCN001A
+***********************************************************************
+*        MODIFICATION LOG
+***********************************************************************
+* USER   DATE      TAG  REASON
+* YAK    02222012       Initial Creation
+* YAK    07312015  YK1  Rewritten for Policy Ownership using new functions
+*                       and a new structure
+***********************************************************************
+*
+* <CNInfo>
+*   <PolicyNumber>171303-1</PolicyNumber>
+*   <CN>171303</CN>
+* </CNInfo>
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 CNInfo
+  2 PolicyNumber     (A) dynamic
+  2 CN               (A) dynamic
+  2 OwnerZipCode     (A) dynamic
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 C*ACTIVE-SEGMENTS
+  2 POLICY-ID (9)
+*
+1 #PolicyNumber (A16)
+1 #ErrorCode    (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #ID-NUMBER    (N6)
+1 #FOUND        (L)
+1 #POLICY-FOUND (L)
+1 #POL-SEG      (I2)
+1 #OwnerContactId (N8)
+1 #ZipCode        (N5)
+1 #ZIP-VALID      (L)
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Main Logic Here
+PERFORM CHECK-DATA
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #FOUND AND #POLICY-FOUND AND #ZIP-VALID
+    IGNORE
+  WHEN NOT #FOUND
+    #ErrorCode := #ID-NOT-FOUND
+  WHEN NOT #POLICY-FOUND
+    #ErrorCode := #INVALID-POLICY-NUMBER
+  WHEN NOT #ZIP-VALID
+    #ErrorCode := #INVALID-ZIP-CODE-AUTH
+  WHEN ANY
+    PERFORM COMPOSE-XML
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'CNInfo'
+    RESET CNinfo
+  VALUE 'CNInfo/CN/$'
+    CNinfo.CN := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'CNInfo/PolicyNumber/$'
+    CNinfo.PolicyNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'CNInfo/OwnerZipCode/$'
+    CNinfo.OwnerZipCode := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE CHECK-DATA
+****************************
+*
+IF CNinfo.CN is (N6)
+  #ID-NUMBER :=  VAL(CNinfo.CN)
+ELSE
+  ESCAPE ROUTINE
+END-IF
+*
+#PolicyNumber := *TRIM(CNinfo.PolicyNumber)
+FIND(1) ST-V WITH ID-NUMBER = #ID-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  #FOUND := TRUE
+  EXAMINE ST-V.POLICY-ID(*) FOR #PolicyNumber INDEX #POL-SEG
+  IF #POL-SEG <> 0
+    #POLICY-FOUND := TRUE
+    PERFORM CHECK-ZIP-CODE
+    ESCAPE ROUTINE
+  END-IF
+END-FIND
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CHECK-ZIP-CODE
+********************************
+*
+#OwnerContactId := GET-POL-OWNER-CI(<#PolicyNumber>)(1)  /* YK1
+#ZipCode        := F-GET-ZIP(<#OwnerContactId>)
+IF CNInfo.OwnerZipCode IS (N5)
+  IF #ZipCode = VAL(CNInfo.OwnerZipCode)
+    #ZIP-VALID := TRUE
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+COMPRESS '<CNInfo>' '<CN>' CNInfo.CN '</CN>' -
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '</CNInfo>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+END

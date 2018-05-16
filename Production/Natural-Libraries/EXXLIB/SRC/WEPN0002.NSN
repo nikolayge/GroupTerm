@@ -1,0 +1,303 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* E-payments (credit cards and eChecks) - apply FPF payments real time
+* Real time version of WCCP0001/WCCNCC22
+* Called from "Policy approve" process (NM & AI) through
+*            WEPN0001 - E-Payments driver
+* WEPN0002 - applies approved FPF credit card and eCheck
+*            transactions to IAS
+* Called from    - WEPN0001
+* Parm Data Area - WCCA0021
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+* USER   DATE      TAG  REASON
+* YAK    07012014       Initial creation
+* NGG    20141023  NG1  Multiple services
+* vxt    06/22/2015 vt1 Add a segment to passing parms to
+*                       C2520SAM program/Ticket 2973/
+**********************************************************
+*
+DEFINE DATA
+PARAMETER USING WCCA0021
+PARAMETER
+1 POLICY-SEGMENT (N1)
+1 RESPONSE-CODE  (A3)
+LOCAL USING OBJLSTAT      /* Status file object LDA
+LOCAL USING OBJLTRRG      /* Transaction Register object LDA
+LOCAL USING C2500AAM
+LOCAL USING SVCA0003
+LOCAL USING ERROR_L       /* Error codes
+LOCAL
+*
+1 #DATN           (N8)
+1 #TIMN           (N7)
+1 #DATE-MMDDYYYY  (N8)
+1 REDEFINE #DATE-MMDDYYYY
+  2 #DATE-MMDDYYYY-A (A8)
+1 #CUR-ACCT-UPDT  (N8)
+1 #ST-ISN         (P9)
+1 #CC-X           (I2)
+1 #ILN1           (I2)
+1 #ILN2           (I2)
+1 #LX             (I2)
+1 #I              (I2)
+1 #II             (I2)
+1 #SG-TBL (15)
+  2 #SG-CAT1 (A2)
+  2 #SG-CAT2 (A2)
+  2 #SG-AMT  (N6.2)
+1 #INP-AMT        (N6.2)
+1 #INP-TR-CD      (A4)
+1 #UPDATE-MODE    (L)  INIT <TRUE>
+1 #CLERK          (A3) INIT <'WEB'>
+1 #USER-ID        (A8)
+1 #TERM           (L)
+1 #EXTRA-STOP     (L)
+1 #CAP-POLICY     (L)
+1 #CMBX           (A4)
+1 #TT-DATE        (P8)           /* Parm for apply ADCR subroutine
+1 #ACC-INT-AMT    (P5.2)
+1 #ISSUE-DATE     (N8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-A  (A8)
+1 #MODE           (A1)
+1 #WEB-CHARGE     (A1) INIT <'Y'>
+1 #CREDIT-CARD    (A) DYNAMIC CONST <'C'>
+1 #APPLY          (A) DYNAMIC CONST <'APPLY'>
+1 #NOT-ACTIVE     (A) DYNAMIC CONST <'The premier service is not active'>
+1 #SERVICES       (L)
+1 #MSG            (A) DYNAMIC
+1 #ACTIVITY-TYPE         (A3)    /* VT1 06/04/2015 \/
+1 #STATUS-TYPE           (A2)
+1 #lx-passed             (i2)     /* VT1 06/04/2015 /\
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+#DATE-MMDDYYYY := FUNCTION-DATE(<#DATN>)
+*
+* Convert Windows id into Clerk id if calling from WebCharge
+IF CC-PAYMENT.USER = MASK('AAFMAA\')
+  #CLERK := FUNCTION-WEB-USER(<CC-PAYMENT.USER>)(1)
+ELSE
+  #USER-ID := *TRANSLATE(CC-PAYMENT.USER,UPPER)
+  #CLERK   := FUNCTION-CLERK(<#USER-ID>)
+END-IF
+*
+FIND(1) ST-V WITH ID-NUMBER = CC-PAYMENT.ID-NUMBER
+  IF NO RECORDS FOUND
+    RESPONSE-CODE := #ST-NOT-FOUND
+    ESCAPE MODULE
+  END-NOREC
+  #ST-ISN := *ISN
+END-FIND
+*
+GET ST-V #ST-ISN
+ST-V.DATE-ACCT-UPDATE := ST-V.DTS-DATN := #DATN
+ST-V.DTS-TIMN := *TIMN
+*
+FOR #I = 1 TO C@PAY-POLICY
+  #CC-X := POLICY-SEGMENT
+  #lx-passed := #cc-x                                                 /* vt1 06/26/2015
+  FOR #II =1 TO C@APPLIED-PAYMENT(#I)
+    RESET #SERVICES
+    #INP-AMT := DUE-AMOUNT(#I,#II)
+    #INP-TR-CD := TRAN-TYPE(#I,#II)
+    DECIDE ON FIRST VALUE TRAN-TYPE(#I,#II)
+      VALUE 'FPFP'
+        PERFORM APPLY-FPFP
+      VALUE 'FPRP'
+        PERFORM APPLY-FPRP
+      VALUE 'DUESPS'
+        #SERVICES := TRUE
+        PERFORM APPLY-SERVICE-PAYMENT
+      VALUE 'ADCR'
+        #INP-TR-CD := TRAN-TYPE(#I,#II)
+        PERFORM APPLY-ADCR
+      NONE VALUE
+        #INP-TR-CD := 'ADCR'
+        PERFORM APPLY-ADCR
+        RESPONSE-CODE := #WRONG-TRAN-TYPE
+    END-DECIDE
+    IF NOT #SERVICES
+      PERFORM ACCT-REG
+    END-IF
+  END-FOR
+END-FOR
+UPDATE
+*
+****************************
+DEFINE SUBROUTINE APPLY-FPFP
+****************************
+*
+#ISSUE-DATE    := FUNCTION-DATE(<ST-V.ISSUE-DATE(#CC-X)>)
+#SCR-ISS-DT(1) := #ISSUE-DATE-A
+#TERM := FUNCTION-TERM-POLICY (<ST-V.PLAN (#CC-X)>)
+IF #TERM
+  #SCR-ALP-CODE (1):= 'T'
+ELSE
+  #SCR-ALP-CODE (1):= 'W'
+END-IF
+*
+#ILN1              := 1
+#LX                := #CC-X
+#SCR-ID-SSN (1)    := ST-V.ID-NUMBER
+#SCR-EFF-DT (1)    := #DATE-MMDDYYYY-A
+#SCR-TRAN-CODE (1) := #INP-TR-CD
+#SCR-TRAN-AMT  (1) := #INP-AMT
+#SCR-CASH-CODE (1) := 'C'
+*
+CALLNAT 'CFPFPSAM' #SCR-LINES
+  ST-V.STATUS       (1:9)
+  ST-V.PAY-STATUS   (1:9)
+  ST-V.MODE         (1:9)
+  ST-V.PLAN         (1:9)
+  ST-V.ISSUE-DATE   (1:9)
+  ST-V.PAID-TO-DATE (1:9)
+  ST-V.PAID-UP-DATE (1:9)
+  ST-V.ANNUAL-PREM  (1:9)
+  ST-V.MTD-ACV-PREM-ADJ (1:9)
+  ST-V.X-FIRST-PLACE-FEE (1:9)
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  #LX
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE APPLY-FPRP
+****************************
+*
+#ILN1              := 1
+#LX                := #CC-X
+#SCR-ID-SSN (1)    := ST-V.ID-NUMBER
+*
+#SCR-EFF-DT (1)  := #DATE-MMDDYYYY-A
+#SCR-TRAN-CODE (1) := #INP-TR-CD
+#SCR-TRAN-AMT  (1) := #INP-AMT
+#SCR-CASH-CODE (1) := 'C'
+*
+CALLNAT 'CRIDRSAM' #SCR-LINES
+  ST-V.X-RID-FPF  (1:9)
+  ST-V.X-RID-BALANCE (1:9)
+  ST-V.RID-TOT-PAID
+  ST-V.RID-PLAN    (1:9)
+  ST-V.RID-EFF-DT  (1:9)
+  ST-V.RID-PD-TO   (1:9)
+  ST-V.MODE        (1:9)
+  #ILN1
+  #ILN2
+  #SG-TBL (1:15)
+  #LX
+*
+END-SUBROUTINE
+*
+****************************
+DEFINE SUBROUTINE APPLY-ADCR
+****************************
+*
+#ILN1              := 1
+#SCR-ID-SSN (1)    := ST-V.ID-NUMBER
+#SCR-EFF-DT (1)    := #DATE-MMDDYYYY-A
+#SCR-TRAN-CODE (1) := #INP-TR-CD
+#SCR-TRAN-AMT  (1) := #INP-AMT
+#SCR-CASH-CODE (1) := 'C'
+*
+CALLNAT 'CADCRSAM' #SCR-LINES
+  ST-V.STATUS                (1:9)
+  ST-V.PAY-STATUS            (1:9)
+  ST-V.MODE                  (1:9)
+  ST-V.PLAN                  (1:9)
+  ST-V.ISSUE-DATE            (1:9)
+  ST-V.PAID-TO-DATE          (1:9)
+  ST-V.PAID-UP-DATE          (1:9)
+  ST-V.ANNUAL-PREM           (1:9)
+  ST-V.MTD-ACV-PREM-ADJ      (1:9)
+  ST-V.ALOT-AMT
+  ST-V.ALOT-SW
+  ST-V.STOP-DATE
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.AUX-DEBIT-CREDIT-AMT
+  ST-V.ALT-LP-AMT
+  ST-V.PAD-CODE
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #TT-DATE
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE APPLY-SERVICE-PAYMENT
+***************************************
+*
+RESET PARM-SVC
+PARM-SVC.ACTION         := #APPLY
+PARM-SVC.USER           := #CLERK
+PARM-SVC.SVC-MEMBER-ID  := CC-PAYMENT.ID-NUMBER
+PARM-SVC.CASH-MODE      := CC-PAYMENT.CASH-CODE
+PARM-SVC.SVC-PAY-AMOUNT := CC-PAYMENT.DUE-AMOUNT(#I,#II)
+PARM-SVC.SVC-PLAN       := CC-PAYMENT.PLAN-TYPE(#I,#II)   /* NG1
+CALLNAT 'SVCN0003' PARM-SVC #MSG 1X ST-V.DEBIT-CREDIT-AMT
+IF #MSG = #NOT-ACTIVE
+  #INP-TR-CD := 'ADCR'
+  PERFORM APPLY-ADCR
+END-IF
+*
+END-SUBROUTINE
+*
+**************************
+DEFINE SUBROUTINE ACCT-REG
+**************************
+*
+MOVE 1 TO #ILN1
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+#SCR-EFF-DT (1) := #DATE-MMDDYYYY-A
+*
+IF #INP-TR-CD = 'ADCR' OR = 'RDCR'
+  #SCR-ISS-DT (1) := 0
+ELSE
+  #ISSUE-DATE    := FUNCTION-DATE(<ST-V.ISSUE-DATE(#CC-X)>)
+  #SCR-ISS-DT(1) := #ISSUE-DATE-A
+END-IF
+*
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+*
+IF #INP-TR-CD = MASK ('FLN')
+  RESET #SCR-TRAN-AMT (1)
+ELSE
+  MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+END-IF
+*
+#SCR-CASH-CODE(1) := CC-PAYMENT.CASH-CODE
+*
+CALLNAT 'C2520SAM' #SCR-LINES
+  ST-V.ID-NUMBER
+  ST-V.PROCESS-IND
+  ST-V.INTRO-FLAG
+  ST-V.NAME
+  ST-V.PLAN   (1:9)
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.DATE-ACCT-UPDATE
+  #DATN
+  #TIMN
+  #ILN1
+  #CUR-ACCT-UPDT
+  #CLERK
+  #EXTRA-STOP
+  #SG-TBL (1:15)
+  #CMBX
+  #ACTIVITY-TYPE             /* vt1 06/04/2015 \/
+  #STATUS-TYPE
+  #lx-passed                  /* VT1 06/04/2015 /\
+RESET #EXTRA-STOP
+RESET #SG-TBL(*) #SCR-LINES
+END-SUBROUTINE
+*
+END

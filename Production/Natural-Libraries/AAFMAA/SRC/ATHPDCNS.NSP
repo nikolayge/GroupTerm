@@ -1,0 +1,274 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPDCNS
+*  COUNTS DCNS FOR STATS  ___ This program will NOT be used after 7/1/2010
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06032004  PM1  Added new bucket for pending application       *
+*                       CN's.                                          *
+* RSE    09212009  RE1  Change PROCESS-IND/600k logic for Unification  *
+* YAK    10092012  YK1  Use function to identify Level Term II plans   *
+* TMT    10092013  TT1  ADDRESS NORMALIZATION
+************************************************************************
+*
+DEFINE DATA
+LOCAL
+1 FI-V VIEW OF A-INVESTMENTS
+ 2 ID-NUMBER
+*
+1 VA-V VIEW OF A-VA-HISTORY           /*TT1
+ 2 YEAR-MONTH-M           (49)
+ 2 YEAR-MONTH-Y           (17)
+*
+1 ST-V VIEW OF A-STATUS         
+ 2 ID-NUMBER
+ 2 PROCESS-IND
+ 2 INTRO-FLAG
+ 2 WIDOW-FLAG
+ 2 MEMBER-FLAG
+ 2 DATE-OF-DEATH
+ 2 NUMBER-MEMBERSHIPS
+ 2 STATUS     (9)
+ 2 PLAN       (9)
+ 2 REDEFINE PLAN
+  3 PLAN-OCC  (9)
+   4 PLAN-A1  (A1)
+   4 PLAN-A2  (A2)
+*
+1 AT-V VIEW OF A-APPL-TRACKING        /*TT1
+ 2 ID-NUMBER
+ 2 INTRO-FLAG
+ 2 AT-STATUS
+ 2 ST-NOTE-DATE  (50)
+*
+1 #AAFM-WHOLE-LIFE-PLANS   (N7)
+1 #AAFM-TERM-PLANS         (N7)
+1 #AAFM-WHOLE-LIFE-HISTORY (N7)
+1 #AAFM-AT-ACTIVE          (N7)
+1 #AAFM-AT-INACTIVE        (N7)
+1 #AAFM-AT-APPROVED        (N7)
+1 #AAFM-INACT-DECEASED     (N7)
+1 #AAFM-INACT-INACT        (N7)
+1 #CONTACTS                (N7)
+1 #PENDING-APPS            (N7)                                   /* PM1
+1 #AAFM-DEAD               (N7)
+1 #AAFM-PURGED             (N7)
+1 #AAFM-G-F                (N7)
+*
+1 #AFSC-CLIENTS            (N7)
+1 #AFSC-AAFM-G-F           (N7)
+1 #AFSC-SRVC-MBRS          (N7)  /* used on AFSC INVOICE
+1 #AFSC-AAFM-SURV          (N7)
+1 #AFSC-AAFM-P-L           (N7)
+1 #AFSC-APP-TRACKING       (N7)
+1 #AFSC-FAS                (N7)
+*
+1 #I1                (I2)
+1 #CNT-1       (N6)
+1 #ISN               (N8)
+*
+1 #FOUND-XHIS        (L)
+1 #MATCH-ID-NUMBER    (N6)
+1 #LAST-ID-NUMBER     (N6)
+1 #FRAMES         (P5)
+1 #FOUND-ST      (L)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY   (N4)
+ 2 #MM     (N2)
+ 2 #DD     (N2)
+1 #INACTIV-DT   (N8)
+1 SAS_PLAN (A3) /* RE1
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+FORMAT     PS=77 LS=133
+WRITE      TITLE LEFT 'PROGRAM:' *PROGRAM
+           55T 'Count DCNS and other info'
+          100T 'DATE:' *DATX 5X 'TIME:' *TIMX
+FORMAT (2) PS=77 LS=133
+WRITE  (2) TITLE LEFT 'PROGRAM:' *PROGRAM
+           55T 'SELECTED DCN"S'
+          100T 'DATE:' *DATX 5X 'TIME:' *TIMX
+*
+* FORMAT (3) PS=77 LS=133
+* WRITE  (3) TITLE LEFT 'PROGRAM:' *PROGRAM
+*            55T 'SELECTED CN"S'
+*           100T 'DATE:' *DATX 5X 'TIME:' *TIMX
+READ ST-V PHYSICAL
+* ESCAPE BOTTOM
+  IF ST-V.ID-NUMBER LE 1900
+    ESCAPE TOP
+  END-IF
+*
+*  IF ST-V.ID-NUMBER GE 600000            /* RE1
+  IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)   /* RE1
+    IF ST-V.NUMBER-MEMBERSHIPS = 0   /* these are not paid for
+      ESCAPE TOP
+    END-IF
+    ADD 1 TO #AFSC-CLIENTS
+  ELSE
+    IF ST-V.WIDOW-FLAG = 'Y'
+      IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'  /* bypass ins-only
+             OR = 'O' OR = 'P' OR = 'Q'
+        WRITE ST-V.ID-NUMBER 'ins-only widow not counted as afsc surv'
+      ELSE
+        ADD 1 TO #AFSC-AAFM-SURV
+      END-IF
+*
+      IF   (ST-V.MEMBER-FLAG = 'Y')
+       AND (ST-V.DATE-OF-DEATH GT 0)
+* WRITE ST-V.ID-NUMBER
+*       'inact-dead-mem-flag=' ST-V.MEMBER-FLAG 'wid-flag=' WIDOW-FLAG
+        ADD 1 TO #AAFM-INACT-DECEASED
+      END-IF
+*
+*     IF   (ST-V.MEMBER-FLAG = ' ')
+*      AND (ST-V.DATE-OF-DEATH GT 0)
+* WRITE ST-V.ID-NUMBER
+*       'inact-dead-mem-flag=' ST-V.MEMBER-FLAG 'wid-flag=' WIDOW-FLAG
+*     END-IF
+    ELSE
+      IF ST-V.NUMBER-MEMBERSHIPS = 0
+* WRITE ST-V.ID-NUMBER
+*       'inact-inact-mem-flag=' ST-V.MEMBER-FLAG 'wid-flag=' WIDOW-FLAG
+*       process-ind =' st-v.process-ind
+        IF ST-V.PROCESS-IND = 'C'
+          IF ST-V.INTRO-FLAG = 'A'                                /* PM1
+            ADD 1 TO #PENDING-APPS                                /* PM1
+          ELSE                                                    /* PM1
+            ADD 1 TO #CONTACTS
+          END-IF                                                  /* PM1
+        ELSE
+          ADD 1 TO #AAFM-INACT-INACT
+        END-IF
+*
+        ESCAPE TOP      /* added 8/8/2001
+      END-IF
+*
+      IF ST-V.ID-NUMBER LT 106030
+        IF (NOT INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+                        OR = 'O' OR = 'P' OR = 'Q')
+         AND (PLAN (1) NE 'FSO')
+          ADD 1 TO #AFSC-AAFM-G-F
+        END-IF
+      ELSE
+*       IF NOT INTRO-FLAG = 'O' OR = 'P' OR = 'Q'
+*                       OR = 'S' OR = 'K' OR = 'G'
+*        IF PROCESS-IND = 'G'                           /* RE1
+        IF F_IF_SVC(<ST-V.ID-NUMBER,ST-V.PROCESS-IND,ST-V.NUMBER-MEMBERSHIPS,ST-V.INTRO-FLAG,SAS_PLAN>)      /* RE1
+          ADD 1 TO #AFSC-AAFM-P-L
+        END-IF
+      END-IF
+    END-IF
+*
+    FOR #I1 1 TO 9
+      IF STATUS (#I1) = 'D'
+*       IF  (ST-V.PLAN (#I1) = 'LT' OR = 'RT' OR = 'FSO' OR = 'SO')       /* YK1
+*        OR ((ST-V.PLAN-A1(#I1) GE 'U') AND (ST-V.PLAN-A1(#I1) LE 'Z'))   /* YK1
+        IF  (ST-V.PLAN (#I1) = 'FSO' OR = 'SO')                           /* YK1
+         OR FUNCTION-TERM-POLICY(<ST-V.PLAN(#I1)>)                        /* YK1
+          ADD 1 TO #AAFM-TERM-PLANS
+        ELSE
+          ADD 1 TO #AAFM-WHOLE-LIFE-PLANS
+        END-IF
+      END-IF
+    END-FOR
+  END-IF
+END-READ
+*
+MOVE *DATN TO #YYYYMMDD
+SUBTRACT 4 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #INACTIV-DT
+*
+READ AT-V PHYSICAL
+* ESCAPE BOTTOM
+  IF INTRO-FLAG = 'V'
+    ADD 1 TO #AFSC-APP-TRACKING
+  ELSE
+    IF AT-STATUS = 'A'
+      ADD 1 TO #AAFM-AT-APPROVED
+    ELSE
+      FOR #I1 1 TO 50
+        IF ST-NOTE-DATE (#I1) = 0
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+*
+      IF   (#I1 GT 1)
+       AND (ST-NOTE-DATE (#I1 -1) LT #INACTIV-DT)
+*       WRITE AT-V.ID-NUMBER 'INACTIVE' AT-V.ST-NOTE-DATE (#I1 - 1)
+        ADD 1 TO #AAFM-AT-INACTIVE
+      ELSE
+        ADD 1 TO #AAFM-AT-ACTIVE
+      END-IF
+    END-IF
+  END-IF
+END-READ
+*
+READ FI-V PHYSICAL
+* ESCAPE BOTTOM
+  IF  (FI-V.ID-NUMBER LE 1900)   /* samples
+   OR (FI-V.ID-NUMBER GE 900000) /* extra investments records (9XXXXX)
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #AFSC-FAS
+END-READ
+*
+READ VA-V PHYSICAL
+* ESCAPE BOTTOM
+  FOR #I1 1 TO 49
+    IF YEAR-MONTH-M (#I1) NE 0
+      ADD 1 TO #AAFM-WHOLE-LIFE-HISTORY
+    END-IF
+  END-FOR
+*
+  FOR #I1 1 TO 17
+    IF YEAR-MONTH-Y (#I1) NE 0
+      ADD 1 TO #AAFM-WHOLE-LIFE-HISTORY
+    END-IF
+  END-FOR
+END-READ
+*
+COMPUTE #AFSC-SRVC-MBRS = #AFSC-CLIENTS + #AFSC-AAFM-P-L
+*
+WRITE (2) 'AAFMAA/AFSC Invoice counts as of' *DATU
+WRITE (2) #AAFM-WHOLE-LIFE-PLANS   'Whole Life Plans'
+WRITE (2) #AAFM-TERM-PLANS         'Term Plans'
+WRITE (2) #AAFM-WHOLE-LIFE-HISTORY 'WL History'
+WRITE (2) #AAFM-AT-ACTIVE          'AAFM AT"S (ACTIVE)'
+WRITE (2) #AAFM-AT-INACTIVE        'AAFM AT"S (INACTIVE)'
+WRITE (2) #AAFM-AT-APPROVED        'AAFM AT"s (APPROVED)'
+WRITE (2) #AAFM-G-F                'AAFMAA G/F or Purged DCN"s'
+WRITE (2) #AAFM-DEAD               'AAFMAA dead DCN"s'
+WRITE (2) #AAFM-PURGED             'AAFMAA purged DCN"s'
+WRITE (2) #AAFM-INACT-DECEASED     'AAFMAA INACTIVE deceased'
+WRITE (2) #AAFM-INACT-INACT        'AAFMAA INACTIVE inactive'
+WRITE (2) #CONTACTS                'contacts not included in above'
+WRITE (2) #PENDING-APPS            'pending apps not included in above'
+WRITE (2) ' '
+WRITE (2) '"_______"'              'AAFMAA notice forms     '
+*
+WRITE (2) #AFSC-AAFM-G-F           'AFSC AAFM Grandfathered'
+WRITE (2) #AFSC-AAFM-SURV          'AFSC AAFM Survivors'
+WRITE (2) #AFSC-CLIENTS            'AFSC Clients'
+WRITE (2) #AFSC-AAFM-P-L           'AFSC AAFM Pipelines'
+WRITE (2) #AFSC-SRVC-MBRS          'AFSC SRVC MBRS (sum of above 2'
+WRITE (2) #AFSC-APP-TRACKING       'AFSC AT"s'
+WRITE (2) #AFSC-FAS                'AFSC FAS'
+WRITE (2) ' '
+WRITE (2) '"_______"'              'AFSC notice forms     '
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+END

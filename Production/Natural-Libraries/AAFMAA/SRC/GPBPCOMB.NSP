@@ -1,0 +1,184 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPBPCOMB - Load the file for creating letters in SSRS
+* Birthday Emails - sent to Insured in the morning of their birthday
+******************************************************************
+* Created for Letters @ Emails project
+******************************************************************
+* MODIFICATION LOG
+******************************************************************
+* YAK  03182014       Initial Creation
+* YAK  08182015  YK1  Exclude people who opted out of marketing
+* bz-Name 07/07/2017     Fine Names
+******************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLSTAT      /* Status file structure
+LOCAL USING OBJLLETT      /* Letters file structure
+LOCAL USING GPRL0EML      /* PDA to send notification email
+LOCAL
+1 CT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID (N8)
+  2 CONTACT-TYPE (A1)
+  2 ID-NUMBER (N6)
+  2 DATE-OF-BIRTH (N8)
+*
+1 #DATN           (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY    (N4)
+  2 #DATN-MM      (N2)
+  2 #DATN-DD      (N2)
+1 #TIMN           (N7)
+1 #USER           (A8)
+*
+1 #TEMPLATES-TABLE
+* Birthday Email
+  2 #EML-BDAY (A20) CONST <'BDAY_EML'>
+*
+1 #WINDOWS-TEST-DIR       (A) DYNAMIC INIT <'Ftp/EDS/Downloads/Test/'>
+1 #WINDOWS-USER-DIR       (A) DYNAMIC INIT <'Ftp/Marketing/'>
+1 #WINDOWS-SUBDIR         (A) DYNAMIC
+1 #UNIX-DIR               (A) DYNAMIC CONST <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/'>
+1 #FTP-SCRIPT-NAME        (A) DYNAMIC CONST <'/usr/SAG/cronus/.scripts/ftpAafmaaLocal'>
+1 #WIN-FILE-NAME          (A) DYNAMIC
+1 #UNIX-FILE-NAME         (A) DYNAMIC
+*
+1 CONSTANTS
+  2 #CLERK-ID                 (A3)  CONST <'EDS'>
+  2 #TAB                      (A1)  CONST <H'09'>
+  2 #EMAIL-ADDRESS-ERROR      (A)   DYNAMIC CONST <'No email address available for the insured'>
+  2 #CONTACT-ID-ERROR         (A)   DYNAMIC CONST <'Contact ID for the insured is zero - no information can be retrieved'>
+*
+* Work variables
+1 #COUNTERS
+  2 #REC-CNT           (N7)
+  2 #REP-CNT           (N7)
+  2 #BAD-CONTACT-ID    (N7)
+  2 #NO-EMAIL-ADDR     (N7)
+
+1 #ID-NUMBER           (N6)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-A       (A6)
+
+1 #DYNAMIC-VARIABLES
+  2 #ERROR-MESSAGE        (A75)
+  2 #Dynamic_Name         (A) DYNAMIC
+  2 #CONTACT-ID           (N8)
+  2 #DOB                  (N8)
+  2 REDEFINE #DOB
+    3 #DOB-YYYY           (N4)
+    3 #DOB-MM             (N2)
+    3 #DOB-DD             (N2)
+*
+* Variables for running program online (testing/debugging)
+1 f_1     (A80) INIT <"/usr/SAG/tmp/Exception_report.txt">
+1 f_2     (A80) INIT <"/usr/SAG/tmp/Statistics_report.txt">
+1 v_PN    (I1)
+1 v_RC    (N3)
+
+END-DEFINE
+*
+ON ERROR
+  WRITE 'CN = ' #ID-NUMBER
+END-ERROR
+*
+IF *DEVICE = 'BATCH'
+  IGNORE
+ELSE
+  PERFORM DEFINE-PRINTERS
+END-IF
+* Check on which server process is running (Test/Prod)
+IF F-IS-DEV(<>)
+  #WINDOWS-USER-DIR := #WINDOWS-TEST-DIR
+END-IF
+*
+#USER := *USER
+#TIMN := *TIMN
+#DATN := *DATN
+WRITE 'Start Time:    '   *TIMN
+*
+FORMAT (1) LS=133 PS=60
+FORMAT (2) LS=133 PS=60
+*
+**===============================
+DEFINE SUBROUTINE DEFINE-PRINTERS
+**===============================
+v_PN := 1
+v_RC := PRT_FN_PUT(<v_PN, f_1>)
+IF v_RC <> 0
+  PRINT (0)  'Error in print file 1 assigment'
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+R_ST.
+READ ST-V BY ID-NUMBER = 1900
+*
+  RESET #DYNAMIC-VARIABLES
+* YK1 >  
+  IF INS-MAIL-CODE = 'E' OR = 'F' OR = 'B' OR = 'S'
+    ESCAPE TOP
+  END-IF   
+* > YK1  
+  IF ST-V.STATUS(*) = 'D'
+    IF ST-V.MEMBER-CONTACT-ID = 0
+      COMPRESS ST-V.ID-NUMBER #CONTACT-ID-ERROR INTO #ERROR-MESSAGE
+      WRITE (1) #ERROR-MESSAGE
+      ESCAPE TOP
+    END-IF
+
+    FIND(1) CT-V WITH CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+      #DOB := CT-V.DATE-OF-BIRTH
+      IF #DOB-MM = #DATN-MM AND #DOB-DD = #DATN-DD
+        #ID-NUMBER := ST-V.ID-NUMBER
+        #CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+        #Dynamic_Name := 'S1'
+        CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name
+*        #Dynamic_Name := EDIT_NAME_LOWCASE (< #Dynamic_Name >) /* bz-Name
+        LT-V.INSURED-NAME := #Dynamic_Name
+*
+* if email to be sent find an email address
+        LT-V.EMAIL-ADDRESS := F-PREF-EMAIL(<#CONTACT-ID>)
+        IF LT-V.EMAIL-ADDRESS = ' '
+          COMPRESS #ID-NUMBER #EMAIL-ADDRESS-ERROR INTO #ERROR-MESSAGE
+          WRITE (1) #ERROR-MESSAGE
+          #NO-EMAIL-ADDR := #NO-EMAIL-ADDR + 1
+          ESCAPE TOP
+        END-IF
+*
+        LT-V.DATE-OF-BIRTH  := #DOB
+        LT-V.TEMPLATE-NAME  := #EML-BDAY
+        LT-V.INSURED-CN     := LT-V.POLICY-NUMBER := #ID-NUMBER
+        LT-V.LAST-LOAD-USER := #USER
+        LT-V.LAST-LOAD-DATE := #DATN
+        LT-V.LAST-LOAD-TIME := #TIMN
+        COMPRESS #DATN-YYYY #DATN-MM #DATN-DD INTO LT-V.FORMATTED-ISSUE-DATE WITH DELIMITER '-'
+*
+        STORE LT-V
+        #REC-CNT := #REC-CNT + 1
+      END-IF
+    END-FIND
+  END-IF
+END-READ
+END TRANSACTION
+*
+WRITE 'End   Time:    '   *TIMN
+WRITE(2)
+  'Records created               :'      #REC-CNT
+  'No Email address              :'      #NO-EMAIL-ADDR
+*
+RESET p_EMAIL
+* P_CC     := 'ykegeles@aafmaa.com'
+P_TO     := 'ykegeles@aafmaa.com'
+P_SUBJ   := '"Statistics report on Letters file load"'
+COMPRESS FULL 'Records created               :' #REC-CNT INTO P_MSG(1)
+COMPRESS FULL 'No Email address              :' #NO-EMAIL-ADDR INTO P_MSG(2)
+IF #BAD-CONTACT-ID <> 0
+  COMPRESS FULL 'Owner contact id zero       :' #BAD-CONTACT-ID INTO P_MSG(3)
+END-IF
+CALLNAT 'GPRS0EML' p_EMAIL
+*
+END

@@ -1,0 +1,198 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram CQRNCHKE.
+/**
+/** :author nguentchev
+/* TODO: Enter your code here
+/**
+/** :author nguentchev
+/*
+DEFINE DATA
+PARAMETER
+1 #RELATION          (A1)
+1 #GENDER            (A1)
+1 #NICOTINE          (A1)
+1 #AGE               (N2) 1 REDEFINE #AGE
+  2 #AGE-A           (A2)
+1 #AGE-DAYS          (N3.2)
+PARAMETER USING CQRA001
+*
+LOCAL
+1 #INSURED            (A1)
+1 #CALC-DATE          (N8) 1 REDEFINE #CALC-DATE
+  2 #CALC-DATE-A      (A8)
+1 #AGE-MIN            (N3.2)
+1 #AGE-MAX            (N3.2)
+1 #DOB-D              (D)
+1 #CALC-D             (D)
+1 #LEGACY-PLAN               (A3) 1 REDEFINE #LEGACY-PLAN /* Translated Plan to match legacy system
+  2 #PLAN-1           (A1)
+  2 #PLAN-2           (A2)
+*
+1 SERVICE            (A1)     CONST <'S'>
+1 #WHOLE             (A3/5)   CONST <'OL','30P','20P','7P','SP'>
+*
+1 #AgedError         (A) DYNAMIC CONST
+  <'No products are available for age'>
+1 #AgedError_GPL       (A) DYNAMIC CONST
+  <'We''re sorry, this policy is not available to %age% year old applicants.'>
+1 #AgedError_EZ       (A) DYNAMIC CONST
+  <'We''re sorry, this policy is available only to applicants 45-74.'>
+1 #AgedError_WL       (A) DYNAMIC CONST
+  <'Please re-apply when your baby is 6 months old.'>
+1 #AgedError_GP2     (A) DYNAMIC CONST
+  <'We''re sorry, this policy is available to applicants 15 days to 14 years of age.'>
+*     Other errors
+1 #NicotineError     (A) DYNAMIC CONST
+  <'We''re sorry, this product is not available to nicotine users.'>
+1 #RelationError     (A) DYNAMIC CONST
+  <'Children and Grandchildren are not eligible.'>
+1 #RelationErrorGP2     (A) DYNAMIC CONST
+  <'Only Children and Grandchildren are eligible.'>
+1 #FaceAMTErr20      (A) DYNAMIC CONST
+  <'The minimum recommended death benefit for age 0-19 is $20,000'>
+*
+1 PN       (I4)
+*
+END-DEFINE
+*
+FOR PN 1 TO C@Product
+  ASSIGN CustomerQuote.Eligibility (PN) = TRUE
+  ASSIGN #LEGACY-PLAN = CustomerQuote.Code ( PN )
+  IF #AGE < 0
+    COMPRESS #AgedError '-' #AGE ' years.'
+      INTO CustomerQuote.ErrorDesc (PN) LEAVING NO
+    RESET CustomerQuote.Eligibility (PN)
+    ESCAPE TOP
+  END-IF
+*
+  IF CustomerQuote.Code ( PN ) = 'LT2'  /* Legacy codes Translation
+*
+    PERFORM LEGACY-TRANSLATION
+*
+    IF #PLAN-1 = 'W' AND #Nicotine = 'S'
+      ASSIGN CustomerQuote.ErrorDesc (PN) = #NicotineError
+      RESET CustomerQuote.Eligibility (PN)
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  IF CustomerQuote.Code ( PN ) = 'EZ'
+      AND #RELATION = 'K' OR= 'G'
+    ASSIGN CustomerQuote.ErrorDesc (PN) = #RelationError
+    RESET CustomerQuote.Eligibility (PN)
+    ESCAPE TOP
+  END-IF
+*
+  IF CustomerQuote.Code ( PN ) = 'GP2'
+      AND NOT #RELATION = 'K' OR= 'G'
+    ASSIGN CustomerQuote.ErrorDesc (PN) = #RelationErrorGP2
+    RESET CustomerQuote.Eligibility (PN)
+    ESCAPE TOP
+  END-IF
+*    VAWL additional web-interface rule
+  IF CustomerQuote.Code ( PN ) = #WHOLE (*)
+      AND #AGE < 20
+      AND CustomerQuote.FaceAmount (PN,1) < 20000
+    ASSIGN CustomerQuote.ErrorDesc (PN) = #FaceAMTErr20
+    RESET CustomerQuote.Eligibility (PN)
+    ESCAPE TOP
+  END-IF
+*
+  CALLNAT 'CQRNAGES'
+    CustomerQuote.Code        (PN)
+    CustomerQuote.Term        (PN)
+    CustomerQuote.ProductType (PN)
+    CustomerQuote.Name        (PN)
+    CustomerQuote.Description (PN)
+    #RELATION
+    #NICOTINE
+    #AGE-MIN
+    #AGE-MAX
+*
+  IF #AGE-DAYS < #AGE-MIN OR #AGE-DAYS > #AGE-MAX
+    RESET CustomerQuote.Eligibility (PN)
+    DECIDE FOR FIRST CONDITION
+      WHEN CustomerQuote.Code ( PN ) = 'EZ'
+        ASSIGN CustomerQuote.ErrorDesc (PN) = #AgedError_EZ
+      WHEN CustomerQuote.Code ( PN ) = 'GP2'
+        ASSIGN CustomerQuote.ErrorDesc (PN) = #AgedError_GP2
+      WHEN CustomerQuote.Code ( PN ) = #WHOLE (*)
+        IF #AGE-DAYS < #AGE-MIN
+          ASSIGN CustomerQuote.ErrorDesc (PN) = #AgedError_WL
+        ELSE
+          ASSIGN CustomerQuote.ErrorDesc  (PN) = #AgedError_GPL
+          EXAMINE CustomerQuote.ErrorDesc (PN) FOR '%age%' REPLACE WITH #AGE-A
+        END-IF
+      WHEN NONE
+        ASSIGN CustomerQuote.ErrorDesc (PN) = #AgedError_GPL
+        EXAMINE CustomerQuote.ErrorDesc (PN) FOR '%age%' REPLACE WITH #AGE-A
+    END-DECIDE
+  END-IF
+  IF CustomerQuote.Eligibility (PN)
+    IF CustomerQuote.ProductType (PN) = SERVICE
+      CALLNAT 'CQRNSCHK'
+        CustomerQuote.ContactId
+        CustomerQuote.Rank
+        CustomerQuote.Code        (PN)
+        CustomerQuote.Eligibility (PN)
+        CustomerQuote.ProductType (PN) /* Service=S, Insurance=I
+        CustomerQuote.Succeeded   (PN)
+        CustomerQuote.ErrorDesc   (PN)
+        CustomerQuote.MilitaryWidow
+    ELSE
+      CALLNAT 'CQRNFAMT'
+        CustomerQuote.Code           (PN )
+        CustomerQuote.C@QuotePackage (PN)
+        CustomerQuote.FaceAmount     (PN,*)
+        CustomerQuote.ErrorDesc      (PN)
+    END-IF
+  END-IF
+  CustomerQuote.Code ( PN ) := #LEGACY-PLAN /* Legacy Plan Codes
+END-FOR
+*
+DEFINE LEGACY-TRANSLATION
+/*     ==================
+DECIDE ON FIRST VALUE CustomerQuote.LevelTermType (PN)
+  VALUE 'ST'
+    IF  CustomerQuote.Rider (PN)
+      MOVE 'X' TO #PLAN-1
+    ELSE
+      IF CustomerQuote.Renewable (PN)
+        MOVE 'S' TO #PLAN-1
+      ELSE
+        MOVE 'U' TO #PLAN-1
+      END-IF
+    END-IF
+  VALUE 'SE'
+    IF CustomerQuote.Rider (PN)
+      MOVE 'Y' TO #PLAN-1
+    ELSE
+      IF CustomerQuote.Renewable (PN)
+        MOVE 'R' TO #PLAN-1
+      ELSE
+        MOVE 'V' TO #PLAN-1
+      END-IF
+    END-IF
+  VALUE 'SS'
+    IF CustomerQuote.Rider (PN)
+      MOVE 'Z' TO #PLAN-1
+    ELSE
+      IF CustomerQuote.Renewable (PN)
+        MOVE 'Q' TO #PLAN-1
+      ELSE
+        MOVE 'W' TO #PLAN-1
+      END-IF
+    END-IF
+  ANY VALUE
+    MOVE EDITED CustomerQuote.Term (PN) (EM=99) TO #PLAN-2
+  NONE VALUE
+    ASSIGN CustomerQuote.ErrorDesc (PN) =
+      'Type is required (SS/SE/ST) for VT'
+    RESET CustomerQuote.Eligibility (PN)
+END-DECIDE
+END-SUBROUTINE
+END

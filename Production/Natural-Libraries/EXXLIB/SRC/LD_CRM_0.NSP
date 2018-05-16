@@ -1,0 +1,190 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* LD_CRM_O
+* Load Organisations - type='o' contacts to crm
+* Load AFA members to crm
+* bz 06/15/2011
+DEFINE DATA LOCAL
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER
+  2 CONTACT-ID
+  2 CONTACT-TYPE
+*
+ 1 CNT-PAPA-V VIEW OF A-CONTACTS
+  2 ID-NUMBER
+  2 CONTACT-ID
+*
+ 1 SVC-V VIEW OF A-SVC-MEMBER-PLAN
+   2 SVC-ID-NUMBER
+   2 SVC-ACTIVE-SEGMENTS (2) 
+     3 SVC-PLAN
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID       
+  2 ROLE-1-CD          
+  2 CONTACT-2-ID       
+  2 ROLE-2-CD  
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+*
+1 v_CN           (N6)
+1  REDEFINE v_CN
+   2 v_CN_A      (A6)
+*
+1 #ISN           (P8)
+1 XML_SERIALZE_OUTPUT     (A) DYNAMIC
+1 #CSV-LINE               (A) DYNAMIC
+1 #CRM-Result             (A) DYNAMIC
+1 #CRM-Request            (I4)           INIT <2>
+1 #CI_AIS                 (N8) 
+1 #CI_CRM                 (A) DYNAMIC
+1 #REQUEST                (A) DYNAMIC
+1 #RESPONCE               (A) DYNAMIC
+*
+1  v_PN             (I1)     INIT  <1>
+1  f_log           (A80)    INIT <"/usr/SAG/AAFMAA/batch/workfiles/TEMP/SAS/LD_CRM_0.TXT">
+1  v_RC             (N3)
+
+*********************
+1 cnt_TYPE           (N5)
+1 cnt_SVC            (N5) 
+1 cnt_PAPA           (N5)
+1 cnt_CNT            (N5)   
+1 cnt_err            (N5)
+1 cnt_xml            (N5)
+1 cnt_XML_Err        (N5) 
+*********************
+1 v_Err              (N4)
+1 v_MSG               (A) DYNAMIC
+* 1 dm     (A1)        INIT<H'09'>
+1 v_A100   (A100)
+END-DEFINE
+*
+ON ERROR
+  PRINT (0)  *PROGRAM *ERROR-NR *ERROR-LINE 
+END-ERROR
+*
+SETA. SETTIME
+DEFINE WORK FILE 1  '/usr/SAG/AAFMAA/batch/workfiles/TEMP/SAS/LD_CRM_1.TXT' TYPE 'ASCII-COMPRESSED'
+* READ CNT-V BY CNT-V.CONTACT-ID  /* FROM 524720 TO 524720
+*      WHERE CONTACT-TYPE ='O'
+*   v_Err := 0 v_CN := 0
+* RESET  v_CN #CI_AIS #ISN
+*   cnt_TYPE := cnt_TYPE + 1
+*   IF CNT-V.ID-NUMBER = 0 
+*      FIND (1) CR-V WITH CONTACT-2-ID = CNT-V.CONTACT-ID
+*               IF NO RECORD 
+*                    v_Err := 1
+*                    COMPRESS  'Error: Orphan Contact' CNT-V.CONTACT-ID INTO v_MSG
+*                    ESCAPE BOTTOM 
+*               END-NOREC
+*          FIND (1) CNT-PAPA-V WITH CNT-PAPA-V.CONTACT-ID = CONTACT-1-ID AND CNT-PAPA-V.ID-NUMBER <> 0
+*                     IF NO RECORD 
+*                          v_Err := 2
+*                          COMPRESS  'Error: Orphan Parent Contact' CNT-V.CONTACT-ID INTO v_MSG
+*                          ESCAPE BOTTOM 
+*                     END-NOREC
+*             v_MSG := '<1>'        
+*             cnt_PAPA := cnt_PAPA + 1 
+*             v_CN := CNT-PAPA-V.ID-NUMBER
+*             #CI_AIS := CNT-PAPA-V.CONTACT-ID
+*             PERFORM DO-XML-ALL
+*           END-FIND
+*      END-FIND  
+*    ELSE 
+*       v_MSG := '<0>'
+*       cnt_CNT := cnt_CNT + 1 
+*       v_CN := CNT-V.ID-NUMBER
+*       #CI_AIS := CNT-V.CONTACT-ID
+*       PERFORM DO-XML-ISN
+*    END-IF
+* 
+*   IF v_Err <> 0 PERFORM DO-ERROR ESCAPE TOP END-IF     
+* 
+*  END-READ 
+
+ READ SVC-V BY SVC-ID-NUMBER /* FROM 999999
+ IF SVC-PLAN(1) = '3SR' OR = 'AER' OR = 'FER' OR = 'CER'
+ RESET  v_CN #CI_AIS #ISN v_Err
+  cnt_SVC := cnt_SVC + 1
+  v_CN := SVC-ID-NUMBER 
+  v_MSG := '<P>'
+  PERFORM DO-XML-ALL
+  IF v_Err <> 0 PERFORM DO-ERROR ESCAPE TOP END-IF     
+  
+ END-IF
+ END-READ
+
+
+PRINT  (0) NOTITLE  'Pussh to CRM '  "Execution time:" *TIMD(SETA.) (EM=ZZh:99min:99sec:9) //
+'Type O CNs :'   cnt_TYPE       /
+' cnt_CNT   :' 2x  cnt_CNT        /
+'Input CNs  :' 2x  cnt_PAPA       /
+'AFA Plans  :'   cnt_SVC        /
+'CNs sent   :'   cnt_xml       /
+'Errors     :'   cnt_err       /
+'XML Errors :'  cnt_XML_Err
+
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE DO-XML-ISN
+          FS.
+          FIND (1) ST-V WITH ID-NUMBER = v_CN    
+                IF NO RECORD 
+                     v_Err := 3
+                     COMPRESS 'Error: STATUS Record not found for CN' v_CN  INTO v_MSG
+                     ESCAPE ROUTINE
+                END-NOREC
+          #ISN := *ISN(FS.)
+          CALLNAT 'MBRDATA' #ISN  XML_SERIALZE_OUTPUT
+                            #CSV-LINE  #CRM-Result  #CRM-Request
+*                            #CI_AIS
+*                            #CI_CRM
+               IF #CRM-Result = 'Succeeded' OR = ' '
+                   cnt_XML := cnt_XML + 1
+                ELSE
+                   cnt_XML_Err := cnt_XML_Err + 1
+               END-IF
+               COMPRESS v_MSG v_CN #CI_AIS #ISN  '<<' #CRM-Result '>>' INTO v_A100
+               WRITE WORK FILE 1 v_A100
+
+          END-FIND
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - -  - - - - -
+DEFINE DO-XML-ALL
+          FIND (1) ST-V WITH ID-NUMBER = v_CN    
+                IF NO RECORD 
+                     v_Err := 3
+                     COMPRESS 'Error: STATUS Record not found for CN' v_CN  INTO v_MSG
+                     ESCAPE ROUTINE
+                END-NOREC
+          END-FIND
+      
+          #REQUEST := 'FAMILY'
+          CALLNAT 'MBRCRC'
+                         v_CN
+                         #REQUEST
+                         #RESPONCE
+      
+               IF #RESPONCE = 'Succeeded' OR = ' '
+                   cnt_XML := cnt_XML + 1
+                ELSE
+                   cnt_XML_Err := cnt_XML_Err + 1
+               END-IF
+               COMPRESS  v_MSG v_CN #CI_AIS '<<' #RESPONCE '>>'  INTO v_A100       
+                 WRITE WORK FILE 1 v_A100   
+END-SUBROUTINE
+
+
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+DEFINE DO-ERROR
+cnt_Err := cnt_Err + 1
+COMPRESS v_MSG v_Err 'CI:' CNT-V.CONTACT-ID 'CI-P:' CNT-PAPA-V.CONTACT-ID INTO v_A100
+WRITE WORK FILE 1 v_A100   
+END-SUBROUTINE
+
+
+END

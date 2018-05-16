@@ -1,0 +1,367 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C1007NAT - AT Final steps
+*
+* The rules are:
+* The new data are in #AT structure
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+* NGG    04/04/2011  None    Program written                           *
+* NGG    20130111    NG1     Remove obsolete logic for AR
+* bz     09/23/2013   Add Vendor to C1011LAT, PMDA0002 (OI-1568)
+* bz     01/14/2014   change for PMD and OI-3155
+* bz     10/28/2015   OI-3876 Escape Routine after U3 Completed
+* bz     9/15/2016    MIB Proj. Add Request on PR->PU, Add Submit on UU
+* bz-Name-C 07/07/2017     Fine Names
+* bz-RX  10/03/2017  RX Request
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING C1008AAT
+PARAMETER USING C1009AAT
+PARAMETER
+1 #AT-ISN                 (P8)
+1 #PROSP                  (L)
+1 #STAT-FOUND             (L)
+1 #WILL-BE-PENDING        (L)
+1 #AT-STATUS              (A2)    /* USER STATUS
+1 #DEP-RCVD               (N7.2)
+1 #CGA-CLERK              (A3)
+1 #TEXT                   (A78)
+1 REDEFINE #TEXT
+  2 #TEXT-1ST-42          (A42)
+  2 #TEXT-FILL            (A1)
+  2 #TEXT-LST-35          (A35)
+*
+LOCAL USING C1011LAT
+LOCAL USING CLASSLAI
+LOCAL USING OBJLCONT
+LOCAL USING GPBATRBI
+LOCAL USING GPRA0004
+LOCAL USING ADDA0001
+*
+LOCAL
+*
+1 CC-STAT VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 BRIDGER-IND
+  2 REFUND-TO-CAP
+  2 NAME
+  2 DATE-OTHER-UPDATE
+*
+1 AT-CONTACT VIEW OF A-APPL-TRACKING
+  2 NAME            (A25)
+  2 SSN             (N9.0)
+  2 SEX             (A1)
+  2 DATE-OF-BIRTH   (N8.0)
+*
+1 #CLERK                  (A8)
+1 #NEW-CN                 (N6)
+1 #TYPE                   (N1)
+1 #SUBTRACT-CAP-STATS     (L)
+1 #MED-REQT-FLAG          (L)
+1 #CONV-FLAG              (L)
+1 #AP-INDEX               (I2)
+*
+1 #YYYYMMDD               (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY                 (N4)
+  2 REDEFINE #YYYY
+    3 #CENT               (A2)
+    3 #YY                 (A2)
+  2 #MMDD                 (N4)
+  2 REDEFINE #MMDD
+    3 #MM                 (N2)
+    3 #DD                 (N2)
+  2 REDEFINE #MMDD
+    3 #MM-A               (A2)
+    3 #DD-A               (A2)
+1 REDEFINE #YYYYMMDD
+  2 #HOLD-MONTH-KEY       (N6)
+1 #I1                     (I4)
+1 #I2                     (I4)
+1 i_NT                    (I4)
+1 #TXN-MSSG               (A78)
+1 REDEFINE #TXN-MSSG
+  2 #TXN-COMPL-MSG        (A9)
+  2 #TXN-MID-30           (A30)
+  2 #TXN-LST-39           (A39)
+*
+1 #HOLD-SOURCE-CODE       (A6)
+1 #SSN                    (N9)
+*
+1 #CAP-UPDATE             (L)
+*
+ 1 PARM-APPL-TRACKING
+   2 #AT-NUMBER   (N6)
+   2 #AT-NAME (A25)
+   2 #ERROR-MESSAGE (A60)
+   2 PM-CODE (A3/1:4)
+   2 PM-REMARK (A130/1:4)
+   2 PM-STATUS (A25)
+   2 PM-VENDOR (A10)       /*Name of the vendor
+ 1  v_A    (A) DYNAMIC  
+ 1 p_RC    (N4)            /* bz
+END-DEFINE
+*****************************************************************************
+*
+G. GET AT-V #AT-ISN
+*
+RESET #SSN
+FIND (1) CT-V WITH CT-V.CONTACT-ID = #AT.CONTACT-ID
+  #SSN := CT-V.SSN
+END-FIND
+*
+PERFORM SYNCH-WITH-CONTACT
+*
+IF NOT #AT.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+  MOVE *DATN TO #YYYYMMDD
+  MOVE #MM TO #AP-INDEX
+  #HOLD-SOURCE-CODE :=  #AT.APPL-SOURCE
+  MOVE 2 TO #TYPE
+  CALLNAT 'C1001SAT'                     /* Application source statistics
+    #TYPE
+    #PROSP
+    #HOLD-SOURCE-CODE
+    #STAT-FOUND
+    #AP-INDEX
+    #TXN-MSSG
+    AT-V.ACTION-FLAG
+    #MED-REQT-FLAG
+    #CONV-FLAG
+    #HOLD-MONTH-KEY
+    #AT.ACTION-FLAG
+    #AT.MEMBER-CN
+    #AT.CAP-IND
+    #AT.FACE-AMT-UNITS
+*
+END-IF
+*
+IF AT-V.CAP-IND = 'Y' AND #AT-STATUS NE AT-V.AT-STATUS
+    AND #AT-STATUS NE ' '
+  RESET #SUBTRACT-CAP-STATS
+  CALLNAT 'C1012SAT'             /* update CAP statistics
+    #AT-STATUS
+    #SUBTRACT-CAP-STATS
+*
+  IF AT-V.CAP-IND = 'Y'          /* was cap prior
+    MOVE TRUE TO #SUBTRACT-CAP-STATS
+    CALLNAT 'C1012SAT'           /* update CAP statistics
+      AT-V.AT-STATUS
+      #SUBTRACT-CAP-STATS
+  END-IF
+END-IF
+*                               Updates AT-V Notes
+IF #AT.REMARKS (1) NE ' '
+  MOVE *DATN TO #YYYYMMDD
+  FOR #I1 1 TO 40
+    IF AT-V.NOTES (#I1) = ' '
+      MOVE '*'        TO AT-V.NOTES-1    (#I1)
+      MOVE #CGA-CLERK TO AT-V.NOTES-INIT (#I1)
+      MOVE '-'        TO AT-V.NOTES-DASH (#I1)
+      COMPRESS NOTES (#I1)  #MM-A '/' #DD-A '/' #YYYY
+        #AT.REMARKS (1) INTO AT-V.NOTES (#I1) LEAVING NO
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF #I1 GT 40                  /* delete oldest note
+    FOR #I2 2 TO 40
+      MOVE AT-V.NOTES (#I2) TO AT-V.NOTES (#I2 - 1)
+    END-FOR
+*
+    RESET AT-V.NOTES-1 (40)
+    MOVE '*'        TO AT-V.NOTES-1    (40)
+    MOVE #CGA-CLERK TO AT-V.NOTES-INIT (40)
+    MOVE '-'        TO AT-V.NOTES-DASH (40)
+    COMPRESS NOTES (40) #MM-A '/' #DD-A '/' #YYYY
+      #AT.REMARKS (1) INTO AT-V.NOTES  (40) LEAVING NO
+  END-IF
+  RESET #AT.REMARKS (*)
+END-IF
+*
+IF AT-V.AT-STATUS NE #AT-STATUS
+    AND #AT-STATUS NE ' '
+    OR FUNCTION-CRM-PR (< #AT-ISN >)
+  RESET AT-V.NEXT-ACTION-DATE            /* used to ind aged status chg in ATHPATLB
+  CALLNAT 'GADDNSXX'                         /* add a status note
+    #CGA-CLERK
+    #AT-STATUS
+    AT-V.ST-NOTE-DATE   (1:50)
+    AT-V.ST-NOTE-USER   (1:50)
+    AT-V.ST-NOTE-STATUS (1:50)
+    AT-V.ACTION-DATE
+*                               PERFORM CHECK-PREMIUM-RATING
+  DECIDE FOR FIRST CONDITION
+    WHEN #AT-STATUS = 'UA'
+      AT-V.RATING-CODE := #CLASS-1
+    WHEN #AT-STATUS = 'UB'
+      AT-V.RATING-CODE := #CLASS-2
+    WHEN #AT-STATUS = 'UC'
+      AT-V.RATING-CODE := #CLASS-3
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*  UPDATE (0190)
+END-IF
+*                               MIB request
+      IF  #AT-STATUS = 'PU'                                          /* bz-MIB    
+        CALLNAT 'MIB-1000' #AT.ID-NUMBER #CGA-CLERK v_A ' ' p_RC     /* bz-MIB
+        IF v_A <> 'Cancel' PERFORM sbr_Notes  END-IF                 /* bz-MIB     
+        v_A := ' '  p_RC := 0                                        /* bz-RX
+*                               RX request
+        CALLNAT 'RX-0000' #AT.ID-NUMBER #CGA-CLERK ' ' v_A  p_RC     /* bz-RX
+        IF v_A <> 'Cancel' PERFORM sbr_Notes  END-IF                 /* bz-RX
+      END-IF                                                         /* bz-MIB
+*                               MIB Submission
+      IF  #AT-STATUS = 'UU'                                          /* bz-MIB    
+        CALLNAT 'MIB-2000' #AT.ID-NUMBER #CGA-CLERK v_A ' ' p_RC     /* bz-MIB
+        IF v_A <> 'Cancel' PERFORM sbr_Notes  END-IF                 /* bz-MIB 
+      END-IF                                                         /* bz-MIB 
+*                               Portamedic request
+IF #AT-STATUS = 'U3'  AND AT-V.AT-STATUS NE 'U3'                       /* --db
+   PARM-APPL-TRACKING.#AT-NUMBER := #AT.ID-NUMBER
+   PARM-APPL-TRACKING.#AT-NAME   := FUNCTION-CONTACT-NAME (<#AT.CONTACT-ID>)
+   PARM-APPL-TRACKING.#AT-NAME := *TRANSLATE(PARM-APPL-TRACKING.#AT-NAME, UPPER)  /* bz-Name
+   PARM-APPL-TRACKING.PM-VENDOR  := AT-V.PM-VENDOR  /*  bz
+   CALLNAT 'PMDN0001' PARM-APPL-TRACKING 
+   MOVE BY NAME PARM-APPL-TRACKING TO AT-V
+   AT-V.AT-STATUS := 'U3'
+   IF #ERROR-MESSAGE <> 'Canceled'
+      IF AT-V.PM-STATUS <> 'Error'                  /* bz OI-3155
+         CALLNAT 'PMDN0002' #AT.ID-NUMBER p_RC      /* bz OI-3155
+      END-IF                                        /* bz OI-3155
+      PERFORM sbr_Notes
+      UPDATE(G.)                            /*  bz OI-3876
+       #TEXT := 'Med Exem order completed'  /*  bz OI-3876
+       ESCAPE ROUTINE                       /*  bz OI-3876
+   END-IF
+END-IF
+*                          PERFORM CREDIT-CARD-INFO
+IF #AT.CAP-IND = 'Y'
+    AND #AT.CAP-TYPE = 'C'
+  #NEW-CN := VAL( #AT.MEMBER-CN )
+  IF FUNCTION-CC-NUMBER(<#NEW-CN>) NE ' '
+      AND #AT-STATUS = 'PI'
+    IGNORE
+  ELSE
+    CALLNAT 'GPXNCC01' #NEW-CN
+  END-IF
+END-IF
+*                          PERFORM RECORD-BRIDGER-AND-CAP-CHANGES
+IF #AT.CAP-IND = 'Y'
+  RESET #CAP-UPDATE
+  BR01. FIND (1) CC-STAT WITH CC-STAT.ID-NUMBER = #AT.MEMBER-CN-N
+    IF #BRIDGER = 'N'
+      RESET #BRIDGER
+    END-IF
+*
+    IF #REFUND-TO-CAP = ' '
+      #REFUND-TO-CAP := 'N'
+    END-IF
+*
+    IF #BRIDGER = CC-STAT.BRIDGER-IND
+      IGNORE
+    ELSE
+      #GPBATRBI-NEW-IND   := #BRIDGER
+      #GPBATRBI-ID-NUMBER := CC-STAT.ID-NUMBER
+      #GPBATRBI-CLERK     := #CGA-CLERK
+      CALLNAT 'GPBSTRBI'
+        #PDA-GPBATRBI
+*
+      CC-STAT.BRIDGER-IND := #BRIDGER
+      #CAP-UPDATE := TRUE
+    END-IF
+*
+    IF #REFUND-TO-CAP NE CC-STAT.REFUND-TO-CAP
+      #FIELD-DESCRIPTION(1)  := 'CA-RCAP = '
+      #OLD-DATA(1)           := CC-STAT.REFUND-TO-CAP
+      #NEW-DATA(1)           := #REFUND-TO-CAP
+*
+      #TR-NAME               := CC-STAT.NAME
+      #TR-ID-NUMBER          := CC-STAT.ID-NUMBER
+      #TR-CLERK-ID           := #CGA-CLERK
+      #TR-DATE-LAST-UPDATE   := CC-STAT.DATE-OTHER-UPDATE
+*
+      CALLNAT 'GPRN0004'
+        #TR-FIELDS #SYNC-FIELD-TABLE(*)
+        #OLD-DATA-TABLE(*) #NEW-DATA-TABLE(*)
+*
+      CC-STAT.REFUND-TO-CAP := #REFUND-TO-CAP
+      #CAP-UPDATE := TRUE
+    END-IF
+*
+    IF #CAP-UPDATE
+      UPDATE (BR01.)
+    END-IF
+  END-FIND
+END-IF
+*
+MOVE BY NAME #AT TO AT-V
+*
+IF #AT-STATUS = MASK ('W')
+    AND #DEP-RCVD GT 0
+  CALLNAT 'C1010SAT'      /* Remove Un-applied Deposits for withdrawn apps
+    #SSN
+    AT-V.MEMBER-CN
+    #CGA-CLERK
+    #TEXT
+END-IF
+*
+**IF #NEW-CN NE 0             NG1
+*  CALLNAT 'GTRANSXX'
+*    #SSN
+*    #NEW-CN
+**END-IF
+*
+UPDATE RECORD (G.)
+*
+DEFINE SYNCH-WITH-CONTACT
+/*     ==================
+GET AT-CONTACT #AT-ISN
+MOVE BY NAME CT-V TO AT-CONTACT
+AT-CONTACT.NAME := FUNCTION-CONTACT-NAME (< #AT.CONTACT-ID >)
+AT-CONTACT.NAME := *TRANSLATE(AT-CONTACT.NAME,UPPER)              /* bz-Name
+
+**PERFORM PRIMARY-AND-SECONDART-ADDR
+UPDATE (0325)
+END-SUBROUTINE
+*
+* -------------------------------------------------------------------------------------
+DEFINE SUBROUTINE sbr_Notes
+*
+  FOR i_NT = 1 TO 40 IF NOTES(i_NT) = ' ' ESCAPE BOTTOM END-IF END-FOR
+  i_NT := i_NT  /* First empty)
+
+  #I1 := (i_NT + 2 ) - 40   /* deficit
+*  print 'Deficit:' #I1
+  IF #I1 > 0
+     NOTES(1 : 40 - #I1) := NOTES(#I1 + 1 : 40)
+     #I1 := 41 - #I1
+     RESET NOTES(#I1 : 40)
+  ELSE #I1 := i_NT   
+  END-IF
+*  PRINT *PROGRAM 'First empty note:' #I1 'Last used note was:' i_NT    
+  MOVE EDITED *DATX (EM=MM/DD/YYYY) TO NOTES(#I1)
+  IF  #AT-STATUS = 'PU'  OR  = 'UU'
+     COMPRESS '*' 'EDS' '-' NOTES(#I1) v_A INTO NOTES(#I1) LEAVING NO SPACE
+     ESCAPE ROUTINE
+  END-IF   
+  COMPRESS '*' 'EDS' '-' NOTES(#I1)  PARM-APPL-TRACKING.#ERROR-MESSAGE  INTO NOTES(#I1) LEAVING NO SPACE
+*  PRINT '[0]' #I1 NOTES(#I1)   /* --db
+    v_A := ' '
+    FOR #i2 = 1 TO 4
+      IF AT-V.PM-CODE(#i2) = ' ' ESCAPE BOTTOM END-IF
+      COMPRESS v_A AT-V.PM-CODE(#i2)  INTO v_A
+    END-FOR
+    IF v_A <> ' '
+     COMPRESS FULL '[' v_A ']'  INTO v_A LEAVING NO SPACE
+     COMPRESS AT-V.PM-VENDOR 'Request:' v_A INTO NOTES(#I1 + 1)
+    END-IF
+END-SUBROUTINE
+
+END

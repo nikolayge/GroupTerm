@@ -1,0 +1,187 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPNXRP - Daily NX reporting
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    10212005  None    Program Written.                            *
+* RSE    09302009  RE1     Change PROCESS-IND logic for Unification    *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL  USING GONERLXX
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER                      (N6)
+ 2 NUMBER-MEMBERSHIPS             (P1)
+ 2 CC-EXP-DT                      (N8)
+ 2 CC-NUM                         (A16)
+ 2 PROCESS-IND                    (A1)
+ 2 STATUS                         (A1/9)
+ 2 DATE-ENTERED                   (N8/9)
+ 2 MODE                           (A1/9)
+ 2 ISSUE-DATE                     (N8/9)
+ 2 REDEFINE ISSUE-DATE
+  3 ISSUE-DATE-OCC                (9)
+   4 ISSUE-DATE-YYYY              (A4)
+   4 ISSUE-DATE-MM                (A2)
+   4 ISSUE-DATE-DD                (A2)
+*
+1 #I1                             (I2)
+1 #I2                             (I2)
+1 #I3                             (I2)
+1 #I4                             (I2)
+1 #NX-INT                         (I2)
+*
+1 #TABLE-OCC                      (200)
+ 2 #ID-NUMBER                     (A6)
+ 2 #ISSUE-DATE                    (A10)
+*
+1 #TIME                           (N7)
+1 #TO-DATE                        (N8)
+1 #ADJUST-DATE                    (N8)
+1 #FROM-DATE                      (N8)
+1 #ACTION-CODE                    (A1) INIT <'E'>
+*
+1 #NOTE-TEXT                      (A60/5)
+1 REDEFINE #NOTE-TEXT
+ 2 #NOTE-TEXT-OCC                 (5)
+  3 #CN-OCC                       (3)
+   4 #CN                          (A6)
+   4 #SPACE                       (A1)
+   4 #ISSUE-DATE-NX               (A10)
+   4 #SPACE-2                     (A3)
+*
+1 #CLERK-ID                       (A3)  INIT <'EDS'>
+1 #TO-INIT                        (A3)
+*
+1 #NX-CLERK-TABLE
+ 2 #NX-CLERK-1                    (A3) INIT <'ELB'>
+ 2 #NX-CLERK-2                    (A3) INIT <'CEB'>
+*
+1 REDEFINE #NX-CLERK-TABLE
+ 2 #CLERK-OCC                     (2)
+  3 #NX-CLERK                     (A3)
+*
+1 #NUMBER-NX                      (P3) INIT <2>
+*
+END-DEFINE
+************************************************************************
+*
+MOVE *TIMN TO #TIME
+*
+IF #TIME LT 1200000 /* between midnight & noon (Normal daily cycle time)
+  MOVE *DATN TO #TO-DATE
+  MOVE 00000001 TO #ADJUST-DATE
+  PERFORM CALL-GDATESXX
+ELSE
+  MOVE *DATN TO #FROM-DATE
+END-IF
+*
+MOVE 'F' TO #ACTION-CODE
+PERFORM CALL-GDATESXX
+IF NOT #FROM-DATE = 1 OR = 2 OR = 3 OR = 4 OR = 5
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'E' TO #ACTION-CODE
+MOVE #FROM-DATE TO #TO-DATE
+MOVE 00000003 TO #ADJUST-DATE
+RESET #FROM-DATE
+PERFORM CALL-GDATESXX
+*
+READ ST-V BY MEMBER-KEY FROM '001900'
+*  IF  (ST-V.PROCESS-IND = 'S')               RE1
+  IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)    /* RE1   
+   OR (ST-V.NUMBER-MEMBERSHIPS = 0)
+   OR (ST-V.CC-EXP-DT NE 0 AND CC-NUM NE ' ')
+    ESCAPE TOP
+  END-IF
+*
+  FOR #I1 1 TO 9
+    IF ST-V.STATUS (#I1) NE 'D'
+     OR NOT ST-V.MODE (#I1) = '0' OR = '1' OR = '2' OR = '4'
+     OR ST-V.DATE-ENTERED (#I1) GE #FROM-DATE
+       ESCAPE TOP
+    END-IF
+*
+    ADD +1 TO #I2
+    MOVE EDITED ST-V.ID-NUMBER (EM=999999) TO #ID-NUMBER (#I2)
+    COMPRESS ST-V.ISSUE-DATE-MM (#I1) ST-V.ISSUE-DATE-DD (#I1)
+             ST-V.ISSUE-DATE-YYYY (#I1) INTO #ISSUE-DATE (#I2) WITH '/'
+  END-FOR
+END-READ
+*
+PERFORM CREATE-NX-MESSAGE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-NX-MESSAGE
+************************************************************************
+*
+MOVE 'Credit Card Policies missing CC Information-Over 3 Days Old'
+  TO #NOTE-TEXT (1)
+*
+MOVE 2 TO #I4
+RESET #I3
+*
+FOR #I2 1 TO 200
+  IF #ID-NUMBER (#I2) = ' '
+   AND #ISSUE-DATE (#I2) = ' '
+    IF #I3 GT 0
+      PERFORM SEND-NX
+    END-IF
+    ESCAPE BOTTOM
+  END-IF
+*
+  ADD +1 TO #I3
+  RESET #ISSUE-DATE-NX (#I4,#I3) #CN (#I4,#I3)
+  MOVE #ISSUE-DATE (#I2) TO #ISSUE-DATE-NX (#I4,#I3)
+  MOVE #ID-NUMBER (#I2)  TO #CN (#I4,#I3)
+*
+  IF #I3 = 3
+    IF #I4 = 5   /* full note
+      PERFORM SEND-NX
+    ELSE
+      ADD +1 TO #I4
+      RESET #I3
+    END-IF
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE SEND-NX
+************************************************************************
+*
+MOVE '*NX' TO #CGA-SCR-SUFFIX
+FOR #NX-INT 1 TO #NUMBER-NX
+  MOVE #NX-CLERK (#NX-INT) TO #TO-INIT
+  FETCH RETURN 'G4090PNX' #CLERK-ID #TO-INIT #NOTE-TEXT (1:5)
+  END TRANSACTION
+END-FOR
+*
+RESET #NOTE-TEXT (2:5) #I3
+MOVE 2 TO #I4
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALL-GDATESXX
+************************************************************************
+*
+CALLNAT 'GDATESXX'
+  #TO-DATE
+  #ADJUST-DATE
+  #FROM-DATE
+  #ACTION-CODE
+*
+END-SUBROUTINE
+*
+END

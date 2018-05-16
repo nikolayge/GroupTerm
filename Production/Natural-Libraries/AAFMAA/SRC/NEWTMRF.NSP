@@ -1,0 +1,1961 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: ATHPTMRF - TERM INSURANCE REFUND
+************************************************************************
+*
+************************************************************************
+*        MODIFICATION LOG
+* USER DATE       TAG   REASON
+* DRW  09282004   DW1   add CREDIT CARD processing
+* PAM  03042005   PM2   Added Do Not Send section for members that
+*                       wants money sent to DB/CR -check each year
+* PAM  03312005   PM3   Made adjustments for 2004 refunds - allow
+*                       convs after process yr, ignore pd-to-dt, ignore RT reversals
+* DRW  05162995   DW4   Add SEX to GPREMSXX linkage
+* DRW  11072005   DW5   Process Date to Linkage
+* PAM  03162006   PM6   Remove Debit processing for deliverable addresses
+*                       Changed Opted Out logic for term only
+* PAM  03312006   PM7   Added special section to include credit in refund
+* DRW  09062006   DW8   Increase size of #recs-read
+* SAG  10272006   DRC   Added FORMAT (1)
+* SAG  10272006   AB    documented change of write to write (1)
+* PAM  20070410   PM8   Changed $1 and under to $5 and under
+* PAM  20080318   PM9   Changed $5 and under to $7 and under - adjusted
+*                       partial termination logic for new LT policies
+* PAM  20080410   PM10  Expand Undeliverable addr report for email address
+* PAM  20094006   PM11  Revised process to use general table for rate changes
+* PAM  20100331   PM12  Include policy segment in undeliverable report
+* PAM  04/09/2011 PM13  Use new term refund account buckets instead of DBCR/ADCR
+* VXT  03/18/2013 vt1   Add refund-to-cap field to undeliverable report
+* vxt  04/01/2014 vt2   Changes for 2013 year
+* TMT  05/13/2014 TT1   CONTACT NORMALIZATION - EMAILS, DOB AND SEX
+* vxt  02/24/2015 vt3   /Ticket 3348 - remove LT plan?
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING ATHLTMRF
+LOCAL USING G3500AAD
+LOCAL USING GPBLTMRF   /* PM11
+LOCAL USING CONTPDA1   /* TT1
+LOCAL
+*
+1 #TR-LOG-FIL-MNT-DESC  (A125)
+1 REDEFINE #TR-LOG-FIL-MNT-DESC
+  2 #TR-L-BADJ-LB1 (A12)
+  2 #TR-L-BADJ-AMT (A10)
+  2 #TR-L-APPD-DT  (A16)
+  2 #TR-L-BADJ     (A87)
+*
+1 #PROCESS-DATE   (N6)   /* DW5
+1 #UPDATE    (L)
+1 #HOLD-CUR-ACCT-UPDT (N8)
+1 #MODAL-PREM    (N5.2)
+*
+1 #ORIG-REFUND   (P5.2)
+1 #DB-CR-ADJ     (P5.2)
+1 #DB-CR-ADJUST  (L)
+1 #NUM-NO-CHECK  (P5)
+1 #LT-TO-RT     (L)
+1 #PP-MANUAL    (L)
+1 #PP-REPL      (P5.2)
+1 #RT-REV       (L)
+1 #PARTIAL-TERM (L)
+1 #BADJ         (L)                                              /* PM11
+1 #NUM-ADDL-CHKS    (N5)
+1 #CHG-TYPE     (A15)
+1 #AMT    (N5.2)
+1 REDEFINE #AMT
+  2 #AMT-THOUS    (A2)
+  2 #AMT-DOLS     (A3)
+  2 #AMT-CENTS    (A2)
+1 REDEFINE #AMT
+  2 #AMT-X        (A1/7)
+*
+1 #UNDL-W-LOAN    (N5)
+1 #UNDL-BILL-ADJ-AMT (N5.2)
+1 #UNDL-BILL-ADJ  (N5)
+1 #UNDL-DB-CR     (N5)
+1 #UNDL-DB-CR-AMT (N5.2)
+1 #TOT-UNDL-REFUND   (P7.2)
+1 #UNDL-AMOUNT-LT-7  (P7.2)                                      /* PM9
+1 #OLD-BILL-ADJ  (P5.2)
+1 #SAVE-MULT-OWNERS (N6/8)
+* 1 #REFUND-LT-DIV-TOT  (N7.2)                              /* vt3
+* 1 #REFUND-LT-DIV      (N7.2/10)                           /* vt3
+1 #REFUND-RT-DIV-TOT  (N7.2)
+1 #REFUND-RT-DIV      (N7.2/10)
+1 #DB-GT-RF    (P5)
+1 #TOTAL-DB-GT-RF  (P7.2)
+1 #DB-LT-RF    (P5)
+1 #REFUNDS-AFFECTED (P5)
+1 #TOTAL-DB-LT-RF (P7.2)
+1 #TOTAL-UNDER-1  (P7.2)
+1 #EXTRA-REFUND   (P7.2)                                          /* PM7
+1 #TOT-EXTRA-REFUND (P7.2)                                        /* PM7
+1 #CN     (N6)
+1 #AMT-9  (N9.7)
+1 #LT-MON-PREM  (N5.2)
+1 #WORK-LT-MON-PREM  (N5.2)
+1 #SPECIAL-LT-REFUND   (P5.2)
+1 #HOLD-SPECIAL-LT-REFUND   (P5.2)
+* 1 #TOT-EXTRA-LT-REFUND (P7.2)                /* vt3
+1 #HAS-OLD-NEW (L)
+1 #HAS-NXT     (L)
+1 #BEG-OF-CURR-YR (N8) INIT <20150101> /*IF TODAY IS 2/2000 THIS IS 2000    /* vt1 was 20120101   /* vt2 was 20130101  /* vt3 was 20140101
+1 REDEFINE #BEG-OF-CURR-YR
+  2 #CURR-YYYY   (N4)
+  2 #CURR-MMDD   (N4)
+1 #BEG-OF-LAST-YR (N8) INIT <20140101>                /* vt1 was 2011101  /* vt2 was 20120101 /* vt3 was 20130101
+1 REDEFINE #BEG-OF-LAST-YR
+  2 #LAST-YYYY   (N4)
+  2 REDEFINE #LAST-YYYY
+    3 #LAST-YYYY-A   (A4)
+  2 #LAST-MMDD   (N4)
+*
+1 #EXTRACT-FILE    /* LENGTH IS 60
+  2 #EXT-FOREIGN-IND (A1)
+  2 #EXT-OWNER-NAME  (A25) /* PERSON GETTING THE CHECK (OWNER)
+  2 #EXT-ID-NUMBER   (N6)  /* CN OF INSURED
+  2 #EXT-REFUND      (N5.2)
+  2 #EXT-PREMS-PAID  (N7.2)
+  2 #EXT-PLAN        (A2)
+  2 #EXT-ISS-DATE    (N8)
+  2 #EXT-DEAD-IND    (A1)
+  2 #EXT-SEG         (N1)
+*
+1 NT-V VIEW OF A-NOTES
+  2 NOTE-CLERK-ID (A3/60)
+  2 NOTE-LINE-NUM (N1/60)
+  2 NOTE-DATE     (N8/60)
+  2 REDEFINE NOTE-DATE
+    3 NOTE-DATE-OCC  (60)
+      4 NOTE-DATE-YYYY  (N4)
+      4 NOTE-DATE-MMDD  (N4)
+  2 NOTE-TEXT     (A60/60)
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC   (60)
+      4 NOTE-TEXT-60  (A60)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-1-20  (A20)
+        5 REDEFINE NOTE-TEXT-1-20
+          6 NOTE-TEXT-11-20    (A10)
+          6 NOTE-TEXT-ISS-MM   (A2)
+          6 NOTE-TEXT-ISS-/1   (A1)
+          6 NOTE-TEXT-ISS-DD   (A2)
+          6 NOTE-TEXT-ISS-/2   (A1)
+          6 NOTE-TEXT-ISS-YYYY (A4)
+        5 NOTE-TEXT-21-22 (A2)     /* '-2' FOR POLICY #
+        5 REDEFINE NOTE-TEXT-21-22
+          6 NOTE-TEXT-21   (A1)
+          6 NOTE-TEXT-22   (N1)    /* POLICY #
+        5 NOTE-TEXT-23-60 (A38)
+        5 REDEFINE NOTE-TEXT-23-60
+          6 NOTE-TEXT-23-31    (A09) /* ' RT TO LT' OR ' LT TO RT'
+          6 REDEFINE NOTE-TEXT-23-31
+            7 NOTE-TEXT-23           (A1)
+            7 NOTE-TEXT-PRIOR-PLAN   (A2)
+          6 NOTE-TEXT-34-60    (A29)
+      4 REDEFINE NOTE-TEXT-60   /* RT 5-year renewal with prem-chg
+        5 NT-RT-1-20   (A20)
+        5 NT-RT-PREM   (A6)   /* ' PREM '
+        5 NT-RT-OLD-THOUS   (A2)
+        5 NT-RT-OLD-COMMA   (A1)
+        5 NT-RT-OLD-DOLS    (A3)
+        5 NT-RT-OLD-PERIOD  (A1)
+        5 NT-RT-OLD-CENTS   (A2)
+        5 NT-RT-TO          (A4)    /* ' TO '
+        5 NT-RT-NEW-THOUS   (A2)
+        5 NT-RT-NEW-COMMA   (A1)
+        5 NT-RT-NEW-DOLS    (A3)
+        5 NT-RT-NEW-PERIOD  (A1)
+        5 NT-RT-NEW-CENTS   (A2)
+        5 NT-RT-ON          (A4)   /* ' ON '
+        5 NT-RT-MM          (A2)
+        5 NT-RT-SLASH       (A1)
+        5 NT-RT-YYYY        (A4)
+        5 NT-RT-REST        (A1)
+      4 REDEFINE NOTE-TEXT-60   /* RT 5-year renewal rt reversal prem chg
+        5 NT-RTR-1-20    (A20)
+        5 NT-RTR-DB      (A4)    /* ' DB '
+        5 NT-RTR-OLD-THOUS   (A3)
+        5 NT-RTR-OLD-COMMA   (A1)
+        5 NT-RTR-OLD-DOLS    (A3)
+        5 NT-RTR-OLD-PERIOD  (A1)
+        5 NT-RTR-OLD-CENTS   (A2)
+        5 NT-RTR-TO          (A4)    /* ' TO '
+        5 NT-RTR-NEW-THOUS   (A3)
+        5 NT-RTR-NEW-COMMA   (A1)
+        5 NT-RTR-NEW-DOLS    (A3)
+        5 NT-RTR-NEW-PERIOD  (A1)
+        5 NT-RTR-NEW-CENTS   (A2)
+        5 NT-RTR-ON          (A4)   /* ' ON '
+        5 NT-RTR-MM          (A2)
+        5 NT-RTR-SLASH       (A1)
+        5 NT-RTR-YYYY        (A4)
+        5 NT-RTR-REST        (A1)
+      4 REDEFINE NOTE-TEXT-60   /* RT renewal reversal
+        5 NT-RR-1-20     (A20)
+        5 NT-RR-REVERSAL (A21)   /* ' RT renewal reversed '
+        5 NT-RR-THOUS    (A2)
+        5 NT-RR-COMMA    (A1)
+        5 NT-RR-DOLS     (A3)
+        5 NT-RR-PER      (A1)
+        5 NT-RR-CENTS    (A2)
+        5 NT-RR-REST     (A10)
+      4 REDEFINE NOTE-TEXT-60   /* Partial termination
+        5 NT-PT-1      (A5)   /* '* 200'
+        5 NT-PT-K1     (A5)   /* 'K OF '
+        5 NT-PT-2      (A3)   /* '400'
+        5 NT-PT-K2     (A13)  /* 'K ON POL ISS '
+        5 NT-PT-ISS-MM  (A2)
+        5 NT-PT-ISS-/1  (A1)
+        5 NT-PT-ISS-DD  (A2)
+        5 NT-PT-ISS-/2  (A1)
+        5 NT-PT-ISS-YYYY(A4)
+        5 NT-PT-REST    (A24)
+*
+1 LK-V VIEW OF A-STATUS
+  2 MODE    (9)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NBR       (A6)
+  2 MEMBER-CONTACT-ID     /* TT1
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 DATE-ACCT-UPDATE
+  2 redefine date-acct-update
+    3 #date-acct-update-yyyy (n4)
+  2 WIDOW-FLAG     (A1)
+  2 PROCESS-IND    (A1)
+*  2 INTERNET-ADDR        /* TT1
+  2 NAME
+*   2 SEX                 /* TT1
+  2 INTRO-FLAG
+  2 X-LOAN-AMOUNT   (9)
+  2 X-LOAN-AMOUNT-2 (9)
+  2 X-LOAN-DATE     (9)
+  2 DEBIT-CREDIT-AMT
+  2 X-BILL-ADJUST   (9)
+  2 LINKED-CN       (1)
+  2 REDEFINE LINKED-CN
+    3 LINKED-CN-A   (A6/1)
+*   2 DATE-OF-BIRTH       /* TT1
+  2 NUMBER-MEMBERSHIPS
+  2 ISSUE-DATE          (N8/9)
+  2 REDEFINE ISSUE-DATE
+    3 ISS-DT-OCC (9)
+      4 ISS-DT-YYYY    (N4)
+      4 ISS-DT-MM      (N2)
+      4 ISS-DT-DD      (N2)
+  2 ONLINE-ACTION       (9)
+  2 SMOKER-FLAG         (9)
+  2 STATUS              (9)
+  2 PLAN                (9)
+  2 PAY-STATUS          (9)
+  2 FACE-AMOUNT         (9)
+  2 ANNUAL-PREM         (9)
+  2 ISSUE-AGE           (9)
+  2 REDEFINE ISSUE-AGE
+    3 ISSUE-AGE-N        (N2/9)
+  2 FIRS-LOCATION-CODE   (9)
+  2 MODE                (9)
+  2 PAID-TO-DATE        (9)
+  2 REDEFINE PAID-TO-DATE
+    3 PAID-TO-DATE-OCC (9)
+      4 PAID-TO-DATE-YYYY (N4)
+      4 PAID-TO-DATE-MM   (N2)
+      4 PAID-TO-DATE-DD   (N2)
+  2 NUM-MBRSHIPS        (P1/9)
+  2 TOT-PREMIUMS-PAID   (9)
+  2 MONTH-ALLOC-AMT     (9)
+  2 EXPIRY-DAY          (9)
+  2 PREM-RATING         (9)
+  2 OUT-TERM-REF-AMOUNT     (100)   /* PM13
+  2 OUT-TERM-REF-YEAR       (100)   /* PM13
+  2 OUT-TERM-REF-ENTRY-DATE (100)   /* PM13
+  2 new-term-pol-nbr        (100)               /* vt1 \/
+  2 new-pol-iss-date        (100)
+  2 refund-to-cap                               /* vt1 /\
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER          (N6)
+  2 PROCESS-IND        (A1)
+  2 TRANSACTION-DATN   (P9)
+  2 TRANSACTION-TIMN   (P7)
+  2 TXN-CODE           (A4)
+  2 SEQUENCE-NUM       (N1)
+  2 NAME               (A25)
+  2 TXN-ACCT-NUMBER    (N3)
+  2 ACCT-DATE          (N8)
+  2 DATE-LAST-ACCT-UPDATE (N8)
+  2 DEBIT-AMOUNT       (P7.2)
+  2 CREDIT-AMOUNT      (P7.2)
+  2 DESCRIPTION        (A20)
+  2 MESSAGE-CODE       (A1)
+  2 AALP-FLAG          (A1)
+  2 CLERK-ID           (A3)
+  2 TERMINAL-ID        (A8)
+  2 CASH-CODE          (A1)
+  2 POLICY-NUMBER                                            /* PM11
+  2 SG-CATEGORY-1      (A2/15)
+  2 SG-CATEGORY-2      (A2/15)
+  2 SG-AMOUNT          (N6.2/15)
+*
+* BELOW IS LINKAGE TO GPREMSXX
+1 #SCR-COMMAND (A2) INIT <'PO'>
+1 #SCR-ID      (N9)
+1 #SCR-SUFFIX  (A3)
+1 #PLAN        (A3)
+1 #AGE         (N2)
+1 #APRM        (N7.2)                                    /* vt2
+1 #ISSUE-DATE  (N8)
+1 #FACE-AMT    (N7.2)
+1 REDEFINE #FACE-AMT
+  2 #FACE-AMT-1      (A1)
+  2 #FACE-AMT-THOUS  (A3)
+  2 #FACE-AMT-REST   (A5)
+1 #SMOKER-FLAG (A1)
+1 #SEX         (A1)   /* DW4
+* above is linkage to GPREMSXX
+*
+1 #RF-AMT-DISP  (A7)  /* MAX IS 9999.99  (cannot be bigger)
+*
+1 #COUNTERS
+  2 #RECS-READ     (P7)   /* DW8
+  2 #RECS-SELECTED (P5)
+  2 #CNT      (P5)
+  2 #CNT-2    (P5)
+  2 #CNT-3    (P5)
+  2 #CNT-4    (P5)
+  2 #CNT-6    (P5)
+  2 #CNT-7    (P5)
+  2 #CNT-8    (P5)
+  2 #CNT-9    (P5)
+  2 #CNT-10   (P5)
+  2 #CNT-11   (P5)
+  2 #CNT-12   (P5)
+  2 #CNT-14   (P5)                           /* VT1
+  2 #I1       (I2)
+  2 #I2       (I2)
+  2 #I3       (I2)
+  2 #MONS     (P3)
+  2 #DAYS     (P3)
+  2 #WORK-AMT (P7.5)
+  2 #WORK-AMT-PREM    (P7.5)
+  2 #PREMS-PAID       (P5.2)
+  2 #PREMS-PAID-RT    (P5.2)
+*  2 #PREMS-PAID-LT    (P5.2)                           /* vt3
+  2 #PREMS-PAID-PRIOR (P5.2)
+  2 #PREMS-PAID-AFTER (P5.2)
+  2 #WORK-PREMS-PAID  (P5.2)
+  2 #REFUND-RT     (N5.2)
+  2 #REFUND-LT     (N5.2)
+  2 #REFUND        (N5.2)
+  2 #NUM-RT        (P5)
+*  2 #NUM-LT        (P5)                                 /* vt3
+  2 #NUM-TM        (P5)
+  2 #NUM-TM-RT     (P5)
+  2 #NUM-TM-LT     (P5)
+  2 #NUM           (P5)  /* policies due refunds
+  2 #NUM-REFUNDS   (P5)  /* refunds (some pols have 2 checks)
+  2 #NUM-REF-AMT      (P9.2)
+  2 #NUM-LT-TO-RT     (P5)
+  2 #UNDL-LT-7        (P5)                                   /* PM9
+  2 #LT-TO-RT-NO-PRIOR (P5)
+  2 #NUM-5YR-RT-REN   (P5)
+  2 #NUM-PARTIAL-TERM (P5)
+  2 #HIGHEST-RT-PMT        (P5.2)
+*  2 #HIGHEST-LT-PMT        (P5.2)                    /* vt3
+  2 #LOWEST-RT-PMT         (P5.2)  INIT <99999.99>
+*  2 #LOWEST-LT-PMT         (P5.2)  INIT <99999.99>   /* vt3
+  2 #TOT-PREMS-PAID-SMOKER (P9.2)
+  2 #TOT-PREMS-PAID-SMOKER-RT (P9.2)
+*  2 #TOT-PREMS-PAID-SMOKER-LT (P9.2)                /* vt3
+  2 #TOT-PREMS-PAID-RT (P9.2)
+*  2 #TOT-PREMS-PAID-LT (P9.2)                       /* vt3
+  2 #TOT-PREMS-PAID-TM (P9.2)
+  2 #TOT-PREMS-PAID-TM-RT (P9.2)
+  2 #TOT-PREMS-PAID-TM-LT (P9.2)
+  2 #TOT-PREMS-PAID   (P9.2)
+  2 #TOT-REFUND-RT    (P9.2)
+*  2 #TOT-REFUND-LT    (P9.2)                        /* vt3
+  2 #TOT-REFUND-TM    (P9.2)
+  2 #TOT-REFUND-TM-RT (P9.2)
+  2 #TOT-REFUND-TM-LT (P9.2)
+  2 #TOT-REFUND       (P9.2)
+  2 #TOT-undeliv-inact   (p9.2)                           /* vt1
+  2 #LINKED-CN        (N6)
+1 #NUM-RECS          (N5)
+1 #NUM-POLS          (P5)
+1 #INT      (I2)
+1 #TRF-I    (I4)             /* PM13
+1 #NOTE-TEXT (A60/10)
+*
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A    (A8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM        (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY          (N4)
+    3 #MM            (N2)
+  2 #DD            (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A        (A4)
+  2 #MM-A          (A2)
+  2 #DD-A          (A2)
+*
+1 #PR-ISS-DT   (N8)
+1 REDEFINE #PR-ISS-DT
+  2 #PR-ISS-DT-YYYY (N4)
+  2 #PR-ISS-DT-MM   (N2)
+  2 #PR-ISS-DT-DD   (N2)
+*
+1 #ISS-DT-USED (N8)
+1 REDEFINE #ISS-DT-USED
+  2 #ISS-DT-YYYY-USED (N4)
+  2 #ISS-DT-MM-USED   (N2)
+  2 #ISS-DT-DD-USED   (N2)
+*
+1 #ISS-DT-FOR-NOTE     (N8)
+1 REDEFINE #ISS-DT-FOR-NOTE
+  2 #ISS-DT-YYYY-FOR-NOTE-A (A4)
+  2 #ISS-DT-MM-FOR-NOTE-A   (A2)
+  2 #ISS-DT-DD-FOR-NOTE-A   (A2)
+*
+1 #CONV-DT        (N8)
+1 REDEFINE #CONV-DT
+  2 #CONV-DT-YYYY  (N4)
+  2 #CONV-DT-MM    (N2)
+  2 #CONV-DT-DD    (N2)
+1 #CONV-PRIOR-MONS (N2)
+1 #CONV-PRIOR-PLAN (A3)
+1 #CONV-MONS       (N2)
+1 #CONV-PRIOR-ANN-PREM (N5.2)
+1 #CONV-AFTER-MONS (N2)
+1 #CONV-BEG-MM     (N2)
+*
+1 #TERMED-PT-DATE (N6)
+1 REDEFINE #TERMED-PT-DATE
+  2 #TERMED-PT-DATE-YYYY (N4)
+  2 #TERMED-PT-DATE-MM   (N2)
+*
+1 #TERM-YYYYMM   (N7)
+1 REDEFINE #TERM-YYYYMM
+  2 #FILL       (N1)
+  2 #TERM-YYYY  (N4)
+  2 #TERM-MM    (N2)
+1 #NXT-X        (I2)
+1 #NXT-PRM-ADJ  (P1.2)
+1 #OO-EFF-DATE  (N8)
+1 #DEGF-EFF-DATE  (N8)
+1 #COI-ADJ      (N3.2/9)
+*
+1 #EQUALIZATION (L)
+1 #LT-TO-LT     (L)
+1 #NUM-LT-TO-LT (P5)
+*
+1 #status   (a8)                           /* vt1
+1 #issue-date-n     (n8)                   /* vt1
+1 redefine #issue-date-n
+  2 #issue-date-n-yyyy  (n4)
+  2 #issue-date-n-mm    (n2)
+  2 #issue-date-n-dd    (n2)
+1 #issue-date-n-format  (a10)
+1 #pol-nbr        (a16)                    /* vt1
+1 EMAIL-ADDRESS         (A60)   /* TT1
+END-DEFINE
+************************************************************************
+*
+FORMAT LS=133 PS=50
+FORMAT(1) LS=133 PS=50                        /* SAG added 10272006
+WRITE (1) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X  /* SAG 10272006
+  '2014 Term Refund Totals'                                         /* vt1 was 2011   /* vt2 was 2012 /* vt3 was 2013
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=50
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Renewable TERM Policy Refund'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=50
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Level TERM Policy Refund'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (4) LS=133 PS=50
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Smoker TERM Policies (Refund only 2002 prem dif)'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (6) LS=133 PS=50
+WRITE  (6) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'TERM POLICIES UNDER $7.01'                                  /* PM9
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (7) LS=133 PS=50
+WRITE  (7) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Opted Out' 5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (9) LS=133 PS=50
+WRITE  (9) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Non-Insured Owners' 5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (10) LS=133 PS=50
+WRITE  (10) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'LT refund 2002(3) Adjustment'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (11) LS=200 PS=50                                          /* PM10
+WRITE  (11) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Undeliverable Addr or no Address'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (12) LS=133 PS=50
+WRITE  (12) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Conversions during Processing Year'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (14) LS=133 PS=50                                          /* vt1 \/
+WRITE  (14) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Undeliverable Inactive policies during Processing Year'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/trmf-over7.TXT' TYPE 'ASCII'
+* DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/trmf-under7.TXT' TYPE 'ASCII'
+* DEFINE WORK FILE 3 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/trmf-third.TXT' TYPE 'ASCII'
+*                                                                /* vt1 /\
+READ ST-V BY MEMBER-KEY   FROM '001900'   /* 001900
+
+* find st-v with id-number = 193515
+  ADD 1 TO #RECS-READ
+*
+  RESET PDA-CONTACT                                 /* TT1
+  P-CONTACT-ID := ST-V.MEMBER-CONTACT-ID            /* TT1
+  CALLNAT 'CONTS001' PDA-CONTACT                    /* TT1
+*
+  MOVE P-GENDER TO #SEX                             /* TT1      /* DW4
+  RESET #UPDATE
+  RESET #OO-EFF-DATE
+  IF PROCESS-IND = 'O'                 /* OPTED-OUT of sharing services
+      AND (NUMBER-MEMBERSHIPS NE 0)
+    MOVE *DATN TO #YYYYMMDD
+    MOVE #YYYYMM TO #PROCESS-DATE                                 /* DW5
+    CALLNAT 'GOPTOSXX'
+      ST-V.ID-NUMBER
+      #PROCESS-DATE                                               /* DW5
+      STATUS          (1:9)
+      PAY-STATUS      (1:9)
+      ISSUE-DATE      (1:9)
+      MONTH-ALLOC-AMT (1:9)
+      FACE-AMOUNT     (1:9)
+      NUM-MBRSHIPS    (1:9)
+      EXPIRY-DAY      (1:9)
+      #COI-ADJ        (1:9)
+      #NXT-X
+      #NXT-PRM-ADJ
+      #OO-EFF-DATE
+      #DEGF-EFF-DATE
+*
+    FOR #I1 1 TO 9
+      IF   (STATUS (#I1) = 'D' OR = 'E')                          /* PM6
+*          AND (PLAN (#I1) = 'RT' OR = 'LT')                          /* PM6            /* vt3
+          AND (PLAN (#I1) = 'RT' )                                                      /* vt3
+        ADD 1 TO #CNT-7                                           /* PM6
+        DISPLAY (7) #CNT-7 ST-V.ID-NUMBER                         /* PM6
+          'OO-date'  #OO-EFF-DATE                                /* PM6
+          'Iss-dt-1' ISSUE-DATE (#I1)                            /* PM6
+          'Plan-1' PLAN (#I1)                                    /* PM6
+          NAME                                          /* PM6
+      END-IF                                                      /* PM6
+    END-FOR                                                       /* PM6
+  END-IF
+*
+  RESET #HAS-OLD-NEW
+  RESET #HAS-NXT
+  FOR #I1 1 TO 9
+    IF STATUS (#I1) NE 'D'
+      ESCAPE TOP
+    END-IF
+*
+    IF   (ISSUE-DATE      (#I1) GE 19970101)
+        AND (MONTH-ALLOC-AMT (#I1) NE 999.99)
+      MOVE TRUE TO #HAS-NXT
+    ELSE
+      MOVE TRUE TO #HAS-OLD-NEW
+    END-IF
+  END-FOR
+*
+  FOR #I1 1 TO 9
+*   IF   (STATUS (#I1) = 'D' OR = 'E')                            /* PM6
+*    AND (ST-V.PROCESS-IND = 'O')
+*    AND (#OO-EFF-DATE LT #BEG-OF-CURR-YR)
+*    AND (#HAS-NXT) AND (NOT #HAS-OLD-NEW) /* has only NXT POLICIES
+*    AND (PLAN (#I1) = 'RT' OR = 'LT')                            /* PM6
+*     WRITE ST-V.ID-NUMBER ISSUE-DATE (#I1) 'OO date=' #OO-EFF-DATE
+*        'DB/CR' DEBIT-CREDIT-AMT 'Plan' PLAN(#I1) FACE-AMOUNT(#I1)
+*        #HAS-NXT #HAS-OLD-NEW 'Adjust refund due to Opting-out of svcs'
+*   END-IF
+*
+*    IF  (NOT PLAN (#I1) = 'RT' OR = 'LT')   /* STATUS "E" SHOULD BE INCL                           /* vt3
+*
+    IF  (NOT PLAN (#I1) = 'RT' )                                                                   /* vt3
+*    OR (ISSUE-DATE (#I1) GE #BEG-OF-CURR-YR)/* BYPASS CURR YEAR /* PM11
+        OR (ONLINE-ACTION (#I1) = 'B' OR = 'H') /* reinst (will be on hist)
+        OR (NOT STATUS (#I1) = 'D' OR = 'E'   ) /* process active and inactive
+      ESCAPE TOP
+    END-IF
+   
+ 
+*
+MOVE SMOKER-FLAG (#I1) TO #SMOKER-FLAG
+*
+RESET #EQUALIZATION
+#RATE-PLAN     := 'LT'                                        /* PM11
+#RATE-DATE     := ST-V.ISSUE-DATE  (#I1)                      /* PM11
+#RATE-FACE-AMT := ST-V.FACE-AMOUNT (#I1)                      /* PM11
+PERFORM SET-RATE-SMOKER                                       /* PM11
+PERFORM CHECK-EQUALIZATION                                    /* PM11
+IF ST-V.ISSUE-DATE (#I1) NE #ISSUE-DATE                       /* PM11
+  #EQUALIZATION := TRUE                                       /* PM11
+END-IF                                                        /* PM11
+*
+IF #EQUALIZATION
+  MOVE ST-V.ID-NUMBER TO #SCR-ID
+  MOVE ISSUE-AGE-N (#I1) TO #AGE
+  MOVE FACE-AMOUNT (#I1) TO #FACE-AMT
+  MOVE 'LT'       TO #PLAN
+*
+  IF PREM-RATING (#I1) NE ' '
+    COMPRESS 'SB' PREM-RATING (#I1) INTO #SCR-SUFFIX LEAVING NO
+  END-IF
+*
+  PERFORM GPREMSXX
+  COMPUTE ROUNDED #LT-MON-PREM = #APRM / 12
+END-IF
+*
+**** CHECK FOR CONVERSIONS FROM NOTES ****
+*
+RESET #CONV-DT #CONV-PRIOR-PLAN #CONV-PRIOR-ANN-PREM #PARTIAL-TERM
+  #CONV-PRIOR-MONS #CHG-TYPE #RT-REV #PP-MANUAL #PP-REPL #LT-TO-RT
+  #LT-TO-LT
+MOVE ISSUE-DATE (#I1) TO #ISS-DT-USED
+*
+FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+  FOR #I2 1 TO 60
+    IF NT-RR-REVERSAL (#I2) = ' RT renewal reversed'
+        OR = ' RT RENEWAL REVERSED'
+        AND (NOTE-DATE-YYYY (#I2) GE #LAST-YYYY)
+      PERFORM NT-ISS-DT
+*
+      IF NT-RR-CENTS (#I2) = MASK (NN)  /* manually calced ref enterd
+          AND NT-RR-DOLS (#I2) = MASK (..N)
+        RESET #AMT
+        MOVE NT-RR-THOUS (#I2) TO #AMT-THOUS
+        MOVE NT-RR-DOLS (#I2) TO #AMT-DOLS
+        MOVE NT-RR-CENTS (#I2) TO #AMT-CENTS
+*
+        FOR #I3 1 TO 7
+          IF #AMT-X (#I3) = ' '
+            MOVE '0' TO #AMT-X (#I3)
+          END-IF
+        END-FOR
+*
+        MOVE #AMT TO #PP-REPL
+        MOVE TRUE TO #PP-MANUAL
+        MOVE 'Manual Prems Pd' TO #CHG-TYPE
+*           WRITE ST-V.ID-NUMBER 'Replaced prems-paid =' #PP-REPL
+*           WRITE (12) ST-V.ID-NUMBER 'Replaced prems-paid =' #PP-REPL
+*           ESCAPE BOTTOM /* do not do below
+      END-IF
+*
+      MOVE TRUE TO #RT-REV
+*         WRITE ST-V.ID-NUMBER 'Calc Prm Paid Manually -NO CHECK'
+*              NOTE-DATE (#I2) NOTE-TEXT (#I2)
+*         WRITE (12) ST-V.ID-NUMBER 'Calc Prm Paid Manually'
+*              NOTE-DATE (#I2) NOTE-TEXT (#I2)
+    END-IF
+  END-FOR
+*
+*     IF ST-V.ID-NUMBER = 57738 OR = 69986
+*       WRITE ST-V.ID-NUMBER 'RT reversal ignored'
+*       RESET #RT-REV
+*     END-IF
+*
+  FOR #I2 1 TO 60
+    IF   (NOTE-TEXT (#I2) = MASK ('* POL ISS'))  /* LT to RT Conv
+*        AND NOT #PP-MANUAL
+        AND (NOTE-DATE-YYYY (#I2) GE #LAST-YYYY)
+        AND ((NOTE-TEXT-23-31 (#I2) = ' RT TO LT')
+        OR  (NOTE-TEXT-23-31 (#I2) = ' LT TO RT'))                          /* vt3
+*            OR  (NOTE-TEXT-23-31 (#I2) = ' LT TO LT'))                         /* vt3 \/
+*
+*           IF (NOTE-TEXT-23-31 (#I2) = ' LT TO LT')
+*             MOVE TRUE TO #LT-TO-LT
+*           ELSE                                                                /* vt3 /\
+      MOVE TRUE TO #LT-TO-RT
+*          END-IF                                                               /* vt3
+*
+*         IF NOTE-DATE-YYYY (#I2) GT #LAST-YYYY
+*           WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+*              ' *** conversion after new year ***'
+*         END-IF
+*
+      PERFORM LT-TO-RT-CONV
+      IF #LT-TO-RT
+        MOVE 'LT to RT' TO #CHG-TYPE
+*           ELSE                                                                /* vt3 \/
+*             MOVE 'LT Redcd' TO #CHG-TYPE
+*             WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+*               '*** LT Reduced ***'                                            /* vt3 /\
+      END-IF
+*
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF   (NOTE-TEXT (#I2) = MASK ('* POL ISS'))
+*        AND (NOT #RT-REV)
+*        AND NOT #PP-MANUAL
+        AND (NT-RT-PREM (#I2) = ' PREM')
+        AND (NT-RT-YYYY (#I2) GE #LAST-YYYY-A)
+        AND (NT-RT-OLD-PERIOD (#I2) = '.')
+        AND (NT-RT-NEW-PERIOD (#I2) = '.')
+*
+*         IF NOTE-DATE-YYYY (#I2) GT #LAST-YYYY
+*           WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+*              ' *** RT renewal after new year ***'
+*         END-IF
+*
+      IF NOT #RT-REV
+        PERFORM RT-5-YR-CONV
+        MOVE 'RT 5-YR Renewal' TO #CHG-TYPE
+*
+        ESCAPE BOTTOM
+      END-IF
+    END-IF
+*
+    IF   (NOTE-TEXT (#I2) = MASK ('* POL ISS'))  /* RT 5-yr Renewal
+        AND (#RT-REV)                               /* calculate prem
+        AND (NT-RTR-DB (#I2) = ' DB ')              /* for reversed pol
+        AND (NT-RTR-YYYY (#I2) =  #LAST-YYYY-A)
+        AND (NT-RTR-OLD-PERIOD (#I2) = '.')
+        AND (NT-RTR-NEW-PERIOD (#I2) = '.')
+*
+      PERFORM RT-5-YR-CONV
+      MOVE 'RT 5-YR Renewal' TO #CHG-TYPE
+*
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF   (NT-PT-K1 (#I2) = 'K OF')
+        AND (NT-PT-K2 (#I2) = 'K ON POL ISS')
+        AND (NOTE-DATE-YYYY (#I2) GE #LAST-YYYY)
+*        AND NOT #PP-MANUAL
+*         WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+*           '*** THIS MAY be A PARTIAL TERM  ***'
+*            PLAN (#I1) 'Face=' FACE-AMOUNT (#I1)
+*            NOTE-TEXT (#I2) (EM=XXXXXXXXXXXXXXXXXXXXXXXXXXXXX)
+      PERFORM PARTIAL-TERM
+      MOVE 'Partial Term' TO #CHG-TYPE
+      ESCAPE BOTTOM    /* WE FOUND A MATCH - WE'RE DONE
+    END-IF
+  END-FOR
+END-FIND
+*
+IF #PARTIAL-TERM AND STATUS (#I1) EQ 'E'
+*     WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+*       '*** Partial Term on Current Policy ***'
+  ESCAPE TOP
+END-IF
+*
+IF ISSUE-DATE (#I1) GE #BEG-OF-CURR-YR     /* PM11 bypass current year
+  IF NOT #LT-TO-RT                         /* PM11
+      OR (#LT-TO-RT                           /* PM11
+      AND #PR-ISS-DT GE #BEG-OF-CURR-YR)      /* BYPASS CURRENT YEAR
+    ESCAPE TOP                             /* PM11
+  ELSE                                     /* PM11
+    WRITE 'LT to RT in current year' 1X ST-V.ID-NUMBER
+  END-IF                                   /* PM11
+END-IF                                     /* PM11
+*
+IF #CHG-TYPE NE ' '
+  ADD 1 TO #CNT-12
+  DISPLAY (12) #CNT-12  (EM=ZZ9)
+    'CN'             ST-V.ID-NUMBER
+    'Chg/Typ'        #CHG-TYPE
+    'CURR/ISS-DATE'  ST-V.ISSUE-DATE (#I1)
+    'CONV/Date'      #CONV-DT
+    'ISS/AGE'        ISSUE-AGE (#I1)
+    'FACE/AMOUNT'    FACE-AMOUNT (#I1)
+    'PLN'            PLAN (#I1)
+    'PRIOR/ISS-DATE' #PR-ISS-DT
+    'PRIOR/ANN-PREM' #CONV-PRIOR-ANN-PREM
+    'CURR/ANN-PREM'  ST-V.ANNUAL-PREM (#I1)
+    'PR-PD/MANUAL'   #PP-REPL
+*
+*     WRITE (12) NOTE-TEXT (#I2)
+END-IF
+*
+*   IF TOT-PREMIUMS-PAID (#I1) NE 0
+*     WRITE '**' ID-NUMBER 'TOT-PREMS-PAID =' TOT-PREMIUMS-PAID (#I1)
+*   END-IF
+*
+RESET #DAYS
+*
+IF #ISS-DT-USED LT #BEG-OF-LAST-YR   /* IN FORCE AT BEG OF YR
+  MOVE 1 TO #CONV-BEG-MM        /* TO START AT BEG OF YEAR
+*     IF PAID-TO-DATE (#I1) LT #BEG-OF-CURR-YR /* very delq - no refund
+*       WRITE ID-NUMBER 'Delinquent - no Refund for ' ISSUE-DATE (#I1)
+*       ESCAPE TOP
+*     ELSE
+  MOVE 12 TO #MONS
+*     END-IF
+ELSE     /* issued during processing year
+  MOVE #ISS-DT-MM-USED TO #CONV-BEG-MM       /* TO START AT ISS MON
+*
+*     IF PAID-TO-DATE (#I1) LT #BEG-OF-CURR-YR /* very delq - no refund
+*       WRITE ID-NUMBER 'Delinquent - no Refund for ' ISSUE-DATE (#I1)
+*       ESCAPE TOP
+*     ELSE
+  COMPUTE #MONS = 12 - #ISS-DT-MM-USED
+*
+  IF #ISS-DT-DD-USED = 01
+    ADD 1 TO #MONS
+  ELSE
+    IF #ISS-DT-MM-USED = 04 OR = 06 OR = 09 OR = 11
+      COMPUTE #DAYS = 30 - #ISS-DT-DD-USED + 1
+    ELSE
+      IF #ISS-DT-MM-USED = 02
+        IF #ISS-DT-DD-USED = 29
+          MOVE 1 TO #DAYS
+        ELSE
+          COMPUTE #DAYS = 28 - #ISS-DT-DD-USED + 1
+        END-IF
+      ELSE
+        COMPUTE #DAYS = 31 - #ISS-DT-DD-USED + 1
+      END-IF
+    END-IF
+*       END-IF
+  END-IF
+END-IF
+*
+RESET #PREMS-PAID-PRIOR #PREMS-PAID-AFTER
+*   RESET #PREMS-PAID-RT #PREMS-PAID-LT                 /* vt3
+RESET #PREMS-PAID-RT                                /* vt3
+*    RESET #REFUND-LT #REFUND-RT #REFUND                /* vt3
+RESET  #REFUND-RT #REFUND                           /* vt3
+*    RESET #SPECIAL-LT-REFUND                           /* vt3
+*
+IF   (#CONV-DT NE 0)
+*    AND (#CONV-DT LT PAID-TO-DATE (#I1))
+  COMPUTE #CONV-PRIOR-MONS = #CONV-DT-MM - #CONV-BEG-MM
+*
+  IF #CONV-DT-DD GE #ISS-DT-DD-USED     /* PAST A FULL MONTH
+    ADD 1 TO #CONV-PRIOR-MONS
+  END-IF
+*
+  IF #CONV-PRIOR-MONS LT 0              /* NEVER NEGATIVE
+    RESET #CONV-PRIOR-MONS
+  END-IF
+*
+  IF  (#ISS-DT-USED GE #BEG-OF-LAST-YR) /* CONV DURING PROC YR
+      AND (#CONV-PRIOR-MONS LE 2)          /* NEW PREMS PROBABLY PAID FROM BEG
+      AND (#LT-TO-RT OR #LT-TO-LT)
+    RESET #CONV-PRIOR-MONS
+  END-IF
+*
+  IF #CONV-DT-YYYY GT #LAST-YYYY        /* move all prems to prior split
+    MOVE #MONS TO #CONV-PRIOR-MONS
+    RESET #CONV-AFTER-MONS
+  END-IF
+*
+  IF #CONV-PRIOR-MONS = 0
+      AND #LT-TO-RT
+    RESET #LT-TO-RT                    /* PM9
+  END-IF
+*
+  COMPUTE #CONV-AFTER-MONS = #MONS - #CONV-PRIOR-MONS
+  IF #CONV-AFTER-MONS = 0
+      AND #LT-TO-RT
+    RESET #LT-TO-RT                    /* PM9
+  END-IF
+*
+*  calc prems paid before and after
+  COMPUTE ROUNDED #WORK-AMT = (#CONV-PRIOR-ANN-PREM / 12)
+    * #CONV-PRIOR-MONS
+  MOVE ROUNDED #WORK-AMT TO #PREMS-PAID-PRIOR
+*
+  COMPUTE ROUNDED #WORK-AMT = (ANNUAL-PREM (#I1) / 12)
+    * #CONV-AFTER-MONS
+*
+  MOVE ROUNDED #WORK-AMT TO #PREMS-PAID-AFTER
+  COMPUTE #PREMS-PAID = #PREMS-PAID-PRIOR + #PREMS-PAID-AFTER
+*
+*    adjust if prior was lt
+  IF   (#CONV-PRIOR-PLAN = 'LT')
+    IF #PARTIAL-TERM /* do equalization for partial terminations
+      PERFORM PARTIAL-TERM-EQUALIZATION
+    ELSE
+      MOVE ST-V.FACE-AMOUNT (#I1) TO #FACE-AMT
+      MOVE #PREMS-PAID-PRIOR TO #WORK-PREMS-PAID
+      MOVE #LT-MON-PREM TO #WORK-LT-MON-PREM
+      MOVE #CONV-PRIOR-MONS TO #CONV-MONS
+      PERFORM CONVERSION-EQUALIZATION
+    END-IF
+  END-IF
+*
+  IF #CHG-TYPE = 'LT to RT'
+    IF PLAN (#I1) = 'RT'
+      MOVE #PREMS-PAID-AFTER TO #PREMS-PAID-RT
+*          MOVE #PREMS-PAID-PRIOR TO #PREMS-PAID-LT             /* vt3
+    ELSE
+*          MOVE #PREMS-PAID-AFTER TO #PREMS-PAID-LT             /* vt3
+      MOVE #PREMS-PAID-PRIOR TO #PREMS-PAID-RT
+    END-IF
+  ELSE                                                   /* vt3 \/    /* vt4 04/10/2015  \/ before the whole block vt3 was with *
+    IF #CHG-TYPE = 'LT Redcd'
+*           MOVE #PREMS-PAID-PRIOR TO #PREMS-PAID-LT          /* vt4 04/10/2015
+*           ADD #PREMS-PAID-AFTER TO #PREMS-PAID-LT           /* vt4 04/10/2015
+      ignore                                              /* vt4 04/10/2015
+    ELSE
+      IF #CHG-TYPE = 'Partial Term'
+        IF ST-V.PLAN (#I1) = 'LT'
+*               MOVE #PREMS-PAID-PRIOR TO #PREMS-PAID-LT                  /* vt4 04/10/2015 \/
+*               ADD #PREMS-PAID-AFTER TO #PREMS-PAID-LT
+          ignore                                                      /* vt4 04/10/2015 /\
+        ELSE
+          MOVE #PREMS-PAID-PRIOR TO #PREMS-PAID-RT
+          ADD  #PREMS-PAID-AFTER TO #PREMS-PAID-RT
+        END-IF
+      ELSE    /* must be RT 5 yr renewal
+        MOVE #PREMS-PAID-PRIOR TO #PREMS-PAID-RT
+        ADD  #PREMS-PAID-AFTER TO #PREMS-PAID-RT
+      END-IF
+    END-IF                                              /* vt3 /\        /* vt4 04/10/2015 /\
+  END-IF
+*
+  WRITE (12) '***' ST-V.ID-NUMBER
+    'From' #CONV-BEG-MM (EM=Z9) 'Thru' #CONV-DT-MM (EM=Z9)
+    'TOT' #MONS (EM=Z9)
+    #CONV-PRIOR-MONS (EM=Z9)
+    '*' #CONV-PRIOR-ANN-PREM (EM=ZZZZ.99) '/ 12 ='
+    #PREMS-PAID-PRIOR (EM=ZZZZ.99)
+    #CONV-AFTER-MONS (EM=Z9)
+    '*' ANNUAL-PREM (#I1) (EM=ZZZ9.99) '/ 12 ='
+    #PREMS-PAID-AFTER (EM=ZZZZ.99)
+ELSE
+*     IF #PP-MANUAL /* prems paid manually entered
+*       MOVE #PP-REPL TO #PREMS-PAID
+*     ELSE
+  COMPUTE ROUNDED #WORK-AMT = (ANNUAL-PREM (#I1) / 12) * #MONS
+    + (ANNUAL-PREM (#I1) / 365) * #DAYS
+  MOVE ROUNDED #WORK-AMT TO #PREMS-PAID
+*
+  #WORK-PREMS-PAID := #PREMS-PAID                             /* PM11
+  #RATE-PLAN       := ST-V.PLAN        (#I1)                  /* PM11
+  #RATE-DATE       := ST-V.ISSUE-DATE  (#I1)                  /* PM11
+  #RATE-FACE-AMT   := ST-V.FACE-AMOUNT (#I1)                  /* PM11
+  PERFORM SET-RATE-SMOKER                                     /* PM11
+  PERFORM CHECK-EQUALIZATION                                  /* PM11
+  IF ST-V.ISSUE-DATE (#I1) NE #ISSUE-DATE                     /* PM11
+    PERFORM CALCULATE-EQUALIZATION-ADJUSTMENT                 /* PM11
+  END-IF                                                      /* PM11
+*     END-IF
+*
+  IF PLAN (#I1) = 'RT'
+    MOVE #PREMS-PAID TO #PREMS-PAID-RT
+*       ELSE                                         /* vt3
+*         MOVE #PREMS-PAID TO #PREMS-PAID-LT         /* vt3
+  END-IF
+END-IF
+*
+IF (SMOKER-FLAG (#I1) = 'S')
+  ADD #PREMS-PAID    TO #TOT-PREMS-PAID-SMOKER
+*      ADD #PREMS-PAID-LT TO #TOT-PREMS-PAID-SMOKER-LT           /* vt3
+  ADD #PREMS-PAID-RT TO #TOT-PREMS-PAID-SMOKER-RT
+ELSE
+  #RATE-PLAN     := 'RT'                                        /* PM11
+  #RATE-DATE     := ST-V.ISSUE-DATE  (#I1)                      /* PM11
+  #RATE-FACE-AMT := ST-V.FACE-AMOUNT (#I1)                      /* PM11
+  PERFORM SET-RATE-SMOKER                                       /* PM11
+  PERFORM GET-REFUND-RATE                                       /* PM11
+  COMPUTE ROUNDED #REFUND-RT = #PREMS-PAID-RT * #RATE-REFUND    /* PM11
+*
+*       IF PLAN (#I1) = 'LT'                                          /* no refund if already using           /* vt3 \/
+*           AND #CHG-TYPE = 'LT Redcd'
+*         IF FACE-AMOUNT (#I1) LE 100000                              /* PM11
+*           WRITE 'Resetting #refund-lt' ID-NUMBER 1X ISSUE-DATE (#I1) 1X #SPECIAL-LT-REFUND
+*           MOVE 0 TO #REFUND-LT
+*         ELSE                                                        /* PM11
+*           COMPUTE #SPECIAL-LT-REFUND = #SPECIAL-LT-REFUND +         /* PM11
+*             #PREMS-PAID-AFTER * .10                                 /* PM11
+*         END-IF                                                      /* PM11
+*       ELSE                                                                                                 /* vt3 /\
+*       #RATE-PLAN       := 'LT'                                    /* PM11                   /* vt 03/10/2015 \/
+*       IF #PR-ISS-DT NE 0                                          /* PM11
+*           AND #CHG-TYPE = 'LT to RT'                                 /* PM11
+*         #RATE-DATE     := #PR-ISS-DT                              /* PM11
+*         #RATE-FACE-AMT := #FACE-AMT                               /* PM11
+*       ELSE                                                        /* PM11
+*         #RATE-DATE     := ST-V.ISSUE-DATE  (#I1)                  /* PM11
+*         #RATE-FACE-AMT := ST-V.FACE-AMOUNT (#I1)                  /* PM11
+*       END-IF                                                      /* PM11
+* *
+*       PERFORM GET-REFUND-RATE                                     /* PM11                 /* vt 03/10/2015 /\
+*
+*      COMPUTE ROUNDED #REFUND-LT = #PREMS-PAID-LT * #RATE-REFUND  /* PM11                                 /* vt3
+*      END-IF                                                                                               /* vt3
+END-IF
+*
+*     IF #SPECIAL-LT-REFUND NE 0                                 /* vt 03/10/2015
+*       MOVE ST-V.ID-NUMBER TO #CN                               /* vt 03/10/2015
+*      PERFORM RESET-REFUND-LT                                                   /* vt3
+*    END-IF                                                      /* vt 03/10/2015
+*
+*    COMPUTE #REFUND = #REFUND-LT + #REFUND-RT                      /* vt3
+COMPUTE #REFUND =  #REFUND-RT                                  /* vt3
+*
+*   IF ST-V.ID-NUMBER = 104752                                      /* PM7
+*     PERFORM EXTRA-REFUND                                          /* PM7
+*   END-IF                                                          /* PM7
+*
+*
+*   IF  (#REFUND-RT GT 999.99)
+*    OR (#REFUND-LT GT 999.99)
+*    OR (#REFUND GT 999.99)
+*     WRITE ST-V.ID-NUMBER 'REFUND EXCEEDS 999.99'
+*   END-IF
+*
+MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID
+MOVE #I1 TO #CONTACT-SEG  /* GET OWNER OF THIS POLICY
+CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+*   keep above to get the owner cn for extract file
+*
+IF #REFUND-RT GT 0
+  ADD 1 TO #CNT-2
+  DISPLAY (2) 'CNT2' #CNT-2 (EM=ZZ,ZZ9)
+    'ID' ID-NUMBER
+    'DB/CR'      DEBIT-CREDIT-AMT
+    'BADJ'       X-BILL-ADJUST (#I1)
+    'PREMS/PAID' #PREMS-PAID-RT
+    'RT/REFUND'  #REFUND-RT
+    'TOT/REFUND' #REFUND
+    'ISSUE/DATE' ISSUE-DATE (#I1)
+    'PL' PLAN (#I1)
+    'SM'         SMOKER-FLAG (#I1)
+    'Pd-To/Date' PAID-TO-DATE (#I1)
+    'ANN/Prem'   ANNUAL-PREM (#I1)
+    'Prior/ANN/Prem'  #CONV-PRIOR-ANN-PREM
+    'MNS'        #MONS
+    'DZS'        #DAYS
+    'S/G'        #INTRO-FLAG
+    'In/Cd'    FIRS-LOCATION-CODE (#I1)
+*
+  IF (#PREMS-PAID-PRIOR NE 0) OR (#PREMS-PAID-AFTER NE 0)
+    WRITE (2) '    Prems/Paid/Before' #PREMS-PAID-PRIOR
+      '   Prems/Paid/After'   #PREMS-PAID-AFTER
+  END-IF
+END-IF
+*
+*     IF #REFUND-LT GT 0                                             /* vt3 \/
+*       ADD 1 TO #CNT-3
+*       DISPLAY (3) 'CNT3' #CNT-3 (EM=ZZ,ZZ9)
+*         'NUM-LT' #NUM-LT
+*         'ID' ID-NUMBER
+*         'DB/CR'      DEBIT-CREDIT-AMT
+*         'BADJ'       X-BILL-ADJUST (#I1)
+*         'PREMS/PAID' #PREMS-PAID-LT
+*         'LT/REFUND'  #REFUND-LT
+*         'TOT/REFUND' #REFUND
+*         'ISSUE/DATE' ISSUE-DATE (#I1)
+*         'PL' PLAN (#I1)
+*         'SM'         SMOKER-FLAG (#I1)
+*         'Pd-To/Date' PAID-TO-DATE (#I1)
+*         'ANN/Prem'   ANNUAL-PREM (#I1)
+*         'Prior/ANN/Prem'  #CONV-PRIOR-ANN-PREM
+*         'MNS'        #MONS
+*         'DZS'        #DAYS
+*         'S/G'        #INTRO-FLAG
+* *       'In/Cd'    FIRS-LOCATION-CODE (#I1)
+* *
+*       IF (#PREMS-PAID-PRIOR NE 0) OR (#PREMS-PAID-AFTER NE 0)
+*         WRITE (3) '    Prems/Paid/Before' #PREMS-PAID-PRIOR
+*           '   Prems/Paid/After'   #PREMS-PAID-AFTER
+*       END-IF
+*     END-IF                                                       /* vt3 /\
+*
+IF #SPS-GEN-ID NE 0
+  ADD 1 TO #CNT-9
+  DISPLAY (9) #CNT-9 #ID-NUM
+    'SM'       SMOKER-FLAG (#I1)
+    'Owner'    #FORMATED-NAME
+    'Insured'  #SPS-GEN-ID
+    'Ins-name' #SPS-GEN-NAME
+END-IF
+*
+IF #NUM-OWNERS GT 1
+  WRITE (9) '# Owners of above' #NUM-OWNERS '2nd+' #MULT-OWNERS (*)
+*     WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1) '# Owner ='
+*         #NUM-OWNERS '2nd+' #MULT-OWNERS (*)
+END-IF
+*
+RESET #LINKED-CN
+IF #SPS-GEN-ID NE 0
+  MOVE #ID-NUM TO #LINKED-CN
+END-IF
+*
+*     IF SMOKER-FLAG (#I1) = 'S'                    /* only show Prem Diff LT                  /* vt3 \/
+*         AND (PLAN (#I1) = 'LT')
+*       #RATE-DATE     := ST-V.ISSUE-DATE  (#I1)                      /* PM11
+*       #RATE-FACE-AMT := ST-V.FACE-AMOUNT (#I1)                      /* PM11
+*       PERFORM SET-RATE-SMOKER                                       /* PM11
+*       PERFORM CHECK-EQUALIZATION                                    /* PM11
+*       IF ST-V.ISSUE-DATE (#I1) NE #ISSUE-DATE                       /* PM11
+*         ADD 1 TO #CNT-4
+*         DISPLAY (4) #CNT-4
+*           'ID' ID-NUMBER
+*           'Issue/Date' ISSUE-DATE (#I1)
+*           'Prems/Paid' #PREMS-PAID
+*           'Pd-To/Date' PAID-TO-DATE (#I1)
+*           'PL'     PLAN (#I1)
+*           'Refund' #REFUND
+*           'Ref-LT' #REFUND-LT
+*           'Ref-RT' #REFUND-RT
+*           'ANN/Prem'   ANNUAL-PREM (#I1)
+*           #MONS
+*           #DAYS
+*           'S-G'        #INTRO-FLAG
+*           'Owner/CN'   #LINKED-CN
+*       END-IF
+*     END-IF                                                          /* PM11                     /* vgt3 /\
+*
+*     RESET #REFUND-LT-DIV-TOT #REFUND-RT-DIV-TOT              /* vt3 \/
+RESET   #REFUND-RT-DIV-TOT
+*     RESET #REFUND-LT-DIV (*) #REFUND-RT-DIV (*)
+RESET   #REFUND-RT-DIV (*)                                 /* vt3 /\
+IF #NUM-OWNERS GT 1
+  WRITE (13) 'Additional checks for ' ST-V.ID-NUMBER
+  FOR #I2 1 TO #NUM-OWNERS
+*         COMPUTE ROUNDED #REFUND-LT-DIV(#I2) = #REFUND-LT / #NUM-OWNERS                 /* vt3
+*         ADD #REFUND-LT-DIV (#I2) TO #REFUND-LT-DIV-TOT                                 /* vt3
+    COMPUTE ROUNDED #REFUND-RT-DIV(#I2) = #REFUND-RT / #NUM-OWNERS
+    ADD #REFUND-RT-DIV (#I2) TO #REFUND-RT-DIV-TOT
+  END-FOR
+*
+*       COMPUTE #REFUND-LT-DIV (1) = #REFUND-LT-DIV (1)                                  /* vt3
+*         + (#REFUND-LT - #REFUND-LT-DIV-TOT)                                            /* vt3
+  COMPUTE #REFUND-RT-DIV (1) = #REFUND-RT-DIV (1)
+    + (#REFUND-RT - #REFUND-RT-DIV-TOT)
+END-IF
+*
+IF #NUM-OWNERS = 0                                              /* PM8
+  MOVE 1 TO #NUM-OWNERS                                         /* PM8
+END-IF                                                          /* PM8
+*
+IF #NUM-OWNERS = 1                                              /* PM8
+*      MOVE #REFUND-LT TO #REFUND-LT-DIV (1)                         /* PM8      /* vt3
+  MOVE #REFUND-RT TO #REFUND-RT-DIV (1)                         /* PM8
+END-IF                                                          /* PM8
+*
+IF  (#REFUND LE 7.00)                                           /* PM8 PM9
+*        OR ((#REFUND-LT-DIV (1) NE 0) AND (#REFUND-LT-DIV (1) LE 7.00))/* PM8 PM9     /* vt3
+    OR ((#REFUND-RT-DIV (1) NE 0) AND (#REFUND-RT-DIV (1) LE 7.00))/* PM8 PM9
+*
+  IF (#UNDEL-ADDR   /* of Owner                                 /* PM9
+      OR (#ERR-TEXT NE ' '))                                       /* PM9
+*         IF #REFUND-LT GT 0                                          /* PM9            /* vt3 \/
+*           ADD +1 TO #UNDL-LT-7                                      /* PM9
+*         END-IF                                                      /* PM9            /* vt3 /\
+    IF #REFUND-RT GT 0                                          /* PM9
+      ADD +1 TO #UNDL-LT-7                                      /* PM9
+    END-IF                                                      /* PM9
+    ADD #REFUND TO #UNDL-AMOUNT-LT-7                            /* PM9
+    PERFORM UNDELIVERABLE                                       /* PM9
+*
+    UPDATE (0534)                                               /* PM9
+    ESCAPE TOP                                                  /* PM9
+  END-IF                                                        /* PM9
+*
+  IF #REFUND GT 0
+    MOVE '9' TO #EXT-FOREIGN-IND                                /* less than 7.01
+    MOVE #NAME TO #EXT-OWNER-NAME
+    MOVE ST-V.ID-NUMBER TO #EXT-ID-NUMBER                       /* INSURED
+    MOVE #REFUND TO #EXT-REFUND
+    MOVE #PREMS-PAID      TO #EXT-PREMS-PAID
+    MOVE PLAN (#I1)       TO #EXT-PLAN
+    MOVE ISSUE-DATE (#I1) TO #EXT-ISS-DATE
+    RESET                    #EXT-DEAD-IND
+    MOVE #I1              TO #EXT-SEG
+    WRITE WORK 2 #EXTRACT-FILE
+*
+    ADD 1 TO #CNT-6
+    ADD #REFUND TO #TOTAL-UNDER-1
+    DISPLAY (6) #CNT-6
+      'ID' ID-NUMBER
+      'Issue/Date' ISSUE-DATE (#I1) PLAN (#I1)
+      'ANN/Prem'   ANNUAL-PREM (#I1)
+      #MONS
+      #DAYS
+      'Prems/Paid' #PREMS-PAID
+      'SM'       SMOKER-FLAG (#I1)
+      'Refund'     #REFUND
+*          'Refund/LT-DIV' #REFUND-LT-DIV (1)                         /* vt3
+      'Refund/RT-DIV' #REFUND-RT-DIV (1)
+      'S-G'        #INTRO-FLAG
+      'Owner'      #FORMATED-NAME  (EM=XXXXXXXXXXXXXXXXXXXX)
+      'Owner/CN'   #LINKED-CN
+  END-IF
+ELSE
+*       IF #REFUND-LT LE 0                                            /* PM9             /* vt3 \/
+*           AND #REFUND-RT LE 0                                          /* PM9
+*         WRITE 'No refund' 1X ST-V.ID-NUMBER 1X #REFUND-RT           /* PM9
+*           1X #REFUND-LT 1X #REFUND                                  /* PM9
+*         ESCAPE TOP                                                  /* PM9
+*       END-IF                                                        /* PM9             /* vt3 /\
+*                                                                   /* PM9
+  IF #LT-TO-RT                                                  /* PM9
+*          AND #REFUND-LT GT 0 AND #REFUND-RT GT 0                      /* PM9           /* vt3
+      AND   #REFUND-RT GT 0                                                         /* vt3
+    ADD +1 TO #NUM-LT-TO-RT                                     /* PM9
+  END-IF                                                        /* PM9
+  ADD +1 TO #NUM                                                /* PM9
+*                                                                   /* PM9
+  ADD #PREMS-PAID TO #TOT-PREMS-PAID                            /* PM9
+  ADD #PREMS-PAID-RT TO #TOT-PREMS-PAID-RT                      /* PM9
+*      ADD #PREMS-PAID-LT TO #TOT-PREMS-PAID-LT                      /* PM9      /* vt3
+  ADD #REFUND-RT  TO #TOT-REFUND-RT                             /* PM9
+*      ADD #REFUND-LT  TO #TOT-REFUND-LT                             /* PM9      /* vt3
+  ADD #REFUND     TO #TOT-REFUND                                /* PM9
+*                                                                   /* PM9
+  IF #REFUND-RT GT 0                                            /* PM9
+    ADD 1 TO #NUM-RT                                            /* PM9
+  END-IF                                                        /* PM9
+*                                                                   /* PM9
+*       IF #REFUND-LT GT 0                                            /* PM9    /* vt3 \/
+*         ADD 1 TO #NUM-LT                                            /* PM9
+*       END-IF                                                        /* PM9    /* vt3 /\
+*                                                                   /* PM9
+  IF (#UNDEL-ADDR   /* of Owner                                 /* PM9
+      OR (#ERR-TEXT NE ' '))                                       /* PM9
+    PERFORM UNDELIVERABLE                                       /* PM9
+    UPDATE (0534)                                               /* PM9
+    ESCAPE TOP                                                  /* PM9
+  END-IF                                                        /* PM9
+*                                                                   /* PM9
+  IF #REFUND-RT GT #HIGHEST-RT-PMT                              /* PM9
+    MOVE #REFUND-RT TO #HIGHEST-RT-PMT                          /* PM9
+  ELSE                                                          /* PM9
+    IF   (#REFUND-RT LT #LOWEST-RT-PMT)                         /* PM9
+      MOVE #REFUND-RT TO #LOWEST-RT-PMT                         /* PM9
+    END-IF                                                      /* PM9
+  END-IF                                                        /* PM9
+*                                                                   /* PM9
+*       IF #REFUND-LT GT #HIGHEST-LT-PMT                              /* PM9     /* vt3 \/
+*         MOVE #REFUND-LT TO #HIGHEST-LT-PMT                          /* PM9
+*       ELSE                                                          /* PM9
+*         IF   (#REFUND-LT LT #LOWEST-LT-PMT)                         /* PM9
+*           MOVE #REFUND-LT TO #LOWEST-LT-PMT                         /* PM9
+*         END-IF                                                      /* PM9
+*       END-IF                                                        /* PM9     /* vt3 /\
+*                                                                   /* PM9
+  MOVE ISSUE-DATE (#I1) TO #ISS-DT-FOR-NOTE
+  PERFORM CREATE-NOTE
+*
+  MOVE #NUM-OWNERS TO #I3   /* save # of owners
+  MOVE #MULT-OWNERS (*) TO #SAVE-MULT-OWNERS (*)
+*
+  IF #REFUND-RT GT 0
+    FOR #I2 1 TO #I3
+      IF #I2 GT 1
+        ADD +1 TO #NUM-ADDL-CHKS                                /* PM9
+        MOVE #SAVE-MULT-OWNERS (#I2 - 1) TO #CGA-SCR-ID
+        RESET #CONTACT-SEG
+        CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+      END-IF
+*
+      MOVE '1' TO #EXT-FOREIGN-IND
+*
+      IF #ZIP-CODE = 0  /* OWNER IS FOREIGN
+        MOVE '0' TO #EXT-FOREIGN-IND
+      END-IF
+*
+      MOVE #NAME            TO #EXT-OWNER-NAME
+*
+      IF #I2 GT 1
+        MOVE #CGA-SCR-ID TO #EXT-ID-NUMBER
+      ELSE
+        MOVE ST-V.ID-NUMBER   TO #EXT-ID-NUMBER                 /* INSURED
+      END-IF
+*
+      MOVE #REFUND-RT-DIV (#I2) TO #EXT-REFUND
+      MOVE #PREMS-PAID-RT   TO #EXT-PREMS-PAID
+      MOVE 'RT'             TO #EXT-PLAN
+      MOVE ISSUE-DATE (#I1) TO #EXT-ISS-DATE
+      RESET                    #EXT-DEAD-IND
+      MOVE #I1              TO #EXT-SEG
+      WRITE WORK 2 #EXTRACT-FILE
+*
+      IF #I2 GT 1
+        WRITE (2) '    Owner-CN =' #CGA-SCR-ID #FORMATED-NAME
+      ELSE
+        IF #LINKED-CN NE 0
+          WRITE (2) '    Owner-CN =' #LINKED-CN #FORMATED-NAME
+        END-IF
+      END-IF
+*
+    END-FOR
+  END-IF
+*
+*       IF #REFUND-LT GT 0                                                                        /* vt3 \/
+*         FOR #I2 1 TO #I3
+*           IF #I2 GT 1
+*             ADD +1 TO #NUM-ADDL-CHKS                                /* PM9
+*             MOVE #SAVE-MULT-OWNERS (#I2 - 1) TO #CGA-SCR-ID
+*             RESET #CONTACT-SEG
+*             CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+*           END-IF
+* *
+*           MOVE '1' TO #EXT-FOREIGN-IND
+* *
+*           IF #ZIP-CODE = 0                                          /* OWNER IS FOREIGN
+*             MOVE '0' TO #EXT-FOREIGN-IND
+*           END-IF
+* *
+*           MOVE #NAME            TO #EXT-OWNER-NAME
+* *
+*           IF #I2 GT 1
+*             MOVE #CGA-SCR-ID TO #EXT-ID-NUMBER
+*           ELSE
+*             MOVE ST-V.ID-NUMBER   TO #EXT-ID-NUMBER                 /* INSURED
+*           END-IF
+* *
+*           MOVE #REFUND-LT-DIV (#I2) TO #EXT-REFUND
+*           MOVE #PREMS-PAID-LT   TO #EXT-PREMS-PAID
+*           MOVE 'LT'             TO #EXT-PLAN
+*           MOVE ISSUE-DATE (#I1) TO #EXT-ISS-DATE
+*           RESET                    #EXT-DEAD-IND
+*           MOVE #I1              TO #EXT-SEG
+*           WRITE WORK 2 #EXTRACT-FILE
+* *
+*           IF #I2 GT 1
+*             WRITE (3) '    Owner-CN =' #CGA-SCR-ID #FORMATED-NAME
+*           ELSE
+*             IF #LINKED-CN NE 0
+*               WRITE (3) '    Owner-CN =' #LINKED-CN #FORMATED-NAME
+*             END-IF
+*           END-IF
+*         END-FOR
+*       END-IF                                                                                /* vt3 /\
+END-IF
+END-FOR
+*
+IF #UPDATE
+  UPDATE (0534)
+END-IF
+END TRANSACTION
+*
+* end-find
+END-READ
+*
+CALLNAT 'NEWSTMVA'    /* new subprogram for history processing - term
+  #BEG-OF-CURR-YR   /* policies
+  #BEG-OF-LAST-YR
+  #LAST-MMDD
+  #NUM-TM
+  #NUM-TM-RT
+  #NUM-TM-LT
+  #NUM
+  #HIGHEST-RT-PMT
+*  #HIGHEST-LT-PMT                 /* vt3
+  #LOWEST-RT-PMT
+*  #LOWEST-LT-PMT                  /* vt3
+  #TOT-PREMS-PAID-TM
+  #TOT-PREMS-PAID-TM-RT
+  #TOT-PREMS-PAID-TM-LT
+  #TOT-PREMS-PAID
+  #TOT-REFUND-TM
+  #TOT-REFUND-TM-RT
+  #TOT-REFUND-TM-LT
+  #TOT-REFUND
+  #TOT-undeliv-inact                                                 /* VT1
+  #cnt-14                                                            /* vt1
+  #CNT-11
+  #UNDL-DB-CR
+  #UNDL-DB-CR-AMT
+  #TOT-UNDL-REFUND
+  #EXTRA-REFUND                                                      /* PM7
+  #TOT-EXTRA-REFUND                                                  /* PM7
+*
+CALLNAT 'NEWSTMRF'
+*
+WRITE (11) #CNT-11 (EM=ZZ,ZZ9)              '= # UNDL Policies'
+  #TOT-UNDL-REFUND (EM=ZZZ,ZZZ.99) '= Tot UNDL Refund Amt'
+WRITE (11) 'Tot BILL-ADJ' #UNDL-BILL-ADJ
+WRITE (11) 'Tot DB-CR   ' #UNDL-DB-CR
+WRITE (11) 'Tot UNDL-Bill-adj-amt ' #UNDL-BILL-ADJ-AMT
+WRITE (11) 'Tot UNDL-DB-CR-AMT    ' #UNDL-DB-CR-AMT
+WRITE (11) 'Tot w-loans ' #UNDL-W-LOAN
+*
+write  (14) 'Tot undeliverable Inactive amt' #tot-undeliv-inact             /* vt1
+*
+* COMPUTE #NUM-REFUNDS = #NUM-RT + #NUM-LT + #NUM-TM                                             /* vt3
+COMPUTE #NUM-REFUNDS = #NUM-RT   + #NUM-TM                                                       /* vt3
+* COMPUTE #NUM-REF-AMT = #TOT-REFUND-RT + #TOT-REFUND-LT + #TOT-REFUND-TM                        /* vt3
+COMPUTE #NUM-REF-AMT = #TOT-REFUND-RT  + #TOT-REFUND-TM                                          /* vt3
+SUBTRACT #UNDL-LT-7 FROM #CNT-11                                        /* PM9
+SUBTRACT #UNDL-AMOUNT-LT-7 FROM #TOT-UNDL-REFUND                        /* PM9
+*
+WRITE (1)     #CNT-11 (EM=ZZ,ZZ9)              '= # UNDL Policies'      /* SAG 10272006
+  #TOT-UNDL-REFUND (EM=ZZZ,ZZZ.99) '= Tot UNDL Refund Amt'
+  '(Applied as DB/CR or Bill Adj)'
+WRITE (1)     #NUM-ADDL-CHKS (EM=ZZ,ZZ9)       '= # Addl Chks - owners' /* SAG 10272006
+WRITE  (1)    '______                   __________'                     /* SAG 10272006
+WRITE  (1)    #NUM-REFUNDS (EM=ZZ,ZZ9)         '= Tot Refunds    '      /* SAG 10272006
+  #NUM-REF-AMT (EM=ZZ,ZZZ,ZZZ.99)     '= Tot Refund Amount'
+WRITE  (1)    '______                   __________'                     /* SAG 10272006
+WRITE  (1)    #NUM-RT (EM=ZZ,ZZ9)              '= Tot RT-Refunds '      /* SAG 10272006
+  #TOT-REFUND-RT (EM=ZZZ,ZZZ.99)   '= Tot RT Refund Amt'
+* WRITE  (1)    #NUM-LT (EM=ZZ,ZZ9)              '= Tot LT-Refunds '      /* SAG 10272006           /* vt3
+*   #TOT-REFUND-LT (EM=ZZZ,ZZZ.99)   '= Tot LT Refund Amt'                                          /* vt3
+WRITE  (1)    #NUM-TM (EM=ZZ,ZZ9)              '= Tot Termed Rfds'      /* SAG 10272006
+  #TOT-REFUND-TM (EM=ZZZ,ZZZ.99)   '= Tot Termed Refund Amt'
+*   '(Has RT and LT)'                                                                                /* vt3
+  '(Has RT)'                                                                                       /* vt3
+WRITE  (1)    '______                   __________'                     /* SAG 10272006
+WRITE  (1)    #NUM               (EM=ZZ,ZZ9)   '= Pols Due Refund'      /* SAG 10272006
+  #TOT-REFUND      (EM=ZZ,ZZZ,ZZZ.99) '= TOT Refund Amt'
+WRITE  (1)    #NUM-LT-TO-RT      (EM=ZZ,ZZ9)   '= LT to RT Convs (2 Chks)' /* SAG 10272006
+WRITE  (1)    '______                   __________'                     /* SAG 10272006
+WRITE  (1)    #NUM-5YR-RT-REN    (EM=ZZ,ZZ9)   '= RT 5-yr Renewal Conv' /* SAG 10272006
+WRITE  (1)    #NUM-PARTIAL-TERM  (EM=ZZ,ZZ9)   '= Partial terminations' /* SAG 10272006
+WRITE  (1)    '______                   __________'                     /* SAG 10272006
+WRITE  (1)    #CNT-6 (EM=ZZ,ZZ9)               '= # Refunds less than 7.01' /* SAG 10272006 PM8 PM9
+  #TOTAL-UNDER-1  (EM=ZZZ,ZZZ.99)  '= Total Refund under 7.01'     /* PM8 PM9
+  '(Not included in above)'
+WRITE (1)    #UNDL-LT-7 (EM=ZZ,ZZ9)            '= # UNDL Policies LT 7' /* PM9
+  #UNDL-AMOUNT-LT-7 (EM=ZZZ,ZZZ.99)'= Tot UNDL Refund Amt LT 7'/* PM9
+  '(Applied as DB/CR or Bill Adj)'            /* PM9
+WRITE  (1)    '---------'                                               /* SAG 10272006
+WRITE  (1)    'Tot DB-CR   ' #UNDL-DB-CR                                /* SAG 10272006
+WRITE  (1)    'Tot UNDL-DB-CR-AMT    ' #UNDL-DB-CR-AMT                  /* SAG 10272006
+WRITE  (1)    'Tot BILL-ADJ' #UNDL-BILL-ADJ                             /* SAG 10272006
+  'Tot UNDL-Bill-adj-amt ' #UNDL-BILL-ADJ-AMT
+WRITE  (1)    'Tot w-loans ' #UNDL-W-LOAN                               /* SAG 10272006
+WRITE  (1)    '***********************'                                 /* SAG 10272006
+write  (1)    ' Total Undeliverable Inactive amount'                          /* vt1 20130403
+  #TOT-undeliv-inact  (EM=ZZZ,ZZZ.99)  'Tot Number' #cnt-14(em=zz,zz9)    /* vt1 20130403
+*
+*  below 2 and 0
+WRITE (2) 'Tot-RT-Pols       = ' #NUM-RT
+WRITE (2) 'Tot-prems-paid-RT = ' #TOT-PREMS-PAID-RT (EM=Z,ZZZ,ZZZ.99)
+WRITE (2) 'Tot-Refund-RT     = ' #TOT-REFUND-RT     (EM=ZZZ,ZZZ.99)
+WRITE (2) 'Highest RT Refund = ' #HIGHEST-RT-PMT    (EM=ZZZ,ZZZ.99)
+WRITE (2) 'Lowest RT Refund  = ' #LOWEST-RT-PMT     (EM=ZZZ,ZZZ.99)
+*
+WRITE (1)    'Tot-RT-Pols       = ' #NUM-RT                             /* SAG 10272006
+WRITE (1)    'Tot-prems-paid-RT = ' #TOT-PREMS-PAID-RT (EM=Z,ZZZ,ZZZ.99) /* SAG 10272006
+WRITE (1)    'Tot-Refund-RT     = ' #TOT-REFUND-RT     (EM=ZZZ,ZZZ.99)  /* SAG 10272006
+WRITE (1)    'Highest RT Refund = ' #HIGHEST-RT-PMT    (EM=ZZZ,ZZZ.99)  /* SAG 10272006
+WRITE (1)    'Lowest RT Refund  = ' #LOWEST-RT-PMT     (EM=ZZZ,ZZZ.99)  /* SAG 10272006
+WRITE (1)     '***********************'                                 /* SAG 10272006
+*
+*  below 3 and 0
+* WRITE (3) 'Tot-LT-Pols       = ' #NUM-LT                                                              /* vt3 \/
+* WRITE (3) 'Tot-prems-paid-LT = ' #TOT-PREMS-PAID-LT (EM=Z,ZZZ,ZZZ.99)
+* WRITE (3) 'Tot-Refund-LT     = ' #TOT-REFUND-LT     (EM=ZZZ,ZZZ.99)
+* WRITE (3) 'Highest LT Refund = ' #HIGHEST-LT-PMT    (EM=ZZZ,ZZZ.99)
+* WRITE (3) 'Lowest LT Refund  = ' #LOWEST-LT-PMT     (EM=ZZZ,ZZZ.99)
+* WRITE (3) 'Tot Extra-LT-refund ' #TOT-EXTRA-LT-REFUND (EM=ZZZ,ZZZ.99)
+* *
+* WRITE (1)    'Tot-LT-Pols       = ' #NUM-LT                             /* SAG 10272006
+* WRITE (1)    'Tot-prems-paid-LT = ' #TOT-PREMS-PAID-LT (EM=Z,ZZZ,ZZZ.99) /* SAG 10272006
+* WRITE (1)    'Tot-Refund-LT     = ' #TOT-REFUND-LT     (EM=ZZZ,ZZZ.99)  /* SAG 10272006
+* WRITE (1)    'Highest LT Refund = ' #HIGHEST-LT-PMT    (EM=ZZZ,ZZZ.99)  /* SAG 10272006
+* WRITE (1)    'Lowest LT Refund  = ' #LOWEST-LT-PMT     (EM=ZZZ,ZZZ.99)  /* SAG 10272006
+* WRITE (1)    'Tot Extra-LT-refund ' #TOT-EXTRA-LT-REFUND (EM=ZZZ,ZZZ.99) /* SAG 10272006
+* WRITE (1)     '***********************'                                 /* SAG 10272006               /* vt3 /\
+* *
+*  below only 0
+WRITE (1)    'Tot-Pols       = ' #NUM                                   /* SAG 10272006
+WRITE (1)    'Tot-prems-paid = ' #TOT-PREMS-PAID (EM=Z,ZZZ,ZZZ.99)      /* SAG 10272006
+WRITE (1)    'Tot-Refund     = ' #TOT-REFUND     (EM=ZZZ,ZZZ.99)        /* SAG 10272006
+WRITE (1)    'Tot UNDL Refund ' #TOT-UNDL-REFUND                        /* SAG 10272006
+WRITE (1)    'Tot-pols to downld= ' #NUM-POLS                           /* SAG 10272006
+WRITE (1)    'Tot-recs to downld= ' #NUM-RECS                           /* SAG 10272006
+WRITE (1)    'Tot-addl-Owner-chks=' #NUM-ADDL-CHKS                      /* SAG 10272006
+WRITE (1)     '***********************'                                 /* SAG 10272006
+*
+*  below only 4
+WRITE (4) 'Tot-prems-paid = ' #TOT-PREMS-PAID-SMOKER (EM=ZZZ,ZZZ.99)
+WRITE (4) 'RT -prems-paid = ' #TOT-PREMS-PAID-SMOKER-RT (EM=ZZZ,ZZZ.99)
+* WRITE (4) 'LT -prems-paid = ' #TOT-PREMS-PAID-SMOKER-LT (EM=ZZZ,ZZZ.99)                        /* vt3
+*
+*  below only 5 and 0
+WRITE (5) 'Tot-TERMED-pols   = ' #NUM-TM
+WRITE (5) 'Tot-prems-paid-TERMED' #TOT-PREMS-PAID-TM (EM=ZZZ,ZZZ.99)
+WRITE (5) 'Tot-Refund-TERMED = ' #TOT-REFUND-TM     (EM=ZZZ,ZZZ.99)
+*
+WRITE (5) 'Tot-TERMED-pols-RT   = ' #NUM-TM-RT
+WRITE (5) 'Tot-prms-paid-TERMED-RT' #TOT-PREMS-PAID-TM-RT(EM=ZZZ,ZZZ.99)
+WRITE (5) 'Tot-Refund-TERMED-RT = ' #TOT-REFUND-TM-RT  (EM=ZZZ,ZZZ.99)
+*
+* WRITE (5) 'Tot-TERMED-pols-LT   = ' #NUM-TM-LT                                              /* vt3 \/
+* WRITE (5) 'Tot-prms-paid-TERMED-LT' #TOT-PREMS-PAID-TM-LT(EM=ZZZ,ZZZ.99)
+* WRITE (5) 'Tot-Refund-TERMED-LT = ' #TOT-REFUND-TM-LT  (EM=ZZZ,ZZZ.99)                      /* vt3 /\
+* *
+WRITE (1)    'Tot-TERMED-pols   = ' #NUM-TM                             /* SAG 10272006
+WRITE (1)    'Tot-prems-paid-TERMED' #TOT-PREMS-PAID-TM (EM=ZZZ,ZZZ.99) /* SAG 10272006
+WRITE (1)    'Tot-Refund-TERMED = ' #TOT-REFUND-TM     (EM=ZZZ,ZZZ.99)  /* SAG 10272006
+*
+WRITE (1)    'Tot-TERMED-pols-RT   = ' #NUM-TM-RT                       /* SAG 10272006
+WRITE (1)    'Tot-prms-paid-TERMED-RT' #TOT-PREMS-PAID-TM-RT(EM=ZZZ,ZZZ.99) /* SAG 10272006
+WRITE (1)    'Tot-Refund-TERMED-RT = ' #TOT-REFUND-TM-RT  (EM=ZZZ,ZZZ.99) /* SAG 10272006
+*
+* WRITE (1)    'Tot-TERMED-pols-LT   = ' #NUM-TM-LT                       /* SAG 10272006            /* vt3 \/
+* WRITE (1)    'Tot-prms-paid-TERMED-LT' #TOT-PREMS-PAID-TM-LT(EM=ZZZ,ZZZ.99) /* SAG 10272006
+* WRITE (1)    'Tot-Refund-TERMED-LT = ' #TOT-REFUND-TM-LT  (EM=ZZZ,ZZZ.99) /* SAG 10272006
+* WRITE (1)     '***********************'                                 /* SAG 10272006            /* vt3 /\
+*
+INCLUDE NEWCTMRF
+*
+***********************************************************************
+DEFINE SUBROUTINE CREATE-NOTE
+***********************************************************************
+*
+MOVE EDITED #REFUND (EM=ZZZZ.99) TO #RF-AMT-DISP
+*
+IF   (ST-V.INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q')
+    AND (X-LOAN-AMOUNT (#I1) NE 0)
+    AND (X-LOAN-DATE (#I1) LT 20000101)
+  COMPRESS '*Term Refund' #LAST-YYYY '$' INTO #NOTE-TEXT (1)
+  COMPRESS #NOTE-TEXT (1) #RF-AMT-DISP INTO #NOTE-TEXT (1) LEAVING NO
+  COMPRESS #NOTE-TEXT (1) 'ON POL ISS' #ISS-DT-MM-FOR-NOTE-A
+    INTO #NOTE-TEXT (1)
+  COMPRESS #NOTE-TEXT (1) '/' #ISS-DT-DD-FOR-NOTE-A
+    '/' #ISS-DT-YYYY-FOR-NOTE-A
+    INTO #NOTE-TEXT (1) LEAVING NO
+  MOVE 1 TO #INT
+  MOVE 'EDS' TO #CGA-CLERK
+  CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE TR-REG-AND-NOTE
+***********************************************************************
+*
+RESET TR-REG-V
+RESET #TR-LOG-FIL-MNT-DESC
+MOVE 'AM-BILL ADJ'            TO #TR-L-BADJ-LB1
+MOVE EDITED #OLD-BILL-ADJ (EM=ZZ,ZZZ.99-) TO #TR-L-BADJ-AMT
+MOVE #TR-LOG-FIL-MNT-DESC   TO TR-REG-V.OLD-DATA (1)
+MOVE EDITED ST-V.X-BILL-ADJUST (#I1) (EM=ZZ,ZZZ.99-) TO #TR-L-BADJ-AMT
+RESET #TR-L-APPD-DT
+MOVE #TR-LOG-FIL-MNT-DESC   TO TR-REG-V.NEW-DATA (1)
+*
+MOVE ST-V.ID-NUMBER        TO TR-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND      TO TR-REG-V.PROCESS-IND
+MOVE ST-V.NAME             TO TR-REG-V.NAME
+MOVE #HOLD-CUR-ACCT-UPDT   TO TR-REG-V.DATE-LAST-UPDATE
+MOVE *INIT-ID              TO TR-REG-V.TERMINAL-ID
+MOVE 'EDS'                 TO TR-REG-V.CLERK-ID
+MOVE *DATN                 TO TR-REG-V.TRANSACTION-DATN
+MOVE *TIMN                 TO TR-REG-V.TRANSACTION-TIMN
+STORE TR-REG-V
+*
+MOVE ST-V.ISSUE-DATE (#I1) TO #ISS-DT-FOR-NOTE
+MOVE EDITED #REFUND (EM=ZZZZ.99) TO #RF-AMT-DISP
+COMPRESS '*Term Refund' #LAST-YYYY '$' INTO #NOTE-TEXT (1)
+COMPRESS #NOTE-TEXT (1) #RF-AMT-DISP INTO #NOTE-TEXT (1) LEAVING NO
+COMPRESS #NOTE-TEXT (1) 'ON POL ISS' #ISS-DT-MM-FOR-NOTE-A
+  INTO #NOTE-TEXT (1)
+COMPRESS #NOTE-TEXT (1) '/' #ISS-DT-DD-FOR-NOTE-A
+  '/' #ISS-DT-YYYY-FOR-NOTE-A
+  INTO #NOTE-TEXT (1) LEAVING NO
+COMPRESS #NOTE-TEXT (1) 'IN BILL ADJ' INTO #NOTE-TEXT (1)
+MOVE 1 TO #INT
+MOVE 'EDS' TO #CGA-CLERK
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE LT-TO-RT-CONV
+***********************************************************************
+*
+IF NOTE-TEXT-22 (#I2) NE NUM-MBRSHIPS (#I1) /* NON-MATCH
+  ESCAPE TOP
+END-IF
+*
+* IF #LT-TO-LT                /* PM9
+*   ADD 1 TO #NUM-LT-TO-LT    /* PM9
+* ELSE                        /* PM9
+*   ADD 1 TO #NUM-LT-TO-RT    /* PM9
+* END-IF                      /* PM9
+*
+MOVE NOTE-DATE (#I2) TO #CONV-DT
+MOVE NOTE-TEXT-PRIOR-PLAN (#I2) TO #CONV-PRIOR-PLAN
+PERFORM NT-ISS-DT
+MOVE #YYYYMMDD TO #PR-ISS-DT
+MOVE #YYYYMMDD TO #ISS-DT-USED
+*
+*    BELOW CHECKS CURRENT ISS-AGE & PREMIUM
+MOVE ST-V.ID-NUMBER TO #SCR-ID
+MOVE ST-V.ISSUE-DATE (#I1) TO #YYYYMMDD  /* CURRENT ISS-DT
+SUBTRACT P-DATE-OF-BIRTH FROM #YYYYMMDD                          /* TT1
+MOVE #YYYY TO #AGE
+MOVE ST-V.ISSUE-DATE (#I1) TO #ISSUE-DATE
+MOVE FACE-AMOUNT (#I1) TO #FACE-AMT
+MOVE PLAN (#I1) TO #PLAN
+*
+IF PREM-RATING (#I1) NE ' '
+  COMPRESS 'SB' PREM-RATING (#I1) INTO #SCR-SUFFIX LEAVING NO
+END-IF
+*
+PERFORM GPREMSXX
+*
+*    BELOW CALCS PRIOR PREMIUM
+MOVE #PR-ISS-DT TO #YYYYMMDD  /* PRIOR ISS-DT
+MOVE #PR-ISS-DT TO #ISSUE-DATE
+SUBTRACT P-DATE-OF-BIRTH FROM #YYYYMMDD                         /* TT1
+MOVE #YYYY TO #AGE                     /* FOR GPREMSXX
+MOVE #CONV-PRIOR-PLAN TO #PLAN
+PERFORM GPREMSXX
+*
+MOVE #APRM TO #CONV-PRIOR-ANN-PREM
+*    ABOVE CALCS PRIOR PREMIUM
+*
+*    BELOW finds prior 2002 LT premium
+RESET #EQUALIZATION
+IF   (#CONV-PRIOR-PLAN = 'LT')
+  #RATE-PLAN     := #CONV-PRIOR-PLAN                          /* PM11
+  #RATE-DATE     := #PR-ISS-DT                                /* PM11
+  #RATE-FACE-AMT := ST-V.FACE-AMOUNT (#I1)                    /* PM11
+  PERFORM SET-RATE-SMOKER                                     /* PM11
+  PERFORM CHECK-EQUALIZATION                                  /* PM11
+  IF #PR-ISS-DT NE #ISSUE-DATE                                /* PM11
+    #EQUALIZATION := TRUE                                     /* PM11
+  END-IF                                                      /* PM11
+*
+  IF #EQUALIZATION
+    MOVE ST-V.ID-NUMBER TO #SCR-ID
+    MOVE #PR-ISS-DT TO #YYYYMMDD
+    SUBTRACT P-DATE-OF-BIRTH FROM #YYYYMMDD                   /* TT1
+    MOVE #YYYY TO #AGE
+    MOVE 'LT'     TO #PLAN
+*
+    PERFORM GPREMSXX
+*
+    COMPUTE ROUNDED #LT-MON-PREM = #APRM / 12
+    WRITE (12) ST-V.ID-NUMBER 'Redcd LT prem' #APRM
+      #LT-MON-PREM 'Curr Prem=' #CONV-PRIOR-ANN-PREM
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE RT-5-YR-CONV
+***********************************************************************
+*
+PERFORM NT-ISS-DT
+ADD 1 TO #NUM-5YR-RT-REN
+MOVE NT-RT-MM  (#I2)  TO #MM-A
+MOVE NT-RT-YYYY (#I2) TO #YYYY-A
+MOVE '01' TO #DD-A
+MOVE #YYYYMMDD TO #CONV-DT
+MOVE #YYYYMMDD TO #PR-ISS-DT
+*
+IF #RT-REV                      /* if reversed, find original premiums
+  MOVE ST-V.ID-NUMBER TO #SCR-ID
+  COMPUTE #AGE = ST-V.ISSUE-AGE-N (#I1) - 5
+  MOVE ST-V.ISSUE-DATE (#I1) TO #ISSUE-DATE
+  MOVE FACE-AMOUNT (#I1) TO #FACE-AMT
+  MOVE PLAN (#I1) TO #PLAN
+*
+  IF PREM-RATING (#I1) NE ' '
+    COMPRESS 'SB' PREM-RATING (#I1) INTO #SCR-SUFFIX LEAVING NO
+  END-IF
+*
+  PERFORM GPREMSXX
+*
+  MOVE #APRM TO #CONV-PRIOR-ANN-PREM
+ELSE
+  MOVE NT-RT-OLD-THOUS (#I2) TO #AMT-THOUS
+  MOVE NT-RT-OLD-DOLS  (#I2) TO #AMT-DOLS
+  MOVE NT-RT-OLD-CENTS (#I2) TO #AMT-CENTS
+*
+  FOR #I3 1 TO 7
+    IF #AMT-X (#I3) = ' '
+      MOVE '0' TO #AMT-X (#I3)
+    END-IF
+  END-FOR
+*
+  MOVE #AMT TO #CONV-PRIOR-ANN-PREM
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE PARTIAL-TERM
+***********************************************************************
+*
+MOVE NT-PT-ISS-MM   (#I2) TO #MM-A
+MOVE NT-PT-ISS-DD   (#I2) TO #DD-A
+MOVE NT-PT-ISS-YYYY (#I2) TO #YYYY-A
+*
+IF #YYYYMMDD NE MASK (YYYYMMDD)
+* WRITE ST-V.ID-NUMBER 'Invalid Note Iss date' #YYYYMMDD-A
+  ESCAPE TOP
+END-IF
+*
+IF #YYYYMMDD NE ST-V.ISSUE-DATE (#I1)
+  ESCAPE TOP
+END-IF
+*
+IF NT-PT-2 (#I2) NE MASK (NNN)
+* WRITE ST-V.ID-NUMBER 'Invalid Partial Term Amt' NT-PT-2 (#I2)
+  ESCAPE TOP
+END-IF
+*
+MOVE #YYYYMMDD TO #PR-ISS-DT
+MOVE #YYYYMMDD TO #ISS-DT-USED
+*
+*    BELOW finds prior unsplit premium
+MOVE ST-V.ID-NUMBER TO #SCR-ID
+MOVE ST-V.ISSUE-AGE-N (#I1) TO #AGE
+MOVE ST-V.ISSUE-DATE (#I1) TO #ISSUE-DATE
+RESET #FACE-AMT
+MOVE NT-PT-2 (#I2) TO #FACE-AMT-THOUS
+MOVE PLAN (#I1) TO #PLAN
+*
+IF PREM-RATING (#I1) NE ' '
+  COMPRESS 'SB' PREM-RATING (#I1) INTO #SCR-SUFFIX LEAVING NO
+END-IF
+*
+PERFORM GPREMSXX
+*
+MOVE NOTE-DATE (#I2) TO #CONV-DT
+MOVE #APRM TO #CONV-PRIOR-ANN-PREM
+MOVE PLAN (#I1) TO #CONV-PRIOR-PLAN
+* WRITE ST-V.ID-NUMBER 'full partial prem=' #APRM
+*
+ADD 1 TO #NUM-PARTIAL-TERM
+MOVE TRUE TO #PARTIAL-TERM
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE NT-ISS-DT
+***********************************************************************
+*
+MOVE NOTE-TEXT-ISS-MM   (#I2) TO #MM-A
+MOVE NOTE-TEXT-ISS-DD   (#I2) TO #DD-A
+MOVE NOTE-TEXT-ISS-YYYY (#I2) TO #YYYY-A
+*
+IF #YYYYMMDD NE MASK (YYYYMMDD)
+* WRITE ST-V.ID-NUMBER 'Invalid Note Iss date' #YYYYMMDD-A
+  ESCAPE TOP
+END-IF
+*
+IF #YYYYMMDD NE ST-V.ISSUE-DATE (#I1)
+    AND NOT #LT-TO-RT   /* they will not match
+  ESCAPE TOP
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CONVERSION-EQUALIZATION                       /* PM11
+***********************************************************************
+*
+#RATE-PLAN     := 'LT'
+#RATE-DATE     := #PR-ISS-DT
+#RATE-FACE-AMT := #FACE-AMT
+PERFORM SET-RATE-SMOKER
+PERFORM CHECK-EQUALIZATION
+IF #PR-ISS-DT NE #ISSUE-DATE
+  PERFORM CALCULATE-CONV-EQUALIZATION-ADJUSTMENT
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE PARTIAL-TERM-EQUALIZATION
+***********************************************************************
+*
+*  calculate equalization for initial face amount
+*
+MOVE ST-V.ID-NUMBER TO #SCR-ID /* #FACE-AMT already contains prior amt
+MOVE ISSUE-AGE-N (#I1) TO #AGE
+MOVE 'LT'              TO #PLAN
+MOVE #CONV-PRIOR-MONS  TO #CONV-MONS
+*
+#RATE-PLAN     := 'LT'                                          /* PM11
+#RATE-DATE     := #PR-ISS-DT                                    /* PM11
+#RATE-FACE-AMT := #FACE-AMT                                     /* PM11
+PERFORM SET-RATE-SMOKER                                         /* PM11
+PERFORM CHECK-EQUALIZATION                                      /* PM11
+*
+IF PREM-RATING (#I1) NE ' '
+  COMPRESS 'SB' PREM-RATING (#I1) INTO #SCR-SUFFIX LEAVING NO
+END-IF
+*
+PERFORM GPREMSXX
+COMPUTE ROUNDED #WORK-LT-MON-PREM = #APRM / 12
+MOVE #PREMS-PAID-PRIOR TO #WORK-PREMS-PAID
+*
+PERFORM CONVERSION-EQUALIZATION
+*
+MOVE #SPECIAL-LT-REFUND TO #HOLD-SPECIAL-LT-REFUND
+*
+IF #PR-ISS-DT = #ISSUE-DATE                                      /* PM11
+  PERFORM GET-REFUND-RATE                                        /* PM11
+*
+  COMPUTE #HOLD-SPECIAL-LT-REFUND = #HOLD-SPECIAL-LT-REFUND +    /* PM9
+    #PREMS-PAID-PRIOR * #RATE-REFUND                       /* PM9 PM11
+END-IF                                                           /* PM11
+*  WRITE ST-V.ID-NUMBER 'Refunding Converted Policy - Before'    /* PM9
+*
+RESET #SPECIAL-LT-REFUND
+*
+* calculate equalization for reduced face amount
+*
+MOVE #LT-MON-PREM TO #WORK-LT-MON-PREM
+MOVE #PREMS-PAID-AFTER TO #WORK-PREMS-PAID
+MOVE #CONV-AFTER-MONS TO #CONV-MONS
+MOVE ST-V.FACE-AMOUNT (#I1) TO #FACE-AMT
+PERFORM CONVERSION-EQUALIZATION
+COMPUTE #SPECIAL-LT-REFUND = #SPECIAL-LT-REFUND
+  + #HOLD-SPECIAL-LT-REFUND
+*
+IF ST-V.ISSUE-DATE (#I1) = #ISSUE-DATE                           /* PM11
+  PERFORM GET-REFUND-RATE                                        /* PM11
+  COMPUTE #SPECIAL-LT-REFUND = #SPECIAL-LT-REFUND +              /* PM9
+    #PREMS-PAID-AFTER * #RATE-REFUND                       /* PM9 PM11
+*  WRITE ST-V.ID-NUMBER 'Refunding Converted Policy - After'     /* PM9
+END-IF                                                           /* PM9
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE UNDELIVERABLE                                  /* PM9
+***********************************************************************
+*
+IF #REFUND LE 0
+  ESCAPE TOP
+END-IF
+*
+* IF #REFUND-LT GT 0                       /* vt3 \/
+*   ADD +1 TO #CNT-11
+* END-IF                                   /* vt3 /\
+*
+IF #REFUND-RT GT 0
+  ADD +1 TO #CNT-11
+END-IF
+*
+MOVE TRUE TO #UPDATE
+*
+DECIDE ON FIRST VALUE ST-V.MODE (#I1)
+  VALUE 'A' MOVE ST-V.ANNUAL-PREM (#I1) TO #MODAL-PREM
+  VALUE '1' MOVE ST-V.ANNUAL-PREM (#I1) TO #MODAL-PREM           /* DW1
+  VALUE 'S' COMPUTE #MODAL-PREM = ANNUAL-PREM (#I1) / 2
+  VALUE '2' COMPUTE #MODAL-PREM = ANNUAL-PREM (#I1) / 2          /* DW1
+  VALUE 'Q' COMPUTE #MODAL-PREM = ANNUAL-PREM (#I1) / 4
+  VALUE '4' COMPUTE #MODAL-PREM = ANNUAL-PREM (#I1) / 4          /* DW1
+  NONE COMPUTE #MODAL-PREM = ANNUAL-PREM (#I1) / 12
+END-DECIDE
+*
+IF st-v.status(#i1) = 'D'                          /* vt1 \/
+  MOVE 'Active' TO #status
+ELSE
+  MOVE 'Inactive' TO #status
+END-IF
+move st-v.issue-date (#i1) to #issue-date-n
+compress #issue-date-n-mm '/' #issue-date-n-dd '/'
+  #issue-date-n-yyyy into #issue-date-n-format leaving no
+callnat 'gplnmsxx' #pol-nbr st-v.id-number #i1     /* vt1  /\
+*
+if #status = 'Inactive'                                            /* vt1 \/
+  add 1 to #cnt-14
+  add #refund to #TOT-undeliv-inact
+  write '=' #id-num '=' #refund
+  display (14) #cnt-14 #ID-NUM
+    'Refund' #refund
+    'Status' #status
+    'Pol Number ' #pol-nbr
+    'Issue Date ' #issue-date-n-format
+end-if                                                             /* vt1 /\
+*
+RESET EMAIL-ADDRESS                                          /* TT1
+EMAIL-ADDRESS := F-PREF-EMAIL(< ST-V.MEMBER-CONTACT-ID >)    /* TT1
+DISPLAY (11) #CNT-11 #ID-NUM
+  'Seg'        #I1                                           /* PM12
+  'Refund'     #REFUND
+  'MD'         ST-V.MODE (#I1)
+  'Mod/Prem'   #MODAL-PREM
+  'Paid/Thru'  ST-V.PAID-TO-DATE (#I1)
+*  'BILL/-ADJUST/BEFORE'  ST-V.X-BILL-ADJUST  (#I1)                  /* vt1
+  'DB-CR/BEFORE'  ST-V.DEBIT-CREDIT-AMT
+  'Fixed/loan' ST-V.X-LOAN-AMOUNT (#I1)
+  'Var/loan'   ST-V.X-LOAN-AMOUNT-2 (#I1)
+  EMAIL-ADDRESS                                              /* TT1 /* PM10
+*      ST-V.INTERNET-ADDR (EM=XXXXXXXXXXXXXXXXXX)                /* PM10
+  'REFUND TO CAP' st-v.refund-to-cap                                   /* vt1  \/
+  'Active/Inactive'     #status
+  'Policy issue date'   #issue-date
+*  'Policy Number    '   #pol-nbr                                       /* vt1 /\
+*
+IF #ERR-TEXT NE ' '
+  WRITE (11) '     ' #ERR-TEXT
+END-IF
+*
+if #status = 'Active'                                                   /* vt1
+  MOVE ST-V.DATE-ACCT-UPDATE TO #HOLD-CUR-ACCT-UPDT
+  MOVE *DATN TO ST-V.DATE-ACCT-UPDATE
+  MOVE *DATN TO ST-V.DTS-DATN
+  MOVE *TIMN TO ST-V.DTS-TIMN
+*
+  ADD 1 TO #UNDL-DB-CR
+  ADD #REFUND TO #TOT-UNDL-REFUND
+  ADD #REFUND TO #UNDL-DB-CR-AMT                                     /* PM13
+  MOVE #REFUND TO #DB-CR-ADJ                                         /* PM13
+  PERFORM ACCT-REG-AND-NOTE                                          /* PM13
+end-if                                                                      /* vt1
+* IF   (ST-V.MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M'
+*               OR = '0' OR = '1' OR = '2' OR = '4')               /* DW1
+*  AND (ST-V.STATUS (#I1) = 'D')
+*   ADD 1 TO #UNDL-BILL-ADJ
+*   ADD #REFUND TO #UNDL-BILL-ADJ-AMT
+*   MOVE ST-V.X-BILL-ADJUST (#I1) TO #OLD-BILL-ADJ
+*   SUBTRACT #REFUND FROM ST-V.X-BILL-ADJUST (#I1)
+*   MOVE #REFUND TO #DB-CR-ADJ                                     /* PM11
+*   PERFORM TR-REG-AND-NOTE                                        /* PM11
+*   #BADJ := TRUE                                                  /* PM11
+*   PERFORM ACCT-REG-AND-NOTE                                      /* PM11
+* ELSE
+*   ADD 1 TO #UNDL-DB-CR
+*   ADD #REFUND TO #UNDL-DB-CR-AMT
+*   SUBTRACT #REFUND FROM ST-V.DEBIT-CREDIT-AMT
+*   RESET #DB-CR-ADJUST
+*   MOVE #REFUND TO #DB-CR-ADJ
+*   MOVE ST-V.ISSUE-DATE (#I1) TO #ISS-DT-FOR-NOTE
+*   RESET #BADJ                                                    /* PM11
+*   PERFORM ACCT-REG-AND-NOTE
+* END-IF
+*
+IF  (ST-V.X-LOAN-AMOUNT   (#I1) NE 0)
+    OR (ST-V.X-LOAN-AMOUNT-2 (#I1) NE 0)
+  ADD 1 TO #UNDL-W-LOAN
+END-IF
+*
+END-SUBROUTINE
+*
+END

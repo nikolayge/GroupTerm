@@ -1,0 +1,56 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online / MC-III
+* ManageCreditCards
+* MBCNEC53 - Checks policies paid by CN before deleting EZPay account
+* Called from MBCNCC40
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    05252017       Initial Creation
+* YAK    08012017  YK1  Check only Active policies in premium-pay status
+************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEC51
+PARAMETER
+1 #ErrorCode  (A3)
+LOCAL USING GPRA006N
+LOCAL USING ERROR_LN
+LOCAL
+1 #Payer     (N2)CONST <8>
+1 #EZPAY-MODE   (A1)   CONST <'E'>
+1 #EZ-LOAN-MODE (A1/2) CONST <'3','4'>
+1 C@Polices  (I2)
+1 #I         (I2)
+1 #RoutingNumber (A) DYNAMIC
+1 #AccountNumber (A) DYNAMIC
+1 #EzPayAccount  (A) DYNAMIC
+1 #CheckType     (A) DYNAMIC
+1 #EZ-Pay        (A) DYNAMIC CONST <'EZ-Pay'>
+*
+END-DEFINE
+*
+#EzPayAccount := F-BANK-ACCOUNT(<BankAccount.AccountCN>)
+SEPARATE #EzPayAccount INTO #CheckType #RoutingNumber #AccountNumber IGNORE WITH DELIMITER '/'
+IF #RoutingNumber = BankAccount.RoutingNumber AND #AccountNumber = BankAccount.AccountNumber AND #CheckType = #EZ-Pay
+  PARM-CN := BankAccount.AccountCN
+  CALLNAT 'GPRN006N' PARM-CN PARM-MEMBER-CN PARM-POLICIES(*) #Payer
+  C@Polices := *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+  FOR #I = 1 TO C@Polices
+    IF ((PARM-POLICIES.POLICY-MODE(#I) = #EZPAY-MODE AND
+        PARM-POLICIES.POLICY-STATUS(#I) = 'D' AND PARM-POLICIES.POLICY-PAY-STATUS(#I) < '40') OR             /* YK1
+        (PARM-POLICIES.LOAN-PAY-MODE(#I,1) <> ' ' AND #EZ-LOAN-MODE(*) = SCAN(PARM-POLICIES.LOAN-PAY-MODE(#I,1))) OR
+        (PARM-POLICIES.LOAN-PAY-MODE(#I,2) <> ' ' AND #EZ-LOAN-MODE(*) = SCAN(PARM-POLICIES.LOAN-PAY-MODE(#I,2))))
+        AND PARM-POLICIES.PAYER-CN(#I) = BankAccount.AccountCN
+      #ErrorCode := #BA-USED-FOR-RECURRING-PAYMENTS
+      ESCAPE MODULE
+    END-IF
+  END-FOR
+END-IF
+*
+END

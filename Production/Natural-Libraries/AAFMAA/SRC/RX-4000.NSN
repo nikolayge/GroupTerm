@@ -1,0 +1,115 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* RX-4000 RX Communications
+* bz Aug 29, 2017. Ver-1(10/27/2017)
+*
+* -- Request for PU Image ! still alive for 15 sec !
+* ===================================
+DEFINE DATA
+PARAMETER USING RX000PDA
+LOCAL USING RX000LDA
+LOCAL
+* -----------------------------------
+1 f_Template            (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/Request_PU.xml'>
+1 f_Request             (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/PU/@@AT_PU.xml'>
+* -----------------
+1 l_Test                (L)
+1 v_A                   (A) DYNAMIC
+* -----------------
+1 CMD                    (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/RX_HTTP_PU @@FN @@ENV'>
+1 FNC                    (A) DYNAMIC
+1 RESP                   (A) DYNAMIC
+* -----------------
+1 XML                    (A) DYNAMIC
+1 L@                     (L)
+1 GUID                   (A36)
+END-DEFINE
+
+ON ERROR
+  PRINT *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /   /* --db
+  COMPRESS *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR INTO p_Message
+  p_RC := 9
+  ESCAPE ROUTINE
+END-ERROR
+
+FIND(1) RX-V WITH RX-AT = p_AT
+  IF NO RECORD FOUND
+    COMPRESS 'RX record was not created' INTO p_Message
+    p_RC := 40
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+
+IF p_Mode = 'T' l_Test := TRUE  END-IF
+
+IF l_Test
+  IF F-IS-DEV(<>)                           /* Server determined URL     
+     EXAMINE CMD FOR '@@ENV' REPLACE 'Test'
+  ELSE
+     EXAMINE CMD FOR '@@ENV' REPLACE 'Prod'
+  END-IF  
+  COMPRESS p_AT '-T' INTO v_A LEAVING NO SPACE
+ELSE
+  EXAMINE CMD FOR '@@ENV' REPLACE 'Prod'
+  v_A := p_AT
+END-IF
+
+EXAMINE f_Request FOR '@@AT' REPLACE v_A
+EXAMINE CMD FOR '@@FN' REPLACE f_Request
+*  WRITE WORK FILE 2 VARIABLE f_Order H'0A'                    /* --db
+
+PERFORM sbr_Request
+
+* -------------------------------------------------------------------------------
+DEFINE sbr_Request
+*      -----------
+/* --- Read template ---
+p_RC := 0
+DEFINE WORK FILE 1 f_Template TYPE 'UNFORMATTED'
+READ WORK FILE 1 ONCE XML
+CLOSE WORK FILE 1
+
+/* --- Create Request ---
+COMPRESS *DATN *TIMN INTO v_A LEAVING NO SPACE
+COMPRESS 'echo' v_A '| digest -a md5' INTO v_A
+CALL INTERFACE4 'CMDX' v_A Resp Fnc
+p_RC := RET('CMDX')
+MOVE EDITED Resp(EM=XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX) TO GUID
+EXAMINE XML FOR '@@TRACK' REPLACE GUID
+EXAMINE XML FOR '@@URL'   REPLACE RX-URL
+
+DEFINE WORK FILE 1 f_Request TYPE 'UNFORMATTED'
+L@ := FN_Exist(<f_Request,1>)
+WRITE WORK FILE 1 VARIABLE XML
+CLOSE WORK FILE 1
+RESP := ' '
+CALL INTERFACE4 'CMDX' CMD RESP FNC
+p_RC := RET('CMDX')
+
+p_Message := RESP
+DECIDE ON FIRST VALUE OF p_RC
+  VALUE 0
+    ESCAPE ROUTINE
+  VALUE 1
+    PRINT 'Error:' CMD RESP                   /* --db
+    p_Message := 'Request Script error'
+    p_RC := 43
+  VALUE 2
+    p_RC := 42
+  VALUE 3
+    p_RC := 3
+    p_Message := 'PreAuth request service error'
+  NONE
+    PRINT 'Error:' CMD RESP                   /* --db
+    p_Message := 'Request Execution error'
+    p_RC := 44
+END-DECIDE
+
+END-SUBROUTINE
+* -------------------------------------------------------------
+END
+* https://test.secure.millimanintelliscript.com/RedirectURL.aspx?RedirectID=
+* 9223ebed-d44a-4d36-90ee-2647d796f1a8

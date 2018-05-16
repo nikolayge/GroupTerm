@@ -1,0 +1,323 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* A00P0RCT  bz 08/7/2017
+* Find Reinstated Policies with Owner and Payor missing data
+
+DEFINE DATA
+LOCAL USING ADDA0001
+ LOCAL
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER            /* D 
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER_A      (A6)
+  2 ENTRY-DATE           /* D
+  2 CODE
+  2 ISSUE-DATE
+*
+ 1 ST-V VIEW OF A-STATUS
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 NAME 
+  2 SSN
+  2 C*ACTIVE-SEGMENTS
+  2 ACTIVE-SEGMENTS(9)
+    3 POLICY-ID
+    3 STATUS 
+    3 PLAN
+    3 PAY-STATUS
+    3 ISSUE-DATE
+    3 REDEFINE ISSUE-DATE
+      4 ISSUE-DATE_A   (A8)
+  
+*
+ 1 EML-V VIEW of A-CONTACT-EMAIL
+   2 CONTACT-ID
+   2 EMAIL-PREFERRED-IND
+   2 EMAIL-ADDRESS
+   2 EMAIL-UNDELIV
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 LAST-NAME
+  2 FIRM-ORGANIZATION-NAME
+  2 CONTACT-TYPE  
+*
+ 1 POL-V VIEW OF A-POLICY-CONTACTS
+   2 POLICY-NUMBER           (A16)  /* D
+   2 CONTACT-ID
+   2 RELATION                (N2)
+   2 REFERENCE-NUMBER
+
+1 v_CN              (N6)  
+1 v_Date_From       (N8)  
+1 REDEFINE v_Date_From
+  2 v_Date_From_A   (A8)
+1 v_Date_To         (N8)  
+1 N08_From          (N8)
+1 N08_To            (N8)
+1 N08               (N8)
+1 REDEFINE  N08   
+  2 N08_A           (A08)
+1 #D                (D)  
+1 A10_1             (A10)
+1 A10_2             (A10)
+1 #i                (N2)
+1 c_Out             (N3)
+1 v_A               (A)   DYNAMIC
+*
+1  f_Dir            (A)   DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK">
+1  f_Name           (A)   DYNAMIC INIT <"Reinstated_Pol_incomplete_contacts.TXT">
+1  f_Rep            (A80) 
+1  v_PN             (I1)     INIT  <1>
+1  v_RC             (I4)
+1  dm               (A1)     INIT <H'09'>
+*
+1 p_FTP_PS
+  2 ftp_Parm      (A) DYNAMIC INIT<'@@DIR, @@NAME, @@WIN, @@NAME,  -e '> 
+  2 ftp_Msg       (A) DYNAMIC
+  2 ftp_RC        (N4)
+1 win_Dir         (A) DYNAMIC INIT <'ftp/NewBiz'>
+1 v_RC_EML        (N4)
+*
+1 eml_Parm        (A) DYNAMIC INIT <'cat @@FILE | mailx -s "@@SUBJ" -c bzaslavskiy@aafmaa.com -r "MD_noreply@aafmaa.com" "@@TO"  > /dev/null 2>&1' >
+1 eml_Subj        (A) DYNAMIC
+1 eml_To          (A) DYNAMIC INIT
+      <'sseng-im@aafmaa.com,cbrown@aafmaa.com'>
+1 msg_0           (A) DYNAMIC INIT <'All reinstated policies have Payor and Owner with Email, Address, Name'>
+1 v_Msg           (A25)
+1 v_Msg_Type      (A5)
+1 v_Days          (I2) INIT <1> 
+*********************************
+1 #Prod_Debug     (L) INIT <FALSE>           /*****************/
+*********************************
+1 v_Parm   (A35)
+END-DEFINE
+
+ON ERROR
+  WRITE(0)  "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR / "CN:" v_CN  'Segments' #i
+END-ERROR
+
+WRITE NOTITLE '--' *DATX *TIMX         / 
+              'Program      ' *PROGRAM /
+              'Device       ' *DEVICE  /
+              'Environment  '  F-IS-DEV(<>)(EM=Env-Prod/Env-Test) /
+              'Run Mode     ' #Prod_Debug (EM=ForceTest-N/ForceTest-Y)
+
+IF *DEVICE = 'BATCH'
+  REPEAT UNTIL *DATA = 0         
+      INPUT v_PARM
+      PRINT v_PARM
+      DECIDE FOR FIRST CONDITION
+        WHEN  v_PARM = SCAN ('TEST')
+          #Prod_Debug := TRUE
+          PRINT 3x 'Run as a test'
+        WHEN  v_PARM = SCAN ('DAYS')
+          SEPARATE v_PARM INTO A10_1 A10_2 WITH DELIMITER '='
+          IF A10_2 IS (N3)
+            v_Days := val(A10_2)
+          ELSE
+            v_Days := 1
+          END-IF  
+          PRINT 3x 'Period set to' A10_2
+        WHEN v_PARM = SCAN ('@')
+          #i := #i + 1
+          v_A := *TRIM(v_PARM)
+          IF #i = 1
+             eml_To := v_A
+          ELSE
+             COMPRESS eml_To ',' v_A INTO eml_To LEAVING NO SPACE
+          END-IF  
+        WHEN NONE IGNORE
+      END-DECIDE
+  END-REPEAT
+  PRINT '=' eml_To
+END-IF
+
+ IF F-IS-DEV(<>) OR #Prod_Debug
+     eml_TO   := 'bzaslavskiy@aafmaa.com'
+     PRINT 'Test eml' eml_To 
+     win_Dir  := 'ftp/TEST'
+ END-IF
+
+ COMPRESS f_Dir '/' f_Name INTO f_Rep LEAVING NO SPACE
+ IF *DEVICE <> 'BATCH'
+   v_PN := 1   v_RC := PRT_FN_PUT(<v_PN, f_Rep>)
+ END-IF
+ PRINT 3x 'Execution date' *DATX
+ #D := *DATX - v_Days                                  /*  -- Attantion --
+ PRINT 3x 'Date From' #D           
+ MOVE EDITED #D(EM=YYYYMMDD) TO v_Date_From_A
+ v_Date_To   := *DATN
+ FORMAT(1)  LS=170 PS=200
+  N08_From := 99999999 - v_Date_From
+  N08_To   := 99999999 - v_Date_To
+  FMD.
+  FIND MD-V WITH ENTRY-DATE <= N08_From AND ENTRY-DATE >= N08_To
+    WHERE CODE = 'R' 
+    IF NO RECORD FOUND
+         PRINT(1) 'No MD records for period'
+       ESCAPE BOTTOM
+    END-NOREC
+     IF *COUNTER(FMD.) = 1 
+          PRINT 3x *NUMBER(FMD.) 'CNs with new policies since' #D (EM=MM/DD/YYYY)
+     END-IF     
+     IF ISSUE-DATE = 0 ESCAPE TOP END-IF
+     v_CN := MD-V.ID-NUMBER
+     FIND(1) ST-V  WITH ID-NUMBER = v_CN 
+         IF NO RECORD FOUND 
+            COMPRESS 'No Status Record' v_CN INTO v_MSG
+            PERFORM sbr_Print_Err
+            ESCAPE BOTTOM
+         END-NOREC 
+       IF PROCESS-IND = 'C' OR INTRO-FLAG = 'A'  ESCAPE BOTTOM END-IF
+       PERFORM sbr_Validate
+     END-FIND 
+*     
+   END-FIND
+   PRINT 3x *DATX *TIMX '-- Find new policies with incomplete contacts --' /
+   'Found:' c_Out / 'Found in MD:' *NUMBER(FMD.)
+        PERFORM sbr_EML
+        PERFORM sbr_FTP 
+        PRINT 3x 'Email sent RC=' v_RC_EML
+        PRINT 3x 'FTP executed RC=' ftp_RC / ftp_Msg
+* =====================================================================================
+DEFINE sbr_Validate
+ FOR #i = 1 TO C*ACTIVE-SEGMENTS
+    IF ST-V.PLAN(#i) = ' ' OR ST-V.ISSUE-DATE(#i) = 0 OR STATUS(#i) <> 'D' ESCAPE TOP END-IF
+    IF ST-V.ISSUE-DATE(#i) <> MD-V.ISSUE-DATE  ESCAPE TOP END-IF
+         N08  := 99999999 - ENTRY-DATE
+         MOVE EDITED N08_A TO #D (EM=YYYYMMDD)
+         MOVE EDITED #D (EM=MM/DD/YYYY) TO A10_1
+         MOVE EDITED ST-V.ISSUE-DATE_A(#i) TO #D (EM=YYYYMMDD)
+         MOVE EDITED #D (EM=MM/DD/YYYY) TO A10_2
+
+         v_Msg := ' '
+         v_Msg_type := 'Payor'         
+         FIND POL-V WITH POL-V.POLICY-NUMBER =  POLICY-ID(#i)  /* has Payor
+              WHERE RELATION = 8
+           IF NO RECORD FOUND
+              v_MSG := 'No record'
+              v_CN  := 0
+              PERFORM sbr_Print_Err
+              ESCAPE BOTTOM      
+           END-NOREC
+           IF REFERENCE-NUMBER = 0
+              v_MSG := 'record CN is 0'
+              PERFORM sbr_Print_Err
+              ESCAPE BOTTOM      
+           END-IF
+           v_CN := REFERENCE-NUMBER
+           PERFORM sbr_VLD_CNT      
+         END-FIND
+ 
+         v_Msg := ' '
+         v_Msg_type := 'Owner'                               
+         FIND POL-V WITH POL-V.POLICY-NUMBER =  POLICY-ID(#i)  /* has Owner   
+             WHERE RELATION = 2 
+           IF NO RECORD FOUND
+              v_MSG := 'No record'
+              v_CN  := 0
+              PERFORM sbr_Print_Err
+              ESCAPE BOTTOM      
+           END-NOREC
+           IF REFERENCE-NUMBER = 0
+              v_MSG := 'record CN is 0'
+              PERFORM sbr_Print_Err
+              ESCAPE BOTTOM      
+           END-IF
+           v_CN := REFERENCE-NUMBER
+           PERFORM sbr_VLD_CNT      
+         END-FIND
+  
+ END-FOR
+END-SUBROUTINE 
+* ======================================================================================
+DEFINE sbr_VLD_CNT
+         FIND(1) CNT-V WITH ID-NUMBER = v_CN
+            IF NO RECORD FOUND
+               COMPRESS 'Contact record' INTO v_MSG
+               PERFORM sbr_Print_Err
+               ESCAPE BOTTOM
+            END-NOREC
+
+            IF CONTACT-TYPE = 'O'
+               IF FIRM-ORGANIZATION-NAME = ' ' 
+                   COMPRESS 'Org-Name' INTO v_MSG
+                   PERFORM sbr_Print_Err
+               END-IF
+            ELSE
+               IF LAST-NAME = ' ' 
+                   COMPRESS 'Name' INTO v_MSG
+                   PERFORM sbr_Print_Err
+               END-IF
+             END-IF   
+            
+            FIND EML-V WITH CONTACT-ID = CNT-V.CONTACT-ID
+                  WHERE  EMAIL-ADDRESS <> ' ' AND  EMAIL-UNDELIV <> 'Y'
+                IF NO RECORD FOUND
+                   COMPRESS 'E-Mail' INTO v_MSG
+                   PERFORM sbr_Print_Err
+                   ESCAPE BOTTOM
+                END-NOREC
+             END-FIND               
+             
+             RESET #PDA-ADDRESS
+             #ADD-TYPE := 'P'
+             #ADD-CONTACT-ID := CNT-V.CONTACT-ID
+             CALLNAT 'ADDN0001'   #PDA-ADDRESS
+             IF #ADD-LINE-1 = ' '
+                COMPRESS 'Primary address' INTO v_MSG
+                PERFORM sbr_Print_Err
+             END-IF   
+         END-FIND
+END-SUBROUTINE
+* ======================================================================================
+DEFINE sbr_EML
+  IF c_Out <> 0
+     PRINT(1) // 'Link to report:'
+     COMPRESS '\\aaf-iad-ftp\' win_Dir '\' f_Name INTO v_A LEAVING NO SPACE
+     EXAMINE v_A FOR '/' REPLACE '\'
+     PRINT(1) v_A
+  ELSE
+     PRINT(1) msg_0 
+  END-IF   
+     MOVE EDITED v_Date_From_A TO #D (EM=YYYYMMDD)
+     MOVE EDITED #D (EM=LLL-DD', 'YYYY) TO v_A
+     COMPRESS  'Reinstated policies with incomplete contact since' v_A  ' Found:' c_Out INTO eml_Subj
+  EXAMINE eml_Parm FOR '@@SUBJ' REPLACE eml_Subj
+  EXAMINE eml_Parm FOR '@@TO'   REPLACE eml_To
+  EXAMINE eml_Parm FOR '@@FILE' REPLACE f_Rep
+  CLOSE PRINTER (1)
+  call 'shcmd' eml_Parm
+  v_RC_EML := RET('shcmd')
+END-SUBROUTINE
+* ======================================================================================
+DEFINE sbr_FTP
+ EXAMINE ftp_Parm FOR '@@DIR'  REPLACE f_Dir
+ EXAMINE ftp_Parm FOR '@@NAME' REPLACE f_NAME
+ EXAMINE ftp_Parm FOR '@@WIN'  REPLACE win_Dir
+ CALLNAT 'FTP-PS' p_FTP_PS
+END-SUBROUTINE
+* ======================================================================================
+DEFINE sbr_Print_Title
+  IF #Prod_Debug
+     WRITE(1)  NOTITLE  '*** Executed in test mode ***'  //
+  END-IF                     
+ MOVE EDITED v_Date_From_A TO #D (EM=YYYYMMDD)
+ WRITE(1)  NOTITLE  *PROGRAM(EM=XXXXXXXX' v.1.4 ') 2x *DATX 2x *TIMX 2x '-- Reinstated policies with incomplete contacts --' 2x
+                    F-IS-DEV(<>)(EM=Prod/Dev) 2x 'DB:' GET_DBN(<>)(EM=999 AL=3) /
+                     'Period:' #D(EM=MM/DD/YYYY) '-' *DATX(EM=MM/DD/YYYY) //
+            'Insured' dm 'Owner/Payor' dm  'Entry Date' dm 'Issue Date' dm 'Policy   ' dm 'Missing data'
+END-SUBROUTINE 
+* ======================================================================================
+DEFINE sbr_Print_Err
+   c_Out := c_Out + 1
+   IF c_Out = 1 PERFORM sbr_Print_Title END-IF
+   COMPRESS v_Msg_Type v_Msg INTO v_Msg
+   WRITE(1) MD-V.ID-NUMBER(EM=999999) 3x dm v_CN(EM=999999) dm 4x A10_1 dm  A10_2 dm POLICY-ID(#i)(AL=12) dm v_Msg
+END-SUBROUTINE
+*
+END

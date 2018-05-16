@@ -1,0 +1,676 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Subprogram MBCNFIR5 - clone of SAS/FIRP00AN
+* Creates a list of Cn's:
+* called from NATSERV0 for function GetMonthlyFIRList
+* 1. Birthday is this month
+* 2. Eligible to get FIR
+* 3. Have the following DI-BA-MAIL-CD value:
+* N Normal:       Mail=Yes MC=Yes Email=Yes
+* S Mail Only     Mail=Yes MC=Yes Email=No
+* B BOTH CURRENT AND FORMER FAMILY MAIL-OUTS
+*************************************************
+* YAK 02/03/2016:      Initial creating MC-II FIR
+* YAK 05/18/2016:  YK1 Change Date format  
+* YAK 07/20/2016:  YK2 Correct error messages
+*                      Do not create FIR for mail 
+*                      code 'N' when email address is on file  
+*************************************************
+DEFINE DATA PARAMETER
+1 FirList
+  2 Date        (A8)   /* YK1 - was N8
+  2 ListCount   (N4)
+  2 FirTable    (*)
+    3 FirCN     (N6)
+    3 FirType   (A1) 
+*
+LOCAL
+1 v_Vrs                 (A) DYNAMIC INIT <'1.1.1'>
+1 v_Parm_Mem            (A50)
+1 REDEFINE v_Parm_Mem
+  2 v_From_Mem          (A4)
+  2  REDEFINE v_From_Mem
+    3 v_From_MM_Mem    (N2) (EM=99)
+    3 v_From_DD_Mem    (N2) (EM=99)
+  2 v_To_Mem            (A4)
+  2  REDEFINE v_To_Mem
+    3 v_To_MM_Mem      (N2) (EM=99)
+    3 v_To_DD_Mem      (N2) (EM=99)
+1 v_Skip_Mem            (L)      INIT <FALSE>
+*
+1 v_Parm_Wid            (A50)
+1 REDEFINE v_Parm_Wid
+  2 v_From_Wid          (A4)
+  2  REDEFINE v_From_Wid
+    3 v_From_MM_Wid    (N2) (EM=99)
+    3 v_From_DD_Wid    (N2) (EM=99)
+  2 v_To_Wid    (A4)
+  2  REDEFINE v_To_Wid
+    3 v_To_MM_Wid      (N2) (EM=99)
+    3 v_To_DD_Wid      (N2) (EM=99)
+1 v_Skip_Wid            (L)    INIT <FALSE>
+1 v_DAL                 (L)    INIT <FALSE>
+1 v_Test                (A3)    INIT <' '>
+1 v_MC_Email            (A8)    INIT <' '>  /* MC_EMAIL
+*
+1 CNT-V        VIEW OF A-CONTACTS
+  2 CONTACT-ID                      (N8)    /* D
+  2 ID-NUMBER                       (N6)    /* D
+  2 CONTACT-STATUS                  (A1)
+  2 MILITARY-STATUS                 (A1)
+  2 PREFIX-TITLE                    (A25)
+  2 FULL-NAME
+    3 FIRST-NAME                    (A25)
+    3 MIDDLE-NAME                   (A25)
+    3 LAST-NAME                     (A25)
+    3 SUFFIX                        (A10)
+  2 DATE-OF-BIRTH                   (N8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DATE-OF-BIRTH-A               (A8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DOB-YYYY  (N4)
+    3 DOB-MM    (N2)
+    3 DOB-DD    (N2)
+  2 DATE-OF-DEATH
+*
+1 CNT-SP-V        VIEW OF A-CONTACTS
+  2 CONTACT-ID                      (N8)    /* D
+  2 ID-NUMBER                       (N6)    /* D
+  2 CONTACT-STATUS                  (A1)
+  2 PREFIX-TITLE                    (A25)
+  2 FULL-NAME
+    3 FIRST-NAME                    (A25)
+    3 MIDDLE-NAME                   (A25)
+    3 LAST-NAME                     (A25)
+    3 SUFFIX                        (A10)
+  2 DATE-OF-BIRTH                   (N8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DATE-OF-BIRTH-A               (A8)
+  2 REDEFINE DATE-OF-BIRTH
+    3 DOB-YYYY  (N4)
+    3 DOB-MM    (N2)
+    3 DOB-DD    (N2)
+  2 DATE-OF-DEATH
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 MEMBER-CONTACT-ID
+  2 SPOUSE-CONTACT-ID
+  2 WIDOW-FLAG
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 SUSPEND-CODE
+  2 HANDLE-FLAG
+  2 MAILING-FLAG-SP
+  2 STATUS-CODE-SP
+  2 DI-BA-MAIL-CD
+  2 NUMBER-MEMBERSHIPS
+  2 FORMER-HUSBAND-SBP-AMT
+
+1 c_sel_Mem    (N6)
+1 c_sel_Wid    (N6)
+1 v_Err_Msg    (A12)
+1 SAS_Plan     (A3)   INIT <" ">
+1 v_VALIDATE    (L)
+1 c_Err_Mem         (N6)
+1 c_Err_Wid         (N6)
+1 c_No_Status_Mem   (N6)
+1 c_Excl_Rules_Mem  (N6)
+1 c_Excl_MEM        (N6)
+1 c_PSM             (N6)
+1 c_Excl_Rules_Wid  (N6)
+1 c_Inact_Mem       (N6)
+1 c_HF_Mem          (N6)
+1 c_SUSP_CD_Mem     (N6)
+1 c_DI-BA_CD_Mem    (N6)
+1 c_Excl_Addr_Mem   (N6)
+*
+1 c_Foreign_Mem        (N6) INIT <0>
+1 c_Foreign_Wid        (N6) INIT <0>
+*
+1 c_Excl_TETS  (N6)
+*
+1 c_OK         (N6)
+1 c_OK_MEM     (N6)
+1 c_OK_WID     (N6)
+1 c_OK_Tot     (N6)
+1 c_OK_Tot_D   (N6)
+
+1 dm           (A1)        INIT<H'09'>
+1 nl           (A1)        INIT<H'0A'>
+*
+1 v_Err_Line_Mem  (5)
+  2 v_Err_Line_Cn_Mem      (N6)
+  2 v_Err_DM1              (A1) INIT ALL <H'09'>
+  2 v_Err_Line_MSG_Mem     (A12)
+  2 v_Err_DM2              (A1) INIT ALL <H'09'>
+1 c_Err_CNT_Mem            (N1)
+*
+1 v_Err_Line_Wid (5)
+  2 v_Err_Line_Cn_Wid      (N6)
+  2 v_Err_DM1              (A1) INIT ALL <H'09'>
+  2 v_Err_Line_MSG_Wid     (A12)
+  2 v_Err_DM2              (A1) INIT ALL <H'09'>
+1 c_Err_CNT_Wid            (N1)
+
+***
+1 c_wid_0  (N6)
+1 c_wid_1  (N6)
+1 c_wid_2  (N6)
+1 c_wid_BA_CD  (N6)
+1 c_wid_5  (N6)
+1 c_wid_6  (N6)
+1 c_wid_7  (N6)
+1 c_wid_8  (N6)
+1 c_Excl_Addr_Wid   (N6)
+*****
+1  p_FIRS
+  2  p_CN    (N6)
+  2  p_Pages (N2)
+  2  p_Err   (N4)
+  2  p_MSG   (A)   DYNAMIC
+  2  p_Mod   (A3)
+*****
+1 v_D0  (D)  INIT <*DATX>
+1 v_D1  (D)
+1 v_N3           (N3)
+1 v_A2           (A2)
+1 v_A3           (A3)
+1 v_A25          (A25)
+1 v_A10          (A10)
+1 p_mail         (A70)
+1 array_ST   (65)
+  2 v_ST                 (A2)
+  2 cnt_ST               (N5)
+1 indx_array_ST           (I1)
+1 #i                      (I2)
+*****
+1 v_Title                 (A40)
+1 #Member     (A1) INIT <'M'>
+1 #Widow      (A1) INIT <'W'>
+* Define FIR report files
+1 #FIR-MEM-LOG   (A) Dynamic INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/MCFIR_MEM_LOG.TXT'>
+1 #FIR-WID-LOG   (A) Dynamic INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/MCFIR_WID_LOG.TXT'>
+1 #FIR-DOMESTIC  (A) Dynamic INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/MCFIR_DOMESTIC.TXT'>
+1 #FIR-FOREIGN   (A) Dynamic INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/MCFIR_FOREIGN.TXT'>
+*
+1  f_Rep            (A80) 
+1  v_PN             (I1)
+1  v_RC             (I4)   
+*
+1 #FIR-REPORT-1  (A) Dynamic INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/MCFIR.TXT'>
+1 #FIR-REPORT-2  (A) Dynamic INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/MCFIR_LOG.TXT'>
+1 #FIR-REPORT-3  (A) Dynamic INIT <'/usr/SAG/AAFMAA/batch/workfiles/PROD/MCFIR_STATES.TXT'>
+*
+END-DEFINE
+*
+DEFINE WORK FILE 11 #FIR-MEM-LOG  TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 12 #FIR-WID-LOG  TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 13 #FIR-DOMESTIC TYPE 'ASCII-COMPRESSED' 
+DEFINE WORK FILE 14 #FIR-FOREIGN  TYPE 'ASCII-COMPRESSED'
+*
+DEFINE WORK FILE 15 #FIR-REPORT-1 TYPE 'ASCII-COMPRESSED'    
+DEFINE WORK FILE 16 #FIR-REPORT-2 TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 17 #FIR-REPORT-3 TYPE 'ASCII-COMPRESSED'
+*
+FORMAT (2) LS=133
+v_PN  := 1
+f_Rep := #FIR-REPORT-1 
+v_RC  := PRT_FN_PUT(<v_PN, f_Rep>)
+v_PN  := 2
+f_Rep := #FIR-REPORT-2 
+v_RC  := PRT_FN_PUT(<v_PN, f_Rep>)
+v_PN  := 3
+f_Rep := #FIR-REPORT-3 
+v_RC  := PRT_FN_PUT(<v_PN, f_Rep>)
+*
+v_Parm_Mem := FirList.Date
+IF v_Parm_Mem <> MASK(MMNNMMNN)
+  MOVE EDITED *DATX (EM=MM01) TO v_From_Mem
+  MOVE EDITED *DATX (EM=MM31) TO v_To_Mem
+END-IF
+
+IF v_Parm_Mem = SCAN('SKIP')      v_Skip_Mem := TRUE END-IF
+IF v_Parm_Mem = SCAN('TEST')      v_Test     := 'TST' END-IF
+IF v_Parm_Mem = SCAN('MC')        v_Test     := 'MC' END-IF
+IF v_Parm_Mem = SCAN('MC-EMAIL')  v_MC_Email := 'MC_EMAIL' END-IF
+
+v_Parm_Wid := FirList.Date
+IF v_Parm_Wid <> MASK(MMNNMMNN)
+  MOVE EDITED *DATX (EM=MM01) TO v_From_Wid
+  MOVE EDITED *DATX (EM=MM31) TO v_To_Wid
+END-IF
+IF v_Parm_Wid  = SCAN ('SKIP') v_Skip_Wid := TRUE END-IF
+
+PRINT (2) NOTITLE
+  *PROGRAM v_Vrs *LIBRARY-ID (AL=8) '-- Annual FIR Letters --'
+  'Env:' GET_DBN(<>)(EM=999) F-IS-DEV(<>)(EM=Prod/Dev) *DATX *TIMX /
+  ' Effective date Range Members:' v_From_Mem '-' v_To_Mem  v_Skip_Mem  /
+  ' Effective date Range Widows:'  v_From_Wid '-' v_To_Wid  v_Skip_Wid  /
+  'Parms:' 'Skip Mem=' v_Skip_Mem (EM=NO/YES) 'Skip Wid=' v_Skip_Wid (EM=NO/YES)
+  'Test=' v_Test 'MC-Email=' v_MC_EMAIL
+*
+IF F-IS-DEV(<>) v_Title := 'DEV' ELSE v_Title := 'PROD' END-IF
+COMPRESS *DATX *TIMX 'DB:' GET_DBN(<>) 'Env' v_Title INTO  v_Title
+WRITE WORK FILE 13 VARIABLE 'Domestic Letters '
+  'Members ' v_From_Mem '-' v_To_Mem
+  ' Widows ' v_From_Wid '-' v_To_Wid ' ' v_Title nl
+  "CN" dm "MBR/WID" dm "Name" dm "DOB" dm "AGE" dm  "Pages" dm "STATE"    dm "E-mail" dm "Service" dm 'Mail Code'
+WRITE WORK FILE 14 VARIABLE 'Foreign Letters '
+  'Members ' v_From_Mem '-' v_To_Mem
+  ' Widows ' v_From_Wid '-' v_To_Wid ' ' v_Title nl
+  "CN" dm "MBR/WID" dm "Name" dm "DOB" dm "AGE" dm  "Pages" dm "STATE"    dm "E-mail" dm "Service" dm 'Mail Code'
+SETA. SETTIME
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - Members
+IF NOT v_Skip_Mem
+  FM.
+  FIND  CNT-V WITH   ID-NUMBER > 001900    /* exclude samples
+      AND CNT-V.DATE-OF-BIRTH <> 0    /* has DOB
+      WHERE
+      CNT-V.DATE-OF-DEATH = 0
+      AND  CNT-V.DOB-MM   >=  v_From_MM_Mem
+      AND  CNT-V.DOB-MM   <=  v_To_MM_Mem
+      AND  CNT-V.DOB-DD   >=  v_From_DD_Mem
+      AND  CNT-V.DOB-DD   <=  v_To_DD_Mem
+
+*        IF  ID-NUMBER  =  22118  /* DI Obj: E4003SDI Ln: 1440 Err: 1316 (#P-DI-START-NUM:   -1)
+* *           OR = 76991           /* D3185SBA Ln: 3205 Err: 1305
+*            OR = 94782           /* D3400SBA Ln: 6055 Err 1305 (DP has amount 9999999)
+*            WRITE (2) ID-NUMBER 'excluded by hard code (MEMBER)'
+*            ESCAPE TOP
+*        END-IF
+
+    c_sel_Mem := c_sel_Mem + 1
+    v_VALIDATE := TRUE
+    PERFORM sbr-VALIDATE-MEM
+*
+    IF v_VALIDATE
+      #I := #I + 1
+      EXPAND ARRAY FirTable TO (*:#I)
+      FirList.FirCN(#I) := CNT-V.ID-NUMBER
+      FirList.FirType(#I) := #Member
+    END-IF
+  END-FIND
+END-IF        /* skip Members
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - Widows
+IF NOT v_Skip_Wid
+  FW.
+  FIND  CNT-V WITH ID-NUMBER > 001900        /* exclude samples
+      AND DATE-OF-DEATH <> 0       /* has DOD
+      AND DATE-OF-BIRTH <> 0       /* has DOB
+
+    FIND (1) CR-V WITH CONTACT-1-ID = CNT-V.CONTACT-ID
+        WHERE  ROLE-1-CD = 'S' AND ROLE-2-CD = 'S'
+      IF NO RECORD FOUND
+        ESCAPE BOTTOM
+      END-NOREC
+      FIND (1) CNT-SP-V WITH CNT-SP-V.CONTACT-ID = CONTACT-2-ID
+          AND CNT-SP-V.DATE-OF-BIRTH <> 0    /* has DOB
+          WHERE
+          CNT-SP-V.DATE-OF-DEATH = 0
+          AND  CNT-SP-V.DOB-MM   >=  v_From_MM_Wid
+          AND  CNT-SP-V.DOB-MM   <=  v_To_MM_Wid
+          AND  CNT-SP-V.DOB-DD   >=  v_From_DD_Wid
+          AND  CNT-SP-V.DOB-DD   <=  v_To_DD_Wid
+        c_sel_Wid := c_sel_Wid + 1
+        v_VALIDATE := TRUE
+        PERFORM  sbr-VALIDATE-WID
+        IF v_VALIDATE
+          #I := #I + 1
+          EXPAND ARRAY FirTable TO (*:#I)
+          FirList.FirCN(#I) := CNT-V.ID-NUMBER
+          FirList.FirType(#I) := #Widow
+        END-IF
+      END-FIND
+    END-FIND
+  END-FIND
+END-IF  /* skip Widows
+FirList.ListCount := *OCCURRENCE(FirCN)
+c_OK_Tot_D := ( c_OK_mem + c_OK_wid ) - ( c_Foreign_Mem + c_Foreign_Wid )
+IF v_Test <> 'MC'
+  WRITE (3) NOTITLE 5x 'AFIR Domestic letters by states' 10x *DATV  /
+    16x 'State  Letters'  /
+    16x '-----  -------'
+  FOR #i = 1 TO 65
+    IF cnt_ST(#i) <> 0
+      WRITE (3) 5x #i 2x v_ST(#i) cnt_ST(#i)
+    END-IF
+  END-FOR
+  WRITE (3) 1x 'Total Letters:' c_OK_Tot_D
+END-IF
+c_OK_Tot :=  c_OK_mem + c_OK_wid
+WRITE(2)
+  "Execution time:" *TIMD(SETA.) (EM=ZZh:99min:99sec:9)  //
+  'Sel by DOB MEMBERS:'     c_sel_Mem                       /
+  'Excl by Rules     :'     c_Excl_Rules_Mem                /
+  'Excl PSM          :'     c_PSM                           /
+  'Errors:           :'     c_Err_Mem                       /
+  'Inactive          :'     c_Inact_Mem                     /
+  'No Status Rec     :'     c_No_Status_Mem                 /
+  'Mail (H. Fl)      :'     c_HF_Mem                        /
+  'Suspended         :'     c_SUSP_CD_Mem                   /
+  'Mail (DI-BA)      :'     c_DI-BA_CD_Mem                  /
+  'Bad/Blank Addr    :'     c_Excl_Addr_Mem                 /
+  'Foreign           :'     c_Foreign_mem                   /
+  'OK  Selected  MEM :'     c_OK_Mem                        /
+WRITE(2)
+  'Sel by DOB WIDOWS :'     c_sel_Wid                       /
+  'Errors:           :'     c_Err_Wid                       /
+  'Excl by Rules     :'     c_Excl_Rules_Wid                /
+  'Excl Bad Addr     :'     c_Excl_Addr_Wid                 /
+  'No Status         :'     c_wid_0                         /
+  'ST Sp. CI=0       :'     c_wid_1                         /
+  'Recent Death      :'     c_wid_2                         /
+  'BA Mail CD  C,M,D :'     c_wid_BA_CD                     /
+  'Mail Flag 9       :'     c_wid_5                         /
+  'Dead ST.Code D    :'     c_wid_6                         /
+  'Gaurdian ST.Code G:'     c_wid_7                         /
+  'No SP  ST.Code N  :'     c_wid_8                         /
+  'Foreign           :'     c_Foreign_wid                   /
+  'OK  Selected  WID :'     c_OK_Wid                        /
+  'Total             :'     c_OK_Tot                        /
+  'Total Domestic    :'     c_OK_Tot_D                      /
+WRITE(2)
+  'CNT search   Mem  :' *NUMBER (FM.) *COUNTER(FM.) 'Wid:' *NUMBER (FW.) *COUNTER(FW.)
+IF c_Err_CNT_Wid <> 0  AND v_Test <> 'MC'
+  WRITE WORK FILE 12 VARIABLE v_Err_Line_Wid(1) dm
+    v_Err_Line_Wid(2) dm
+    v_Err_Line_Wid(3) dm
+    v_Err_Line_Wid(4) dm
+    v_Err_Line_Wid(5)
+END-IF
+IF c_Err_CNT_Mem <> 0
+  WRITE WORK FILE 11 VARIABLE v_Err_Line_Mem(1) dm
+    v_Err_Line_Mem(2) dm
+    v_Err_Line_Mem(3) dm
+    v_Err_Line_Mem(4) dm
+    v_Err_Line_Mem(5)
+END-IF
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = VALIDATE
+DEFINE SUBROUTINE sbr-VALIDATE-MEM
+FIND (1) ST-V WITH ST-V.ID-NUMBER = CNT-V.ID-NUMBER
+  IF NO RECORD FOUND
+    v_VALIDATE := FALSE
+    v_Err_Msg := 'No Status'
+    c_No_Status_Mem :=   c_No_Status_Mem + 1
+    PERFORM sbr-Error-MEM
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+
+IF NOT (DI-BA-MAIL-CD = 'N' OR DI-BA-MAIL-CD = 'S' OR DI-BA-MAIL-CD = 'B')
+  v_VALIDATE := FALSE
+  c_DI-BA_CD_Mem := c_DI-BA_CD_Mem + 1
+  v_Err_Msg := 'Not N,S,B'
+  PERFORM sbr-Error-MEM
+  ESCAPE ROUTINE
+END-IF
+
+SAS_Plan := ' '
+IF NOT F_IF_SVC(<CNT-V.ID-NUMBER,PROCESS-IND,NUMBER-MEMBERSHIPS,INTRO-FLAG,SAS_Plan>)
+  c_Excl_Rules_Mem := c_Excl_Rules_Mem + 1
+  v_VALIDATE := FALSE
+  DECIDE ON FIRST VALUE OF SAS_Plan
+    VALUE "0gf "                          /*  NUMBER-MEMBERSHIPS = 0
+      c_Inact_Mem := c_Inact_Mem + 1
+      v_Err_MSG := 'Inactive'
+    NONE  COMPRESS 'Err:' SAS_Plan INTO v_Err_MSG
+  END-DECIDE
+  PERFORM sbr-Error-MEM
+  ESCAPE ROUTINE
+END-IF
+IF SAS_Plan = 'PSM' AND  v_Test <> 'MC'
+  v_VALIDATE := FALSE
+  c_PSM := c_PSM + 1
+  v_Err_MSG := 'Prem.Srv'
+  PERFORM sbr-Error-MEM
+  ESCAPE ROUTINE
+END-IF
+
+IF  HANDLE-FLAG    = '9' AND v_Test <> 'MC'
+  v_VALIDATE := FALSE
+  c_HF_Mem := c_HF_Mem + 1
+  v_Err_MSG := 'Mail (H. Fl)'
+  PERFORM sbr-Error-MEM
+  ESCAPE ROUTINE
+END-IF
+IF SUSPEND-CODE = '3'
+  v_VALIDATE := FALSE
+  c_SUSP_CD_Mem := c_SUSP_CD_Mem + 1
+  v_Err_MSG := 'Suspended'
+  PERFORM sbr-Error-MEM
+  ESCAPE ROUTINE
+END-IF
+
+* YK2 >
+p_Mail := ' '
+CALLNAT 'EMAILN01' CNT-V.CONTACT-ID P_mail
+IF DI-BA-MAIL-CD = 'N' AND p_Mail <> ' '
+  v_VALIDATE := FALSE
+  c_DI-BA_CD_Mem := c_DI-BA_CD_Mem + 1
+  v_Err_Msg := 'N and email'
+  PERFORM sbr-Error-Wid
+  ESCAPE ROUTINE
+END-IF
+* < YK2
+
+*   DECIDE FOR FIRST CONDITION
+*     WHEN DI-BA-MAIL-CD = 'C'
+*          v_Err_MSG := 'Mail CD: C'
+*     WHEN DI-BA-MAIL-CD = 'D' AND  v_Test <> 'MC'
+*          v_Err_MSG := 'Mail CD: D'
+*     WHEN DI-BA-MAIL-CD = 'M' AND (v_Test <> 'MC' OR (v_Test = 'MC' AND v_MC_Email = 'MC_EMAIL'))
+*          v_Err_MSG := 'Mail CD: M'
+*     WHEN ANY
+*          v_VALIDATE := FALSE
+*          c_DI-BA_CD_Mem := c_DI-BA_CD_Mem + 1
+*          PERFORM sbr-Error-MEM
+*          ESCAPE ROUTINE
+*     WHEN NONE IGNORE
+*   END-DECIDE
+
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = VALIDATE WIDOW
+DEFINE SUBROUTINE sbr-VALIDATE-WID
+FIND (1) ST-V WITH ST-V.ID-NUMBER = CNT-V.ID-NUMBER
+  IF NO RECORD FOUND
+    c_wid_0 := c_wid_0 + 1
+    v_VALIDATE := FALSE
+    v_Err_Msg := 'No Status Rec.'
+    PERFORM sbr-Error-WID
+    ESCAPE ROUTINE
+  END-NOREC
+END-FIND
+IF ST-V.SPOUSE-CONTACT-ID = 0
+  c_wid_1 := c_wid_1 + 1
+  v_VALIDATE := FALSE
+  v_Err_Msg := 'ST Sp. CI=0'
+  PERFORM sbr-Error-WID
+  ESCAPE ROUTINE
+END-IF
+
+IF NOT (DI-BA-MAIL-CD = 'N' OR DI-BA-MAIL-CD = 'S' OR DI-BA-MAIL-CD = 'B')
+  v_VALIDATE := FALSE
+  c_DI-BA_CD_Mem := c_DI-BA_CD_Mem + 1
+  v_Err_Msg := 'Not N,S,B'
+  PERFORM sbr-Error-Wid
+  ESCAPE ROUTINE
+END-IF
+
+SAS_Plan := ' '
+IF NOT F_IF_WID(<CNT-V.ID-NUMBER,PROCESS-IND,INTRO-FLAG,SAS_Plan>)
+  c_Excl_Rules_Wid := c_Excl_Rules_Wid + 1
+  v_Err_Msg := 'Excl. Rules'
+  PERFORM sbr-Error-WID
+  v_VALIDATE := FALSE
+  ESCAPE ROUTINE
+END-IF
+IF FORMER-HUSBAND-SBP-AMT <> 0
+  PRINT(1) ST-V.ID-NUMBER 'Former husband has sbp amt'
+END-IF
+*
+IF PROCESS-IND <> "S" AND v_Test <> 'MC'      /* not for AFA clients    /* bz5
+  IF ( CNT-V.DATE-OF-DEATH >= *DATN - 10000 )      /* Memeber died less the 1 year ego
+    v_VALIDATE := FALSE
+    c_wid_2 := c_wid_2 + 1
+    v_Err_Msg := 'Recent Death'
+    PERFORM sbr-Error-WID
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+
+*   DECIDE FOR FIRST CONDITION
+*     WHEN DI-BA-MAIL-CD = 'C'
+*          v_Err_MSG := 'Mail CD: C'
+*          c_wid_BA_CD := c_wid_BA_CD + 1
+*     WHEN DI-BA-MAIL-CD = 'D' AND  v_Test <> 'MC'
+*          v_Err_MSG := 'Mail CD: D'
+*     WHEN DI-BA-MAIL-CD = 'M' AND (v_Test <> 'MC' OR (v_Test = 'MC' AND v_MC_Email = 'MC_EMAIL'))
+*          v_Err_MSG := 'Mail CD: M'
+*     WHEN ANY
+*          v_VALIDATE := FALSE
+*          PERFORM sbr-Error-WID
+*          ESCAPE ROUTINE
+*     WHEN NONE IGNORE
+*   END-DECIDE
+
+IF MAILING-FLAG-SP = '9'
+  c_wid_5 := c_wid_5 + 1
+  v_VALIDATE := FALSE
+  v_Err_Msg := 'Mail (M.Fl)'
+  PERFORM sbr-Error-WID
+  ESCAPE ROUTINE
+  ESCAPE TOP
+END-IF
+IF  (STATUS-CODE-SP = 'D')
+  c_wid_6 := c_wid_6 + 1
+  v_VALIDATE := FALSE
+  v_Err_Msg := 'Death ST.'
+  PERFORM sbr-Error-WID
+  ESCAPE ROUTINE
+END-IF
+IF   (STATUS-CODE-SP = 'G')      /* GUARDIAN  ! 0
+  c_wid_7 := c_wid_7 + 1
+  v_VALIDATE := FALSE
+  v_Err_Msg := 'Guardian'
+  PERFORM sbr-Error-WID
+  ESCAPE ROUTINE
+END-IF
+IF STATUS-CODE-SP = 'N'          /* NO SPOUSE  ! 0
+  c_wid_8 := c_wid_8 + 1
+  v_VALIDATE := FALSE
+  v_Err_Msg := 'No Spouse ST'
+  PERFORM sbr-Error-WID
+  ESCAPE ROUTINE
+END-IF
+
+* YK2 >
+p_Mail := ' '
+CALLNAT 'EMAILN01' CNT-V.CONTACT-ID p_Mail
+IF DI-BA-MAIL-CD = 'N' AND p_Mail <> ' '
+  v_VALIDATE := FALSE
+  c_DI-BA_CD_Mem := c_DI-BA_CD_Mem + 1
+  v_Err_Msg := 'N and email'
+  PERFORM sbr-Error-Wid
+  ESCAPE ROUTINE
+END-IF
+* < YK2
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = sbr-Error-MEM
+DEFINE SUBROUTINE sbr-Error-MEM
+c_Err_Mem := c_Err_Mem + 1
+c_ERR_CNT_Mem := c_Err_CNT_Mem + 1
+IF c_Err_Mem = 1
+  WRITE WORK FILE 11 VARIABLE
+    'AFIR Exclusions ' 'Members ' v_From_Mem '-' v_To_Mem ' ' v_Title nl
+    'CN' dm 'MSG' dm 'CN' dm 'MSG' dm 'CN' dm 'MSG' dm 'CN' dm 'MSG' dm 'CN' dm 'MSG'
+END-IF
+v_Err_Line_Cn_Mem(c_Err_CNT_Mem) := CNT-V.ID-NUMBER
+v_Err_Line_MSG_Mem(c_Err_CNT_Mem) := v_Err_MSG
+IF c_Err_CNT_Mem = 5
+  WRITE WORK FILE 11 VARIABLE v_Err_Line_Mem(1) dm
+    v_Err_Line_Mem(2) dm
+    v_Err_Line_Mem(3) dm
+    v_Err_Line_Mem(4) dm
+    v_Err_Line_Mem(5)
+  c_Err_CNT_Mem := 0 RESET v_Err_Line_Mem(*)
+END-IF
+
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = sbr-Error-MEM
+DEFINE SUBROUTINE sbr-Error-WID
+c_Err_Wid := c_Err_Wid + 1
+c_ERR_CNT_Wid := c_Err_CNT_Wid + 1
+IF c_Err_Wid = 1
+  WRITE WORK FILE 12 VARIABLE
+    'AFIR Exclusions ' 'Widows ' v_From_Wid '-' v_To_Wid ' ' v_Title nl
+    'CN' dm 'MSG' dm 'CN' dm 'MSG' dm 'CN' dm 'MSG' dm 'CN' dm 'MSG' dm 'CN' dm 'MSG'
+END-IF
+v_Err_Line_Cn_Wid(c_Err_CNT_Wid) := CNT-V.ID-NUMBER
+v_Err_Line_MSG_Wid(c_Err_CNT_Wid) := v_Err_MSG
+IF c_Err_CNT_Wid = 5
+  WRITE WORK FILE 12 VARIABLE v_Err_Line_Wid(1) dm
+    v_Err_Line_Wid(2) dm
+    v_Err_Line_Wid(3) dm
+    v_Err_Line_Wid(4) dm
+    v_Err_Line_Wid(5)
+  c_Err_CNT_Wid := 0 RESET v_Err_Line_Wid(*)
+END-IF
+
+END-SUBROUTINE
+*
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = sbr-Error-MEM
+DEFINE SUBROUTINE DO-STAT
+IF v_A3 = 'MEM'
+  c_OK_MEM := c_OK_MEM + 1
+  v_A25 := EDIT_NAME_FMLS(<CNT-V.FULL-NAME>)
+  MOVE EDITED CNT-V.DATE-OF-BIRTH-A TO v_D1 (EM=YYYYMMDD)
+  v_N3 := ( v_D0 - v_D1 ) / 365
+  MOVE EDITED v_D1 (EM=MM/DD/YYYY) TO v_A10
+  p_Mail := ' '
+  CALLNAT 'EMAILN01' CNT-V.CONTACT-ID P_mail
+ELSE
+  c_OK_WID := c_OK_WID + 1
+  v_A25 := EDIT_NAME_FMLS(<CNT-SP-V.FULL-NAME>)
+  MOVE EDITED CNT-SP-V.DATE-OF-BIRTH-A TO v_D1 (EM=YYYYMMDD)
+  v_N3 := ( v_D0 - v_D1 ) / 365
+  MOVE EDITED v_D1 (EM=MM/DD/YYYY) TO v_A10
+  p_Mail := ' '
+  CALLNAT 'EMAILN01' CNT-SP-V.CONTACT-ID P_mail
+END-IF
+IF  p_MSG <> '|'
+  v_A2 := p_MSG
+  IF  v_Test <> 'MC'  PERFORM DO-STATE END-IF
+  WRITE WORK FILE 13 VARIABLE
+    ST-V.ID-NUMBER  dm v_A3      dm v_A25  dm v_A10 dm v_N3  dm p_Pages  dm v_A2 dm p_Mail dm SAS_Plan dm DI-BA-MAIL-CD
+ELSE
+  v_A2 := ' '
+  IF v_A3 = 'MEM' c_Foreign_Mem := c_Foreign_Mem + 1 END-IF
+  IF v_A3 = 'WID' c_Foreign_Wid := c_Foreign_Wid + 1 END-IF
+  WRITE WORK FILE 14 VARIABLE
+    ST-V.ID-NUMBER  dm v_A3      dm v_A25  dm v_A10 dm v_N3  dm p_Pages  dm v_A2 dm p_Mail dm SAS_Plan dm DI-BA-MAIL-CD
+END-IF
+END-SUBROUTINE
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = sbr-Error-MEM
+DEFINE DO-STATE
+EXAMINE v_ST (*) FOR v_A2 GIVING INDEX #i
+IF #i <> 0 cnt_ST(#i)  := cnt_ST(#i) + 1
+ELSE
+  indx_array_ST :=  indx_array_ST + 1
+  v_ST(indx_array_ST)   := v_A2
+  cnt_ST(indx_array_ST) := 1
+END-IF
+END-SUBROUTINE
+END
+
+
+

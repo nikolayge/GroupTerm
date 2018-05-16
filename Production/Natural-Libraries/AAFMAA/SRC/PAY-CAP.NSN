@@ -1,0 +1,732 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+
+**********************************************************************************
+* Pgm ID : PAY-CAP
+*
+* Function : pay CAP policy
+*
+* 10/20/2011 vt Initial creation
+* 12/19/2013 vt1 Store plan-type to sg-category-2 field on TA file.
+* 02/21/2014 YK1 Keep paid to date for Rider in sync with policy paid to date
+* TMT 06/16/2014   TT2  Contact Normalization - DOB and Sex
+* 09/09/2014 vt2 /Ticket 3047/ Fix the months paid when the BADJ amount is greater than monthly due amount.
+* 06/02/2015 vt3 /Ticket 3571/ Pass the right segment to processed policy.
+* 08/19/2013 vt4 Add PS payments /ticket 2177/
+**********************************************************************************
+define data parameter
+1 #rest-amt           (n7.2)
+1 #STATUS-ISN         (P8)
+1 CC-PAYMENT
+  2 PARM-DATE             (N8.0)
+  2 ID-NUMBER             (N6.0)
+  2 INSURED-NAME          (A50)
+  2 C@PAY-POLICY          (N2.0)
+  2 PAY-POLICY     (1:9)
+    3 POLICY-NBR          (A16)
+    3 segment             (i2)                 /* vt
+    3 cap-policy          (a1)
+    3 PLAN-TYPE           (A3)
+    3 ISSUE-DATE          (N8.0)
+    3 FACE-AMOUNT         (N7.2)
+    3 MAX-PREMIUMS        (N4)
+    3 MIN-PREMIUMS        (N2)
+    3 DEFAULT-PREM        (N2)
+    3 C@AVAILABLE-PAYMENT (N2.0)
+    3 AVAILABLE-PAYMENT (1:10)
+      4 PAYMENT-NOTE      (A) DYNAMIC
+      4 CC-PAYABLE        (A1)
+      4 VAR-AMOUNT        (A1)
+      4 EXCEED-AMT        (A1)
+      4 TRAN-TYPE         (A6)                   /* vt4 was a4
+      4 PAID-TO-DATE      (N8.0)
+      4 PAYMENT-MODE      (A1)
+      4 DEFAULT-AMOUNT    (N6.2)
+      4 DUE-AMOUNT        (N6.2)
+1 #timn               (n7)
+1 #error-message      (a75)
+LOCAL USING C2500AAM
+local using svcA0003                              /* vt4
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 id-number              (n6)
+  2 MEMBER-CONTACT-ID                 /* TT2
+  2 name                   (a25)      /* used in prnc pmts
+  2 process-ind            (a1)
+  2 status                 (a1/9)
+  2 pay-status             (a2/9)
+  2 mode                   (a1/9)
+  2 plan                   (a3/9)
+  2 issue-date             (n8/9)
+  2 paid-to-date           (n8/9)
+  2 paid-up-date           (n8/9)
+  2 annual-prem            (p5.2/9)
+  2 MTD-ACV-PREM-ADJ       (p7.2/9)
+  2 X-first-place-fee      (p7.2/9)    /* used only for PAY-FPF
+*  2 date-of-birth          (n8)        /* used in Prep pmts           /* TT2
+  2 MONTH-ALLOC-AMT        (p7.2/9)    /* used in Prep pmts            /* TT1                      /* vt1 was p3.2
+  2 X-BILL-ADJUST          (p5.2/9)    /* used in Prep pmts
+  2 X-BILL-DOLLAR          (p5.2/9)    /* used in Prep pmts
+  2 OWNERSHIP-FLAG         (a1/9)      /* used in Prep pmts
+  2 DUES-ALL-PAID-IND      (a1)        /* used in Prep pmts
+  2 DUES-BALANCE           (p5.2)      /* used in Prep pmts
+  2 DUES-FPF               (p3.2)      /* used in Prep pmts
+  2  DUES-TOT-PAID         (p5.2)      /* used in Prep pmts
+  2 INTRO-FLAG             (a1)        /* used in Prep pmts
+  2 RID-PLAN               (a2/9)      /* used in Prep pmts
+  2 RID-EFF-DT             (n8/9)      /* used in Prep pmts
+  2 RID-PD-TO              (n8/9)      /* used in Prep pmts
+*
+  2 X-INTEREST-RATE        (p2.3/9)     /* used in prnc pmt + intc
+  2 X-LOAN-DATE            (n8/9)       /* used in prnc pmt
+  2 X-LOAN-AMOUNT          (p5.2/9)     /* used in prnc pmt
+  2 X-ACCUM-INTEREST       (p5.2/9)     /* used in prnc pmt
+  2 X-NXT-YR-ACCUM-INT     (p5.2/9)     /* used in prnc pmt
+  2 X-OLD-LOAN-AMT         (p5.2/9)     /* used in prnc pmt
+  2 X-CAP-AMT              (p5.2/9)     /* used in prnc pmt
+  2 X-BILL-INTEREST-AMT    (p5.2/9)     /* used in prnc pmt
+  2 X-INTEREST-RECEIVED    (p5.2/9)     /* used in prnc pmt
+  2 X-PRINCIPAL-CHG-CODE   (a1/9)       /* used in prnc pmt
+  2 APL-CNT                (p3)         /* used in prnc pmt
+  2 X-LOAN-DATE-2          (n8/9)       /* used in prnc pmt
+  2 X-LOAN-AMOUNT-2        (p7.2/9)     /* used in prnc pmt
+  2 X-ACCUM-INTEREST-2     (p5.2/9)     /* used in prnc pmt
+  2 X-NXT-YR-ACCUM-INT-2   (p5.2/9)     /* used in prnc pmt
+  2 X-OLD-LOAN-AMT-2       (p7.2/9)     /* used in prnc pmt
+  2 X-CAP-AMT-2            (p5.2/9)     /* used in prnc pmt
+  2 X-BILL-INTEREST-AMT-2  (p5.2/9)     /* used in prnc pmt
+  2 X-INTEREST-RECEIVED-2  (p5.2/9)     /* used in prnc pmt
+  2 X-LPO-PMT-RCVD         (p5.2/9)     /* used in prnc pmt
+  2 X-LPO-PMT-RCVD-2       (p5.2/9)     /* used in prnc pmt
+  2 X-LPO-PRIOR-LOAN-BAL   (p5.2/9)     /* used in prnc pmt
+  2 X-LPO-PRIOR-LOAN-BAL-2 (p7.2/9)     /* used in prnc pmt
+  2 X-LPO-PRIOR-ACC-INT    (p5.2/9)     /* used in prnc pmt
+  2 X-LPO-PRIOR-ACC-INT-2  (p5.2/9)     /* used in prnc pmt
+  2 DATE-ACCT-UPDATE       (n8)         /* used in prnc pmt
+  2 DTS-TIMN               (p7)         /* used in prnc pmt
+  2 CAP-BILL-DATE          (n8)         /* used in prnc pmt + intc
+*
+  2 X-BILL-SW              (a1/9)       /* used in intc pmt
+  2 X-BILL-SW-2            (a1/9)       /* used in intc pmt
+  2 CONV-DURATION          (p3/9)
+  2 X-RID-FPF            (9)
+  2 X-RID-BALANCE        (9)
+  2 RID-TOT-PAID
+  2 debit-credit-amt                     /* vt4
+*
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 id-number         (n6)
+  2 name              (a25)
+  2 transaction-datn  (p9)
+  2 transaction-timn  (p7)
+  2 cash-code         (a1)
+  2 clerk-id          (a3)
+  2 terminal-id       (a8)
+  2 PROCESS-IND       (A1)
+  2 POLICY-NUMBER     (A16)
+  2 AALP-FLAG         (A1)
+  2 TXN-CODE          (A4)
+  2 TXN-ACCT-NUMBER   (N3)
+  2 MESSAGE-CODE      (A1)
+  2 credit-amount     (p7.2)
+  2 acct-date         (n8)
+  2 debit-amount      (p7.2)
+  2 description       (a20)
+  2 SG-CATEGORY-1     (a2/15)
+  2 SG-CATEGORY-2     (a2/15)
+  2 SG-AMOUNT         (n6.2/15)
+*
+1 #idx                     (i2)
+1 #idx1                    (i2)
+1 #mode                    (a1)
+1 #CAP-POLICY              (L)
+1 #WEB-CHARGE              (A1) INIT <'N'>
+1 #CURR-VAR-INT-RATE       (P2.3)
+1 #ORIG-MODE               (A1/9)
+1 #clerk                   (A3) INIT <'INV'>
+1 #cash-code               (a1)
+*
+1 #l                      (i2)
+1 #cc-x                   (i2)
+1 #iln1                   (i2)
+1 #iln2                   (i2)
+1 #lx                     (i2)
+1 #pol-nbr                (a16)
+1 #tot-due                (p7.2)
+1 #inp-amt                (p7.2)
+1 #inp-tr-cd              (a4)
+1 #issue-date             (n8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-A         (A8)
+1 #TERM                   (L)
+1 #DATE-MMDDYYYY          (N8)
+1 REDEFINE #DATE-MMDDYYYY
+  2 #MMDD                 (N4)
+  2 #YYYY                 (N4)
+1 REDEFINE #DATE-MMDDYYYY
+  2 #DATE-MMDDYYYY-A      (A8)
+1 #update-mode            (l) init<TRUE>
+1 #SG-TBL                 (15)
+  2 #SG-CAT1              (A2)
+  2 #SG-CAT2              (A2)
+  2 #SG-AMT               (N6.2)
+1 #datn                   (n8)
+1 redefine #datn
+  2 #datn-yyyy             (n4)
+  2 #datn-mm               (n2)
+  2 #datn-dd               (n2)
+1 #datn-a                  (a10)
+1 #amount                  (a10)
+1 #RATE-DISP              (A6)
+1 #1-YR-ago-a               (a8)
+1 redefine #1-YR-ago-a
+  2 #1-YR-AGO               (N8)
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY     (N4)
+  2 #MM       (N2)
+  2 #DD       (N2)
+*
+1 #out-rec            (a100)
+1 #tab                (a1) INIT <H'09'>
+1 #tran-code          (a4)
+1 #plan               (a3)                /* vt1
+1 DATE-OF-BIRTH       (N8.0)              /* TT2
+1 #source-program     (a8)                /* vt2
+1 #is-ps              (l)                 /* vt4
+1 #msg                (a) dynamic         /* vt4
+*
+end-define
+*
+GET ST-V #STATUS-ISN
+move *datn to #datn
+#DATE-MMDDYYYY := FUNCTION-DATE(<#DATN>)
+#YYYYMMDD      := *datn
+SUBTRACT 1 FROM #YYYYMMDD.#YYYY
+move #yyyymmdd to  #1-yr-ago-a
+#yyyymmdd := *datn
+
+*
+examine cap-policy(*) for 'Y' giving index #idx
+if #idx le 0
+  escape routine
+end-if
+if #idx gt 0
+  move policy-nbr(#idx) to #pol-nbr
+*
+  for #l 1   c@available-payment(#idx)
+    if tran-type(#idx,#l) = 'FPFP' or = 'PREP' or = 'RIDP' or = 'INTC' or = 'PRNC' or  = 'DUEP'                /* vt 20121029
+        or = 'DUEPPS'                                     /* vt4
+      add due-amount(#idx,#l) to #tot-due
+    end-if                                                                                                     /* vt 20121029
+  end-for
+*
+  reset #l
+  for  #l 1   c@available-payment(#idx)
+    if segment(#idx) = #idx                                            /* vt3
+      #cc-x      := #idx
+    else                                                             /* vt3 \/
+      #cc-x    := segment(#idx)
+    end-if                                                           /* vt3 /\
+*    #issue-date := cc-payment.issue-date(#cc-x)                     /* vt3
+    #issue-date := st-v.issue-date (#cc-x)
+    if #rest-amt ge #tot-due
+      #inp-amt   := due-amount (#idx,#l)
+      decide on first value of tran-type(#idx,#l)
+        value 'FPFP'
+          #inp-tr-cd := 'FPFP'
+        value 'PREP'
+          #inp-tr-cd := 'PREP'
+        value 'DUEP'
+          #inp-tr-cd := 'DUEP'
+          reset #is-ps                                          /* vt4
+        value 'RIDP'
+          #inp-tr-cd := 'RIDP'
+        value 'INTC'
+          #inp-tr-cd := 'INPF'
+        value 'PRNC'
+          #inp-tr-cd := 'PRNF'
+        value 'DUEPPS'                                          /* vt4
+          #inp-tr-cd := 'DUEP'                                  /* vt4
+          move true to #is-ps                                   /* vt4
+        none value
+*          ignore                                                                                                 /* vt 20121029
+          escape bottom                                                                                           /* vt 20121029
+      end-decide
+      #cash-code := 'I'
+      if #rest-amt ge due-amount (#idx,#l)
+        compute #rest-amt := #rest-amt - due-amount (#idx,#l)
+        compute #tot-due  := #tot-due  - due-amount (#idx,#l)
+        decide on first value of tran-type (#idx,#l)
+          value 'FPFP'
+            perform apply-fpf
+          value 'PREP'
+            perform apply-prep
+          value 'DUEP'
+            if #is-ps                                             /* vt4
+              perform apply-ps                                    /* vt4
+            else                                                  /* vt4
+              perform apply-duep
+            end-if                                                /* vt4
+          value 'RIDP'
+            perform apply-ridp
+          value 'INTC'
+            perform apply-intc
+          value 'PRNC'
+            perform apply-prnc
+          none value
+            ignore
+        end-decide
+        update (0204)
+        perform prepare-ACCT-REG
+        perform write-report
+      end-if
+    end-if
+  end-for
+end-if
+*
+*****************
+DEFINE SUBROUTINE APPLY-fpf
+*****************
+*
+write '=' #cc-x
+*  #issue-date := cc-payment.issue-date(#cc-x)
+* #iSSUE-DATE    := FUNCTION-DATE(<st-v.ISSUE-DATE(#CC-X)>)
+#SCR-ISS-DT(1) := #ISSUE-DATE-A
+#TERM := FUNCTION-TERM-POLICY (<ST-V.PLAN (#CC-X)>)
+IF #TERM
+  #SCR-ALP-CODE (1):= 'T'    /* was 1
+ELSE
+  #SCR-ALP-CODE (1):= 'W'    /* was1
+END-IF
+*
+#ILN1              := 1
+#LX                := #CC-X
+#SCR-ID-SSN    (1) := ST-V.ID-NUMBER
+#SCR-EFF-DT    (1) := #DATE-MMDDYYYY-A
+#SCR-TRAN-CODE (1) := #INP-TR-CD
+#SCR-TRAN-AMT  (1) := #INP-AMT
+#SCR-CASH-CODE (1) := #CASH-CODE
+*
+*  write 'before call of cfpfpsam' '='#scr-lines
+CALLNAT 'CFPFPSAM' #SCR-LINES
+  ST-V.STATUS            (1:9)
+  ST-V.PAY-STATUS        (1:9)
+  ST-V.MODE              (1:9)
+  ST-V.PLAN              (1:9)
+  ST-V.ISSUE-DATE        (1:9)
+  ST-V.PAID-TO-DATE      (1:9)
+  ST-V.PAID-UP-DATE      (1:9)
+  ST-V.ANNUAL-PREM       (1:9)
+  ST-V.MTD-ACV-PREM-ADJ  (1:9)
+  ST-V.X-FIRST-PLACE-FEE (1:9)
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  #LX
+  #ERROR-MESSAGE
+*
+END-SUBROUTINE
+*
+*****************
+define subroutine apply-prep
+*****************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+#SCR-EFF-DT (1) := #DATE-MMDDYYYY-A
+*
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+MOVE #CASH-CODE     TO #SCR-CASH-CODE (1)
+*
+write '=' ST-V.id-number '=' #cc-x '=' #lx
+DECIDE ON FIRST VALUE ST-V.MODE(#LX)
+  VALUE '4','2','1'
+    #MODE := '0'
+  VALUE 'A','S','Q'
+    #MODE := 'M'
+  VALUE 'G'
+    IF ST-V.PAY-STATUS (#LX) = '21'
+      #MODE := ST-V.MODE(#LX)
+    ELSE
+      #MODE := 'M'
+    END-IF
+  NONE VALUE
+    #MODE := ST-V.MODE(#LX)
+END-DECIDE
+*
+move st-v.plan (#lx) to #plan                         /* vt4
+*
+move 'NEWINVP' to  #source-program                               /* vt2
+RESET DATE-OF-BIRTH                                              /* TT2
+DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<ST-V.MEMBER-CONTACT-ID>)     /* TT2
+*
+*
+CALLNAT 'CPREPSAM' #SCR-LINES
+  DATE-OF-BIRTH                                       /* TT2
+  ST-V.STATUS            (#LX)
+  ST-V.PAY-STATUS        (#LX)
+  #MODE
+  ST-V.PLAN              (#LX)
+  ST-V.ISSUE-DATE        (#LX)
+  ST-V.PAID-TO-DATE      (#LX)
+  ST-V.PAID-UP-DATE      (#LX)
+  ST-V.ANNUAL-PREM       (#LX)
+  ST-V.MTD-ACV-PREM-ADJ  (1:9)
+  ST-V.MONTH-ALLOC-AMT   (#LX)
+  ST-V.X-BILL-ADJUST     (#LX)
+  ST-V.X-BILL-DOLLAR     (#LX)
+  ST-V.OWNERSHIP-FLAG    (#LX)
+  ST-V.DUES-ALL-PAID-IND
+  ST-V.DUES-BALANCE
+  ST-V.DUES-FPF
+  ST-V.DUES-TOT-PAID
+  ST-V.INTRO-FLAG
+  ST-V.RID-PLAN          (#LX)
+  ST-V.RID-EFF-DT        (#LX)
+  ST-V.RID-PD-TO         (#LX)
+*
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  #LX
+  #CAP-POLICY
+  #ERROR-MESSAGE
+  #WEB-CHARGE
+  #source-program                         /* vt2
+*
+update (0204)                        /* vt 09/11/2014
+end-subroutine
+*
+*****************
+DEFINE SUBROUTINE APPLY-DUEP
+*****************
+*
+MOVE 1 TO #ILN1
+MOVE ST-V.ID-NUMBER   TO #SCR-ID-SSN    (1)
+MOVE #DATE-MMDDYYYY-A TO #SCR-EFF-DT (1)
+MOVE #INP-TR-CD       TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT         TO #SCR-TRAN-AMT  (1)
+MOVE #CASH-CODE       TO #SCR-CASH-CODE (1)
+*
+CALLNAT 'CDUESSAM' #SCR-LINES
+  ST-V.DUES-FPF
+  ST-V.DUES-BALANCE
+  ST-V.DUES-TOT-PAID
+  #ILN1
+  #ILN2
+  #SG-TBL (1:15)
+  #ERROR-MESSAGE
+*
+update (0204)               /* vt 09/11/2014
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE APPLY-RIDP
+*****************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER   TO #SCR-ID-SSN    (1)
+MOVE #DATE-MMDDYYYY-A TO #SCR-EFF-DT (1)
+MOVE #INP-TR-CD       TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT         TO #SCR-TRAN-AMT  (1)
+MOVE #CASH-CODE       TO #SCR-CASH-CODE (1) /* PM1
+* MOVE 'C'            TO #SCR-CASH-CODE (1) /* PM1
+*
+CALLNAT 'CRIDRSAM' #SCR-LINES
+  ST-V.X-RID-FPF     (1:9)
+  ST-V.X-RID-BALANCE (1:9)
+  ST-V.RID-TOT-PAID
+  ST-V.RID-PLAN      (1:9)
+  ST-V.RID-EFF-DT    (1:9)
+  ST-V.RID-PD-TO     (1:9)
+  #ORIG-MODE        (1:9)
+*
+  #ILN1
+  #ILN2
+  #SG-TBL (1:15)
+  #LX
+  #ERROR-MESSAGE
+*
+ST-V.RID-PD-TO(#CC-X) := ST-V.PAID-TO-DATE(#CC-X)                        /* YK1
+update (0204)
+END-SUBROUTINE
+*
+*
+*****************
+DEFINE SUBROUTINE APPLY-PS                                             /* vt4    \/
+*****************
+*
+RESET PARM-SVC
+PARM-SVC.ACTION         := 'APPLY'
+PARM-SVC.USER           := #CLERK
+PARM-SVC.SVC-MEMBER-ID  := ST-V.ID-NUMBER
+PARM-SVC.SVC-PLAN       := *TRIM(CC-PAYMENT.POLICY-NBR(#cc-x))
+PARM-SVC.CASH-MODE      := #cash-code
+PARM-SVC.SVC-PAY-AMOUNT := #inp-amt
+PARM-SVC.TRANSACTION-DATN := #DATN
+PARM-SVC.TRANSACTION-TIMN := #TIMN
+CALLNAT 'SVCN0003' PARM-SVC #MSG 1X ST-V.DEBIT-CREDIT-AMT
+*
+END-SUBROUTINE                                                        /* vt4     /\
+*
+*****************
+define subroutine apply-prnc
+*****************
+*
+write '!!!!!!!!'  '=' #rest-amt '=' #inp-amt  'apply prnc'
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+#SCR-EFF-DT (1) := #DATE-MMDDYYYY-A
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+** if c@pay-policy gt 1
+MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)                 /* 01062012
+** else
+**  move #rest-amt      to #scr-tran-amt (1)                    /* 01062012
+**  reset #rest-amt
+** end-if
+MOVE #CASH-CODE     TO #SCR-CASH-CODE (1)
+*
+CALLNAT 'CPRNPSAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE        (#LX)
+  ST-V.X-LOAN-DATE            (#LX)
+  ST-V.X-LOAN-AMOUNT          (#LX)
+  ST-V.X-ACCUM-INTEREST       (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT     (#LX)
+  ST-V.X-OLD-LOAN-AMT         (#LX)
+  ST-V.X-CAP-AMT              (#LX)
+  #ORIG-MODE                 (#LX)
+  ST-V.X-BILL-INTEREST-AMT    (#LX)
+  ST-V.X-INTEREST-RECEIVED    (#LX)
+  ST-V.X-PRINCIPAL-CHG-CODE   (#LX)
+  ST-V.X-BILL-DOLLAR          (#LX)
+  ST-V.APL-CNT
+  ST-V.X-LOAN-DATE-2          (#LX)
+  ST-V.X-LOAN-AMOUNT-2        (#LX)
+  ST-V.X-ACCUM-INTEREST-2     (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT-2   (#LX)
+  ST-V.X-OLD-LOAN-AMT-2       (#LX)
+  ST-V.X-CAP-AMT-2            (#LX)
+  ST-V.X-BILL-INTEREST-AMT-2  (#LX)
+  ST-V.X-INTEREST-RECEIVED-2  (#LX)
+  ST-V.INTRO-FLAG
+  ST-V.X-LPO-PMT-RCVD         (#LX)
+  ST-V.X-LPO-PMT-RCVD-2       (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL   (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT    (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT-2  (#LX)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  #DATN
+  #TIMN
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  ST-V.CAP-BILL-DATE
+  ST-V.PROCESS-IND
+  ST-V.NAME
+  #CLERK
+  #ERROR-MESSAGE
+*
+IF   (#INP-TR-CD = 'PRNF')
+    AND (X-LOAN-AMOUNT (#CC-X) LE 0)
+*  RESULT-MESSAGE(#I,#II) := 'Fixed Loan has been paid off'
+  write 'Fixed Loan has been paid off'
+END-IF
+*
+IF   (#INP-TR-CD = 'PRNV')
+    AND (X-LOAN-AMOUNT-2 (#CC-X) LE 0)
+*  RESULT-MESSAGE(#I,#II) := 'VAR Loan has been paid off'
+  write 'VAR Loan has been paid off'
+END-IF
+*
+end-subroutine
+*
+*****************
+define subroutine apply-intc
+*****************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER   TO #SCR-ID-SSN    (1)
+MOVE #DATE-MMDDYYYY-A   TO #SCR-EFF-DT    (1)
+MOVE #INP-TR-CD         TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT           TO #SCR-TRAN-AMT  (1)
+MOVE #CASH-CODE         TO #SCR-CASH-CODE (1)
+*
+CALLNAT 'CINTPSAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE        (#LX)
+  ST-V.X-LOAN-DATE            (#LX)
+  ST-V.X-LOAN-AMOUNT          (#LX)
+  ST-V.X-ACCUM-INTEREST       (#LX)
+  ST-V.X-CAP-AMT              (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT     (#LX)
+  ST-V.X-INTEREST-RECEIVED    (#LX)
+  ST-V.X-LOAN-DATE-2          (#LX)
+  ST-V.X-LOAN-AMOUNT-2        (#LX)
+  ST-V.X-ACCUM-INTEREST-2     (#LX)
+  ST-V.X-CAP-AMT-2            (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT-2   (#LX)
+  ST-V.X-INTEREST-RECEIVED-2  (#LX)
+  ST-V.INTRO-FLAG
+  ST-V.X-LPO-PMT-RCVD         (#LX)
+  ST-V.X-LPO-PMT-RCVD-2       (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL   (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT    (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT-2  (#LX)
+  ST-V.X-BILL-SW              (#LX)
+  ST-V.X-BILL-SW-2            (#LX)
+  ST-V.X-BILL-INTEREST-AMT    (#LX)
+  ST-V.X-BILL-INTEREST-AMT-2  (#LX)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  #DATN
+  #TIMN
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  #ERROR-MESSAGE
+*
+end-subroutine
+*
+*****************
+define subroutine Prepare-ACCT-REG
+*****************
+*
+write 'in prepare trans records' '=' #scr-tran-amt(1) '=' #iln1
+
+RESET AR-V
+ar-v.id-number               := ST-V.id-number
+ar-v.transaction-datn        := #datn
+ar-v.transaction-timn        := #timn
+ar-v.acct-date               := #datn
+ar-v.cash-code               := 'I'
+ar-v.name                    := ST-V.name
+ar-v.clerk-id                := 'EDS'
+ar-v.terminal-id             := *init-id
+AR-V.TXN-CODE                := #SCR-TRAN-CODE (1)
+AR-V.PROCESS-IND             := ST-V.PROCESS-IND
+AR-V.AALP-FLAG               := #SCR-ALP-CODE  (1)
+AR-V.POLICY-NUMBER           := #POL-Nbr
+AR-V.SG-AMOUNT           (1) := #scr-tran-amt(1)
+AR-V.credit-amount           := #scr-tran-amt(1)
+AR-V.MESSAGE-CODE            := '1'
+DECIDE ON FIRST VALUE OF #SCR-TRAN-CODE(1)
+  VALUE  'FPFP'
+    IF ST-V.PLAN (#LX) = 'SO'
+      AR-V.TXN-ACCT-NUMBER := 432
+    else
+      AR-V.TXN-ACCT-NUMBER := 430
+    end-if
+  VALUE   'PREP'
+    IF ST-V.PLAN (#LX) = 'SO'
+      AR-V.TXN-ACCT-NUMBER       := 422
+      MOVE 'DUEP' TO AR-V.TXN-CODE
+    ELSE
+      AR-V.TXN-ACCT-NUMBER       := 420
+    END-IF
+  VALUE  'DUEP'
+    AR-V.TXN-ACCT-NUMBER   := 422
+  VALUE  'RIDP'
+    AR-V.TXN-ACCT-NUMBER   := 434
+  VALUE 'INPF'
+    AR-V.TXN-ACCT-NUMBER   := 410
+  VALUE  'PRNF'
+    AR-V.TXN-ACCT-NUMBER   := 110
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+if #SCR-TRAN-CODE(1) = 'PREP'  or = 'PRNF'
+  IF #TIMN = 0
+      AND AR-V.TXN-ACCT-NUMBER  NE 999
+    MOVE 999 TO AR-V.TXN-ACCT-NUMBER
+  END-IF
+end-if
+*
+IF (#SCR-TR-CD-3 (1)  = 'INT'   OR = 'PRN'
+    OR (#SCR-TR-CD-2 (1) = '33' OR = '44' OR = '11' OR = '22' OR = '88') /* PREP/FPFP/RIDP
+    AND (#SCR-ISS-DT (1) NE ' '))
+  COMPRESS AR-V.DESCRIPTION   #SCR-ISS-DT (1)
+    INTO AR-V.DESCRIPTION
+END-IF
+*
+IF   (#SCR-TRAN-CODE (1) = 'PRNF' OR = 'INTF'
+    AND (CONV-DURATION (#LX) NE 999)
+    AND (X-INTEREST-RATE (#LX) NE 0))
+  MOVE EDITED X-INTEREST-RATE (#LX) (EM=ZZ.99) TO #RATE-DISP
+  COMPRESS #RATE-DISP '%' INTO #RATE-DISP LEAVING NO
+  COMPRESS AR-V.DESCRIPTION  #RATE-DISP INTO AR-V.DESCRIPTION
+END-IF
+*
+COMPRESS AR-V.DESCRIPTION  'INV'
+  INTO AR-V.DESCRIPTION  LEAVING NO
+*
+IF   (#SCR-TRAN-CODE (1) = 'PRNF' OR = 'INPF'
+    AND (CONV-DURATION (#LX) eq 999))
+  AR-V.SG-CATEGORY-1 (1) := 'CP'
+  AR-V.SG-CATEGORY-2 (1) := '**'
+  AR-V.SG-AMOUNT (1)     := #scr-tran-amt(1)
+end-if
+if #SCR-TRAN-CODE (1) = 'PREP'
+  IF #ISSUE-DATE GT #1-YR-AGO
+    MOVE '1Y' TO AR-V.SG-CATEGORY-1 (1)
+  ELSE
+    MOVE 'RN' TO AR-V.SG-CATEGORY-1 (1)
+  END-IF
+end-if
+IF #plan = 'SO'                                                              /* vt1 \/
+  MOVE 'SO' TO AR-V.SG-CATEGORY-1 (1)
+end-if
+if #plan = 'OL' OR= '20P' OR= '30P' OR= '7P' OR= 'SO' OR= 'SPF' OR= 'FSO'
+    OR= 'LT' OR= 'RT' OR = 'GPL' OR = 'EZ' or = 'GP2'
+  move #plan to ar-v.sg-category-2(1)
+else
+  if f-lt2-true(<#plan>)
+    move 'VT' to ar-v.sg-category-2(1)
+  else
+    if (#plan = mask (NN'F'))
+        or (#plan = mask (N'PF'))
+        or (#plan = 'SPF')
+      move 'FL' TO ar-v.sg-category-2(1)
+    else
+      move 'FX' to ar-v.sg-category-2(1)
+    end-if
+  end-if
+end-if                                                                       /* vt1 /\
+*
+STORE AR-V
+*
+end-subroutine
+*
+*****************
+define subroutine write-report
+*****************
+#tran-code := #SCR-TRAN-CODE (1)
+compress #datn-mm '/' #datn-dd '/' #datn-yyyy into #datn-a leaving no
+move edited #scr-tran-amt(1) (EM=zzzzzz9.99) to #amount
+compress st-v.id-number #tab
+  #tran-code              #tab
+  #amount                 #tab
+  #datn-a                 #tab
+  into #out-rec leaving no
+write work 3 #out-rec
+*
+end-subroutine
+*
+end

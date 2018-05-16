@@ -1,0 +1,266 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPACCI  ** ADJUST ACC INT due to missed int rate chg 12/1/06
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    04292004  None    Program written - cloned from C2350PVA      *
+* SAG    01092007  AB      changed hex '05' to hex '09'                                                                   *
+************************************************************************
+*
+DEFINE DATA
+LOCAL
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 PROCESS-IND
+ 2 DATE-ACCT-UPDATE
+ 2 DTS-DATN
+ 2 DTS-TIMN
+ 2 NAME
+ 2 X-BILL-INTEREST-AMT-2  (9)
+ 2 X-INTEREST-RECEIVED-2  (9)
+ 2 X-LOAN-AMOUNT-2    (9)
+ 2 X-ACCUM-INTEREST-2 (9)
+ 2 X-LOAN-DATE-2      (9)
+ 2 REDEFINE X-LOAN-DATE-2
+  3 X-LOAN-DATE-2-OCC   (9)
+   4 X-LOAN-DATE-2-YYYY  (N4)
+   4 X-LOAN-DATE-2-MM    (N2)
+   4 X-LOAN-DATE-2-DD    (N2)
+ 2 ISSUE-DATE         (9)
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+ 2 ID-NUMBER
+ 2 PROCESS-IND        (A1)
+ 2 TRANSACTION-DATN   (P9)
+ 2 TRANSACTION-TIMN   (P7)
+ 2 TXN-CODE           (A4)
+ 2 SEQUENCE-NUM       (N1)
+ 2 NAME               (A25)
+ 2 TXN-ACCT-NUMBER    (N3)
+ 2 ACCT-DATE          (N8)
+ 2 DATE-LAST-ACCT-UPDATE (N8)
+ 2 DEBIT-AMOUNT       (P7.2)
+ 2 CREDIT-AMOUNT      (P7.2)
+ 2 DESCRIPTION        (A20)
+ 2 REDEFINE DESCRIPTION
+  3 DESCRIPTION-DATE  (A8)
+ 2 MESSAGE-CODE       (A1)
+ 2 AALP-FLAG          (A1)
+ 2 CLERK-ID           (A3)
+ 2 TERMINAL-ID        (A8)
+ 2 CASH-CODE          (A1)
+ 2 SG-CATEGORY-1      (A2/15)
+ 2 SG-CATEGORY-2      (A2/15)
+ 2 SG-AMOUNT          (N6.2/15)
+*
+1 #EXTRACT    (A100)
+*
+1 #LOAN-AMT        (N5.2)
+1 #TR-AMT-ADDED    (N5.2)
+1 #INT-ADJ-7    (N5.7)
+1 #INT-ADJ-2    (N5.2)
+1 #AMT-DISP-LN   (A12)
+1 #AMT-DISP-IN   (A12)
+1 #AMT-DISP-RC   (A12)
+1 #AMT-DISP-AD   (A12)
+1 #AMT-DISP-AC   (A12)
+1 #AMT-DISP-NU   (A12)
+1 #AMT-DISP-TR   (A12)
+*
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 20070109 AB
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 20070101 AB
+1 #UPDATE     (L)
+1 #CNT-2     (N5)
+1 #CNT-3     (N5)
+1 #I1              (I2)
+1 #I2              (I2)
+1 #I3              (I2)
+*
+1 #DATE-MMDDYYYY   (A8)
+1 REDEFINE #DATE-MMDDYYYY
+ 2 #DATE-MM    (A2)
+ 2 #DATE-DD    (A2)
+ 2 #DATE-YYYY  (A4)
+*
+1 #MMDDYYYY   (A8)
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMMDD-A   (A8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A  (A4)
+ 2 #MM-A    (A2)
+ 2 #DD-A    (A2)
+*
+END-DEFINE
+* * * * * * * * *
+*
+FORMAT  (2) LS=133 PS=76
+WRITE   (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     'ACC INT  Adjustments for missed Rate Chg   DAY 01'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT  (3) LS=133 PS=76
+WRITE   (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     'ACC INT  Adjustments for missed Rate Chg   DAY 01'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+COMPRESS 'CN'
+ #TAB   'iss-dt'
+ #TAB   'loan-dt'
+ #TAB   'Cur-loan-amt'
+ #TAB   '12/1/2006-loan-amt'
+ #TAB   'Int/Adjust'
+ #TAB   'Billed-Int'
+ #TAB   'Int-Rcvd'
+ #TAB   'Acc-int'
+ #TAB   'TR-amt-added'
+  INTO #EXTRACT LEAVING NO
+WRITE WORK 3 #EXTRACT
+*
+READ ST-V WITH MEMBER-KEY = '001900'
+  RESET #UPDATE
+  FOR #I1 1 TO 9
+    IF   (X-LOAN-DATE-2-MM (#I1) NE 01)
+     OR  (X-LOAN-AMOUNT-2 (#I1) = 0)
+      ESCAPE TOP
+    END-IF
+*
+    MOVE X-LOAN-AMOUNT-2 (#I1) TO #LOAN-AMT
+    RESET #TR-AMT-ADDED
+    FIND ACCT-REG-V WITH ID-NUMBER = ST-V.ID-NUMBER
+      RESET #YYYYMMDD
+      IF TRANSACTION-DATN GE 20061201
+        IF (TXN-CODE = 'PRNV' OR = 'PADV' OR = 'CAPV' OR = 'CADV'
+                  OR = 'INPV' OR = 'IADV' OR = 'INTV' OR = 'AIAV')
+          MOVE DESCRIPTION-DATE TO #DATE-MMDDYYYY
+          COMPRESS #DATE-YYYY #DATE-MM #DATE-DD
+              INTO #YYYYMMDD-A LEAVING NO
+*
+          IF #YYYYMMDD NE ISSUE-DATE (#I1)
+            RESET #YYYYMMDD
+            ESCAPE TOP
+          END-IF
+        END-IF
+*
+        WRITE (3) ST-V.ID-NUMBER TXN-CODE DEBIT-AMOUNT CREDIT-AMOUNT
+          DESCRIPTION (EM=XXXXXXXXXXXX)
+          TRANSACTION-DATN 'iss dt=' #YYYYMMDD
+*
+        IF TXN-CODE = 'PRNV' OR = 'PADV' OR = 'CAPV' OR = 'CADV'
+          ADD CREDIT-AMOUNT TO #LOAN-AMT
+          ADD CREDIT-AMOUNT TO #TR-AMT-ADDED
+          WRITE (3) ST-V.ID-NUMBER 'added' CREDIT-AMOUNT 'to loan'
+               #LOAN-AMT
+        END-IF
+      END-IF
+    END-FIND
+*
+    COMPUTE ROUNDED #INT-ADJ-7 =
+      #LOAN-AMT * .002 / 365 * (X-LOAN-DATE-2-DD(#I1) - 1)
+    MOVE ROUNDED #INT-ADJ-7 TO #INT-ADJ-2
+*
+    MOVE EDITED X-LOAN-AMOUNT-2 (#I1) (EM=ZZ,ZZZ.99) TO #AMT-DISP-LN
+    MOVE LEFT #AMT-DISP-LN TO #AMT-DISP-LN
+    MOVE EDITED #LOAN-AMT (EM=ZZ,ZZZ.99) TO #AMT-DISP-NU
+    MOVE LEFT #AMT-DISP-NU TO #AMT-DISP-NU
+    MOVE EDITED X-BILL-INTEREST-AMT-2(#I1)(EM=ZZ,ZZZ.99) TO #AMT-DISP-IN
+    MOVE LEFT #AMT-DISP-IN TO #AMT-DISP-IN
+    MOVE EDITED X-INTEREST-RECEIVED-2(#I1)(EM=ZZ,ZZZ.99) TO #AMT-DISP-RC
+    MOVE LEFT #AMT-DISP-RC TO #AMT-DISP-RC
+    MOVE EDITED X-ACCUM-INTEREST-2(#I1)(EM=-ZZ,ZZZ.99) TO #AMT-DISP-AC
+    MOVE LEFT #AMT-DISP-AC TO #AMT-DISP-AC
+    MOVE EDITED #INT-ADJ-2(EM=-ZZ,ZZZ.99) TO #AMT-DISP-AD
+    MOVE LEFT #AMT-DISP-AD TO #AMT-DISP-AD
+    MOVE EDITED #TR-AMT-ADDED (EM=-ZZ,ZZZ.99) TO #AMT-DISP-TR
+    MOVE LEFT #AMT-DISP-TR TO #AMT-DISP-TR
+*
+    COMPRESS ST-V.ID-NUMBER
+     #TAB   ISSUE-DATE (#I1)
+     #TAB   X-LOAN-DATE-2 (#I1)
+     #TAB   #AMT-DISP-LN
+     #TAB   #AMT-DISP-NU
+     #TAB   #AMT-DISP-AD
+     #TAB   #AMT-DISP-IN
+     #TAB   #AMT-DISP-RC
+     #TAB   #AMT-DISP-AC
+     #TAB   #AMT-DISP-TR
+      INTO #EXTRACT LEAVING NO
+    WRITE WORK 3 #EXTRACT
+*
+    IF X-LOAN-DATE-2-DD (#I1) = 01
+      ADD 1 TO #CNT-2
+      DISPLAY (2) #CNT-2 ST-V.ID-NUMBER
+        'iss/dt'     ISSUE-DATE (#I1)
+        'loan/dt'    X-LOAN-DATE-2 (#I1)
+        'loan/amt'   X-LOAN-AMOUNT-2 (#I1)
+        'Int/Adjust' #INT-ADJ-2
+        'Acc-int'    X-ACCUM-INTEREST-2 (#I1)
+    ELSE
+      ADD 1 TO #CNT-3
+      DISPLAY (3) #CNT-3 ST-V.ID-NUMBER
+        'iss/dt'     ISSUE-DATE (#I1)
+        'loan/dt'    X-LOAN-DATE-2 (#I1)
+        'loan/amt'   X-LOAN-AMOUNT-2 (#I1)
+        'ADJ-loan/amt' #LOAN-AMT
+        'Int/Adjust' #INT-ADJ-2
+        'Billed-Int' X-BILL-INTEREST-AMT-2 (#I1)
+        'INT-RCVD'   X-INTEREST-RECEIVED-2 (#I1)
+        'Acc-int'    X-ACCUM-INTEREST-2 (#I1)
+*
+      MOVE TRUE TO #UPDATE
+*
+      PERFORM CREATE-ACCT-TR
+*
+      SUBTRACT #INT-ADJ-2 FROM X-ACCUM-INTEREST-2 (#I1)
+      MOVE *DATN TO ST-V.DATE-ACCT-UPDATE
+      MOVE *DATN TO ST-V.DTS-DATN
+      MOVE *TIMN TO ST-V.DTS-TIMN
+*
+    END-IF
+  END-FOR
+*
+  IF #UPDATE
+    UPDATE (0124)
+  END-IF
+*
+  END TRANSACTION
+END-READ
+*
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CREATE-ACCT-TR
+* * * * * * * * * * * * * * * * *
+*
+RESET ACCT-REG-V
+MOVE ST-V.ID-NUMBER   TO ACCT-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND TO ACCT-REG-V.PROCESS-IND
+MOVE *DATN            TO ACCT-REG-V.TRANSACTION-DATN
+MOVE *TIMN            TO ACCT-REG-V.TRANSACTION-TIMN
+MOVE *INIT-ID         TO ACCT-REG-V.TERMINAL-ID
+MOVE 'EDS'            TO ACCT-REG-V.CLERK-ID
+MOVE ST-V.NAME        TO ACCT-REG-V.NAME
+RESET                    ACCT-REG-V.CASH-CODE
+RESET                    ACCT-REG-V.AALP-FLAG
+MOVE *DATN            TO ACCT-REG-V.ACCT-DATE
+*
+MOVE 'AIAV' TO ACCT-REG-V.TXN-CODE
+MOVE ST-V.DATE-ACCT-UPDATE TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+*
+MOVE #INT-ADJ-2 TO ACCT-REG-V.CREDIT-AMOUNT
+MOVE 190 TO ACCT-REG-V.TXN-ACCT-NUMBER
+*
+MOVE ISSUE-DATE (#I1) TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #MMDDYYYY LEAVING NO
+COMPRESS ACCT-REG-V.DESCRIPTION #MMDDYYYY 'Jan 07 Adj'
+       INTO ACCT-REG-V.DESCRIPTION
+*
+STORE ACCT-REG-V
+* WRITE 'store acct-reg-v date =' ST-V.ID-NUMBER
+*
+END-SUBROUTINE
+*
+END

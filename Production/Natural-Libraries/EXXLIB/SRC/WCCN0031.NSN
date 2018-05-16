@@ -1,0 +1,231 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* WCCN0031 - Save/Retreive Card information to/from SAGE
+* Accepts Request Data from IAS and calls WebService that
+* communicates with SAGE vault services
+* Called from - WEPN0001 - FPF payment with policy issue
+*
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+* YAK  02/23/2016            Initial creation
+* YAK  05/19/2016   YK1      Add info to log file
+* YAK  07/08/2016   YK2  Add timestamp for request/response
+* bz-1777 01/06/2016 Set and process TimeOut
+**********************************************************
+*
+DEFINE DATA
+PARAMETER USING WCCA0031
+LOCAL
+*
+1 #REQUEST        (A)  DYNAMIC
+1 #WEBCHARGE-LOG  (A500)
+1 D1              (A) DYNAMIC
+1 D2              (A) DYNAMIC
+*
+1 v_Env           (A) DYNAMIC
+1 v_Res           (A) DYNAMIC
+1 v_RC            (I4)
+1 v_Error         (I4)              /* bz-1777
+* ---------------------------
+1  RQTOUT         (I4)   INIT <5>   /* bz-1777
+1  RQTOUT_RC      (I4)              /* bz-1777 
+1  RQTOUT_Msg     (A) DYNAMIC       /* bz-1777   
+* ---------------------------
+*
+1 #DATN           (A) DYNAMIC
+1 #TIMN           (A) DYNAMIC
+1 #SUCCESS        (A) DYNAMIC CONST <'SUCCESS'>
+1 URL_wsIAS       (A)  DYNAMIC
+* 1 URL_Test      (A)  DYNAMIC  INIT <"http://localhost:49247/api/vaultcardservices/">
+1 URL_Test        (A)  DYNAMIC  INIT <"http://sagewebapiv2.testing.local/api/vaultcardservices/">
+1 URL_Prod        (A)  DYNAMIC  INIT <"https://sagewebapiservice.aafmaa.com/api/vaultcardservices/">
+*
+1 #VerifyService  (A)  DYNAMIC  INIT <"VerifyVaultService">
+1 #Insert         (A)  DYNAMIC  INIT <"InsertCardDataIAS">
+1 #UpdateCardData (A)  DYNAMIC  INIT <"UpdateCardDataIAS">
+1 #UpdateExpDate  (A)  DYNAMIC  INIT <"UpdateCardExpDateIAS">
+1 #DeleteCardData (A)  DYNAMIC  INIT <"PostCreditCardDataToDelete">
+*
+1 Pars-Tag   (A/9) DYNAMIC INIT
+  <'GU_ID:',
+  'Status:',
+  'Message:'>
+1 Pars-Val (A/9) DYNAMIC
+1 ParsedResult
+  2 GUID                 (A) DYNAMIC
+  2 Status               (A) DYNAMIC
+  2 Message              (A) DYNAMIC
+1 #ERROR-CODE             (A3)
+1 #I                      (I2)
+1 #QT                     (A1) CONST <H'22'>
+1 #SEP                    (A3) CONST <H'2C'>
+1 #NULL                   (A6) INIT <'null'>
+1 #ActionName             (A) DYNAMIC
+1 #CC-ACTION
+  2 #ADD             (A) DYNAMIC CONST <'ADD'>
+  2 #UPDATE          (A) DYNAMIC CONST <'UPDATE'>
+  2 #UPDATE-EXP-DATE (A) DYNAMIC CONST <'UPDATE-EXP-DATE'>
+  2 #DELETE          (A) DYNAMIC CONST <'DELETE'>
+END-DEFINE
+*
+* ON ERROR
+*   PRINT  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+* END-ERROR
+*
+MOVE EDITED F-IS-DEV(<>) (EM=Prod/Test) TO v_Env
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #CC-STORAGE-FIELDS.Action = #ADD AND #CC-STORAGE-FIELDS.CardGUID = ' ' AND #CC-STORAGE-FIELDS.CardNumber <> ' ' AND #CC-STORAGE-FIELDS.CardExpDate <> ' '
+    #ActionName := #Insert
+  WHEN #CC-STORAGE-FIELDS.Action = #UPDATE AND #CC-STORAGE-FIELDS.CardGUID <> ' ' AND #CC-STORAGE-FIELDS.CardNumber <> ' ' AND #CC-STORAGE-FIELDS.CardExpDate <> ' '
+    #ActionName := #UpdateCardData
+  WHEN #CC-STORAGE-FIELDS.Action = #UPDATE-EXP-DATE AND #CC-STORAGE-FIELDS.CardGUID <> ' ' AND #CC-STORAGE-FIELDS.CardExpDate <> ' '
+    #ActionName := #UpdateExpDate
+  WHEN #CC-STORAGE-FIELDS.Action = #DELETE AND #CC-STORAGE-FIELDS.CardGUID <> ' '
+    #ActionName := #DeleteCardData
+  WHEN NONE
+    #ActionName := #VerifyService
+END-DECIDE
+*
+DECIDE ON FIRST VALUE v_Env
+  VALUE 'Test'
+    URL_wsIAS  :=  URL_Test
+  VALUE 'Prod'
+    URL_wsIAS   :=  URL_Prod
+  ANY VALUE
+    COMPRESS URL_wsIAS #ActionName INTO URL_wsIAS LEAVING NO
+  NONE
+    Status := 'false'
+    COMPRESS 'Unknown environment' v_Env INTO #WEBCHARGE-LOG
+    WRITE WORK FILE 3 #WEBCHARGE-LOG
+    CLOSE WORK 3
+    ESCAPE ROUTINE
+END-DECIDE
+*
+PERFORM CREATE-REQUEST
+PERFORM CALL-SERVICE
+*
+********************************
+DEFINE SUBROUTINE CREATE-REQUEST
+********************************
+* Create request in Jason Format for Web API
+*
+*  public string CardGUID { get; set; }
+*  public string CardNumber { get; set; }
+*  public string CardExpDate { get; set; }
+*  public string UserId { get; set; }
+*  public string ApplicationSource { get; set; }
+*
+IF #CC-STORAGE-FIELDS.Action = #DELETE
+  COMPRESS '=' #CC-STORAGE-FIELDS.CardGUID INTO #REQUEST LEAVING NO
+ELSE
+  D1 := '":"'
+  D2 := '","'
+  COMPRESS
+    '={"'
+    'CardGUID' D1 CardGUID D2
+    'CardNumber' D1 CardNumber D2
+    'CardExpDate' D1 CardExpDate D2
+    'ApplicationSource' D1 ApplicationSource D2
+    'UserLoginName' D1 UserId
+    '"}'
+    INTO #REQUEST LEAVING NO
+END-IF
+*
+#DATN := *DAT4I        /* YK2
+#TIMN := *TIMX         /* YK2
+COMPRESS #DATN #TIMN 'Member CN =' CNumber #ActionName #REQUEST INTO #WEBCHARGE-LOG
+* YK1 >
+IF #CC-STORAGE-FIELDS.Action = #DELETE 
+  COMPRESS #WEBCHARGE-LOG 'ApplicationSource =' ApplicationSource 'UserLoginName =' UserId INTO #WEBCHARGE-LOG
+END-IF
+* < YK1
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE CALL-SERVICE
+******************************
+*
+CALLNAT 'USR6307N' 'S' RQTOUT RQTOUT_RC RQTOUT_Msg   /* bz-1777 S
+IF RQTOUT_RC <> 0
+ COMPRESS #DATN #TIMN 'Member CN =' CNumber 'Error set TimeOut'  INTO #WEBCHARGE-LOG
+ WRITE WORK FILE 3 #WEBCHARGE-LOG
+END-IF                                               /* bz-1777 E
+
+REQUEST DOCUMENT FROM URL_wsIAS
+  WITH DATA
+      NAME ' ' VALUE #REQUEST
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+GIVING   v_ERROR                               /* bz-1777  
+IF v_ERROR = 8304 v_RC := 8304 END-IF          /* bz-1777  
+*
+* v_RC  := 200
+* v_Res := '{"GUID":"6370a9830b944b18ba2d5e51c767cced","Status":true,"Message":"SUCCESS"}'
+* {"GU_ID":"7e91e5b4186f473698554549b60077ed","Status":true,"Message":"SUCCESS"}
+* Bad response
+* v_Res := '{"GUID":" ","Status":false,"Message":" "}'
+#DATN := *DAT4I          /* YK2
+#TIMN := *TIMX           /* YK2
+COMPRESS #DATN #TIMN 'Member CN =' CNumber 'Response Status = ' v_RC v_Res INTO #WEBCHARGE-LOG
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+IF v_RC <> 200                                         /* bz-1777 S
+  IF v_ERROR = 8304                                 
+       ResultMessage := "TimeOut"                   
+       ResultStatus  := "false"                     
+  ELSE                                              
+       COMPRESS "RC=" v_RC INTO ResultMessage       
+       ResultStatus  := "false"                     
+  END-IF                                            
+  ESCAPE ROUTINE                                    
+END-IF                                                 /* bz-1777 E
+*
+* Parse Response
+* {"GU_ID":null,"Status":false,"Message":null}
+* Status:True
+EXAMINE v_Res FOR '{' DELETE
+EXAMINE v_Res FOR '}' DELETE
+PERFORM PARSE-RESULT
+*
+IF ParsedResult.Status = 'true'
+  IF #ActionName = #Insert
+    CardGUID := ParsedResult.GUID
+  END-IF
+END-IF
+ResultMessage := ParsedResult.Message
+ResultStatus  := ParsedResult.Status
+*
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE PARSE-RESULT
+COMPRESS #QT 'null' #QT INTO #NULL LEAVING NO
+EXAMINE v_Res FOR 'null' REPLACE #NULL
+EXAMINE v_Res FOR #SEP REPLACE ';'
+EXAMINE v_Res FOR #QT DELETE
+EXAMINE v_Res FOR '"' DELETE
+EXAMINE v_Res FOR Pars-Tag(*) DELETE
+SEPARATE v_Res INTO Pars-Val(*) WITH DELIMITER ';'
+*
+ParsedResult.GUID        := Pars-Val(1)
+ParsedResult.Status      := Pars-Val(2)
+ParsedResult.Message     := Pars-Val(3)
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE Test_wsIAS
+REQUEST DOCUMENT FROM URL_Test
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+END-SUBROUTINE
+*
+END

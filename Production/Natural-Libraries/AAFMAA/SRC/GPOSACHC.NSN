@@ -1,0 +1,897 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPOSACHC                                              *
+* AUTHOR       : Copyright: Electronic Data Systems - an HP company    *
+* DESCRIPTION  : Process ACH EZPay Account Changes                     *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    06/18/2009  None    Program Written                           *
+* PAM    07/18/2009  PM1     ACH returns Phase II                      *
+* PAM    08/06/2009  PM2     ACH returns Phase III                     *
+* PAM    02/19/2010  PM3     Changed PAD CODE from 'V' to 'P'          *
+*                            Adjust ALT-LP-IND if mode 'E'             *
+* PAM    12/15/2010  PM4     Do not create bills for EIL               *
+* VXT    07/11/2012  Vt1     Populate mode "M" for CAP members.        *
+* NGG    07/18/2013  NG1     Address Normalization                     *
+* TMT    05/22/2014  TT1     CONTACT NORMALIZATION - EMAILS            *
+* YAK    01/17/2018  YK1     Remove changing MODE/PAD-CODE to "Q/P"    *
+*                            Change only when payments stop            *
+*                            Fix problem with premier services         *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING GPOAACHR
+PARAMETER USING GPOAACHP
+PARAMETER USING GPOAACHE                                         /* PM2
+PARAMETER
+1 #DATE-OF-UPDATE                      (N8)
+1 #TIME-OF-UPDATE                      (N7)
+1 #TYPE                                (A1)                      /* PM1
+1 #NUMBER-OF-CHANGES                   (P5)                      /* PM1
+*
+LOCAL USING OBJLSTAT
+LOCAL USING GBANKLXX                                             /* PM2
+LOCAL USING OBJAGENT                                             /* PM2
+LOCAL USING ADDA0001                                             /* NG1
+LOCAL
+1 #UPDATE                              (L)
+1 #FOUND                               (L)
+1 #STOP                                (L)
+1 #FOUND-POLICY                        (L)
+1 #FOUND-NON-MODE                      (L)
+1 #FOUND-LOAN                          (L)
+1 #2ND                                 (L)
+1 #I1                                  (I4)
+1 #I2                                  (I4)
+1 #I3                                  (I4)
+1 #TR-I                                (I4)
+1 #EIL-I                               (I4)                      /* PM2
+1 #ISN                                 (P8)
+1 #DISPLAY-FIELD                       (A)   DYNAMIC
+1 #DISPLAY-NAME                        (A)   DYNAMIC
+1 #DISPLAY-ZIP                         (A)   DYNAMIC
+1 #DISPLAY-AMOUNT                      (A)   DYNAMIC
+1 #WORK-NAME                           (A)   DYNAMIC
+1 #NEW-PAD                             (A1)
+1 #TAB                                 (A1)  INIT <H'09'>
+1 #CLERK                               (A3)
+1 #SPLIT                               (A1)
+1 #ERR-MSG                             (A60)
+1 #STREET                              (A25)
+1 #STREET-2                            (A25)
+1 #CITY                                (A22)
+1 #STATE                               (A2)
+1 #TEXT                                (A60)
+1 #FILE-RECORD                         (A200)
+1 EMAIL-ADDRESS                        (A)DYNAMIC
+1 #CHANGE-DATA                         (A29)
+1 REDEFINE #CHANGE-DATA
+  2 #CHANGE-ACCT-NUM-C01                (A17)
+  2 #CHANGE-REST-C01                    (A12)
+1 REDEFINE #CHANGE-DATA
+  2 #CHANGE-ABA-NUM-C02                 (A9)
+  2 #CHANGE-ABA-REST-C02                (A20)
+1 REDEFINE #CHANGE-DATA
+  2 #CHANGE-ABA-NUM-C03                 (A9)
+  2 #CHANGE-SPACER-C03                  (A3)
+  2 #CHANGE-ACCT-NUM-C03                (A17)
+*
+1 #BILL-FILE-TABLE                     (100)
+  2 #POLICY-NUMBER                      (A16)
+  2 #PREMIUM-TYPE                       (A4)
+  2 #PREMIUM-AMOUNT                     (P7.2)
+  2 #LOAN-AMOUNT                        (P7.2)
+  2 #CAP-LOAN-AMOUNT                    (P7.2)
+  2 #OTHER-AMOUNT                       (P7.2)
+  2 #OTHER-TYPE                         (A4)
+*
+1 #BILL-FILE-DISPLAY-FIELDS
+  2 #DISPLAY-BILL-TYPE                  (A2)
+  2 #DISPLAY-PREMIUM-CODE               (A2)
+  2 #DISPLAY-PREMIUM-AMOUNT             (A25)
+  2 #DISPLAY-LOAN-CODE                  (A2)
+  2 #DISPLAY-LOAN-AMOUNT                (A25)
+  2 #DISPLAY-CAP-LOAN-AMOUNT            (A25)
+  2 #DISPLAY-OTHER-AMOUNT               (A25)
+  2 #DISPLAY-REASON                     (A50)
+*
+1 #PAD-CHANGE-TABLE                    (500)
+  2 #PAD-CHANGE-CN                      (A6)
+*
+1 #NOTE-FIELDS
+  2 #NOTE-TEXT                          (A60/10)
+  2 #NOTE-I1                            (I2) INIT <1>
+  2 #TIME-TEXT                          (A3)
+*
+1 #W-OLD-NEW-DATA                      (A125)
+1 REDEFINE #W-OLD-NEW-DATA
+  2 #W-DESCRIPTION                     (A12)
+  2 #W-DATA                            (A113)
+*
+1 TR-V VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER
+  2 NAME
+  2 DATE-LAST-UPDATE
+  2 TERMINAL-ID
+  2 PROCESS-IND
+  2 CLERK-ID
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 OLD-DATA                            (32)
+  2 NEW-DATA                            (32)
+*
+1 #FTP-FIELDS
+  2 #DATN                              (N8)
+  2 REDEFINE #DATN
+    3 #DATN-A                            (A8)
+  2 #TIMN                               (N7)
+  2 REDEFINE #TIMN
+    3 #TIMN-A                            (A6)
+    3 #TIMN-REST                         (A1)
+  2 #SHCMD                              (A250)
+  2 #EMAIL-FILE-NAME                    (A)   DYNAMIC INIT <'ACH_RET_EMAIL'>
+  2 #EXCP-FILE-NAME                     (A)   DYNAMIC INIT <'ACH_RET_EXCEPTIONS'>
+  2 #BILL-FILE-NAME                     (A)   DYNAMIC INIT <'ACH_RET_BILL'>
+  2 #FTP-SCRIPT-NAME                    (A)   DYNAMIC INIT <'/usr/SAG/cronus/.scripts/ftpAafmaaLocal'>
+  2 #UNIX-FILE-DIRECTORY                (A)   DYNAMIC INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ACHPROCESSED/'>
+  2 #WINDOWS-FILE-DIRECTORY             (A)   DYNAMIC INIT <'/ftp/polserv/'>
+  2 #WINDOWS-FILE-NAME                  (A)   DYNAMIC
+  2 #UNIX-FILE-NAME                     (A)   DYNAMIC
+  2 #UNIX-DESTINATION                   (A)   DYNAMIC
+* YK1
+1 EZPay_Loan    (A1/3) CONST <'3','4','E'>
+1 #GET (A) DYNAMIC CONST <'GET'>
+1 #UPDATE-SERVICE (A) DYNAMIC CONST <'UPDATE'>
+1 #EZ-N         (N2)
+1 #MODE         (A1)
+1 #STATUS       (A1)
+1 #USER         (A) DYNAMIC
+END-DEFINE
+************************************************************************
+*
+IF NOT #TYPE = 'C'                                               /* PM1
+  COMPRESS #UNIX-FILE-DIRECTORY #EXCP-FILE-NAME '.TXT' INTO #UNIX-FILE-NAME LEAVING NO
+  DEFINE WORK FILE 2 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS 'MEMBER NUMBER'   #TAB
+    'REJ/CHANGE CODE' #TAB
+    'DESCRIPTION'     #TAB INTO #FILE-RECORD LEAVING NO
+  WRITE WORK 2 #FILE-RECORD
+  RESET #FILE-RECORD
+*
+  COMPRESS #UNIX-FILE-DIRECTORY #EMAIL-FILE-NAME '.TXT' INTO #UNIX-FILE-NAME LEAVING NO
+  DEFINE WORK FILE 3 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS 'MEMBER NUMBER'   #TAB
+    'EMAIL'           #TAB
+    'RANK'            #TAB
+    'NAME'            #TAB
+    'ADDRESS 1'       #TAB
+    'ADDRESS 2'       #TAB
+    'CITY'            #TAB
+    'STATE'           #TAB
+    'ZIP'             #TAB
+    'REJ CODE'        #TAB
+    'REJ REASON'      #TAB
+    'REJ AMOUNT'      #TAB INTO #FILE-RECORD LEAVING NO
+  WRITE WORK 3 #FILE-RECORD
+  RESET #FILE-RECORD
+*
+  COMPRESS #UNIX-FILE-DIRECTORY #BILL-FILE-NAME '.TXT' INTO #UNIX-FILE-NAME LEAVING NO
+  DEFINE WORK FILE 4 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+END-IF                                                           /* PM1
+*
+#CLERK := FUNCTION-CLERK(<*USER>)
+RESET #NUMBER-OF-CHANGES                                         /* PM1
+*
+FOR #I1 1 TO 12
+  IF #ACHR-DATE (#I1) = 0
+    ESCAPE BOTTOM
+  END-IF
+*
+  FOR #I2 1 TO 500
+    IF #ACHR-MEMBER-NUMBER (#I1,#I2) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF NOT #ACHR-REJECTION-CODE (#I1,#I2) = 'C01' OR = 'C02' OR = 'C03' OR = 'R03' OR = 'R04' OR = 'R11'
+      ESCAPE TOP
+    END-IF
+*
+    PERFORM PROCESS-CHANGES
+  END-FOR
+END-FOR
+*
+IF NOT #TYPE = 'C'                                               /* PM1
+  PERFORM UPDATE-PAD-CODE-CREATE-NOTE-AND-BILL-FILE
+*
+  CLOSE WORK 2
+  CLOSE WORK 3
+  CLOSE WORK 4
+  PERFORM FTP-FILE
+END-IF                                                           /* PM1
+*
+ON ERROR
+  BACKOUT TRANSACTION
+    REINPUT 'An error in GPOSACHC account updates occurred. Please contact Technical Support.'
+  ESCAPE ROUTINE
+END-ERROR
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-CHANGES
+************************************************************************
+*
+FIND (1) ST-V WITH MEMBER-KEY = #ACHR-MEMBER-NUMBER (#I1,#I2)
+  IF NO RECORDS FOUND
+    FIND (1) ST-V WITH WIDOW-KEY = #ACHR-MEMBER-NUMBER (#I1,#I2)
+      IF NO RECORDS FOUND
+        COMPRESS 'Member' #ACHR-MEMBER-NUMBER (#I1,#I2) 'Not found - Contact'
+          'Technical Support' INTO #TEXT
+        REINPUT #TEXT
+      END-NOREC
+      #ISN   := *ISN
+    END-FIND
+  END-NOREC
+*
+  #ISN       := *ISN
+END-FIND
+*
+RESET #CHANGE-DATA #UPDATE
+G01. GET ST-V #ISN
+*
+#CHANGE-DATA := #ACHR-CHANGE-DATA (#I1,#I2)
+DECIDE FOR FIRST CONDITION
+  WHEN #ACHR-REJECTION-CODE (#I1,#I2) = 'C01'
+      AND ST-V.PAD-ACCT-NUM NE #CHANGE-ACCT-NUM-C01
+    IF #TYPE = 'C'                                               /* PM1
+      ADD +1 TO #NUMBER-OF-CHANGES                               /* PM1
+    ELSE                                                         /* PM1
+      PERFORM LOAD-ACCT-TRANSACTION
+      TR-V.OLD-DATA (1) := #W-OLD-NEW-DATA
+      ST-V.PAD-ACCT-NUM := #CHANGE-ACCT-NUM-C01
+      PERFORM LOAD-ACCT-TRANSACTION
+      TR-V.NEW-DATA (1) := #W-OLD-NEW-DATA
+      #UPDATE           := TRUE
+      COMPRESS #ACHR-MEMBER-NUMBER (#I1,#I2)  #TAB
+        #ACHR-REJECTION-CODE (#I1,#I2) #TAB
+        'Account Number Changed' INTO #FILE-RECORD LEAVING NO
+      WRITE WORK 2 #FILE-RECORD
+      RESET #FILE-RECORD
+      PERFORM CREATE-CHANGE-NOTE                                 /* PM2
+    END-IF                                                       /* PM1
+*
+  WHEN #ACHR-REJECTION-CODE (#I1,#I2) = 'C02'
+      AND ST-V.PAD-ABA-NBR NE #CHANGE-ABA-NUM-C02
+    IF #TYPE = 'C'                                               /* PM1
+      ADD +1 TO #NUMBER-OF-CHANGES                               /* PM1
+    ELSE                                                         /* PM1
+      PERFORM LOAD-ABA-TRANSACTION
+      TR-V.OLD-DATA (1) := #W-OLD-NEW-DATA
+      ST-V.PAD-ABA-NBR  := #CHANGE-ABA-NUM-C02
+      PERFORM LOAD-ABA-TRANSACTION
+      TR-V.NEW-DATA (1) := #W-OLD-NEW-DATA
+      #UPDATE           := TRUE
+      COMPRESS #ACHR-MEMBER-NUMBER (#I1,#I2)  #TAB
+        #ACHR-REJECTION-CODE (#I1,#I2) #TAB
+        'ABA Number Changed' INTO #FILE-RECORD LEAVING NO
+      WRITE WORK 2 #FILE-RECORD
+      RESET #FILE-RECORD
+      PERFORM CREATE-CHANGE-NOTE                                 /* PM2
+    END-IF                                                       /* PM1
+*
+  WHEN #ACHR-REJECTION-CODE (#I1,#I2) = 'C03'
+      AND (ST-V.PAD-ACCT-NUM NE #CHANGE-ACCT-NUM-C03
+      OR  ST-V.PAD-ABA-NBR  NE #CHANGE-ABA-NUM-C03)
+    IF #TYPE = 'C'                                               /* PM1
+      ADD +1 TO #NUMBER-OF-CHANGES                               /* PM1
+    ELSE                                                         /* PM1
+      PERFORM LOAD-ACCT-TRANSACTION
+      TR-V.OLD-DATA (1) := #W-OLD-NEW-DATA
+      PERFORM LOAD-ABA-TRANSACTION
+      TR-V.OLD-DATA (2) := #W-OLD-NEW-DATA
+      ST-V.PAD-ACCT-NUM := #CHANGE-ACCT-NUM-C03
+      ST-V.PAD-ABA-NBR  := #CHANGE-ABA-NUM-C03
+      PERFORM LOAD-ACCT-TRANSACTION
+      TR-V.NEW-DATA (1) := #W-OLD-NEW-DATA
+      PERFORM LOAD-ABA-TRANSACTION
+      TR-V.NEW-DATA (2) := #W-OLD-NEW-DATA
+      #UPDATE           := TRUE
+      COMPRESS #ACHR-MEMBER-NUMBER (#I1,#I2)  #TAB
+        #ACHR-REJECTION-CODE (#I1,#I2) #TAB
+        'ABA/Account Number Changed' INTO #FILE-RECORD LEAVING NO
+      WRITE WORK 2 #FILE-RECORD
+      RESET #FILE-RECORD
+      PERFORM CREATE-CHANGE-NOTE                                 /* PM3
+    END-IF                                                        /* PM1
+*
+  WHEN #ACHR-REJECTION-CODE (#I1,#I2) = 'R03' OR = 'R04' OR = 'R11' OR = 'R13' OR = 'R14'
+      AND #TYPE NE 'C'                                              /* PM1
+    COMPRESS #ACHR-MEMBER-NUMBER (#I1,#I2)  #TAB
+      #ACHR-REJECTION-CODE (#I1,#I2) #TAB
+      'Rejected -' FUNCTION-ACH-REASON(<#BILL-REJECTION-CODE(#I1),'C'>)
+      INTO #FILE-RECORD LEAVING NO
+    WRITE WORK 2 #FILE-RECORD
+    RESET #FILE-RECORD
+*
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF #UPDATE
+  UPDATE (G01.)
+  PERFORM STORE-TRANSACTION
+END-IF
+*
+END TRANSACTION
+*
+END-SUBROUTINE
+*************************************************************************
+DEFINE SUBROUTINE UPDATE-PAD-CODE-CREATE-NOTE-AND-BILL-FILE
+*************************************************************************
+*
+FOR #I1 1 TO 500
+  IF #BILL-MEMBER-ID (#I1) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  FIND (1) ST-V WITH MEMBER-KEY = #BILL-MEMBER-ID (#I1)
+    IF NO RECORDS FOUND
+      FIND (1) ST-V WITH WIDOW-KEY = #BILL-MEMBER-ID (#I1)
+        IF NO RECORDS FOUND
+          COMPRESS 'Member' #BILL-MEMBER-ID (#I1) 'Not found - Contact'
+            'Technical Support' INTO #TEXT
+          REINPUT #TEXT
+        END-NOREC
+        #ISN   := *ISN
+      END-FIND
+    END-NOREC
+*
+    #ISN       := *ISN
+  END-FIND
+*
+  G02. GET ST-V #ISN
+*
+  RESET #STOP #UPDATE #TR-I
+  IF  FUNCTION-ACH-REASON(<#BILL-REJECTION-CODE(#I1),'B'>) NE 'E'
+      OR #BILL-STOP (#I1) = 'Y'                                     /* PM1
+    #STOP := TRUE
+  END-IF
+*
+  RESET #2ND
+  IF FUNCTION-ACH-PREV-REVERSED(<ST-V.ID-NUMBER,*DATN>) = TRUE
+    #2ND  := TRUE
+    #STOP := TRUE
+  END-IF
+* YK1 >
+* PERFORM DETERMINE-NEW-PAD-CODE
+*
+*   IF #NEW-PAD NE ST-V.PAD-CODE
+*     ADD +1 TO #TR-I
+*     PERFORM LOAD-PAD-TRANSACTION
+*     TR-V.OLD-DATA (#TR-I) := #W-OLD-NEW-DATA
+*     ST-V.PAD-CODE         := #NEW-PAD
+*     PERFORM LOAD-PAD-TRANSACTION
+*     TR-V.NEW-DATA (#TR-I) := #W-OLD-NEW-DATA
+*     #UPDATE               := TRUE
+* Update policies only if #STOP
+  IF #STOP
+    #UPDATE := TRUE
+    PERFORM UPDATE-POLICIES
+  END-IF
+*  END-IF
+* < YK1
+  PERFORM CREATE-NOTE
+*
+  IF #UPDATE
+    UPDATE (G02.)
+    PERFORM STORE-TRANSACTION
+  END-IF
+*
+  IF #BILL-CREATE (#I1) = 'Y'
+    RESET EMAIL-ADDRESS                                        /* TT1
+    EMAIL-ADDRESS :=   F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)  /* TT1
+    IF NOT EMAIL-ADDRESS = ' ' OR = '999' OR = '?'             /* TT1
+      PERFORM CREATE-EMAIL-FILE
+    END-IF
+*
+    PERFORM CREATE-BILL-FILE
+  END-IF                                                         /* PM1
+*
+END-FOR
+*
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-ACCT-TRANSACTION
+************************************************************************
+*
+RESET #W-DATA
+#W-DESCRIPTION := 'CA-ACH-REV'
+*
+#DISPLAY-FIELD := ST-V.PAD-ACCT-NUM
+#W-DATA        := FUNCTION-MASK(<#DISPLAY-FIELD,'*'>)
+*
+COMPRESS 'PAD-ACT-NUM: ' #W-DATA '-' #ACHR-REJECTION-CODE (#I1,#I2) INTO #W-DATA
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-ABA-TRANSACTION
+************************************************************************
+*
+RESET #W-DATA
+#W-DESCRIPTION := 'CA-ACH-REV'
+*
+#DISPLAY-FIELD := ST-V.PAD-ABA-NBR
+#W-DATA        := FUNCTION-MASK(<#DISPLAY-FIELD,'*'>)
+*
+COMPRESS 'PAD-ABA-NUM: ' #W-DATA '-' #ACHR-REJECTION-CODE (#I1,#I2) INTO #W-DATA
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-PAD-TRANSACTION
+************************************************************************
+*
+RESET #W-DATA
+#W-DESCRIPTION := 'CA-ACH-REV'
+*
+#W-DATA        := ST-V.PAD-CODE
+*
+COMPRESS 'PAD-CODE:' #W-DATA '-' #BILL-REJECTION-CODE (#I1) INTO #W-DATA
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-POLICY-TRANSACTION
+************************************************************************
+*
+RESET #W-DATA
+#W-DESCRIPTION := 'CA-ACH-REV'
+*
+COMPRESS 'ISSUE-DATE:' ST-V.ISSUE-DATE (#I3) 'PLAN:' ST-V.PLAN (#I3)
+  'MODE:' ST-V.MODE (#I3) INTO #W-DATA
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-FIXED-LOAN-TRANSACTION
+************************************************************************
+*
+RESET #W-DATA
+#W-DESCRIPTION := 'CA-ACH-REV'
+*
+COMPRESS 'ISSUE-DATE:' ST-V.ISSUE-DATE (#I3) 'PLAN:' ST-V.PLAN (#I3)
+  'FIX ALP IND:' ST-V.X-ALT-LP-IND (#I3) INTO #W-DATA
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE LOAD-VARIABLE-LOAN-TRANSACTION
+************************************************************************
+*
+RESET #W-DATA
+#W-DESCRIPTION := 'CA-ACH-REV'
+*
+COMPRESS 'ISSUE-DATE:' ST-V.ISSUE-DATE (#I3) 'PLAN:' ST-V.PLAN (#I3)
+  'VAR ALP IND:' ST-V.X-ALT-LP-IND-2 (#I3) INTO #W-DATA
+*
+END-SUBROUTINE
+*
+************************************************************************
+* DEFINE SUBROUTINE DETERMINE-NEW-PAD-CODE
+************************************************************************
+*
+* RESET #FOUND-POLICY #FOUND-LOAN #FOUND-NON-MODE
+*
+* IF ST-V.PAD-CODE NE 'E'
+*   #NEW-PAD        := ST-V.PAD-CODE
+*   ESCAPE ROUTINE
+* END-IF
+*
+* FOR #I3 1 TO 9
+*   IF ST-V.STATUS (#I3) NE 'D'
+*     ESCAPE TOP
+*   END-IF
+*
+*   IF ST-V.MODE (#I3) = 'E'
+*     #FOUND-POLICY   := TRUE
+*   ELSE
+*     #FOUND-NON-MODE := TRUE
+*   END-IF
+*
+*   IF  ST-V.X-ALT-LP-IND (#I3) = '3' OR = '4' OR = 'E'
+*       OR ST-V.X-ALT-LP-IND-2 (#I3) = '3' OR = '4' OR = 'E'
+*     #FOUND-LOAN   := TRUE
+*   END-IF
+* END-FOR
+*
+* DECIDE FOR FIRST CONDITION
+*   WHEN #STOP OR (NOT #FOUND-LOAN AND NOT #FOUND-POLICY)
+*     #NEW-PAD := 'S'
+*   WHEN #FOUND-LOAN AND NOT #FOUND-POLICY
+*     #NEW-PAD := 'L'
+*   WHEN NONE
+*     IF #FOUND-NON-MODE
+*       #NEW-PAD := 'D'
+*     ELSE
+*       #NEW-PAD := 'P'                                           /* PM3
+*     END-IF
+* END-DECIDE
+*
+* END-SUBROUTINE
+*
+*************************************************************************
+DEFINE SUBROUTINE UPDATE-POLICIES
+************************************************************************
+*
+FOR #I3 1 TO C*ACTIVE-SEGMENTS                                         /* YK1
+  IF ST-V.STATUS (#I3) NE 'D'
+    ESCAPE TOP
+  END-IF
+*
+  IF ST-V.MODE (#I3) = 'E'
+    ADD +1 TO #TR-I
+    PERFORM LOAD-POLICY-TRANSACTION
+    TR-V.OLD-DATA (#TR-I)         := #W-OLD-NEW-DATA
+*
+    IF (#STOP AND ST-V.X-ALT-LP-IND (#I3) = '3' OR = '4')
+        or (st-v.conv-duration (#i3) = 999  and                           /* vt1
+        ST-V.X-ALT-LP-IND (#I3) = '3' OR = '4')                           /* vt1
+      ST-V.MODE (#I3)             := 'M'
+    ELSE
+      ST-V.MODE (#I3)             := 'Q'
+*     IF #FOUND-NON-MODE                             /* YK1
+*       ST-V.OWNERSHIP-FLAG (#I3) := 'D'             /* YK1
+*     END-IF                                         /* YK1
+    END-IF
+*
+    PERFORM LOAD-POLICY-TRANSACTION
+    TR-V.NEW-DATA (#TR-I)         := #W-OLD-NEW-DATA
+    #UPDATE                       := TRUE
+  END-IF
+*
+* IF #STOP AND ST-V.X-ALT-LP-IND (#I3) = '3' OR = '4' OR = 'E'    /* PM3
+  IF ST-V.X-ALT-LP-IND (#I3) = '3' OR = '4'                       /* PM3
+      OR (#STOP AND ST-V.X-ALT-LP-IND (#I3) = 'E')                /* PM3
+    ADD +1 TO #TR-I
+    PERFORM LOAD-FIXED-LOAN-TRANSACTION
+    TR-V.OLD-DATA (#TR-I)         := #W-OLD-NEW-DATA
+*
+    IF ST-V.X-ALT-LP-IND (#I3) = '3' OR = '4'
+      ST-V.X-ALT-LP-IND (#I3)     := '6'
+    ELSE
+      RESET ST-V.X-ALT-LP-IND (#I3) ST-V.X-ALT-LP-AMT (#I3)
+    END-IF
+*
+    PERFORM LOAD-FIXED-LOAN-TRANSACTION
+    TR-V.NEW-DATA (#TR-I)         := #W-OLD-NEW-DATA
+    #UPDATE                       := TRUE
+  END-IF
+*
+* IF #STOP AND ST-V.X-ALT-LP-IND-2 (#I3) = '3' OR = '4'           /* PM3
+  IF ST-V.X-ALT-LP-IND-2 (#I3) = '3' OR = '4'                     /* PM3
+    ADD +1 TO #TR-I
+    PERFORM LOAD-VARIABLE-LOAN-TRANSACTION
+    TR-V.OLD-DATA (#TR-I)         := #W-OLD-NEW-DATA
+*
+    IF #STOP                                                      /* PM3
+      RESET ST-V.X-ALT-LP-IND-2 (#I3) ST-V.X-ALT-LP-AMT-2 (#I3)
+    ELSE                                                          /* PM3
+      ST-V.X-ALT-LP-IND-2 (#I3)   := '6'                          /* PM3
+    END-IF                                                        /* PM3
+*
+    PERFORM LOAD-VARIABLE-LOAN-TRANSACTION
+    TR-V.NEW-DATA (#TR-I)         := #W-OLD-NEW-DATA
+    #UPDATE                       := TRUE
+  END-IF
+END-FOR
+*
+* YK1 >
+#NEW-PAD := 'S'
+ADD +1 TO #TR-I
+PERFORM LOAD-PAD-TRANSACTION
+TR-V.OLD-DATA (#TR-I) := #W-OLD-NEW-DATA
+ST-V.PAD-CODE         := #NEW-PAD
+PERFORM LOAD-PAD-TRANSACTION
+TR-V.NEW-DATA (#TR-I) := #W-OLD-NEW-DATA
+#UPDATE := TRUE
+*
+RESET #MODE #STATUS #USER
+IF F-SERVICE(<#GET,ST-V.ID-NUMBER,'PSM',#MODE,#STATUS,#USER>)
+  IF #MODE = 'E'
+    #STATUS := 'T'
+      F-SERVICE(<#UPDATE-SERVICE,ST-V.ID-NUMBER,'PSM',#MODE,#STATUS,#USER>)
+  END-IF
+END-IF
+* < YK1
+END-SUBROUTINE
+*
+*************************************************************************
+DEFINE SUBROUTINE CREATE-NOTE
+************************************************************************
+*
+RESET #NOTE-TEXT (*)
+*
+IF #2ND
+  #TIME-TEXT := '2ND'
+ELSE
+  #TIME-TEXT := '1ST'
+END-IF
+*
+MOVE EDITED #BILL-REJECTION-AMOUNT (#I1) (EM=Z,ZZZ,ZZ9.99) TO #NOTE-TEXT (#NOTE-I1)
+MOVE LEFT #NOTE-TEXT (#NOTE-I1) TO #NOTE-TEXT (#NOTE-I1)
+COMPRESS '$' #NOTE-TEXT (#NOTE-I1) INTO #NOTE-TEXT (#NOTE-I1) LEAVING NO
+*
+COMPRESS 'EZ-PAY' #TIME-TEXT 'REVERSAL -' #NOTE-TEXT (#NOTE-I1) INTO #NOTE-TEXT (#NOTE-I1)
+COMPRESS #NOTE-TEXT (#NOTE-I1) 'RETURNED -' FUNCTION-ACH-REASON(<#BILL-REJECTION-CODE(#I1),'C'>)
+  INTO #NOTE-TEXT (#NOTE-I1)
+*
+CALLNAT 'E4205SDM'
+  ST-V.ID-NUMBER
+  #NOTE-I1
+  #CLERK
+  #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+*************************************************************************
+DEFINE SUBROUTINE CREATE-CHANGE-NOTE                              /* PM2
+*************************************************************************
+*
+RESET #NOTE-TEXT (*)
+*
+COMPRESS 'EZ-PAY Account Correction <' FUNCTION-ACH-REASON(<#ACHR-REJECTION-CODE (#I1,#I2),'C'>)
+  '>' INTO #NOTE-TEXT (#NOTE-I1) LEAVING NO
+*
+CALLNAT 'E4205SDM'
+  ST-V.ID-NUMBER
+  #NOTE-I1
+  #CLERK
+  #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE STORE-TRANSACTION
+************************************************************************
+*
+TR-V.ID-NUMBER        := ST-V.ID-NUMBER
+TR-V.NAME             := ST-V.NAME
+TR-V.PROCESS-IND      := ST-V.PROCESS-IND
+TR-V.DATE-LAST-UPDATE := ST-V.DATE-OTHER-UPDATE
+TR-V.CLERK-ID         := #CLERK
+TR-V.TERMINAL-ID      := *INIT-ID
+TR-V.TRANSACTION-DATN := #DATE-OF-UPDATE
+TR-V.TRANSACTION-TIMN := #TIME-OF-UPDATE
+*
+STORE TR-V
+*
+RESET TR-V
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE FTP-FILE
+************************************************************************
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+COMPRESS #UNIX-FILE-DIRECTORY #EXCP-FILE-NAME '.TXT' INTO #UNIX-FILE-NAME LEAVING NO
+COMPRESS #WINDOWS-FILE-DIRECTORY #EXCP-FILE-NAME '_' #DATN '_' #TIMN '.TXT' INTO #WINDOWS-FILE-NAME LEAVING NO
+*
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WINDOWS-FILE-NAME
+*
+COMPRESS #UNIX-FILE-DIRECTORY #EXCP-FILE-NAME ':' #DATN-A ':' #TIMN-A INTO #UNIX-DESTINATION LEAVING NO
+COMPRESS 'mv' #UNIX-FILE-NAME #UNIX-DESTINATION INTO #SHCMD
+*
+CALL 'SHCMD' #SHCMD
+*
+COMPRESS #UNIX-FILE-DIRECTORY #EMAIL-FILE-NAME '.TXT' INTO #UNIX-FILE-NAME LEAVING NO
+* COMPRESS #WINDOWS-FILE-DIRECTORY #EMAIL-FILE-NAME '_' #DATN '_' #TIMN '.TXT' INTO #WINDOWS-FILE-NAME LEAVING NO
+*
+* CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WINDOWS-FILE-NAME
+*
+COMPRESS #UNIX-FILE-DIRECTORY #EMAIL-FILE-NAME ':' #DATN-A ':' #TIMN-A INTO #UNIX-DESTINATION LEAVING NO
+COMPRESS 'mv' #UNIX-FILE-NAME #UNIX-DESTINATION INTO #SHCMD
+*
+CALL 'SHCMD' #SHCMD
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-EMAIL-FILE
+************************************************************************
+*
+#WORK-NAME    := ST-V.NAME
+#DISPLAY-NAME := FUNCTION-FORM-NAME (<#WORK-NAME,' '>)
+*
+RESET #PDA-ADDRESS                                /** NG1 BEGIN
+MOVE ST-V.MEMBER-CONTACT-ID TO #ADD-CONTACT-ID
+MOVE 'P' TO #ADD-TYPE
+CALLNAT 'ADDN0001' #PDA-ADDRESS
+#DISPLAY-ZIP := DISPLAY-ZIP (< #ADD-ZIP-CODE >)   /** NG1 END
+*
+#DISPLAY-REASON := FUNCTION-ACH-REASON(<#BILL-REJECTION-CODE (#I1),'C'>)
+MOVE EDITED #BILL-REJECTION-AMOUNT (#I1) (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+COMPRESS '$' #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT LEAVING NO
+*
+COMPRESS #BILL-MEMBER-ID (#I1)      #TAB
+  EMAIL-ADDRESS              #TAB        /* TT1
+  ST-V.RANK                  #TAB
+  #DISPLAY-NAME              #TAB
+  #ADD-STREET                #TAB        /*NG1
+  #ADD-CITY                  #TAB        /*NG1
+  #ADD-STATE                 #TAB        /*NG1
+  #DISPLAY-ZIP               #TAB
+  #BILL-REJECTION-CODE (#I1) #TAB
+  #DISPLAY-REASON            #TAB
+  #DISPLAY-AMOUNT            #TAB INTO #FILE-RECORD LEAVING NO
+*
+WRITE WORK 3 #FILE-RECORD
+RESET #FILE-RECORD
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-BILL-FILE
+************************************************************************
+*
+#BANK-ID-NUMBER := ST-V.ID-NUMBER                                /* PM2
+CALLNAT 'GBANKSXX'                                               /* PM2
+  #PDA-BANK                                                      /* PM2
+*
+RESET #BILL-FILE-TABLE (*)
+FOR #I2 1 TO 500
+  IF #BILL-TRAN-CODE (#I1,#I2) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #BILL-ORIG-TRAN (#I1,#I2) = 'APFR'                          /* PM4
+    ADD +1 TO #EIL-I                                             /* PM4
+    #EIL-MEMBER-ID (#EIL-I)     := #BILL-MEMBER-ID (#I1)         /* PM4
+    if #i3 <> 0                                                  /* vt1 Yelena's temporary fix
+      #EIL-POLICY-NUMBER (#EIL-I) := #POLICY-NUMBER (#I3)          /* PM4
+    end-if                                                       /* vt1 Yelena's temporary fix
+    ESCAPE TOP                                                   /* PM4
+  END-IF                                                         /* PM4
+*
+  FOR #I3 1 TO 100
+    IF #POLICY-NUMBER (#I3) = ' '
+      #POLICY-NUMBER (#I3) := #BILL-POLICY-NUMBER (#I1,#I2)
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF #POLICY-NUMBER (#I3) = #BILL-POLICY-NUMBER (#I1,#I2)
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN #BILL-TRAN-CODE (#I1,#I2) = 'PRER' OR = 'DUER' OR = 'BADJ' OR = 'RIDR'
+      ADD #BILL-DEBIT-AMOUNT (#I1,#I2) TO #PREMIUM-AMOUNT (#I3)
+      SUBTRACT #BILL-CREDIT-AMOUNT (#I1,#I2) FROM #PREMIUM-AMOUNT (#I3)
+      IF #PREMIUM-TYPE (#I3) = ' '
+        #PREMIUM-TYPE (#I3) := #BILL-TRAN-CODE (#I1,#I2)
+      ELSE
+        #PREMIUM-TYPE (#I3) := 'CMB4'
+      END-IF
+    WHEN #BILL-TRAN-CODE (#I1,#I2) = 'PADF' OR = 'PADV' OR = 'AIAF' OR = 'AIAV'
+      IF #BANKRUPT NE 'Y'                                        /* PM2
+        ADD #BILL-DEBIT-AMOUNT (#I1,#I2) TO #LOAN-AMOUNT (#I3)
+        SUBTRACT #BILL-CREDIT-AMOUNT (#I1,#I2) FROM #LOAN-AMOUNT (#I3)
+      END-IF                                                     /* PM2
+    WHEN #BILL-ORIG-TRAN (#I1,#I2) = 'APFR'
+      ADD +1 TO #EIL-I                                           /* PM2
+      #EIL-MEMBER-ID (#EIL-I)     := #BILL-MEMBER-ID (#I1)        /* PM2
+      #EIL-POLICY-NUMBER (#EIL-I) := #POLICY-NUMBER (#I3)         /* PM2
+*
+      IF #BANKRUPT NE 'Y'                                        /* PM2
+        ADD #BILL-DEBIT-AMOUNT (#I1,#I2) TO #CAP-LOAN-AMOUNT (#I3)
+        SUBTRACT #BILL-CREDIT-AMOUNT (#I1,#I2) FROM #CAP-LOAN-AMOUNT (#I3)
+      END-IF                                                     /* PM2
+    WHEN NONE
+      IF #BANKRUPT = 'Y'
+          AND #BILL-ORIG-TRAN (#I1,#I2) = 'PRNF' OR = 'PRNV'        /* PM2
+          OR = 'INTF' OR = 'INTV'        /* PM2
+        IGNORE                                                   /* PM2
+      ELSE                                                       /* PM2
+        ADD #BILL-DEBIT-AMOUNT (#I1,#I2) TO #OTHER-AMOUNT (#I3)
+        SUBTRACT #BILL-CREDIT-AMOUNT (#I1,#I2) FROM #OTHER-AMOUNT (#I3)
+        IF #OTHER-TYPE (#I3) = ' '
+          #OTHER-TYPE (#I3) := #BILL-TRAN-CODE (#I1,#I2)
+        ELSE
+          #OTHER-TYPE (#I3) := 'MANY'
+        END-IF
+      END-IF                                                     /* PM2
+  END-DECIDE
+END-FOR
+*
+FOR #I3 1 TO 100
+  IF #POLICY-NUMBER (#I3) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  RESET #BILL-FILE-DISPLAY-FIELDS
+*
+  #DISPLAY-REASON := FUNCTION-ACH-REASON(<#BILL-REJECTION-CODE (#I1),'C'>)
+  IF #2ND OR #STOP
+    #DISPLAY-BILL-TYPE := 'E2'
+  ELSE
+    #DISPLAY-BILL-TYPE := 'E1'
+  END-IF
+*
+  DECIDE FOR EVERY CONDITION
+    WHEN #PREMIUM-AMOUNT (#I3) NE 0
+      PERFORM DETERMINE-PREMIUM-BAR-CODE
+      MOVE EDITED #PREMIUM-AMOUNT (#I3) (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-PREMIUM-AMOUNT
+      MOVE LEFT #DISPLAY-PREMIUM-AMOUNT TO #DISPLAY-PREMIUM-AMOUNT
+      COMPRESS '$' #DISPLAY-PREMIUM-AMOUNT INTO #DISPLAY-PREMIUM-AMOUNT LEAVING NO
+    WHEN #LOAN-AMOUNT (#I3) NE 0
+      #DISPLAY-LOAN-CODE := '93'
+      MOVE EDITED #LOAN-AMOUNT (#I3) (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-LOAN-AMOUNT
+      MOVE LEFT #DISPLAY-LOAN-AMOUNT TO #DISPLAY-LOAN-AMOUNT
+      COMPRESS '$' #DISPLAY-LOAN-AMOUNT INTO #DISPLAY-LOAN-AMOUNT LEAVING NO
+    WHEN #CAP-LOAN-AMOUNT (#I3) NE 0
+      MOVE EDITED #CAP-LOAN-AMOUNT (#I3) (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-CAP-LOAN-AMOUNT
+      MOVE LEFT #DISPLAY-CAP-LOAN-AMOUNT TO #DISPLAY-CAP-LOAN-AMOUNT
+      COMPRESS '$' #DISPLAY-CAP-LOAN-AMOUNT INTO #DISPLAY-CAP-LOAN-AMOUNT LEAVING NO
+    WHEN #OTHER-AMOUNT (#I3) NE 0
+      IF #OTHER-TYPE (#I3) = 'FPFP' AND #PREMIUM-AMOUNT (#I3) = 0
+        MOVE EDITED #OTHER-AMOUNT (#I3) (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-PREMIUM-AMOUNT
+        MOVE LEFT #DISPLAY-OTHER-AMOUNT TO #DISPLAY-PREMIUM-AMOUNT
+        COMPRESS '$' #DISPLAY-PREMIUM-AMOUNT INTO #DISPLAY-PREMIUM-AMOUNT LEAVING NO
+        #DISPLAY-PREMIUM-CODE := '22'
+      ELSE
+        MOVE EDITED #OTHER-AMOUNT (#I3) (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-OTHER-AMOUNT
+        MOVE LEFT #DISPLAY-OTHER-AMOUNT TO #DISPLAY-OTHER-AMOUNT
+        COMPRESS '$' #DISPLAY-OTHER-AMOUNT INTO #DISPLAY-OTHER-AMOUNT LEAVING NO
+      END-IF
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+  COMPRESS #BILL-MEMBER-ID (#I1)      #TAB
+    #POLICY-NUMBER (#I3)       #TAB
+    #DISPLAY-BILL-TYPE         #TAB
+    #DISPLAY-PREMIUM-CODE      #TAB
+    #DISPLAY-PREMIUM-AMOUNT    #TAB
+    #DISPLAY-LOAN-CODE         #TAB
+    #DISPLAY-LOAN-AMOUNT       #TAB
+    #DISPLAY-CAP-LOAN-AMOUNT   #TAB
+    #DISPLAY-OTHER-AMOUNT      #TAB
+    #BILL-REJECTION-CODE (#I1) #TAB
+    #DISPLAY-REASON INTO #FILE-RECORD LEAVING NO
+*
+  WRITE WORK 4 #FILE-RECORD
+  RESET #FILE-RECORD
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE DETERMINE-PREMIUM-BAR-CODE
+************************************************************************
+*
+DECIDE ON FIRST VALUE OF #PREMIUM-TYPE (#I3)
+  VALUE 'PRER'
+    #DISPLAY-PREMIUM-CODE   := '11'
+  VALUE 'DUER'
+    #DISPLAY-PREMIUM-CODE   := '55'
+  VALUE 'RIDR'
+    #DISPLAY-PREMIUM-CODE   := '88'
+  NONE VALUE
+    #DISPLAY-PREMIUM-CODE   := '94'
+END-DECIDE
+*
+END-SUBROUTINE
+*
+END

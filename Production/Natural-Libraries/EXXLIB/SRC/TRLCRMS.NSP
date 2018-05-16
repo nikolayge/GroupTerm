@@ -1,0 +1,270 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* CRM Admin interface : Synchronize CRM based on selected transaction
+*                       log records CRM synchronization process
+*********************************************************************
+* NAME         : TRLCRMS                                            *
+* AUTHOR       : Copyright: MetrostarSystems AAFMAA                 *
+* DESCRIPTION  : Synchronize CRM based on selected transaction      *
+*                log records
+*********************************************************************
+*        MODIFICATION LOG
+*        ================
+* USER   DATE      TAG  REASON
+* NGG    20100606      Initial Creation
+*********************************************************************
+DEFINE DATA
+LOCAL
+1 #Skipped          (A7)  CONST <'Skipped'>
+1 #Synchronized     (A12) CONST <'Synchronized'>
+1 #Action           (A12)
+1 #LOG   (A2/6) INIT < 'AT','NM','AI','CG','CB','CA'>
+1 #LOG-C (I4/7)
+1 #CMD              (A2)
+1 J                 (I4)
+1 #SYNC-RECORDS     (i4)
+1 #CN               (N6)
+1 #EFFECTIVE-DATE-A (A8) 1 REDEFINE #EFFECTIVE-DATE-A
+  2 #EFFECTIVE-DATE (N8)
+1 #SYNC-DATE        (D)
+1 #TRL-FILE-NAME    (A) DYNAMIC
+1 #REP-DATE         (A10)
+1 #REP-TIME         (A9)
+1 #REP-LINE         (A200)
+*                           Log transaction register entries
+1 #LOG-START        (D)
+1 #LOG-END          (D)
+1 #LOG-START-A      (A8) 1 REDEFINE #LOG-START-A
+  2 #LOG-START-N    (N8)
+1 #LOG-END-A        (A8) 1 REDEFINE #LOG-END-A
+  2 #LOG-END-N      (N8)
+1 #tr-exist         (L)
+1 #Proceed          (L)
+1 #TRL-ISN          (P8)
+
+1 TREGISTER VIEW OF A-TRANSACTION-REGISTER
+  2 TRANSREG
+    3 ID-NUMBER        (N6.0)
+    3 PROCESS-IND      (A1)
+    3 NAME             (A25)
+    3 DATE-LAST-UPDATE (N8.0)
+    3 TERMINAL-ID      (A8)
+    3 CLERK-ID         (A3)
+    3 TRANSACTION-DATN (P9.0)
+    3 TRANSACTION-TIMN (P7.0)
+    3 SYNC-FLD-NUM     (N3.0/60)
+  2 OLD-DATA           (A125/1)
+  2 REDEFINE OLD-DATA
+    3 OLD-DATA-G       (1)
+      4 OLD-DATA-3     (A3)
+      4 OLD-DATA-122   (A122)
+  2 NEW-DATA           (A125/1)
+  2 REDEFINE NEW-DATA
+    3 NEW-DATA-G       (1)
+      4 NEW-DATA-3     (A3)
+      4 NEW-DATA-122   (A122)
+
+1 Table view of A-GEN-TABLE
+  2 GEN-KEY                           (A4)   /* D
+  2 GEN-SUB-KEY                       (A3)
+  2 END-DATE                          (N8)
+  2 EFFECTIVE-DATE                    (N8)
+  2 LAST-DATE-UPDATE                  (N8)
+  2 ADDL-INFO                         (A150) 2 REDEFINE ADDL-INFO
+    3 #NEW-CMD   (A3)
+1 #sync-key
+  2 #main-key    (a4)
+  2 #sub-key     (a3)
+  2 #ID-NUMBER   (N8)
+1 redefine #sync-key
+  2 #PRIMARY-KEY (A15)
+
+1 TableH view of A-GEN-TABLE
+  2 GEN-KEY                           (A4)   /* D
+
+END-DEFINE
+
+reset #LOG-C (*)
+ASSIGN #SYNC-DATE = *DATX - 1
+MOVE EDITED #SYNC-DATE (EM=YYYYMMDD) TO #EFFECTIVE-DATE-A
+assign #TRL-FILE-NAME = '/usr/SAG/tmp/'
+compress #TRL-FILE-NAME 'D' #EFFECTIVE-DATE-A '.txt' into
+  #TRL-FILE-NAME leaving no
+DEFINE WORK FILE 2 #TRL-FILE-NAME TYPE 'ASCII'
+
+perform initial-step
+if not #Proceed
+  escape routine
+end-if
+
+READ TREGISTER DESCENDING BY TRANSACTION-DATN
+    starting from #LOG-END-N
+  IF TRANSACTION-DATN < #LOG-START-N
+    ESCAPE BOTTOM
+  END-IF
+
+  ASSIGN #TRL-ISN = *ISN (0103)
+  If FUNCTION-SYNC-FIELD (<#TRL-ISN>)
+    PERFORM LOG-SYNC-RECORD
+  end-if
+
+END-READ
+
+COMPRESS 'Operation' 'CN#' 'Date' 'Time' 'New data'
+  INTO #REP-LINE WITH DELIMITERS
+write work 2 #REP-LINE
+
+assign #main-key = 'SCRM'
+find Table with GEN-KEY = #main-key
+
+*  if #EFFECTIVE-DATE NE Table.EFFECTIVE-DATE
+*    escape top
+*  end-if
+
+  ADD 1 TO #SYNC-RECORDS
+  assign TREGISTER.ID-NUMBER = Table.END-DATE
+  move edited Table.EFFECTIVE-DATE   (EM=9999-99-99) to #REP-DATE
+  move edited Table.LAST-DATE-UPDATE (EM=99:99:999)  to #REP-TIME
+
+  PERFORM CRM-SYNC
+
+  compress full
+    #Action
+    TREGISTER.ID-NUMBER
+    #REP-DATE
+    #REP-TIME
+    ADDL-INFO
+    INTO #REP-LINE WITH DELIMITERS
+  write work 2 #REP-LINE
+
+end-find
+
+ASSIGN #REP-LINE = 'Summary'
+write work 2 #REP-LINE
+FOR J 1 TO 6
+  COMPRESS
+    'Source of request'
+    #LOG (J)
+    'Number of synchronize requests'
+    #LOG-C (J)
+    INTO #REP-LINE WITH DELIMITERS
+  write work 2 #REP-LINE
+END-FOR
+add #LOG-C (1:6) TO #LOG-C (7)
+COMPRESS
+  'Online updates......:' #LOG-C (7)
+  'Total updates.......:' #SYNC-RECORDS
+  INTO #REP-LINE WITH DELIMITERS
+write work 2 #REP-LINE
+
+DEFINE CRM-SYNC
+/*     ========
+MOVE SUBSTRING ( ADDL-INFO ,1,2) TO #CMD
+FOR J 1 TO 6
+  IF #LOG (J) = #CMD
+    ADD 1 TO #LOG-C (J)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+* The synchronization process will be applied for all changes in Transaction Register
+* if j <= 4                   /* The transaction log is for one of the real-time sync commans
+*  assign #Action = #Skipped /* Skip real time sync updates
+* else
+assign #Action = #Synchronized
+CALLNAT 'MBRCRC' TREGISTER.ID-NUMBER     /* CRM SYNC PROCESS
+* end-if
+END-SUBROUTINE
+
+DEFINE LOG-SYNC-RECORD
+/*     ===============
+assign #ID-NUMBER = TREGISTER.ID-NUMBER
+find Table with PRIMARY-KEY = #PRIMARY-KEY
+  if no records found
+    assign Table.GEN-KEY = #main-key
+    assign Table.END-DATE = TREGISTER.ID-NUMBER
+    assign Table.EFFECTIVE-DATE   = TREGISTER.TRANSACTION-DATN
+    assign Table.LAST-DATE-UPDATE = TREGISTER.TRANSACTION-TIMN
+    assign Table.ADDL-INFO = TREGISTER.NEW-DATA (1)
+    store Table
+  end-norec
+  IF Table.EFFECTIVE-DATE < TREGISTER.TRANSACTION-DATN
+      OR  Table.EFFECTIVE-DATE = TREGISTER.TRANSACTION-DATN
+      AND Table.LAST-DATE-UPDATE < TREGISTER.TRANSACTION-TIMN
+    assign Table.EFFECTIVE-DATE   = TREGISTER.TRANSACTION-DATN
+    assign Table.LAST-DATE-UPDATE = TREGISTER.TRANSACTION-TIMN
+    assign Table.ADDL-INFO = TREGISTER.NEW-DATA (1)
+    UPDATE (0184)
+  END-IF
+end-find
+end transaction
+
+end-subroutine
+
+define initial-step
+/*     ============
+
+assign #Proceed = TRUE
+histogram TableH for GEN-KEY
+  compress full
+    *number
+    GEN-KEY
+    INTO #REP-LINE WITH DELIMITERS
+  write work 2 #REP-LINE
+end-histogram
+
+ASSIGN #LOG-START = *DATX - 1
+ASSIGN #LOG-END   = *DATX - 1
+
+MOVE EDITED #LOG-START (EM=YYYYMMDD) TO #LOG-START-A
+MOVE EDITED #LOG-END   (EM=YYYYMMDD) TO #LOG-END-A
+
+READ (1) TREGISTER BY TRANSACTION-DATN
+    starting from #LOG-START-N
+  compress
+    'Transaction log will be read from date '
+    TRANSACTION-DATN
+    INTO #REP-LINE WITH DELIMITERS
+  write work 2 #REP-LINE
+  assign #tr-exist = true
+end-read
+
+if not #tr-exist
+  compress
+    'There are no transaction log records for a given date'
+    #LOG-START-A
+    INTO #REP-LINE WITH DELIMITERS
+  write work 2 #REP-LINE
+  reset #Proceed
+  escape routine
+end-if
+
+assign #main-key = 'SCRM'
+find Table with GEN-KEY = #main-key
+  compress full
+    'Deleted'
+    END-DATE
+    LAST-DATE-UPDATE
+    #NEW-CMD
+    INTO #REP-LINE WITH DELIMITERS
+  write work 2 #REP-LINE
+  delete
+  end transaction
+end-find
+end-subroutine
+
+
+ON ERROR
+  COMPRESS
+    'Error'
+    *ERROR-NR
+    'Line'
+    *ERROR-LINE
+    INTO #REP-LINE WITH DELIMITERS
+  write work 2 #REP-LINE
+  ESCAPE ROUTINE
+END-ERROR
+
+END

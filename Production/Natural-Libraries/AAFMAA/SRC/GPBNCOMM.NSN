@@ -1,0 +1,437 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPBNCOMM - Generic routine to load Letters Data
+* Load the file for creating letters in SSRS
+* Called from different Daily processes
+*************************************************************************
+* Created for Letters @ Emails project
+******************************************************************
+* MODIFICATION LOG
+******************************************************************
+* YAK  12132013       Initial Creation
+* YAK  11032014  YK1  Stop CAP Option letters
+* YAK  08072015  YK2  Stop CAP Pay-Off letters
+* YAK  11152015  YK3  Add CC Expiration letters/emails
+* bz-Name 07/07/2017  Fine Names
+* YAK  11152015  YK4  Add Bill Cycle change notification
+* YF   10092017  YF1  Add AT Emails
+* YAK  10122017  YK5  Add CC to Q conversion letters
+*                     Eliminate duplicate emails
+* YF   01032018  YF2  Add Paid-up Letters
+* YAK  02012018  YK6  Skip conversion letters for Service Only
+* YAK  02020018  YK7  Send CC expiration correspondence to Payer
+*                     Email to Owner/Payer
+* YF   03222018  YF3  Add Webcharge Success Emails
+******************************************************************
+*
+DEFINE DATA
+PARAMETER USING GPBACOMM
+*
+LOCAL USING OBJLLETT      /* Letters file structure
+LOCAL USING ADDA0001      /* PDA to call address generic program
+LOCAL USING GPRA0003      /* YK3 Error log
+LOCAL
+*
+1 LT-V1 VIEW OF A-LETTERS
+  2 LAST-LOAD-DATE
+  2 TEMPLATE-NAME
+  2 OWNER-CN
+  2 IS-SENT
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 PLAN         (9)
+  2 MODE         (9)
+  2 ANNUAL-PREM  (9)
+  2 BILL-TO-DATE (9)
+  2 PAID-TO-DATE (9)
+*
+1 #DATN           (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY    (N4)
+  2 #DATN-MM      (N2)
+  2 #DATN-DD      (N2)
+1 #TIMN           (N7)
+1 #USER           (A8)
+* Letters Templates
+1 #PROCESS-TABLE
+  2 #LAPS                   (A10) CONST <'LAPS'>
+  2 #LAPO                   (A10) CONST <'LAPO'>
+  2 #CAP-OPT                (A10) CONST <'CAP-OPT'>
+  2 #CAP-PAYOFF             (A10) CONST <'CAP-PAYOFF'>
+  2 #CC-EXP                 (A10) CONST <'CC-EXP'>
+  2 #BC-CHANGE              (A10) CONST <'BC-CHANGE'>        /* YK4
+  2 #CC-Q-CONV              (A10) CONST <'CC-Q-CONV'>       /* YK5
+  2 #AT-U2-10               (A10) CONST <'AT-U2-10'>         /* YF1 START
+  2 #AT-U2                  (A10) CONST <'AT-U2'>
+  2 #AT-U3                  (A10) CONST <'AT-U3'>
+  2 #AT-U5                  (A10) CONST <'AT-U5'>
+  2 #AT-S7-P                (A10) CONST <'AT-S7-P'>
+  2 #AT-P-U                 (A10) CONST <'AT-P-U'>           /* YF1 END
+  2 #PAID-UP                (A10) CONST <'PAID-UP'>          /* YF2
+  2 #WCS                    (A10) CONST <'WCS'>              /* YF3
+*
+1 #TEMPLATES-TABLE
+* LAPS Templates
+  2 #TEMPLATE-LAPS       (A20) CONST <'LAPS_LET'>
+  2 #TEMPLATE-LAPO       (A20) CONST <'LAPO_LET'>
+  2 #TEMPLATE-CAP-OPT    (A20) CONST <'CAP_LET_OPT'>
+  2 #TEMPLATE-CAP-PAYOFF (A20) CONST <'CAP_LET_PAYOFF'>
+* Billing notifications Template
+  2 #TEMPLATE-CC-EXP-LET (A20) CONST <'CC_EXP_LET'>
+  2 #TEMPLATE-CC-EXP-EML (A20) CONST <'CC_EXP_EML'>
+  2 #TEMPLATE-BC-CHANGE  (A20) CONST <'BILL_CYCLE_CHG_EML'>    /* YK4
+  2 #TEMPLATE-CC-Q-CONV  (A20) CONST <'CC_Q_CONV_LET'>         /* YK5
+* AT Templates                                                 /* YF1 START
+  2 #TEMPLATE-AT-U2-10   (A20) CONST <'AT_U2_10DAY_EML'>
+  2 #TEMPLATE-AT-U2      (A20) CONST <'AT_U2_EML'>
+  2 #TEMPLATE-AT-U3      (A20) CONST <'AT_U3_EML'>
+  2 #TEMPLATE-AT-U5      (A20) CONST <'AT_U5_EML'>
+  2 #TEMPLATE-AT-S7-P    (A20) CONST <'AT_S7_P_EML'>
+  2 #TEMPLATE-AT-P-U     (A20) CONST <'AT_P_U_EML'>            /* YF1 END
+* Paid-up Template                                             /* YF2
+  2 #TEMPLATE-PU-LET     (A20) CONST <'PAID_UP_LET'>
+* Webcharge Template                                           /* YF3
+  2 #TEMPLATE-WCS        (A20) CONST <'WCS_EML'>
+*
+1 CONSTANTS
+  2 #CLERK-ID               (A3)  CONST <'EDS'>
+  2 #CONTACT-ID-ERROR       (A)   DYNAMIC CONST <'Contact ID for the owner is zero - no information can be retrieved'>
+  2 #Service                (A)   DYNAMIC CONST <'Service'>
+*
+* Work variables
+1 #COUNTERS
+  2 #I                 (I2)
+  2 #OWNER-BAD-CI      (N7)
+
+1 #ID-NUMBER           (N6)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-A       (A6)
+
+1 #DYNAMIC-VARIABLES
+  2 #AMOUNT               (A) DYNAMIC
+  2 #ERROR-MESSAGE        (A75)
+  2 #Dynamic_Name         (A) DYNAMIC
+  2 #CONTACT-ID           (N8)
+  2 #OWNER-CONTACT-ID     (N8)
+  2 #OWNER-CN             (N6)
+  2 #DATE-W               (N8)
+  2 REDEFINE #DATE-W
+    3 #YYYY               (N4)
+    3 #MM                 (N2)
+    3 #DD                 (N2)
+  2 #LET_EML              (L)
+  2 #EML_ONLY             (L)
+  2 #EMAIL-ADDRESS        (A) DYNAMIC
+  2 #EMAIL-ADDRESS-1      (A) DYNAMIC  /* YK7
+  2 #DUE-AMOUNT           (N7.2)
+  2 #DATE                 (N8)
+  2 #N                    (N4)
+*
+END-DEFINE
+*
+#USER := *USER
+#TIMN := *TIMN
+#DATN := *DATN
+*
+PERFORM FIND-TEMPLATE
+IF LT-V.TEMPLATE-NAME <> ' '
+  #ID-NUMBER := PARM-LETTERS.ID-NUMBER
+  F_ST.
+  FIND(1) ST-V WITH ID-NUMBER = #ID-NUMBER
+    PERFORM CREATE-FILE-RECORD
+  END-FIND
+END-IF
+*
+*******************************
+DEFINE SUBROUTINE FIND-TEMPLATE
+*******************************
+*
+DECIDE ON FIRST VALUE PARM-LETTERS.PROCESS-TYPE
+  VALUE #LAPS
+    LT-V.TEMPLATE-NAME := #TEMPLATE-LAPS
+  VALUE #LAPO
+    LT-V.TEMPLATE-NAME := #TEMPLATE-LAPO
+* YK3 >
+  VALUE #CC-EXP
+    IF PARM-LETTERS.MONTH-END
+      LT-V.TEMPLATE-NAME := #TEMPLATE-CC-EXP-LET
+      #LET_EML := TRUE
+    ELSE
+      LT-V.TEMPLATE-NAME := #TEMPLATE-CC-EXP-EML
+      #EML_ONLY := TRUE
+    END-IF
+* < YK3
+* VALUE #CAP-OPT                                    /* YK1
+*   LT-V.TEMPLATE-NAME := #TEMPLATE-CAP-OPT         /* YK1
+*   VALUE #CAP-PAYOFF                               /* YK2
+*     LT-V.TEMPLATE-NAME := #TEMPLATE-CAP-PAYOFF    /* YK2
+*     #LET_EML := TRUE                              /* YK2
+  VALUE #BC-CHANGE                                  /* YK4
+    LT-V.TEMPLATE-NAME := #TEMPLATE-BC-CHANGE       /* YK4
+    #EML_ONLY := TRUE                               /* YK4
+  VALUE #CC-Q-CONV                                  /* YK5
+    LT-V.TEMPLATE-NAME := #TEMPLATE-CC-Q-CONV       /* YK5
+  VALUE #AT-U2-10                                   /* YF1 Start
+    LT-V.TEMPLATE-NAME := #TEMPLATE-AT-U2-10
+    #EML_ONLY := TRUE
+  VALUE #AT-U2
+    LT-V.TEMPLATE-NAME := #TEMPLATE-AT-U2
+    #EML_ONLY := TRUE
+  VALUE #AT-U3
+    LT-V.TEMPLATE-NAME := #TEMPLATE-AT-U3
+    #EML_ONLY := TRUE
+  VALUE #AT-U5
+    LT-V.TEMPLATE-NAME := #TEMPLATE-AT-U5
+    #EML_ONLY := TRUE
+  VALUE #AT-S7-P
+    LT-V.TEMPLATE-NAME := #TEMPLATE-AT-S7-P
+    #EML_ONLY := TRUE
+  VALUE #AT-P-U
+    LT-V.TEMPLATE-NAME := #TEMPLATE-AT-P-U
+    #EML_ONLY := TRUE                               /* YF1 End
+  VALUE #PAID-UP                                            /* YF2 \/
+    LT-V.TEMPLATE-NAME := #TEMPLATE-PU-LET
+* PAYMENT-MODE field is used to hold flag for subreporting
+    LT-V.PAYMENT-MODE := PARM-LETTERS.PROCESS-SUBTYPE       /* YF2 /\
+  VALUE #WCS                                                /* YF3
+    LT-V.TEMPLATE-NAME := #TEMPLATE-WCS
+    #EML_ONLY := TRUE
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+************************************
+DEFINE SUBROUTINE CREATE-FILE-RECORD
+************************************
+* Check duplicate requests if required
+IF PARM-LETTERS.PROCESS-TYPE = #BC-CHANGE OR = #AT-U2-10 OR = #AT-U2 OR = #AT-U3 OR = #AT-U5 OR = #AT-S7-P OR = #AT-P-U
+  FIND LT-V1 WITH LAST-LOAD-DATE = #DATN
+    ACCEPT IF LT-V1.TEMPLATE-NAME = LT-V.TEMPLATE-NAME AND LT-V1.OWNER-CN = PARM-LETTERS.ID-NUMBER AND LT-V1.IS-SENT <> 'Y'
+    ESCAPE MODULE
+  END-FIND
+END-IF
+* Skip letters when only Service paid by Credit Card                      /* YK6
+* There is no conversion from Credit Card to Direct Bill for Services
+IF PARM-LETTERS.POLICY-NUMBER = SCAN(#Service) AND LT-V.TEMPLATE-NAME = #TEMPLATE-CC-Q-CONV
+  ESCAPE MODULE
+END-IF
+*
+#CONTACT-ID := #OWNER-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+IF PARM-LETTERS.POLICY-NUMBER = SCAN(#Service) OR LT-V.TEMPLATE-NAME = #TEMPLATE-BC-CHANGE      /* YK4  /* YK7
+    OR LT-V.TEMPLATE-NAME = #TEMPLATE-AT-U2-10 OR LT-V.TEMPLATE-NAME = #TEMPLATE-AT-U2
+    OR LT-V.TEMPLATE-NAME = #TEMPLATE-AT-U3 OR LT-V.TEMPLATE-NAME = #TEMPLATE-AT-U5
+    OR LT-V.TEMPLATE-NAME = #TEMPLATE-AT-S7-P OR LT-V.TEMPLATE-NAME = #TEMPLATE-AT-P-U
+  #OWNER-CN := PARM-LETTERS.POLICY-NUMBER := #ID-NUMBER
+ELSE
+  PERFORM GET-OWNER-INFO
+  IF LT-V.TEMPLATE-NAME = #TEMPLATE-LAPO OR = #TEMPLATE-CAP-OPT OR = #TEMPLATE-CAP-PAYOFF   /* YK7
+    #I := F_POLICY_SEGMENT(<PARM-LETTERS.POLICY-NUMBER,#ID-NUMBER-A>)
+  END-IF
+END-IF
+* Do not create a record
+IF #OWNER-CONTACT-ID = 0
+  #OWNER-BAD-CI := #OWNER-BAD-CI + 1
+  COMPRESS PARM-LETTERS.POLICY-NUMBER #CONTACT-ID-ERROR INTO #ERROR-MESSAGE
+  COMPRESS #ERROR-MESSAGE ST-V.ID-NUMBER INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+  ESCAPE ROUTINE
+END-IF
+*
+IF PARM-LETTERS.PROCESS-TYPE = #CC-EXP   /* YK7 \/
+* Send credit card expiration letter to Payer address / email to Payer and Owner
+  #EMAIL-ADDRESS := F-PREF-EMAIL(<#OWNER-CONTACT-ID>) /* Get Owner email
+  #OWNER-CONTACT-ID := #CONTACT-ID                    /* Use Payer contact ID to populate name/address information
+  #OWNER-CN         := #ID-NUMBER
+END-IF                                   /* YK7 /\
+*
+LT-V.OWNER-CN := #OWNER-CN
+LT-V.INSURED-CN := #ID-NUMBER            /* YK7
+LT-V.POLICY-NUMBER := PARM-LETTERS.POLICY-NUMBER
+*
+#Dynamic_Name := 'L'                                 /*  bz-Name   /* YF1 mixed case
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+LT-V.OWNER-NAME := #Dynamic_Name
+*
+#Dynamic_Name := 'S1'
+CALLNAT 'GPRS0CNT' #OWNER-CONTACT-ID #Dynamic_Name
+LT-V.OWNER-SALUTATION    := #Dynamic_Name
+*
+IF LT-V.TEMPLATE-NAME <> #TEMPLATE-BC-CHANGE            /* YK4
+  #Dynamic_Name := 'L'                                 /*  bz-Name  /* YF1 mixed case
+  CALLNAT 'GPRS0CNT' #CONTACT-ID #Dynamic_Name
+  LT-V.INSURED-NAME := #Dynamic_Name
+*
+  #ADD-CONTACT-ID := #OWNER-CONTACT-ID
+  #ADD-TYPE       := 'P'  /* Primary
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+  LT-V.ADDRESS-1 := #ADD-LINE-1
+  LT-V.ADDRESS-2 := #ADD-LINE-2
+  LT-V.ADDRESS-3 := #ADD-LINE-3
+END-IF                                                  /* YK4
+*
+IF #EML_ONLY OR #LET_EML                                /* YK7
+  IF #EMAIL-ADDRESS <> ' '
+    #EMAIL-ADDRESS-1 := F-PREF-EMAIL(<#OWNER-CONTACT-ID>)
+    IF #EMAIL-ADDRESS-1 <> ' ' AND #EMAIL-ADDRESS-1 <> #EMAIL-ADDRESS
+      COMPRESS #EMAIL-ADDRESS-1 #EMAIL-ADDRESS INTO #EMAIL-ADDRESS WITH DELIMITER ','
+    END-IF
+  ELSE
+    #EMAIL-ADDRESS := F-PREF-EMAIL(<#OWNER-CONTACT-ID>)
+  END-IF
+  IF #EMAIL-ADDRESS = ' '
+    PARM-LETTERS.ERROR-COUNTER := PARM-LETTERS.ERROR-COUNTER + 1
+    IF #EML_ONLY
+      ESCAPE MODULE
+    END-IF
+  END-IF
+END-IF
+
+DECIDE FOR FIRST CONDITION
+  WHEN PARM-LETTERS.PROCESS-TYPE = #LAPO
+    LT-V.TAX-INCOME-AMOUNT := PARM-LETTERS.TAX-INCOME-AMOUNT
+    EXAMINE DIRECTION BACKWARD LT-V.TAX-INCOME-AMOUNT FOR '.' DELETE FIRST
+*
+    MOVE ST-V.BILL-TO-DATE(#I) TO #DATE-W
+    SUBTRACT 1 FROM #MM
+    IF #MM LT 1
+      ADD 12 TO #MM
+    END-IF
+    #YYYY := #DATN-YYYY
+    IF #MM GE #DATN-MM
+      SUBTRACT 1 FROM #YYYY
+    END-IF
+    #DD := 1
+    LT-V.BILL-NOTE-DATE := FUNCTION-CALENDAR(<#DATE-W,'F'>)
+    LT-V.POLICY-EXPIRATION-DATE := FUNCTION-CALENDAR(<#DATN,'F'>)
+  WHEN PARM-LETTERS.PROCESS-TYPE = #LAPS
+    LT-V.POLICY-EXPIRATION-DATE := FUNCTION-CALENDAR(<#DATN,'F'>)
+* YK3 >
+  WHEN PARM-LETTERS.PROCESS-TYPE = #CC-EXP
+* Policy expiration date field on Letters file is used to hold Credit Card expiration date for
+* 'CC_EXP_LET' and 'CC_EXP_EML' templates
+* January 2016
+    LT-V.POLICY-EXPIRATION-DATE := FUNCTION-CALENDAR(<PARM-LETTERS.EVENT-DATE,'C'>)
+* Policy renewal date field on Letters file is used to hold Credit Card Mode of payment description
+* for 'CC_EXP_LET' and 'CC_EXP_EML' templates
+* quarterly, monthly, semi-annually, annually
+    LT-V.POLICY-RENEWAL-DATE    := PARM-LETTERS.ADD-INFO
+* Insured Name field on Letters file is used to hold referenced policy numbers impacted by Credit Card expiration
+* for 'CC_EXP_LET' and 'CC_EXP_EML' templates
+* 199229-1 and other
+    IF PARM-LETTERS.REFERENCE = SCAN('Service')
+      PARM-LETTERS.REFERENCE := #ID-NUMBER
+    END-IF
+    LT-V.INSURED-NAME := PARM-LETTERS.REFERENCE
+* < YK3
+  WHEN PARM-LETTERS.PROCESS-TYPE = #CAP-OPT
+    LT-V.PLAN          := ST-V.PLAN(#I)
+    LT-V.DEATH-BENEFIT := PARM-LETTERS.FACE-AMOUNT
+* Bill note date is used for Loan payoff date
+    LT-V.BILL-NOTE-DATE := FUNCTION-CALENDAR(<PARM-LETTERS.PAYOFF-DATE,'F'>)
+  WHEN PARM-LETTERS.PROCESS-TYPE = #CAP-PAYOFF
+    LT-V.PLAN          := ST-V.PLAN(#I)
+    LT-V.DEATH-BENEFIT := PARM-LETTERS.FACE-AMOUNT
+    #LET_EML := TRUE
+  WHEN PARM-LETTERS.PROCESS-TYPE = #AT-U2-10             /* YF1 START
+* Plan field on Letters file is used to hold referenced phone extension for AT_U2_10DAY_EML, AT_U2_EML,
+* AT_U3_EML, and AT_U5_EML templates
+* FORMATTED-ISSUE-DATE field on Letters file is used to hold referenced status date for AT_U2_10DAY_EML template
+    LT-V.PLAN := PARM-LETTERS.ADD-INFO
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.FACE-AMOUNT
+  WHEN PARM-LETTERS.PROCESS-TYPE = #AT-U2
+* FORMATTED-ISSUE-DATE field on Letters file is used to hold referenced AT-Number for AT_U2_EML, AT_U3_EML,
+* AT_U5_EML, AT_S7_P_EML, and AT_P_U_EML templates
+    LT-V.PLAN := PARM-LETTERS.ADD-INFO
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.REFERENCE
+  WHEN PARM-LETTERS.PROCESS-TYPE = #AT-U3
+    LT-V.PLAN := PARM-LETTERS.ADD-INFO
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.REFERENCE
+  WHEN PARM-LETTERS.PROCESS-TYPE = #AT-U5
+    LT-V.PLAN := PARM-LETTERS.ADD-INFO
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.REFERENCE
+  WHEN PARM-LETTERS.PROCESS-TYPE = #AT-S7-P
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.REFERENCE
+  WHEN PARM-LETTERS.PROCESS-TYPE = #AT-P-U
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.REFERENCE    /* YF1 END
+  WHEN PARM-LETTERS.PROCESS-TYPE = #PAID-UP                                        /* YF2 START
+* DEATH-BENEFIT field on Letters file is used to store allotment amount
+* DEATH-BENEFIT-DECREASED-1 field on Letters file is used to store reduced allotment amount
+    LT-V.PLAN := PARM-LETTERS.PLAN
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.EVENT-DATE-A
+    LT-V.POLICY-EXPIRATION-DATE := PARM-LETTERS.EVENT-DATE-B
+    LT-V.DEATH-BENEFIT := PARM-LETTERS.AMOUNT
+    LT-V.DEATH-BENEFIT-DECREASED-1 := PARM-LETTERS.OTHER-AMOUNT                     /* YF2 END
+* YK5 >
+  WHEN PARM-LETTERS.PROCESS-TYPE = #CC-Q-CONV
+* Use Death Benefit fields to store rejected payment amounts
+* Use Plan field to store rejected Credit Card number (last 4 digit)
+    LT-V.DEATH-BENEFIT := PARM-LETTERS.TOTAL-AMOUNT
+    LT-V.DEATH-BENEFIT-DECREASED-1 := PARM-LETTERS.AMOUNT
+    LT-V.DEATH-BENEFIT-DECREASED-2 := PARM-LETTERS.OTHER-AMOUNT
+    LT-V.INSURED-NAME := PARM-LETTERS.REFERENCE
+    #N := *LENGTH(PARM-LETTERS.ADD-INFO)
+    #N := #N - 3
+    LT-V.PLAN := SUBSTR(PARM-LETTERS.ADD-INFO,#N)
+* < YK5
+  WHEN PARM-LETTERS.PROCESS-TYPE = #WCS                                              /* YF3
+* Use Plan field to store description of the mode of payment
+* Use Monthly Premium to store current payment amount
+* Use Death Benefit field to store next payment amount
+* Use Formatted Issue Date to store Next Payment Date
+    LT-V.PAYMENT-MODE := PARM-LETTERS.PROCESS-SUBTYPE
+    LT-V.PLAN := PARM-LETTERS.PLAN
+    LT-V.MONTHLY-PREMIUM := PARM-LETTERS.AMOUNT
+    LT-V.DEATH-BENEFIT := PARM-LETTERS.OTHER-AMOUNT
+    LT-V.FORMATTED-ISSUE-DATE := PARM-LETTERS.EVENT-DATE-A
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+LT-V.LAST-LOAD-USER := #USER
+LT-V.LAST-LOAD-DATE := #DATN
+LT-V.LAST-LOAD-TIME := *TIMN
+*
+IF #EML_ONLY
+  LT-V.EMAIL-ADDRESS := #EMAIL-ADDRESS
+  STORE LT-V
+  PARM-LETTERS.EML-COUNTER := PARM-LETTERS.EML-COUNTER + 1
+  ESCAPE ROUTINE
+END-IF
+*
+STORE LT-V
+PARM-LETTERS.LET-COUNTER := PARM-LETTERS.LET-COUNTER + 1
+* if email to be sent find an email address
+IF #LET_EML AND #EMAIL-ADDRESS <> ' '
+  LT-V.EMAIL-ADDRESS := #EMAIL-ADDRESS
+  EXAMINE LT-V.TEMPLATE-NAME FOR 'LET' REPLACE 'EML'
+  STORE LT-V
+  PARM-LETTERS.EML-COUNTER := PARM-LETTERS.EML-COUNTER + 1
+END-IF
+*
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE GET-OWNER-INFO
+********************************
+*
+IF PARM-LETTERS.PROCESS-TYPE = #CC-Q-CONV         
+* One letter created per Payer CN - sent only to the Payer address
+* Passed to this program as PARM-LETTERS.ID-NUMBER
+  #OWNER-CN := #ID-NUMBER
+ELSE
+  #OWNER-CN := GET-POLICY-OWNER(<PARM-LETTERS.POLICY-NUMBER>)
+END-IF
+*
+IF #OWNER-CN <> #ID-NUMBER
+  #OWNER-CONTACT-ID := F-GET-CONTACT-ID(<#OWNER-CN>)
+END-IF
+*
+END-SUBROUTINE
+*
+END

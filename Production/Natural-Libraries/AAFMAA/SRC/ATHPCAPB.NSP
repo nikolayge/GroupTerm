@@ -1,0 +1,232 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+****************************************************************************
+* NAME         : ATHPCAPB                                                  *
+*                                                                          *
+* FUNCTION  : Create daily file for all AIL/EIL made for the current day   *
+*                                                                          *
+*                               MODIFICATION LOG                           *
+* USER DATE      TAG  REASON                                               *
+* vxt  05182012       Initial creation                                     *
+* JNT  08292013  JT1  account for address deletion in databases            *
+****************************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+local using G3500AAD
+*
+LOCAL
+1 status view of a-status
+  2 id-number
+  2 member-contact-id
+  2 cap-entry-date
+  2 rank
+  2 x-alt-lp-date (9)
+*
+1 AT view of A-appl-tracking
+  2 ssn
+  2 id-number
+  2 rank
+*   2 zip-code                       /* JT1
+  2 internet-addr
+  2 contact-code
+  2 home-phone
+  2 work-phone
+  2 home-phone-intr
+  2 work-phone-intr
+  2 cap-ind
+*
+1 CONT view of A-contacts
+  2 last-name
+  2 first-name
+  2 middle-name
+  2 redefine middle-name
+    3 #middle-name     (a25)
+  2 contact-id
+  2 date-of-birth
+  2 redefine date-of-birth
+    3 #dob-yyyy   (a4)
+    3 #dob-mm     (a2)
+    3 #dob-dd     (a2)
+  2 ssn
+*
+1 #pda-rank
+  2 #PASS-COMMAND       (A2)
+  2 #RANK-PASS          (A3)
+  2 #MIL-ID-PASS        (A3)
+  2 #INVALID            (L)
+  2 #RANK-PAY-TBL-DISPL (P2)
+  2 #RANK-LITERAL-PASS  (A23)
+  2 #RANK-DISPLAY       (A5)
+  2 #CONTACT-ID-r         (N8)
+  2 #RANK-ABBR          (A) DYNAMIC
+  2 #LETTER-ENV         (A) DYNAMIC
+  2 #SALUTATION         (A) DYNAMIC
+  2 #SALUTATION-WITH-NAME (A) DYNAMIC
+*
+1 #curr-date-d                      (d)
+1 #curr-date                        (N8)
+1 REDEFINE #curr-date
+  2 #curr-date-YYYY                 (N4)
+  2 redefine #curr-date-yyyy
+    3 #curr-date-cent               (n2)
+    3 #curr-date-year               (n2)
+  2 #curr-date-MM                   (n2)
+  2 #curr-date-DD                   (n2)
+1 #curr-date-a                     (a8)    /* for test vt2
+1 #cap-date                        (n8)
+*
+1 #work-date                        (N8)
+1 REDEFINE #work-date
+  2 #work-date-YYYY                 (N4)
+  2 redefine #work-date-yyyy
+    3 #work-date-cent               (n2)
+    3 #work-date-year               (n2)
+  2 #work-date-MM                   (n2)
+  2 #work-date-DD                   (n2)
+*
+1 #CITY     (A22)
+1 #STATE    (A2)
+*
+1 #TAB          (A1) INIT <H'09'>
+1 #AFB-file     (a200)
+1 #alt-lp-date  (a10)
+1 #i            (i2)
+1 #cap          (l)
+*
+1 #LAST            (A25)
+1 #FIRST-20        (A20)
+1 #MI              (A1)
+1 #STREET          (A25)
+1 #STREET-2        (A25)
+1 #CITY-STATE      (A53)
+1 #date-of-birth   (a8)
+1 redefine #date-of-birth
+  2 #DOB-YYYY   (a4)
+  2 #dob-mm     (a2)
+  2 #dob-dd     (a2)
+1 #home-phone      (a26)
+1 #work-phone      (a26)
+1 #home-phone-intr (a6)
+1 #work-phone-intr (a6)
+1 #e-mail          (a70)
+1 #sig-card        (a1)
+1 #rec-written     (p9)
+
+*
+END-DEFINE
+*
+DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/AFB-FILE.TXT' TYPE 'ASCII'
+*  ATTRIBUTES 'APPEND'
+*
+
+COMPRESS 'Account'
+  #TAB 'SSN'
+  #TAB 'Rank'
+  #TAB 'Last-Name'
+  #TAB 'First-Name'
+  #TAB 'MI'
+  #TAB 'Address1'
+  #TAB 'Address2'
+  #TAB 'CityState'
+  #TAB 'Zip'
+  #TAB 'DOB'
+  #TAB 'Home Phone'
+  #TAB 'Work Phone'
+  #TAB 'Email Addr'
+  #TAB 'Sig-Card'
+  INTO #AFB-FILE LEAVING NO
+WRITE WORK 1 #AFB-FILE
+*
+move *datn to #curr-date
+*
+* move 20120521 to #curr-date                                  /* for test only  \/
+* move '20120521' to #curr-date-a
+*                                                               /* for test only /\
+WRITE 'process started' #curr-date
+*
+read Status by ISN
+*
+  reset #cap-date #cap
+  For1. for #i 1 9
+    if status.x-alt-lp-date (#i) ne 0
+      move status.x-alt-lp-date(#i)  to #cap-date
+      move true to #cap
+      escape bottom (for1.)
+    end-if
+  end-for
+*
+  if (#curr-date = #cap-date) and #cap
+*
+    reset #e-mail #rank  #home-phone #work-phone
+    f2. find cont with cont.contact-id = member-contact-id
+      if no
+        escape bottom
+      end-norec
+      #last-name      := cont.last-name
+      #first-name     := cont.first-name
+      #middle-name    := cont.middle-name
+      compress cont.#dob-mm cont.#dob-dd cont.#dob-yyyy into #date-of-birth leaving no
+      #ssn            := cont.ssn
+*
+      callnat 'emailn01' cont.contact-id #e-mail
+*
+      move status.id-number to #cga-scr-id
+      callnat 'g3500sad' #cga-master #PDA-AREA-G3500AAD
+*
+      move #ext-city to #city-state
+      compress #city-state #ext-state into #city-state
+*
+      move cont.contact-id to #CONTACT-ID-r
+      callnat 'RANKN001' #pda-rank
+      #rank := #rank-abbr
+*
+      #home-phone  := f-formatted-phone(<cont.contact-id,'H'>)
+      #work-phone  := f-formatted-phone(<cont.contact-id,'W'>)
+*
+      write cont.contact-id #home-phone #work-phone
+      f3. find at with at.ssn = cont.ssn
+        if no
+          escape bottom (f3.)
+        end-norec
+        IF AT.CAP-IND = 'Y'
+*        #ssn         := at.ssn
+*        #rank        := at.rank
+*        #zip-code    := at.zip-code
+*        #home-phone  := at.home-phone
+*        #work-phone  := at.work-phone
+*        #e-mail      := at.internet-addr
+          #sig-card    := at.contact-code
+        END-IF
+      end-find
+*
+      COMPRESS      /* the 1st slot is for account # for afb to propagate
+        #TAB #SSN
+        #TAB #RANK
+        #TAB #LAST-name
+        #TAB #FIRST-name
+        #TAB #MIddle-name
+        #TAB #ext-STREET
+        #TAB #ext-STREET-2
+        #TAB #CITY-STATE
+        #TAB #ext-ZIP
+        #TAB #DATE-OF-BIRTH     /* format is mmddyyyy
+        #TAB #home-phone /* #HOME-PHONE-INTR
+        #TAB #WORK-PHONE /* #WORK-PHONE-INTR
+        #TAB #E-MAIL
+        #TAB #sig-card
+        INTO #AFB-FILE LEAVING NO
+      WRITE WORK 1 #AFB-FILE
+      add 1 to #rec-written
+    end-find
+  end-if
+*
+  at end of data
+    write 'records written to the out file ' #rec-written
+  end-enddata
+*
+end-read
+end
+*

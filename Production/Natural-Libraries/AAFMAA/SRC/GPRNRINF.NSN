@@ -1,0 +1,345 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************************
+* SUBPROGRAM-ID: GPRNRINF
+* DESCRIPTION: Common module to validate personal date fields based on certain
+*              business rules; called by Admin System (UNIX)
+*              The error message codes below are grouped according to category:
+*              Gen-Table Primary Key: ERRD
+*              Gen-Table Secondary Key: 201-399
+*              Please note the following very well before using this module:
+*              1. This program can validate all fields at the same time.
+*                 If this is the purpose, calling program must populate the
+*                 #VALIDATE-FLAG array with "Y".
+*              2. This program can validate one field or more at a time. If this
+*                 is the purpose, populate with "Y" the occurrence(s) in the
+*                 #VALIDATE-FLAG array that correspond(s) to the field in
+*                 #MILITARY-INFO.
+**************************************************************************
+*        MODIFICATION LOG
+**************************************************************************
+* USER   DATE      TAG  REASON
+* RSE  05-08-2012  None Creation
+**************************************************************************
+DEFINE DATA
+PARAMETER USING GPRARINF
+LOCAL
+1 CNT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 CONTACT-TYPE
+  2 SSN
+  2 DATE-OF-DEATH
+  2 DATE-OF-BIRTH
+*
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+*
+1 CR2-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 ROLE-1-CD
+*
+1 #I                  (I2)
+1 #X                  (N2)
+1 #VALID              (L)
+1 #ADD-MODE           (L)
+1 #MEMBER-DOD         (N8)
+1 #INDIVIDUAL         (L)
+1 #ORGANIZATION       (L)
+END-DEFINE
+*
+FIND CNT-V WITH CONTACT-ID = MEMBER-CONTACT-ID    /* get info of member 
+  #MEMBER-DOD := CNT-V.DATE-OF-DEATH
+END-FIND
+*
+FIND CNT-V WITH CONTACT-ID = RELATION-CONTACT-ID  /* get info of member's relation
+  IF CNT-V.CONTACT-TYPE = 'I'
+    MOVE TRUE TO #INDIVIDUAL
+  ELSE
+    MOVE TRUE TO #ORGANIZATION
+  END-IF
+END-FIND
+*
+DECIDE FOR EVERY CONDITION
+  WHEN ROLE <> ' ' AND #VALIDATE-FLAG(1) = 'Y'                     /* Role
+    PERFORM VALIDATE-ROLE
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+  WHEN STATUS-CODE-SP <> ' ' AND #VALIDATE-FLAG(2) = 'Y'           /* Spouse Status Code
+    PERFORM VALIDATE-SPOUSE-STATUS
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+  WHEN FORMER-SPOUSE-STATUS <> ' ' AND #VALIDATE-FLAG(3) = 'Y'    /* Former Spouse Status Code
+    PERFORM VALIDATE-FORMER-SPOUSE-STATUS
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+  WHEN DEPN-STATUS-CODE <> ' ' AND #VALIDATE-FLAG(4) = 'Y'        /* Dependent Status Code
+    PERFORM VALIDATE-FORMER-SPOUSE-STATUS
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+  WHEN #RELATION-INFO.SSN <> 0 AND #VALIDATE-FLAG(5) = 'Y'        /* SSN
+    PERFORM CHECK-IF-DUPLICATE
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+  WHEN #RELATION-INFO.DATE-OF-MARRIAGE <> 0 AND #VALIDATE-FLAG(6) = 'Y'   /* Date of Marriage
+    PERFORM VALIDATE-DOM
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+  WHEN #RELATION-INFO.MARRIAGE-CERT-CODE <> ' ' AND #VALIDATE-FLAG(7) = 'Y'   /* Marriage Cert Code
+    PERFORM VALIDATE-MCC
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+ WHEN #RELATION-INFO.DATE-OF-DIVORCE <> 0 AND #VALIDATE-FLAG(8) = 'Y'    /* Date of Divorce
+    PERFORM VALIDATE-DODIV
+    IF #SYSTEM = 'UNIX' AND NOT #VALID
+      ESCAPE ROUTINE
+    END-IF
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+*******************************
+DEFINE SUBROUTINE VALIDATE-ROLE
+*******************************
+ADD 1 TO #I
+IF FUNCTION-CV-CHECK(<'041',ROLE>) NE ' ' OR ROLE = 'M'
+  #ERROR-CODE (#I) := 306                                             /* Invalid Role/Relationship
+  ESCAPE ROUTINE
+END-IF
+*
+**IF #ADD-MODE
+RESET #X
+FIND CR-V WITH CONTACT-2-ID = RELATION-CONTACT-ID
+  IF CONTACT-1-ID = MEMBER-CONTACT-ID
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+IF ROLE = 'S' AND CR-V.ROLE-2-CD = 'S' 
+  IF CONTACT-1-ID NE MEMBER-CONTACT-ID
+    #ERROR-CODE (#I) := 308                                         /* Spouse already exists for Member.
+  END-IF
+END-IF
+IF ROLE = 'X' AND CR-V.ROLE-2-CD = 'X'
+  FIND CR-V WITH CONTACT-2-ID = RELATION-CONTACT-ID
+    IF CONTACT-1-ID = MEMBER-CONTACT-ID
+      IF ROLE-2-CD = 'X'
+        ADD 1 TO #X
+      END-IF
+    END-IF
+  END-FIND
+  IF #X > 1
+    #ERROR-CODE (#I) := 309                                         /* Two former spouses already exist for member.
+  END-IF
+END-IF
+IF ROLE = 'Y' AND CR-V.ROLE-2-CD = 'Y'
+  #ERROR-CODE (#I) := 310                                           /* Former husband already exists for Member.
+END-IF
+**END-IF
+*
+IF #ERROR-CODE (#I) = ' '
+  IF (#INDIVIDUAL AND FUNCTION-CONTACT-TYPE(<ROLE>) = 'ORGANIZATION') OR
+      (#ORGANIZATION AND FUNCTION-CONTACT-TYPE(<ROLE>) = 'INDIVIDUAL')
+    #ERROR-CODE (#I) := 307                                        /* Role and Contact Type mismatch
+  END-IF
+END-IF
+*
+IF #ERROR-CODE (#I) = ' '
+  MOVE TRUE TO #VALID
+  SUBTRACT 1 FROM #I
+END-IF
+*
+END-SUBROUTINE
+************************************
+DEFINE SUBROUTINE CHECK-IF-DUPLICATE
+************************************
+ADD 1 TO #I
+*
+FIND CNT-V WITH CONTACT-ID = MEMBER-CONTACT-ID AND SSN = #RELATION-INFO.SSN
+  MOVE 201 TO #ERROR-CODE(#I)                                    /* SSN already belongs to this Member.
+  ESCAPE ROUTINE
+END-FIND
+*
+FIND CR-V WITH CONTACT-1-ID = MEMBER-CONTACT-ID
+  FIND CNT-V WITH CONTACT-ID = CONTACT-2-ID
+    IF CNT-V.SSN = #RELATION-INFO.SSN
+      DECIDE ON FIRST VALUE OF ROLE-2-CD
+        VALUE 'K','G','D'
+          MOVE 219 TO #ERROR-CODE(#I)                            /* SSN already belongs to a DEPN of this Member.
+        VALUE 'S'
+          IF ROLE NE 'X'
+            MOVE 220 TO #ERROR-CODE(#I)                          /* SSN already belongs to the Spouse of this Member.
+          ELSE
+            ESCAPE BOTTOM
+          END-IF
+        VALUE 'X'
+          IF ROLE NE 'S'
+            MOVE 221 TO #ERROR-CODE(#I)                          /* SSN already belongs to the Former Spouse of this Member.
+          ELSE
+            ESCAPE BOTTOM
+          END-IF
+        NONE
+          MOVE 222 TO #ERROR-CODE(#I)                            /* SSN already belongs to an OTHER relation of Member.
+      END-DECIDE
+    ELSE
+      IF ROLE = 'S'
+        PERFORM CHECK-IF-NOT-SPOUSE-OF-ANOTHER
+      END-IF
+    END-IF
+    IF #ERROR-CODE(#I) <> ' '
+      ESCAPE ROUTINE
+    END-IF
+  END-FIND
+END-FIND
+*
+IF #ERROR-CODE(#I) <> ' '
+  ESCAPE ROUTINE
+ELSE
+  SUBTRACT 1 FROM #I
+  MOVE TRUE TO #VALID
+END-IF
+*
+END-SUBROUTINE
+************************************************
+DEFINE SUBROUTINE CHECK-IF-NOT-SPOUSE-OF-ANOTHER
+************************************************
+FIND CNT-V WITH SSN = #RELATION-INFO.SSN
+  FIND CR2-V WITH CONTACT-1-ID = CNT-V.CONTACT-ID
+    IF ROLE-1-CD = 'S'
+      MOVE 234 TO #ERROR-CODE(#I)                                /* This SSN belongs to the Spouse of another member.
+    END-IF
+  END-FIND
+  FIND CR2-V WITH CONTACT-2-ID = CNT-V.CONTACT-ID
+    IF ROLE-1-CD = 'S'
+      MOVE 234 TO #ERROR-CODE(#I)                                /* This SSN belongs to the Spouse of another member.
+    END-IF
+  END-FIND
+END-FIND
+*
+END-SUBROUTINE
+****************************************
+DEFINE SUBROUTINE VALIDATE-SPOUSE-STATUS
+****************************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN FUNCTION-CV-CHECK (<'032',STATUS-CODE-SP>) NE ' '
+    MOVE 250 TO #ERROR-CODE(#I)                                    /* Invalid Spouse Status Code.
+  WHEN NOT (STATUS-CODE-SP = 'D' OR = 'P') AND #MEMBER-DOD > 0 AND DATE-OF-DEATH > 0
+    MOVE 238 TO #ERROR-CODE(#I)                                  /* CALL EDS TO UNDEAD A WIDOW.
+  WHEN NOT (STATUS-CODE-SP = 'F' OR = 'D' OR = 'R') AND                                     /* Enter Spouse info if Status is not blank.
+      (DATE-OF-DEATH > 0 OR DATE-OF-DIVORCE > 0)
+    MOVE 239 TO #ERROR-CODE(#I)                                  /* Sps status must be "F/D/R" with DIV/DTH Dt.
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+***********************************************
+DEFINE SUBROUTINE VALIDATE-FORMER-SPOUSE-STATUS
+***********************************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN FUNCTION-CV-CHECK (<'032',STATUS-CODE-SP>) NE ' '
+    MOVE 240 TO #ERROR-CODE(#I)                                  /* Former Spouse status must be "F/D/G".
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+**************************************
+DEFINE SUBROUTINE VALIDATE-DEPN-STATUS
+**************************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN FUNCTION-CV-CHECK (<'059',DEPN-STATUS-CODE>) NE ' '
+    MOVE 252 TO #ERROR-CODE(#I)                                  /* Invalid Dependent Status Code.
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+******************************
+DEFINE SUBROUTINE VALIDATE-DOM
+******************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN DATE-OF-MARRIAGE NE MASK(YYYYMMDD)
+    MOVE 200 TO #ERROR-CODE(#I)                                  /* Invalid date format - must be MMDDYYYY.
+  WHEN DATE-OF-MARRIAGE > *DATN
+    MOVE 215 TO #ERROR-CODE(#I)                                  /* Future Date of Marriage is invalid. 
+  WHEN DATE-OF-MARRIAGE < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)                                  /* Date cannot be before 1900.
+  WHEN DATE-OF-BIRTH > 0 AND DATE-OF-BIRTH > DATE-OF-MARRIAGE   
+    MOVE 204 TO #ERROR-CODE(#I)                                  /* Date of Birth must precede Date of Marriage.
+  WHEN DATE-OF-DIVORCE > 0 AND DATE-OF-MARRIAGE > DATE-OF-DIVORCE
+    MOVE 206 TO #ERROR-CODE(#I)                                  /* Marriage must precede divorce.
+  WHEN DATE-OF-DEATH > 0 AND DATE-OF-MARRIAGE > DATE-OF-DEATH
+    MOVE 207 TO #ERROR-CODE(#I)                                  /* Marriage must precede death. 
+*  WHEN ROLE = 'K' OR = 'G' OR = 'D'
+*    MOVE 208 TO #ERROR-CODE(#I)                                  /* Date of Marriage not allowed for this Role.
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+******************************
+DEFINE SUBROUTINE VALIDATE-MCC
+******************************
+IF FUNCTION-CV-CHECK (<'033',MARRIAGE-CERT-CODE>) NE ' '
+  ADD 1 TO #I
+  MOVE 228 TO #ERROR-CODE(#I)                                    /* Invalid Marriage Cert. Code
+ELSE
+  MOVE TRUE TO #VALID
+END-IF
+*
+END-SUBROUTINE
+********************************
+DEFINE SUBROUTINE VALIDATE-DODIV
+********************************
+ADD 1 TO #I
+DECIDE FOR FIRST CONDITION
+  WHEN DATE-OF-DIVORCE NE MASK(YYYYMMDD)
+    MOVE 200 TO #ERROR-CODE(#I)                                  /* Invalid date format - must be MMDDYYYY.
+  WHEN DATE-OF-DIVORCE > *DATN
+    MOVE 216 TO #ERROR-CODE(#I)                                  /* Future Date of Divorce is invalid. 
+  WHEN DATE-OF-DIVORCE < 19000000
+    MOVE 202 TO #ERROR-CODE(#I)                                  /* Date cannot be before 1900.
+  WHEN DATE-OF-BIRTH > 0 AND DATE-OF-BIRTH > DATE-OF-DIVORCE   
+    MOVE 205 TO #ERROR-CODE(#I)                                  /* Date of Birth must precede Date of Divorce.
+  WHEN DATE-OF-DEATH > 0 AND DATE-OF-DIVORCE > DATE-OF-DEATH
+    MOVE 209 TO #ERROR-CODE(#I)                                  /* Divorce must precede death. 
+*  WHEN ROLE = 'K' OR = 'G' OR = 'D'                             
+*    MOVE 210 TO #ERROR-CODE(#I)                                  /* Date of Divorce not allowed for this Role.  
+  WHEN NONE
+    SUBTRACT 1 FROM #I
+    MOVE TRUE TO #VALID
+END-DECIDE
+*
+END-SUBROUTINE
+**************
+END
+
+
+
+
+
+
+
+
+
+
+
+

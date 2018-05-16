@@ -1,0 +1,277 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Benefits/External Life Insurance Information
+* Business Logic
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    10202011       Initial Creation
+* YAK    08012014  YK1  Contact Normalization
+* YAK    02042016  YK2  MC-II FIR
+* BZ     01182017  bz-2439 Change calculation for NSLI insurance
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0008
+PARAMETER 1 #ErrorCode (A3)
+*
+LOCAL USING OBJLEXTP
+LOCAL USING OBJLMINF
+LOCAL USING GWAGELXX
+LOCAL USING ERROR_L
+LOCAL
+*
+1 CNT-V VIEW OF A-CONTACTS 
+  2  DATE-OF-BIRTH 
+*
+1 #DATN             (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY      (N4)
+1 #TIMN             (N7)
+1 #I                (I2)
+1 #EXT-LIFE-POLICIES (A) DYNAMIC CONST<'ExternalLifeInsurance'>
+1 #BENEFITS-SS       (A) DYNAMIC CONST<'BenefitsSS'>
+1 #BENEFITS-VA       (A) DYNAMIC CONST<'BenefitsVA'>
+1 #BENEFITS-MILITARY (A) DYNAMIC CONST<'BenefitsMilitary'>
+1 #BENEFITS-OTHER    (A) DYNAMIC CONST<'BenefitsOther'>
+1 #TRUE              (A) DYNAMIC CONST<'true'>
+1 #FALSE             (A) DYNAMIC CONST<'false'>
+1 #SS-DATE           (N8)
+1 REDEFINE #SS-DATE
+  2 #SS-DATE-YYYYMM  (N6)
+  2 #SS-DATE-DD      (N2)
+1 #INS-CONTACT-ID    (N8)
+1 #POL-NAME          (A) DYNAMIC
+1 #PREV-YEAR-WAGE    (N6)
+1 #TWO-YEAR-WAGE     (N6)
+1 #MemberBenefitAmt  (P5)
+1 #INCLUDE-INS-CODES (A1/4) INIT <'2','4','*',' '>
+1 #MEMBER-INS-CODES  (A1/8) INIT <'1','2','3','4','*',' ','5','6'>
+1 #SPGEN-INS-CODES   (A1/4) INIT <'&','X','7','8'>
+1 #SGLI-MBR          (A) DYNAMIC INIT <'SGLI-MBR'>
+1 #SGLI-CHILD        (A) DYNAMIC INIT <'SGLI-CHILD'>
+1 #SGLI-SPOUSE       (A) DYNAMIC INIT <'SGLI-SPOUSE'>
+1 #MEMBER            (A) DYNAMIC INIT <'MEMBER'>
+1 #CHILD             (A) DYNAMIC INIT <'CHILD'>
+1 #SPOUSE            (A) DYNAMIC INIT <'SPOUSE'>
+1 #SP-GEN            (A) DYNAMIC INIT <'SP-GEN'>
+*
+1 #ADDED-SGLI-LINES  (N3)
+1 #ADDED-SPS-SGLI  (L)
+1 #ADDED-DEP-SGLI  (L)
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+ FIND(1) CNT-V WITH ID-NUMBER = MemberBenefits.CN
+ END-FIND
+  
+DECIDE ON FIRST MemberBenefits.BenefitType
+  VALUE #EXT-LIFE-POLICIES
+    PERFORM GET-EXT-POLICIES
+  VALUE #BENEFITS-SS
+    PERFORM GET-SS-BENEFITS
+  VALUE #BENEFITS-VA
+    PERFORM GET-VA-BENEFITS
+  VALUE #BENEFITS-MILITARY
+    PERFORM GET-MILITARY-BENEFITS
+  VALUE #BENEFITS-OTHER
+    PERFORM GET-OTHER-BENEFITS
+  NONE
+    IGNORE
+END-DECIDE
+*
+**********************************
+DEFINE SUBROUTINE GET-EXT-POLICIES
+**********************************
+*
+FIND(1) FIR-V WITH ID-NUMBER = MemberBenefits.CN
+  IF WIDOW-FLAG NE 'Y'
+    CALLNAT 'ESGLISDI'   /* add SGLI extra lines
+      MemberBenefits.CN
+      POL-CODE     (*)
+      POL-NAME     (*)
+      POL-NUMBER   (*)
+      POL-TYPE     (*)
+      POL-REMARKS  (*)
+      POL-AMOUNT   (*)
+      POL-DATE     (*)
+      #ADDED-SGLI-LINES
+      #ADDED-SPS-SGLI
+      #ADDED-DEP-SGLI
+    ADD #ADDED-SGLI-LINES TO C*POLICY-TABLE
+  END-IF
+*
+  C@ExternalLifeInsurance := C*POLICY-TABLE
+  IF C@ExternalLifeInsurance <> 0
+    EXPAND ARRAY ExternalLifeInsurance TO (*:C@ExternalLifeInsurance)
+    FOR #I = 1 TO C@ExternalLifeInsurance
+      MemberBenefits.PolicyID(#I)         := POL-ID(#I)
+      MemberBenefits.PolicyNumber(#I)     := POL-NUMBER(#I)
+      MemberBenefits.PolicyCode(#I)       := #FALSE
+      DECIDE FOR EVERY CONDITION
+        WHEN POL-CODE(#I) = #INCLUDE-INS-CODES(*)
+          MemberBenefits.PolicyCode(#I)     := #TRUE
+        WHEN POL-CODE(#I) = #MEMBER-INS-CODES(*)  
+          MemberBenefits.InsuredName(#I)    := #MEMBER
+        WHEN POL-CODE(#I) = #SPGEN-INS-CODES(*)  
+          MemberBenefits.InsuredName(#I)    := #SP-GEN
+        WHEN POL-NAME(#I) = #SGLI-MBR
+          MemberBenefits.InsuredName(#I)    := #MEMBER        
+        WHEN POL-NAME(#I) = #SGLI-SPOUSE
+          MemberBenefits.InsuredName(#I)    := #SPOUSE        
+        WHEN POL-NAME(#I) = #SGLI-CHILD
+          MemberBenefits.InsuredName(#I)    := #CHILD
+        WHEN NONE
+          IGNORE
+      END-DECIDE     
+      MemberBenefits.Remarks(#I)          := POL-REMARKS(#I)
+      MemberBenefits.Company(#I)          := F-EXT-POL-NAME(<POL-NAME(#I)>)
+      MemberBenefits.Type(#I)             := POL-TYPE(#I)
+      MemberBenefits.IssueDate(#I)        := POL-DATE(#I)
+      MemberBenefits.DeathBenefits(#I)    := POL-AMOUNT(#I)
+      IF POL-NAME(#I) = 'NSLI'  OR = 'N.S.L.I.'                                                /* bz-2439  S        
+        IF ( POL-TYPE(#I) = 'ML65' AND ((CNT-V.DATE-OF-BIRTH + 650000) <= *DATN))
+          OR 
+           ( POL-TYPE(#I) = 'ML70' AND ((CNT-V.DATE-OF-BIRTH + 700000) <= *DATN))
+          MemberBenefits.DeathBenefits(#I) := MemberBenefits.DeathBenefits(#I) / 2
+       END-IF
+    END-IF                                                              /* bz-2439  E  
+* *                                                                       /* --db
+*        COMPRESS  *PROGRAM                                               /* --db
+*                 'amt:' MemberBenefits.DeathBenefits(#I)                 /* --db
+*                 'Co:' MemberBenefits.Company(#I)                        /* --db
+*                 'Date:' MemberBenefits.IssueDate(#I)                    /* --db
+*                 'Pol-Name:' POL-NAME(#I)                                /* --db 
+*                 'Pol-Type:' POL-TYPE(#I)                                /* --db 
+*                 'Seg:' #I                                               /* --db 
+*                 'DOB:' DATE-OF-BIRTH                                    /* --db 
+*            INTO A400                                                    /* --db
+*         WRITE WORK FILE 5 A400                                          /* --db
+* *                                                                       /* --db       
+    END-FOR
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-SS-BENEFITS
+*********************************
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  RESET #SS-DATE
+  #SS-DATE-YYYYMM := MIL-INFO-V.SOC-SEC-ST-DATE
+  IF #SS-DATE-YYYYMM <> 0
+    #SS-DATE-DD     := 1
+  END-IF
+  MemberBenefits.MemberReceivingSSDate := #SS-DATE
+  RESET #SS-DATE
+  #SS-DATE-YYYYMM := MIL-INFO-V.SPS-SS-ST-DATE
+  IF #SS-DATE-YYYYMM <> 0
+    #SS-DATE-DD     := 1
+  END-IF
+* PERFORM GET-SS-WAGES
+  MemberBenefits.SpouseReceivingSSDate    := #SS-DATE
+  MemberBenefits.MemberGrossSSBenefit     := MIL-INFO-V.MBR-SS
+  MemberBenefits.SpouseGrossSSBenefit     := MIL-INFO-V.SS-BENEFIT-AMT
+* MemberBenefits.MemberSSWageTwoYearsAgo  := #PREV-YEAR-WAGE
+* MemberBenefits.MemberSSWagePreviousYear := #TWO-YEAR-WAGE
+  IF MIL-INFO-V.MBR-SS = 0 AND MIL-INFO-V.SOC-SEC-ST-DATE <> 0
+      AND MIL-INFO-V.SOC-SEC-PIA <> 0 AND CNT-V.DATE-OF-BIRTH >= 19180101   /* YK1
+    CALLNAT 'MBCN0083' MemberBenefits.BenefitType
+      MemberBenefits.CN
+      MIL-INFO-V.MBR-SS
+      CNT-V.DATE-OF-BIRTH
+      MIL-INFO-V.SOC-SEC-ST-DATE
+    MemberBenefits.MemberGrossSSBenefit := MIL-INFO-V.MBR-SS
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-VA-BENEFITS
+*********************************
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  VAClaimNumber                := MIL-INFO-V.VA-CLAIM-NUMBER
+  VADisabilityDate             := MIL-INFO-V.VA-DISABLE-DATE
+  IF MIL-INFO-V.VA-DISABILITY-PCT <> 9.99 AND MIL-INFO-V.VA-DISABILITY-PCT <> 0.01
+    VADisabilityPercent        := MIL-INFO-V.VA-DISABILITY-PCT * 100
+  END-IF
+  VASpecialMonthlyCompensation := MIL-INFO-V.SMC-CODE
+  IF  (SMC-CODE NE ' ')
+      OR (VA-DISABILITY-PCT NE 0)    
+    CALLNAT 'MBCN0083' MemberBenefits.BenefitType
+                           MemberBenefits.CN
+                           MIL-INFO-V.VA-DIC-AMT
+                           CNT-V.DATE-OF-BIRTH
+                           MIL-INFO-V.SOC-SEC-ST-DATE                           
+                           MIL-INFO-V.VA-DISABILITY-PCT
+  END-IF
+  IF MIL-INFO-V.VA-DIC-AMT <> 0
+    MOVE EDITED MIL-INFO-V.VA-DIC-AMT (EM=ZZ,ZZ9) TO VACompensationCalculated
+    VACompensationCalculated := *TRIM(VACompensationCalculated)
+    COMPRESS '$' VACompensationCalculated INTO VACompensationCalculated LEAVING NO
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE GET-MILITARY-BENEFITS
+***************************************
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+* YK2 >  
+  IF MIL-INFO-V.RETIRED-PAY-AMT = 0
+    IF ((MIL-INFO-V.MILITARY-STATUS = 'R')
+      OR  ((MIL-INFO-V.MILITARY-STATUS = 'A') /* Act Resv over 60    /* DW14
+       AND  ((MIL-INFO-V.MILITARY-SERVICE = MASK (.'G'.))
+          OR  (MIL-INFO-V.MILITARY-SERVICE = MASK (.'R'.))))
+          AND (CNT-V.DATE-OF-BIRTH LE *DATN - 600000)) /* 60 or oldr END DW14
+        CALLNAT 'MBCN0083' MemberBenefits.BenefitType
+                           MemberBenefits.CN
+                           MIL-INFO-V.RETIRED-PAY-AMT
+                           CNT-V.DATE-OF-BIRTH                        
+        GrossMilitaryRetirementPay := MIL-INFO-V.RETIRED-PAY-AMT
+      END-IF
+  ELSE
+    GrossMilitaryRetirementPay := MIL-INFO-V.RETIRED-PAY-AMT
+  END-IF
+* < YK2  
+  SBPOption := MIL-INFO-V.MIL-SBP-OPT
+  IF GuardOrReserve = #TRUE
+    GuardReserveSBPAnnuity    := MIL-INFO-V.RSV-NG-TYPE-ANNUITY
+    GuardReserveSBPBaseAmount := MIL-INFO-V.MIL-SBP-AMT
+  ELSE
+    SBPAnnuityAmount := MIL-INFO-V.MIL-SBP-AMT
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE GET-OTHER-BENEFITS
+************************************
+*
+FIND(1) MIL-INFO-V WITH ID-NUMBER = MemberBenefits.CN
+  GovPensionAmount                   := MIL-INFO-V.CIVIL-SVC-PENSION
+  GovPensionSurvivorAnnuityAmount    := MIL-INFO-V.CIV-SV-SBP-AMT
+  PrivatePensionAmount               := MIL-INFO-V.CIVIL-PENSION
+  PrivatePensionSuvivorAnnuityAmount := MIL-INFO-V.CIVIL-ANNUITY
+  SpousePensionAmount                := MIL-INFO-V.SPS-GOVT-ANNUITY
+  SpousePensionType                  := MIL-INFO-V.SPS-CSRS-IND
+END-FIND
+*
+END-SUBROUTINE
+*
+END

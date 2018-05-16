@@ -1,0 +1,606 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPALCG    - chg MODE from to Q
+* do sc for '#1' to see reasons to chg mode to Q
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  08032005 DW1  allow Flex to be chged from mode G to Q
+* DRW  09292005 DW2  disallow mode chg to G to Q if pad code is P/V/D/X
+* DRW  07142007 DW3  Stop changing mode from G to Q based on issue date
+* YAK  07302007 YK1  Add new report with records with Mode change
+*                    from G to Q and allotment authorization 'Y'
+* PAM  10292007 PM1  Adjust mode change from 'G' to 'Q' from 60 days to 30
+*                    days after paid-to-date (immediately if delinquent).
+* DRW  10312007 DW4 Show Calced PT-TO-DT and correct "MANUAL' Indicator
+* DRW 12/11/2007 DW5 Chg Mode M to Q if loan being sent to collections
+* DRW 12/11/2007 DW6 Check for Forced CAP DELQ Condition
+* DRW 01/30/2008 DW7 Chg Mode from M to Q if CAP-BILL-DATE is in future
+* DRW 01/30/2008 DW8 Chg Forced DELQ Condition
+* DRW 02/21/2008 DW9 Remove DW8 and Do Forced ALOT STOP delq Processing
+* DRW 05/12/2008 DW10 Chg ALOT-CHG-AUTH from B to N when Date is reached
+* DRW 06/06/2008 DW11 Add ALOT-CHG-AUTH A checking
+* DRW 07/31/2008 DW12 Modify CAP Mode chg to Q logic
+* PAM 08/24/2009 PM13 Modify CAP Mode chg to Q logic
+* YAK 10/10/2012 YK2  Use function to identify Level Term II plans
+********************************************
+*
+*
+DEFINE DATA
+LOCAL
+1 #JCL-PARM       (A10)
+1 REDEFINE #JCL-PARM
+ 2 #JCL-MM            (N2)   /* DATE PARM 03/01/1999
+ 2 #JCL-X1            (A1)
+ 2 #JCL-DD            (N2)
+ 2 #JCL-X2            (A1)
+ 2 #JCL-YYYY          (N4)
+1 #PARM-YYYYMMDD      (N8)
+1 REDEFINE #PARM-YYYYMMDD
+ 2 #PARM-YYYYMM       (N6)
+ 2 #PARM-DD           (N2)
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 DTS-DATN
+ 2 DTS-TIMN
+ 2 PAD-CODE
+ 2 PROCESS-IND
+ 2 NAME
+ 2 INTRO-FLAG
+ 2 MILITARY-STATUS                 /* YK1
+ 2 STOP-DATE                   /* DW9
+ 2 ALOT-AMT
+ 2 ALOT-CHG-AUTH                   /* YK1
+ 2 ALOT-CHG-DATE                                /* DW10
+ 2 DATE-ACCT-UPDATE                                /* DW5
+ 2 X-LOAN-AMOUNT   (9)
+ 2 X-FIRST-PLACE-FEE  (9)
+ 2 DEBIT-CREDIT-AMT
+ 2 CAP-BILL-DATE                    /* DW5
+ 2 X-BILL-ADJUST   (9)
+ 2 MONTH-ALLOC-AMT (9)
+ 2 STATUS       (9)
+ 2 ISSUE-DATE   (9)
+ 2 REDEFINE ISSUE-DATE
+  3 ISSUE-DATE-OCC   (9)
+   4 ISSUE-DATE-YYYYMM (N6)
+   4 REDEFINE ISSUE-DATE-YYYYMM
+    5 ISSUE-DATE-YYYY   (N4)
+    5 ISSUE-DATE-MM     (N2)
+   4 ISSUE-DATE-DD      (N2)
+ 2 PAY-STATUS   (9)
+ 2 MODE         (9)
+ 2 OWNERSHIP-FLAG  (9)
+ 2 FACE-AMOUNT  (9)
+ 2 PLAN         (9)
+ 2 REDEFINE PLAN
+  3 PLAN-OCC    (9)
+   4 PLAN-A1     (A1)
+   4 PLAN-A2     (A2)
+ 2 CONV-DURATION (9)
+ 2 PAID-TO-DATE (9)
+ 2 REDEFINE PAID-TO-DATE
+  3 PAID-TO-DATE-OCC (9)
+   4 PAID-TO-DATE-YYYYMM (N6)
+   4 REDEFINE PAID-TO-DATE-YYYYMM
+    5 PAID-TO-DATE-YYYY   (N4)
+    5 PAID-TO-DATE-MM     (N2)
+   4 PAID-TO-DATE-DD     (N2)
+ 2 PAID-UP-DATE (9)
+ 2 REDEFINE PAID-UP-DATE
+  3 PAID-UP-DATE-OCC (9)
+   4 PAID-UP-DATE-YYYYMM (N6)
+   4 REDEFINE PAID-UP-DATE-YYYYMM
+    5 PAID-UP-DATE-YYYY   (N4)
+    5 PAID-UP-DATE-MM     (N2)
+   4 PAID-UP-DATE-DD     (N2)
+*
+1 TR-V VIEW OF A-TRANSACTION-REGISTER
+ 2 ID-NUMBER (N6)
+ 2 PROCESS-IND (A1)
+ 2 NAME (A25)
+ 2 DATE-LAST-UPDATE (N8)
+ 2 TERMINAL-ID (A8)
+ 2 CLERK-ID (A3)
+ 2 TRANSACTION-DATN (P9)
+ 2 TRANSACTION-TIMN (P7)
+ 2 OLD-DATA (A125/20)
+ 2 NEW-DATA (A125/20)
+*
+1 #TR-REG-MODE-GR                                      /* DW5
+ 2 #TR-REG-MODE-LBL-1A        (A3)  INIT <'CI-'>
+ 2 #TR-REG-MODE-LBL-1B        (A4)  INIT <'MODE'>
+ 2 #TR-REG-MODE-LBL-13        (A12) INIT <'-CHG ISS-DT '>
+ 2 #TR-REG-MODE-ISSUE-DATE    (N08)
+ 2 #TR-REG-MODE-LBL-2         (A05) INIT <' MOD '>
+ 2 #TR-REG-MODE-MODE          (A01)
+1 REDEFINE #TR-REG-MODE-GR
+ 2 #TR-REG-MODE               (A33)
+*
+1 #TR-REG-AUTH-GR                                      /* DW10
+ 2 #TR-REG-AUTH-LBL-1A        (A3)  INIT <'CA-'>
+ 2 #TR-REG-AUTH-LBL-1B        (A9)  INIT <'ALOT-AUTH'>
+ 2 #TR-REG-AUTH-LBL-13        (A19) INIT <'-CHG ALOT-CHG-AUTH '>
+ 2 #TR-REG-AUTH-CODE          (A08)
+1 REDEFINE #TR-REG-AUTH-GR
+ 2 #TR-REG-AUTH               (A39)
+*
+1 #COUNTERS
+ 2 #I1               (I2)
+ 2 #I2               (I2)
+ 2 #I3               (I2)
+ 2 #CNT-2     (P5)
+ 2 #CNT-3     (P5)
+ 2 #CNT-4     (P5)
+*
+1 #PD-TO    (A10)            /* DW4
+1 #RD-MINUS-2-MONS   (N8)
+1 REDEFINE #RD-MINUS-2-MONS
+ 2 #RD-MINUS-2-MONS-YYYYMM  (N6)
+ 2 #RD-MINUS-2-MONS-DD      (N2)
+*
+1 #RD-MINUS-3-MONS   (N8)
+1 REDEFINE #RD-MINUS-3-MONS
+ 2 #RD-MINUS-3-MONS-YYYYMM  (N6)
+ 2 #RD-MINUS-3-MONS-DD      (N2)
+*
+1 #YYYYMMDD     (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM  (N6)
+ 2 REDEFINE #YYYYMM
+  3 #YYYY    (N4)
+  3 #MM      (N2)
+ 2 #DD      (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A   (A4)
+ 2 #MM-A     (A2)
+ 2 #DD-A     (A2)
+*
+1 #MANUAL    (A6)
+1 #BILL-MODES   (N2/4)
+1 #BILL-MODES-DELQ (N2/4)    /* DW4
+
+1 #UPDATE       (L)
+1 #FLEX         (L)
+1 #BADJ-X       (I2)
+1 #EXCEPTIONS   (A80)                 /* YK1
+1 #TAB          (A1) INIT <H'09'>     /* YK1
+1 #LAST-DATE-UPDATE     (N8)          /* DW5
+1 #FORCED-CAP-DELQ-BILL   (L)         /* DW6
+1 #1-MON-AGO-YYYYMM    (N6)           /* DW6
+1 #1-MON-AGO-YYYYMMDD  (N8)           /* PM13
+1 #2-MON-AGO-YYYYMM    (N6)           /* DW6
+*
+END-DEFINE
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+    'Exceptions'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+    'New members with Mode No Longer Chged from "G" to "Q"'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+    'Delq members with Mode changed from "G" to "Q"'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (4) LS=133 PS=76
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'CAP Mbrs with LN paid off or CAP-BILL-DATE Not current & chged mode from "M" to "Q"'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (5) LS=133 PS=76                            /* YK1
+WRITE  (5) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X      /* YK1
+*
+READ WORK 1 ONCE RECORD #JCL-PARM
+WRITE 'PARM dates =' #JCL-PARM
+*
+MOVE #JCL-YYYY TO #YYYY
+MOVE #JCL-MM   TO #MM
+MOVE #JCL-DD   TO #DD
+MOVE #YYYYMMDD TO #PARM-YYYYMMDD
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD                  /* PM13
+SUBTRACT 1 FROM #MM                               /* PM13
+IF #MM LT 1                                       /* PM13
+  ADD 12 TO #MM                                   /* PM13
+  SUBTRACT 1 FROM #YYYY                           /* PM13
+END-IF                                            /* PM13
+MOVE #YYYYMMDD TO #1-MON-AGO-YYYYMMDD             /* PM13
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD
+SUBTRACT 2 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #RD-MINUS-2-MONS
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD
+SUBTRACT 3 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #RD-MINUS-3-MONS
+*
+* COMPUTE MONTHS MODE Q WILL GET NOTICES
+MOVE #JCL-MM TO #BILL-MODES (1)
+*
+FOR #I2 2 TO 4
+  COMPUTE #BILL-MODES (#I2) = #BILL-MODES (#I2 - 1) + 3
+  IF #BILL-MODES (#I2) GT 12
+    SUBTRACT 12 FROM #BILL-MODES (#I2)
+  END-IF
+END-FOR
+*
+READ ST-V BY MEMBER-KEY FROM '001900'
+*
+  IF ALOT-CHG-AUTH = 'B'                 /* DW10
+    MOVE #PARM-YYYYMMDD TO #YYYYMMDD
+    MOVE 15 TO #DD
+*
+    IF ALOT-CHG-DATE LE #YYYYMMDD /* ALOT-CHG-DATE always has day 15
+      WRITE ST-V.ID-NUMBER 'ALOT-CHG-AUTH chged from B to N' ALOT-CHG-DATE
+      PERFORM WRITE-TR-REG-AUTH
+      MOVE TRUE TO #UPDATE
+      MOVE 'N' TO ALOT-CHG-AUTH
+      RESET ALOT-CHG-DATE
+    END-IF
+  END-IF
+*
+  RESET #UPDATE #BADJ-X #FORCED-CAP-DELQ-BILL                   /* DW6
+  FOR #I1 1 TO 9
+    IF STATUS (#I1) = 'D'                     /* DW4
+      PERFORM CALC-PD-TO-DT                   /* DW4
+      PERFORM CALC-DELQ-BILL-DATES            /* DW4
+*
+      MOVE 'MANUAL' TO #MANUAL
+      FOR #I2 1 TO 4
+        IF PAID-TO-DATE-MM (#I1) = #BILL-MODES (#I2)  /* Check for 1st bill
+          RESET #MANUAL
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+*
+      FOR #I2 1 TO 4     /* Check for delq bill             /* DW4
+        IF #JCL-MM = #BILL-MODES-DELQ (#I2)
+         OR #FORCED-CAP-DELQ-BILL                   /* DW6
+          RESET #MANUAL
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+    END-IF
+*
+    IF    (STATUS (#I1) = 'D') /*               #1 chg to Q if CAP/MOD M/LOAN=0
+     AND  (MODE (#I1) = 'M')
+     AND  (CONV-DURATION (#I1) = 999)
+     AND  ((X-LOAN-AMOUNT (#I1) = 0)
+*        and (cap-bill-date ne #parm-yyyymmdd)      /* ill unpaid or pushd into future DW7
+*                and (cap-bill-date ne 0))          /* DW5
+      OR  ((X-LOAN-AMOUNT (#I1) NE 0)               /* Has a loan          /* DW12
+*       and (cap-bill-date lt #parm-yyyymmdd)       /* Bill unpaid
+       AND (CAP-BILL-DATE LT #1-MON-AGO-YYYYMMDD)   /* Bill unpaid         /* PM13
+       AND (CAP-BILL-DATE NE 0)))                   /* END DW12
+      PERFORM WRITE-TR-REG                          /* DW5
+      MOVE 'Q' TO MODE (#I1)
+      MOVE TRUE TO #UPDATE
+*
+      ADD 1 TO #CNT-4
+      DISPLAY (4) #CNT-4 'CN' ST-V.ID-NUMBER 'Issue/Date' ISSUE-DATE (#I1)
+          'Paid/To/Date' #PD-TO                      /* DW4
+          'CAP/BILL/DATE' CAP-BILL-DATE
+          'MANUAL'      #MANUAL
+          'Pay/Stat'    PAY-STATUS (#I1)
+          'FIRST/PLACE/FEE' X-FIRST-PLACE-FEE (#I1)
+          'DB/CR'       DEBIT-CREDIT-AMT
+          'Bill/Adj'    X-BILL-ADJUST  (#I1)
+          'Alot/Amt'    ALOT-AMT
+          'Loan/Amt'    X-LOAN-AMOUNT (#I1)              /* DW12
+      MOVE #I1 TO #BADJ-X
+      PERFORM SET-BILL-ADJUST
+      ESCAPE TOP
+    END-IF
+*
+    RESET #FLEX
+    IF  (PLAN (#I1) = MASK (..'F'))
+     OR (PLAN (#I1) = MASK (.'F'))
+      MOVE TRUE TO #FLEX
+    END-IF
+*
+    IF   (STATUS (#I1) NE 'D')
+     OR  (MODE (#I1) NE 'G')
+*    OR  (#FLEX)           /* removed 8/3/2005 as per KHB  /* DW1
+     OR  (PAY-STATUS(#I1) GT '40')
+*     OR  (NOT PAD-CODE = ' ' OR = 'S' OR = 'R')   /* DW2
+     OR  (PAD-CODE = 'P' OR = 'V')                 /* DW2
+     OR  ((PAD-CODE = 'D' OR = 'X')                /* DW2
+        AND (OWNERSHIP-FLAG (#I2) = 'D'))          /* DW2
+*    OR  ((CONV-DURATION (#I1) = 999)   /* removed 3/31/2004 khb
+*       AND (X-LOAN-AMOUNT (#I1) GT 10.00))
+      ESCAPE TOP
+    END-IF
+*   /* #2 chg to Q if 2 mons aft ISS DT & pay-status 12/21 (UNPD/GAWT) NO LONGER DW3
+    IF (((ST-V.ID-NUMBER LT 600000)
+     AND (ISSUE-DATE-YYYYMM (#I1) = #RD-MINUS-2-MONS-YYYYMM))
+*
+    OR  ((ST-V.ID-NUMBER GE 600000)
+     AND (ISSUE-DATE-YYYYMM (#I1) = #RD-MINUS-3-MONS-YYYYMM)
+     AND (PAID-TO-DATE (#I1) LE ISSUE-DATE (#I1)))) /* nothing paid
+*
+     AND (PAY-STATUS (#I1) = '12' OR = '21') /* UNPD/GAWT
+*      MOVE TRUE TO #UPDATE                                      /* DW3
+*      MOVE 'MANUAL' TO #MANUAL
+*      FOR #I2 1 TO 4
+*        IF PAID-TO-DATE-MM (#I1) = #BILL-MODES (#I2)
+*          RESET #MANUAL
+*          ESCAPE BOTTOM
+*        END-IF
+*      END-FOR
+*
+      ADD 1 TO #CNT-2
+      DISPLAY (2) #CNT-2 ST-V.ID-NUMBER ISSUE-DATE (#I1)
+          'Paid/To/Date' #PD-TO                           /* DW4
+          'MANUAL'      #MANUAL
+          'Pay/Stat'    PAY-STATUS (#I1)
+          'FIRST/PLACE/FEE' X-FIRST-PLACE-FEE (#I1)
+          'DB/CR'       DEBIT-CREDIT-AMT
+          'Bill/Adj'    X-BILL-ADJUST (#I1)
+          'Alot/Amt'    ALOT-AMT
+*
+*      perform Write-Tr-Reg                             /* DW5
+*      MOVE 'Q'  TO MODE (#I1)     /* DW3
+*      MOVE #I1 TO #BADJ-X
+*      PERFORM SET-BILL-ADJUST
+*
+*      IF X-FIRST-PLACE-FEE (#I1) NE 0   /* DW3
+*        MOVE '20' TO PAY-STATUS (#I1)
+*      ELSE
+*        MOVE '22' TO PAY-STATUS (#I1)
+*      END-IF
+    END-IF
+*                           /* #3 chg to Q if 2 mons aft pd-to dt
+    IF   (PAID-TO-DATE-YYYYMM (#I1) LT #PARM-YYYYMM)               /* PM1
+     AND (PAID-UP-DATE-YYYYMM (#I1) GT #PARM-YYYYMM)
+     AND (ALOT-AMT EQ 0)                                           /* PM1
+*    AND (PAID-TO-DATE-YYYYMM (#I1) LE #RD-MINUS-2-MONS-YYYYMM)    /* PM1
+*    AND (PAID-TO-DATE-YYYYMM (#I1) LE #RD-MINUS-3-MONS-YYYYMM)
+      MOVE TRUE TO #UPDATE
+*
+      ADD 1 TO #CNT-3
+      DISPLAY (3) #CNT-3 ST-V.ID-NUMBER ISSUE-DATE (#I1)
+          'Paid/To/Date' #PD-TO
+          'MANUAL'      #MANUAL
+          'Pay/Stat'    PAY-STATUS (#I1)
+          'FIRST/PLACE/FEE' X-FIRST-PLACE-FEE (#I1)
+          'DB/CR'       DEBIT-CREDIT-AMT
+          'Bill/Adj'    X-BILL-ADJUST (#I1)
+          'Alot/Amt'    ALOT-AMT
+* Add new report for Kathie Ballard                          /* YK1
+      IF ST-V.MODE (#I1) = 'G' AND
+       (ST-V.ALOT-CHG-AUTH = 'Y' OR = 'S' OR = 'A')    /* DW11
+       COMPRESS ST-V.ID-NUMBER #TAB ST-V.ISSUE-DATE (#I1) #TAB
+       ST-V.MILITARY-STATUS #TAB 'Mode changed from G to Q'
+       INTO #EXCEPTIONS LEAVING NO
+       WRITE (5) #EXCEPTIONS                                 /* YK1
+      END-IF
+*
+      PERFORM WRITE-TR-REG                              /* DW5
+      MOVE 'Q'  TO MODE (#I1)
+      MOVE #I1 TO #BADJ-X
+      PERFORM SET-BILL-ADJUST
+*
+      IF X-FIRST-PLACE-FEE (#I1) NE 0
+        MOVE '20' TO PAY-STATUS (#I1)
+      ELSE
+        MOVE '22' TO PAY-STATUS (#I1)
+      END-IF
+    END-IF
+  END-FOR
+*
+  IF #UPDATE AND (#BADJ-X NE 0)
+    IF DEBIT-CREDIT-AMT NE 0
+      WRITE ST-V.ID-NUMBER 'DB/CR added to BILL ADJ'
+            DEBIT-CREDIT-AMT X-BILL-ADJUST (#BADJ-X)
+*
+      ADD DEBIT-CREDIT-AMT TO X-BILL-ADJUST (#BADJ-X)
+      RESET DEBIT-CREDIT-AMT
+    END-IF
+*
+    UPDATE (0245)
+  END-IF
+  END TRANSACTION
+END-READ
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-PD-TO-DT                     /* DW4
+* * * * * * * * * * * * * * * *
+*
+MOVE PAID-TO-DATE (#I1) TO #YYYYMMDD
+IF  (ISSUE-DATE (#I1) LT 19970101)    /* old or new
+ OR (MONTH-ALLOC-AMT (#I1) = 999.99)  /*   processing
+ OR (ISSUE-DATE-DD (#I1) = 1)    /* NXT PROCESSING WITH ISS DAY = 1
+  IF #MM = 02
+    MOVE 28 TO #DD
+  ELSE
+    IF #MM = 4 OR = 6 OR = 9 OR = 11
+      MOVE 30 TO #DD
+    ELSE
+      MOVE 31 TO #DD
+    END-IF
+  END-IF
+ELSE
+  IF ((ISSUE-DATE-MM (#I1) = 2)
+          AND (ISSUE-DATE-DD (#I1) = 28 OR = 29))  /* LAST DAY OF MONTH
+   OR ((ISSUE-DATE-MM (#I1) = 4 OR = 6 OR = 9 OR = 11)
+          AND (ISSUE-DATE-DD (#I1) = 30))
+   OR ((ISSUE-DATE-MM (#I1) = 1 OR = 3 OR = 5 OR = 7 OR = 8 OR = 10
+           OR = 12) AND (ISSUE-DATE-DD (#I1) = 31))
+    IF #MM = 02
+        MOVE 27 TO #DD /* nxt to last day of month
+    ELSE
+      IF #MM = 4 OR = 6 OR = 9 OR = 11
+        MOVE 29 TO #DD
+      ELSE
+        MOVE 30 TO #DD
+      END-IF
+    END-IF
+  ELSE
+    COMPUTE #DD = ISSUE-DATE-DD (#I1) - 1
+*
+    IF (#MM = 2) AND (#DD GE 27)
+      MOVE 26 TO #DD /* nxt to nxt to last day of month
+    END-IF
+  END-IF
+END-IF
+*
+COMPRESS #MM-A #DD-A #YYYY-A INTO #PD-TO WITH '/'
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-DELQ-BILL-DATES          /* DW4
+* * * * * * * * * * * * * * * * * * * *
+*
+MOVE PAID-TO-DATE-MM (#I1) TO #BILL-MODES-DELQ (1)
+*
+IF   (ISSUE-DATE (#I1) GE 19970101)   /* NXT with pd-to day 1 thru 15
+ AND (MONTH-ALLOC-AMT (#I1) NE 999.99)
+ AND (ISSUE-DATE-DD (#I1) GT 1)
+ AND (ISSUE-DATE-DD (#I1) LT 17)
+  ADD 1 TO #BILL-MODES-DELQ (1)
+ELSE
+  ADD 2 TO #BILL-MODES-DELQ (1)
+END-IF
+IF #BILL-MODES-DELQ (1) GT 12
+  SUBTRACT 12 FROM #BILL-MODES-DELQ (1)
+END-IF
+*
+FOR #I2 2 TO 4
+  COMPUTE #BILL-MODES-DELQ (#I2) = #BILL-MODES-DELQ (#I2 - 1) + 3
+  IF #BILL-MODES-DELQ (#I2) GT 12
+    SUBTRACT 12 FROM #BILL-MODES-DELQ (#I2)
+  END-IF
+END-FOR
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD                         /* DW6
+SUBTRACT 1 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMM TO #1-MON-AGO-YYYYMM
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD                         /* DW6
+SUBTRACT 2 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMM TO #2-MON-AGO-YYYYMM
+*
+IF   (ISSUE-DATE (#I1) GE 19970101)        /* DW6 DW8 DW9
+ AND (MONTH-ALLOC-AMT (#I1) NE 999.99)
+ AND (CONV-DURATION (#I1) = 999)
+ AND (PAID-TO-DATE-YYYYMM (#I1) = #1-MON-AGO-YYYYMM OR = #2-MON-AGO-YYYYMM)
+  MOVE TRUE TO #FORCED-CAP-DELQ-BILL
+END-IF
+*
+* Above replaced by below    /* and then removed   DW8 DW9
+* If paid-to-date-yyyymm (#i1) = #1-mon-ago-yyyymm or = #2-mon-ago-yyyymm  /* DW8
+*   move true to #forced-cap-delq-bill
+* end-if
+*
+IF   (PAID-TO-DATE-YYYYMM (#I1) = #1-MON-AGO-YYYYMM OR = #2-MON-AGO-YYYYMM)  /* DW9
+ AND (STOP-DATE = #PARM-YYYYMMDD)    /* 1 or 2 Mons delq and just stopped
+  MOVE TRUE TO #FORCED-CAP-DELQ-BILL
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SET-BILL-ADJUST
+* * * * * * * * * * * * * * * * *
+*
+IF (X-FIRST-PLACE-FEE (#I1) NE 0)
+*  AND ((PLAN (#I1) = 'LT' OR = 'RT')                        /* YK2
+*  OR  (PLAN-A1 (#I1) GE 'U') AND (PLAN-A1 (#I1) LE 'Z'))    /* YK2
+  AND FUNCTION-TERM-POLICY(<PLAN(#I1)>)                      /* YK2
+  WRITE ST-V.ID-NUMBER ISSUE-DATE (#I1)  'FPF added to BILL ADJ'
+       X-FIRST-PLACE-FEE (#I1) X-BILL-ADJUST (#I1) 'PLAN=' PLAN (#I1)
+  ADD X-FIRST-PLACE-FEE (#I1) TO X-BILL-ADJUST (#I1)
+  RESET X-FIRST-PLACE-FEE (#I1)
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE WRITE-TR-REG    /* DW5
+* * * * * * * * * *
+*
+MOVE ST-V.DATE-ACCT-UPDATE TO #LAST-DATE-UPDATE
+*
+MOVE *DATN TO ST-V.DTS-DATN
+MOVE *TIMN TO ST-V.DTS-TIMN
+MOVE *DATN TO ST-V.DATE-ACCT-UPDATE
+*
+RESET TR-V                         /* INITIALIZE TRANS-REGISTER
+MOVE ST-V.PROCESS-IND  TO TR-V.PROCESS-IND
+MOVE ST-V.ID-NUMBER    TO TR-V.ID-NUMBER
+MOVE ST-V.NAME         TO TR-V.NAME
+MOVE #LAST-DATE-UPDATE TO TR-V.DATE-LAST-UPDATE
+MOVE *INIT-ID          TO TR-V.TERMINAL-ID
+MOVE 'EDS'             TO TR-V.CLERK-ID
+MOVE *DATN             TO TR-V.TRANSACTION-DATN
+MOVE *TIMN             TO TR-V.TRANSACTION-TIMN
+*
+MOVE ST-V.ISSUE-DATE(#I1)  TO #TR-REG-MODE-ISSUE-DATE
+MOVE ST-V.MODE (#I1)       TO #TR-REG-MODE-MODE
+MOVE #TR-REG-MODE          TO TR-V.OLD-DATA (1)
+*
+MOVE 'Q'                    TO #TR-REG-MODE-MODE
+MOVE #TR-REG-MODE TO TR-V.NEW-DATA (1)
+*
+STORE TR-V
+*
+END-SUBROUTINE
+*
+* * * * * * * * * *
+DEFINE SUBROUTINE WRITE-TR-REG-AUTH    /* DW10
+* * * * * * * * * *
+*
+MOVE ST-V.DATE-ACCT-UPDATE TO #LAST-DATE-UPDATE
+*
+MOVE *DATN TO ST-V.DTS-DATN
+MOVE *TIMN TO ST-V.DTS-TIMN
+MOVE *DATN TO ST-V.DATE-ACCT-UPDATE
+*
+RESET TR-V                         /* INITIALIZE TRANS-REGISTER
+MOVE ST-V.PROCESS-IND  TO TR-V.PROCESS-IND
+MOVE ST-V.ID-NUMBER    TO TR-V.ID-NUMBER
+MOVE ST-V.NAME         TO TR-V.NAME
+MOVE #LAST-DATE-UPDATE TO TR-V.DATE-LAST-UPDATE
+MOVE *INIT-ID          TO TR-V.TERMINAL-ID
+MOVE 'EDS'             TO TR-V.CLERK-ID
+MOVE *DATN             TO TR-V.TRANSACTION-DATN
+MOVE *TIMN             TO TR-V.TRANSACTION-TIMN
+*
+MOVE ST-V.ALOT-CHG-DATE TO #YYYYMMDD
+COMPRESS 'B' #YYYYMM INTO #TR-REG-AUTH-CODE
+MOVE #TR-REG-AUTH TO TR-V.OLD-DATA (1)
+*
+MOVE 'N'          TO #TR-REG-AUTH-CODE
+MOVE #TR-REG-AUTH TO TR-V.NEW-DATA (1)
+*
+STORE TR-V
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,2227 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 2
+* <Natural Source Header
+* * * * * * * * * * * * * * * * * *
+* PROGRAM-ID: Venetka -DNXUN005            *
+*
+* DN  -  WIDOW NOTIFICATION
+* 12/14/2010 VXT ceated
+**************************************************************************
+*        MODIFICATION LOG
+**************************************************************************
+* USER   DATE      TAG  REASON
+* RSE 01-05-2011   RE1  Don't update DATE-DEATH-NOTIFY when it is not 0;
+*                       Move current date to DATE-DEATH-NOTIFY
+* RSE 01-06-2011   RE2  Populate DATE-OF-DEATH in Status record only when confirmed
+* VXT 02-11-2011   vt2  Fix the issue when the FIR rec does not exist (must use the new created ISN)
+* RSE 03-16-2011   RE3  Fix DOD issue
+* PAM 04/15/2011   PM1  Added Aimee Sealy as eligible user
+* RSE 04/29/2011   RE4  Add 'B' Death Status Code for Beneficiary Final
+* RSE 05/05/2011   RE5  Call module to sync with CRM
+* PAM 05/16/2011   PM2  Remove Lyne Babin from NX messages
+* RSE 06/23/2011   RE6  Remove Brady Gruler and Lee Bibb from NX messages re death confirmation
+* RSE 08/18/2011   RE7  Validate date even when user confirms to prevent bad data
+* bz  09/23/2011   bz1  Add member CI to FIR
+* RSE 10/03/2011   RE8  Fix update issue with Death Document Validation Code
+* YAK 10/16/2012   YK1  Use function to identify Level Term II plans
+* YAK 11/07/2012   YK2  Add No Medical Term plan (EZ)
+* TMT 06/16/2014   TT1  Contact Normalization - DOB and Sex
+* vxt 07/22/2104   vt3  /Ticket 2837/
+* NGG 09/17/2014   NG1  MS STATISTICS
+* YAK 10/15/2014   YK3  Replace 'AL' with function
+* BZ  01/20/2016 bz-GPL/GP2 - 1. If death reported after 18/21 bu occure before
+*                             2. GIPO set to not Contestable
+* vxt 05/26/2017   vt4  Group Term Project
+* vxt 10/17/2017   vt5  /Ticket 6046 / - populate contestable indicator on FIR file
+**************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #ISN              (P8)
+1 #CLERK-ID         (A3)
+1 #MODE-2           (A1)
+1 #MSG              (A72)
+*
+LOCAL USING A-IFAFFL                               /* PDA used with FUNCTION F-if-AFFL
+* LOCAL USING W5701LWN                             /* pda for calll to W5700SWN subprogram
+LOCAL USING DNXUA005                               /* PDA FOR screen variables & CALL TO dnxuN05B SUBPROGRAM
+LOCAL USING GPRA0004
+LOCAL USING CONTPDA1                              /* TT1
+LOCAL
+*
+* Screen Variables
+*
+1 #PROGRAM        (A8)                     /* NG1
+1 #USE-TIMX       (L) INIT <TRUE>          /* NG1
+1 #SCR-MDOD       (A8)
+1 REDEFINE #SCR-MDOD                       /* on confirmation window
+  2 #SCR-MDOD-N     (N8)
+1 #SCR-MNAME      (A25)                    /* on confirmation window
+1 #SCR-SSN        (N9)                     /* on confirmation window
+1 #SCR-RANK       (A3)                     /* on confirmation window
+*
+* Control Variables
+*
+1 #SCR-DOD-CV            (C)
+1 #SCR-DOD-ST-CV         (C)
+1 #SCR-DOC-VAL-CV        (C)
+1 #SCR-CERT-CDE-CV       (C)
+1 #SCR-CAUSE-OF-DEATH-CV (C)
+* 1 #scr-svc-conn-cv       (c)
+1 #SCR-PLACE-CV          (C)
+1 #SCR-PLACE-BIRTH-CV    (C)
+1 #SCR-HOMICIDE-IND-CV   (C)
+1 #SCR-BUR-LOC-CV        (C)
+1 #SCR-BUR-INFO-CV       (C)
+1 #MAP-CV                (C)
+*
+* PDA-s
+*
+1 #PARM                     (A3)
+1 REDEFINE #PARM
+  2 #USER-COMPANY           (A1)
+  2 #SECURITY-CODE          (N2)
+*
+1 P_PARMS                                     /* structure for error routine
+  2 P_ERROR_NUM (I4) /*ERROR NUMBER
+  2 P_ERROR_LINE (I4) /*ERROR LINE
+  2 P_ERROR_PROGRAM (A32)
+  2 P_ERROR_LIB (A32)
+  2 P_ERROR_DBID (I4)
+  2 P_ERROR_FNR (I4)
+  2 P_ERROR_TIME (T)
+  2 P_ERROR_PGM_TYPE (A1)
+  2 P_ERROR_PGM_TYPE_LONG (A11)
+  2 P_ERROR_LANG (I4)
+  2 P_ERROR_LEVEL (I4)
+  2 P_ERROR_CLASS (I1)
+  2 P_ERROR_TYPE (I1)
+*
+* Constants
+*
+1 BLANK   (A1) CONST <' '>
+*
+* Variables
+*
+1 #POS                       (I4)
+1 #SECURED                   (A1)
+1 #ERRORS                    (L)
+1 #UPDATED                   (L)
+*
+* VIEWS
+*
+1  CONTACT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 ID-NUMBER
+  2 SSN
+  2 DATE-OF-DEATH
+  2 REDEFINE DATE-OF-DEATH
+    3 DATE-OF-DEATH-YYYY         (A4)
+    3 DATE-OF-DEATH-MM           (A2)
+    3 DATE-OF-DEATH-DD           (A2)
+  2 DATE-OF-DEATH-STATUS-CODE
+  2 DATE-OF-DEATH-STATUS-DATE
+  2 REDEFINE DATE-OF-DEATH-STATUS-DATE
+    3 DATE-OF-DEATH-STATUS-DATE-YYYY   (A4)
+    3 DATE-OF-DEATH-STATUS-DATE-MM     (A2)
+    3 DATE-OF-DEATH-STATUS-DATE-DD     (A2)
+  2 DATE-OF-DEATH-REPORTED
+  2 REDEFINE DATE-OF-DEATH-REPORTED
+    3 DATE-OF-DEATH-REPORTED-YYYY  (A4)
+    3 DATE-OF-DEATH-REPORTED-MM    (A2)
+    3 DATE-OF-DEATH-REPORTED-DD    (A2)
+  2 DEATH-CERT-CODE
+  2 CAUSE-OF-DEATH
+  2 HOMICIDE-SUICIDE-ACCIDENT-IND
+  2 PLACE-OF-DEATH
+  2 BURIAL-LOC
+  2 BURIAL-INFO
+  2 LAST-DATE-UPD
+  2 LAST-USER-UPD
+  2 DEATH-DOCUMENT-VALIDATION-CODE
+  2 LAST-DEATH-DATE-UPD
+  2 REDEFINE LAST-DEATH-DATE-UPD
+    3 #LAST-DEATH-DATE-UPD-YYYY   (N4)
+    3 #LAST-DEATH-DATE-UPD-MM     (N2)
+    3 #LAST-DEATH-DATE-UPD-DD     (N2)
+  2 LAST-DEATH-USER-UPD
+  2 PLACE-OF-BIRTH
+  2 DATE-OF-BIRTH
+*
+1 STATUS-V VIEW OF A-STATUS
+  2 INTRO-FLAG (A1)
+  2 MEMBER-CONTACT-ID
+*   2 SEX                                /* TT1
+*   2 SEX-SP                             /* TT1
+  2 TITLE-SP
+  2 ID-NUMBER (N6.0)
+  2 PROCESS-IND (A1)
+  2 SSN
+  2 LINKED-CN (N6.0/1:30) /* MU-FIELD
+  2 REDEFINE LINKED-CN /* REDEF. BEGIN : LINKED-CN
+    3 LINKED-CN-A (A6/1:30)
+  2 WIDOW-FLAG (A1)
+  2 ALOT-SW (A1)
+  2 MILITARY-SERVICE (A3)
+  2 RANK (A3)
+  2 CHIEF-OF-STAFF-IND (A1)
+  2 DATE-BOOK (A1)
+  2 NUMBER-MEMBERSHIPS
+  2 DATE-OF-DEATH
+  2 DEATH-CERT-CODE
+  2 DEATH-SERVICE-CON
+  2 DATE-DEATH-NOTIFY
+  2 REDEFINE DATE-DEATH-NOTIFY
+    3 #DATE-DEATH-NOTIFY (A8)
+  2 C*ACTIVE-SEGMENTS
+  2 NAME
+  2 FORMER-HUSBAND-VA-CLAIM-NUM (A12)
+  2 REDEFINE FORMER-HUSBAND-VA-CLAIM-NUM /* REDEF. BEGIN : FORMER-HUSBAND
+    3 FH-V-F-1 (A1)
+    3 FH-VCN-D-3 (A3)
+    3 FH-V-F-2 (A1)
+    3 FH-VCN-D-2 (A2)
+    3 FH-V-F-3 (A1)
+    3 FH-VCN-D-4 (A4)
+  2 REDEFINE FORMER-HUSBAND-VA-CLAIM-NUM /* REDEF. BEGIN : FORMER-HUSBAND
+    3 FH-VCN-FIL2 (A2)
+    3 FH-VCN-10-A (A10)
+  2 REDEFINE FORMER-HUSBAND-VA-CLAIM-NUM /* REDEF. BEGIN : FORMER-HUSBAND
+    3 FH-VCN-FIL1 (A3)
+    3 FH-VCN-D (A9)
+  2 REDEFINE FORMER-HUSBAND-VA-CLAIM-NUM /* REDEF. BEGIN : FORMER-HUSBAND
+    3 FH-VCN-A (A9)
+  2 REDEFINE FORMER-HUSBAND-VA-CLAIM-NUM /* REDEF. BEGIN : FORMER-HUSBAND
+    3 FH-VCN-F1 (A1)
+    3 FH-VCN-B (A9)
+  2 REDEFINE FORMER-HUSBAND-VA-CLAIM-NUM /* REDEF. BEGIN : FORMER-HUSBAND
+    3 FH-VCN-F2 (A2)
+    3 FH-VCN-C (A9)
+  2 VA-CLAIM-NUMBER       (A12)
+  2 REDEFINE VA-CLAIM-NUMBER /* REDEF. BEGIN : VA-CLAIM-NUMBE
+    3 VCN-F2 (A2)
+    3 VCN-C (A9)
+  2 REDEFINE VA-CLAIM-NUMBER /* REDEF. BEGIN : VA-CLAIM-NUMBE
+    3 VCN-F1 (A1)
+    3 VCN-B (A9)
+  2 REDEFINE VA-CLAIM-NUMBER /* REDEF. BEGIN : VA-CLAIM-NUMBE
+    3 VCN-A (A9)
+  2 REDEFINE VA-CLAIM-NUMBER /* REDEF. BEGIN : VA-CLAIM-NUMBE
+    3 VCN-FIL1 (A3)
+    3 VCN-D (A9)
+  2 REDEFINE VA-CLAIM-NUMBER /* REDEF. BEGIN : VA-CLAIM-NUMBE
+    3 V-F-1 (A1)
+    3 VCN-D-3 (A3)
+    3 V-F-2 (A1)
+    3 VCN-D-2 (A2)
+    3 V-F-4 (A1)
+    3 VCN-D-4 (A4)
+  2 REDEFINE VA-CLAIM-NUMBER /* REDEF. BEGIN : VA-CLAIM-NUMBE
+    3 V-F-3 (A2)
+    3 VCN-10-A (A10)
+  2 ACTIVE-SEGMENTS (9)      /* used in death calculation  \/
+    3 STATUS
+    3 PAY-STATUS
+    3 FACE-AMOUNT
+    3 EXPIRY-DAY
+    3 ISSUE-DATE
+    3 ANNUAL-PREM
+    3 CONVERSION-FLAG
+    3 DEATH-BENEFIT
+    3 FIRS-LOCATION-CODE
+    3 PLAN
+    3 CASH-VALUE
+    3 BEG-CASH-VALUE
+    3 ISSUE-AGE
+    3 SMOKER-FLAG
+    3 PAID-UP-DATE
+    3 NXT-MON-DEATH-BENEFIT
+    3 MONTH-ALLOC-AMT
+    3 LAST-ANN-CASH-VALUE
+    3 ONLINE-ACTION
+    3 SPLIT-IND
+    3 POLICY-ID
+  2 ONLINE-ACTION-GN
+1 #DATE-OF-BIRTH        (N8.0)  /* used in death calculation  /\         /* TT1
+1 #DOB-SPOUSE           (N8.0)                                           /* TT1
+1 #SEX                  (A1)                                             /* TT1
+1 #SEX-SP               (A1)                                             /* TT1
+
+*
+1 LK-V VIEW OF A-STATUS
+  2 INTRO-FLAG
+*
+1 FIRS-V VIEW OF A-FIRS
+  2 ID-NUMBER
+  2 CONTACT-ID-NUMBER
+  2 DN-REMARKS (3)
+  2 C*POLICY-TABLE
+  2 POL-NAME               (45)
+  2 POL-CODE               (45)
+  2 POL-NUMBER             (45)
+  2 POL-MODE               (45)
+  2 POL-712                (45)
+  2 POL-TYPE               (45)
+  2 POL-REMARKS            (45)
+  2 POL-AMOUNT             (45)
+  2 POL-DATE               (45)
+  2 POL-AMT-PAID           (45)
+  2 POL-DATE-CLM-SETTLED   (45)
+  2 POL-DATE-SENT-TO-WIDOW (45)
+  2 POL-DATE-CLM-FILED     (45)
+  2 POL-INSTAL             (45)
+  2 CONTESTABLE-IND        (45)
+  2 POLICY-TABLE           (45)
+    3 POL-BENEFIC (A20/3)
+  2 WIDOW-FLAG
+  2 MEMBER-FLAG
+  2 PLACE-OF-DEATH
+  2 CAUSE-OF-DEATH
+  2 DP-LAST-FM-DATE                                /* for update \/
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 DOCU-LAST-FM-DATE                              /* for update /\
+  2 VERIFIED-MSG
+  2 NOTICE-RCVD-FROM
+*
+1 CODES VIEW OF A-GEN-TABLE
+  2 GEN-KEY                           (A4)
+  2 GEN-SUB-KEY                       (A3)
+  2 GEN-ALPHA-VALUE                   (A50)
+  2 GEN-DESCRIPTION                   (A75)
+  2 ADDL-INFO
+*
+1 NOTES-V VIEW OF A-NOTES
+  2 ID-NUMBER
+  2 C*NOTE-TABLE
+*
+1 HIST-V VIEW OF A-VA-HISTORY
+  2 C*MONTHLY-HIST
+  2 MONTHLY-HIST (1:49) /*PERIODIC GROUP
+    3 YEAR-MONTH-M (P7.0)
+    3 MONTH-IND-M (P3.0)
+    3 DEATH-BENEFIT-M (P7.2)
+    3 CASH-VALUE-M (P7.2)
+*
+1 MBRSHIP-MTD-DET-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER (N6.0)
+  2 ENTRY-DATE (N8.0)
+  2 REC-ISN (N8.0)
+  2 CODE (A1)
+  2 ISSUE-DATE (N8.0)
+  2 NUM-MBRSHIPS
+  2 USER-COMPANY
+*
+1 TERM-V VIEW OF A-TERMINALS
+  2 COMMENTS
+*
+* Keys
+*
+1 #TABLE-KEY  (A7)
+1 REDEFINE #TABLE-KEY
+  2 #GEN-KEY         (A4)
+  2 #SUB-KEY         (A3)
+*
+1 #KEY      (A7)
+1 REDEFINE #KEY
+  2 #ID-NUMBER-KEY  (N6)
+  2 #FLAG       (N1)
+*
+1 #START-KEY      (N15)
+1 REDEFINE #START-KEY
+  2 #START-ID         (N6)
+  2 #START-ISSUE      (N8)
+  2 #START-SPLIT-IND  (N1)
+*
+1 #FIR-ISN             (P8)
+1 #ST-ISN              (P8)
+*
+1 #TEST   (A8) CONST <'STAGEDN'>
+*
+1 #CURR-DATE-D                (D)
+1 #CURR-DATE-A               (A8)
+1 REDEFINE #CURR-DATE-A
+  2 #CURR-DATE-YYYY           (A4)
+  2 #CURR-DATE-MM            (A2)
+  2 #CURR-DATE-DD            (A2)
+*
+1 #UPDATE-NOT-ALLOWED        (L)
+1 #USER-ID                   (A8)
+1 #SPECIAL-USER              (L)
+1 #SEG-I                     (I2)
+1 #HAS-CONTESTABILITY        (L)
+1 #NO-LONGER-CONTESTABLE     (L)
+1 #CONTESTABLE-BUT-PAID      (L)
+1 #HOLD-ISN                  (P8)
+1 #I1                        (I2)
+1 #NUM-UNITS                 (P7)
+1 #NOTES-EXIST                (L)
+1 #WORK-DOD-D                (D)
+1 #WORK-DOD-A                (A8)
+1 REDEFINE #WORK-DOD-A
+  2 #WORK-DOD-N                (N8)
+1 #HOLD-SCR-DOD-ST            (A1)
+1 #SEND-DTH-MSG             (L)
+1 #PF3                      (L)
+1 #F-X                      (I2)
+1 #C-X                      (I2)
+1 #ST-X                     (I2)
+1 #N-X                      (I2)
+1 #B-X                      (I2)
+1 #BD-X                     (I2)
+1 #H-X                      (I2)
+1 #FIRST-WN                 (L)
+1 #UPDATE-PD-SCN            (L)
+1 #NO-FIRS-FOUND            (L)
+1 #WIDOW-KEY-FOUND          (L)
+1 #NO-HISTORY               (L)
+1 #MATCH-FOUND              (L)
+*
+1 #PREM-ACC                 (P7.2)
+1 #POL-AMOUNT               (P7.2)
+1 #DEATH-BN                 (P7.2)
+1 #CASH-VALUE               (P7.2)
+1 #CONT-FUND                (P7.2)
+1 #PLAN-3                   (A3)
+1 REDEFINE #PLAN-3
+  2 #PLAN-A1             (A1)
+*
+1 #HOLD-MDOD                (N8)
+1 #EFF-DATE                 (N8)
+1 #WYYYYMMDD-ISS            (N8)
+1 REDEFINE #WYYYYMMDD-ISS
+  2 #WYYYY-ISS            (N4)
+  2 #WMM-ISS              (N2)
+  2 #WDD-ISS              (N2)
+1 #WYYYYMMDD-TOD          (N8)
+1 REDEFINE #WYYYYMMDD-TOD
+  2 #WYYYY-TOD            (N4)
+  2 #WMM-TOD              (N2)
+  2 #WDD-TOD              (N2)
+1 #WYYYYMMDD-DOD            (N8)
+1 REDEFINE #WYYYYMMDD-DOD
+  2 #WYYYY-DOD            (N4)
+  2 #WMM-DOD              (N2)
+  2 #WDD-DOD              (N2)
+1 REDEFINE #WYYYYMMDD-DOD
+  2 #WYYYYMM-DOD  (N6)
+  2 #W-DAY-DOD    (N2)
+*
+1 #PAY-STAT                 (A4)
+1 #HOLD-FIRS-ISN            (P8)
+1 #MODE                     (A1)
+1 #DOD-CHG-MSG              (A35)
+*
+*
+1 #MMDDYYYY
+  2 #MM               (N2)
+  2 #DD               (N2)
+  2 #YYYY             (N4)
+1 REDEFINE #MMDDYYYY
+  2 #MMDDYYYY-A       (A8)
+*
+1 #YYYYMMDD
+  2 #YYYY             (N4)
+  2 #MM               (N2)
+  2 #DD               (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-N       (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A   (A4)
+  2 #MM-A     (A2)
+  2 #DD-A     (A2)
+1 #SAVE-YYYYMMDD      (N8)
+*
+1 #PRIOR-DOD      (A8)
+1 #Y-N            (A1)
+
+* 1 #scr-ssn        (n9)
+
+1 #DATE-OF-DEATH-REPORTED (A8)
+1 #DATE-OF-DEATH           (A8)
+1 REDEFINE #DATE-OF-DEATH
+  2 #DATE-OF-DEATH-N         (N8)
+1 #LNK          (A20)
+1 #NOTE-TEXT    (A60/5)              /* TO SEND MESSAGE \/  was 10 occ
+1 #CLK                (A3)
+1 #LAST               (A25)
+1 #FIRST/MID          (A25)
+1 REDEFINE #FIRST/MID
+  2 #FILL           (A1)
+  2 #FIRST/MID-R    (A24)
+1 #NAME               (A25)
+1 #SUFF            (A9)
+1 REDEFINE #SUFF
+  2 #FILL           (A1)
+  2 #SUFF-R         (A8)
+1 #NAME-OVRFLO     (A25)
+1 #FIRST-NAME         (A25)
+1 #MIDDLE-NAME        (A25)
+1 #LAST-NAME          (A25)
+1 #SUFFIX             (A10)
+1 #DOD                (A10)
+1 #W-MDOD                  (N8)
+1 REDEFINE #W-MDOD
+  2 #W-MDOD-YYYYMM         (N6)
+  2 REDEFINE #W-MDOD-YYYYMM
+    3 #W-MDOD-YYYY         (A4)
+    3 #W-MDOD-MM           (A2)
+  2 #W-MDOD-DD             (A2)
+  2 REDEFINE #W-MDOD-DD
+    3 #W-MDOD-DD-N  (N2)
+1 #TO-INIT      (A3)                   /* TO SEND MESSAGE /\
+*
+1 #WYYYYMMDD-DATE-NOTIFIED  (N8)
+*
+1 #SUFFIX-NX         (A3)
+1 #NX-STATUS         (A22)
+1 #STATUS-DATE-A       (A8)
+1 REDEFINE #STATUS-DATE-A
+  2 #STATUS-DATE-N      (N8)
+*
+1 #PRIOR-DOD-ST    (A1)
+1 #TXN-TYPE        (A3)
+1 #OVER-AGE        (L)
+1 #AVL-TDIV        (P7.2)
+1 #W-FACE-AMT      (P7.2)
+1 #HOLD-VCN        (A12)
+1 REDEFINE #HOLD-VCN
+  2 #HNV     (A1/1:12)
+1 #HOLD-OLD-VCN    (A12)
+1 REDEFINE #HOLD-OLD-VCN
+  2 #HOV  (A1/1:12)
+1 #IN              (I2)
+1 #IO              (I2)
+1 #HOLD-SCR-DOD    (A8)
+1 #NO-SPECIAL-USER (L)
+1 #INIT-CREATED     (L)
+1 #VERIFY-NOTIFY-MSG(A78/2)
+1 #SCR-MSG         (A78)
+*
+1 #SAVE-DOD        (A8)
+1 #SAVE-DOD-ST     (A1)
+1 #SAVE-DOC-VAL    (A10)
+1 #SAVE-CERT-CDE   (A1)
+1 #SAVE-CAUSE-OF-DEATH(A50)
+1 #SAVE-PLACE      (A50)
+1 #SAVE-PLACE-BIRTH(A50)
+1 #SAVE-HOMICIDE-IND(A1)
+1 #SAVE-BUR-LOC    (A1)
+1 #SAVE-BUR-INFO   (A35)
+1 #SAVE-DN-REMARKS (A78/3)
+1 #XML             (A) DYNAMIC       /* RE5
+1 #LINE            (A) DYNAMIC       /* RE5
+1 #RESPONSE        (A) DYNAMIC       /* RE5
+1 #CRM-REQUEST     (I4)              /* RE5
+1 #RESPONSE-DSPL   (A16)             /* RE5
+1 #SYNCHRONIZE     (L)               /* RE5
+*
+1 #seg             (n2/9)            /* vt3
+1 #k               (i2)              /* vt3
+1 v_RC             (N4)              /* bz-GPL/GP2
+1 v_GIPO           (N1)              /* bz-GPL/GP2
+1 #idx             (i2)              /* vt 06/01/2017
+END-DEFINE
+*
+MOVE *USER TO #USER-ID
+*
+SET KEY ENTR NAMED 'Save'
+SET KEY PF1=HELP
+SET KEY PF3 NAMED 'Exit'
+SET KEY PF7 NAMED 'Prev'
+SET KEY PF8 NAMED 'Next'
+SET KEY PF12 NAMED 'Reln'
+*
+PERFORM INITIAL-SETTINGS
+*
+REPEAT
+  PERFORM LOAD-DATA
+  REPEAT
+    INPUT WITH TEXT #SCR-MSG MARK #POS USING MAP 'DNXUM005'
+    DECIDE ON FIRST VALUE OF *PF-KEY
+      VALUE 'PF3','PF7','PF8'
+        ESCAPE BOTTOM
+      VALUE 'ENTR'
+        PERFORM INPUT-VALIDATION
+        IF #PF3
+          RESET #PF3
+          ESCAPE TOP
+        END-IF
+      NONE VALUE IGNORE
+*        WRITE *PF-KEY
+    END-DECIDE
+    UNTIL NOT #ERRORS
+  END-REPEAT
+  IF *PF-KEY NE 'PF3'
+    PERFORM DB-UPDATE
+    IF #UPDATED
+      MOVE TRUE TO #SYNCHRONIZE
+      PERFORM STATUS-UPDATE
+      IF #CLERK-ID = 'vxt'
+        WRITE NOTITLE 'Record successfully updated'
+*        WRITE CONTACT-V
+      END-IF
+      END TRANSACTION
+      CALLNAT 'ADRN0004' #CONTACT-ID #H1 #H2
+    ELSE
+      IF #CLERK-ID = 'vxt'
+        WRITE NOTITLE 'No Record is updated'
+      END-IF
+      MOVE 'No updates requested' TO #SCR-MSG
+      BACKOUT TRANSACTION
+    END-IF
+  END-IF
+  UNTIL *PF-KEY = 'PF3' OR= 'PF7' OR= 'PF8'
+END-REPEAT
+*
+IF #SYNCHRONIZE             /* RE5 CRM SYNC PROCESS  Start
+  ASSIGN #CRM-REQUEST = 2
+  CALLNAT 'MBRDATA'
+    #ST-ISN                 /* Status record ISN
+    #XML
+    #LINE
+    #RESPONSE
+    #CRM-REQUEST
+END-IF                      /* RE5 CRM SYNC PROCESS  End
+*
+*****************
+DEFINE SUBROUTINE INPUT-VALIDATION
+*****************
+*
+RESET #SCR-MSG #ERRORS #POS
+*
+COMPRESS #SCR-DOD-MM #SCR-DOD-DD #SCR-DOD-YYYY INTO #WORK-DOD-A LEAVING NO
+COMPRESS #SCR-DOD-YYYY #SCR-DOD-MM #SCR-DOD-DD INTO #SCR-DOD-8-A LEAVING NO
+*
+IF #WORK-DOD-A  = ' '
+  MOVE 'Date of Death must be entered' TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-DOD)
+  ESCAPE ROUTINE
+ELSE
+  IF #WORK-DOD-N NE MASK(MMDDYYYY)
+    MOVE  'Must be (MMDDYYYY) format' TO #SCR-MSG
+    MOVE TRUE TO #ERRORS
+    #POS := POS(#SCR-DOD)
+    ESCAPE ROUTINE
+  ELSE
+    MOVE EDITED #WORK-DOD-A  TO #WORK-DOD-D (EM=MMDDYYYY)
+    IF #WORK-DOD-D GT #CURR-DATE-D
+      MOVE 'Date of Death could not be a future date' TO #SCR-MSG
+      MOVE TRUE TO #ERRORS
+      #POS := POS(#SCR-DOD)
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+END-IF
+*
+MOVE #SCR-DOD-YYYY TO #W-MDOD-YYYY
+MOVE #SCR-DOD-MM   TO #W-MDOD-MM
+MOVE #SCR-DOD-DD   TO #W-MDOD-DD                      /* VXT 12272010
+*
+IF #SCR-DOD-ST = ' '
+  MOVE  'Enter DOD Status' TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-DOD-ST)
+  ESCAPE ROUTINE
+END-IF
+*
+IF NOT(#SCR-DOD-ST = 'P' OR = 'C' OR = 'B')
+  MOVE 'Wrong DOD status. Possible values are P or C or B.' TO #SCR-MSG   /* RE4
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-DOD-ST)
+  ESCAPE ROUTINE
+END-IF
+*
+IF #HOLD-SCR-DOD-ST = 'C' AND #SCR-DOD-ST = 'P'
+  MOVE 'You can not change the DOD status from ''C'' to ''P''' TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  #POS := POS (#SCR-DOD-ST)
+*  move #hold-scr-dod-st to #scr-dod-st
+  ESCAPE ROUTINE
+END-IF
+*
+IF #HOLD-SCR-DOD-ST = 'P' AND #SCR-DOD-ST = 'B'                             /* RE4 START
+  MOVE 'You can not change the DOD status from "P" to "B"' TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  #POS := POS (#SCR-DOD-ST)
+*  move #hold-scr-dod-st to #scr-dod-st
+  ESCAPE ROUTINE
+END-IF
+*
+IF #HOLD-SCR-DOD-ST = 'B' AND (#SCR-DOD-ST = 'C' OR = 'P')
+  MOVE 'You can not change the DOD status from "B" to "C" or "P"' TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  #POS := POS (#SCR-DOD-ST)
+*  move #hold-scr-dod-st to #scr-dod-st
+  ESCAPE ROUTINE
+END-IF                                                                      /* RE4 END
+*
+IF #HOLD-SCR-DOD-ST = 'C'
+    AND (#HOLD-SCR-DOD NE #SCR-DOD)
+    AND  #NO-SPECIAL-USER
+  MOVE 'You are not authorized to update DOD after the status is ''C'''  TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  #POS := POS (#SCR-DOD)
+  ESCAPE ROUTINE
+END-IF
+*
+#SCR-MSG := FUNCTION-DNV-CHECK (<'036',#SCR-DOC-VAL>)
+IF #SCR-MSG NE ' '
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-DOC-VAL)
+  ESCAPE ROUTINE
+END-IF
+*
+#SCR-MSG := FUNCTION-CV-CHECK (<'033',#SCR-CERT-CDE>)
+IF #SCR-MSG NE ' '
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-CERT-CDE)
+  ESCAPE ROUTINE
+END-IF
+*
+IF #SCR-CAUSE-OF-DEATH = ' '
+  MOVE  'Required info. Please enter Cause of Death.'  TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-CAUSE-OF-DEATH)
+  ESCAPE ROUTINE
+END-IF
+*
+#SCR-MSG := FUNCTION-CV-CHECK (<'035',#SCR-HOMICIDE-IND>)
+IF #SCR-MSG NE ' '
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-HOMICIDE-IND)
+  ESCAPE ROUTINE
+END-IF
+*
+#SCR-MSG := FUNCTION-CV-CHECK (<'037',#SCR-BUR-LOC>)
+IF #SCR-MSG NE ' '
+  MOVE TRUE TO #ERRORS
+  #POS := POS(#SCR-BUR-LOC)
+  ESCAPE ROUTINE
+END-IF
+*
+GET STATUS-V #ST-ISN
+IF STATUS-V.PROCESS-IND = 'S' AND STATUS-V.INTRO-FLAG = 'O'
+  IGNORE
+ELSE
+  IF   (STATUS-V.NUMBER-MEMBERSHIPS = 0)
+      AND (NOT #HAS-ACTIVE-AFFL-PLANS)
+      AND (STATUS-V.DATE-OF-DEATH = 0)
+      AND (STATUS-V.ID-NUMBER GT 1900)
+    MOVE 'Inactive Member cannot be made deceased' TO #SCR-MSG
+    MOVE TRUE TO #ERRORS
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+MOVE #ST-ISN  TO #HOLD-ISN
+*
+FOR #I1 1 TO 9
+  IF STATUS-V.STATUS (#I1) = 'D'
+    IF STATUS-V.PAY-STATUS (#I1) = '45'
+      ADD STATUS-V.EXPIRY-DAY (#I1) TO #NUM-UNITS
+    ELSE
+      COMPUTE #NUM-UNITS = #NUM-UNITS + (STATUS-V.FACE-AMOUNT (#I1) / 5000)
+    END-IF
+  END-IF
+END-FOR
+*
+MOVE TRUE TO #NOTES-EXIST
+FIND (1) NOTES-V WITH NOTES-V.ID-NUMBER = STATUS-V.ID-NUMBER
+  IF NO RECORDS FOUND
+    RESET #NOTES-EXIST
+  END-NOREC
+*
+  IF #NOTES-EXIST
+    IF C*NOTE-TABLE = 0
+      RESET #NOTES-EXIST
+    END-IF
+  END-IF
+*
+  IF #NOTES-EXIST
+    MOVE 'NOTES' TO #SCR-MSG
+  END-IF
+END-FIND
+*
+CALLNAT 'PLAN-AFA' STATUS-V.ID-NUMBER F-IF-AFFL-DATA
+*
+IF   (NUMBER-MEMBERSHIPS = 0)
+    AND (NOT #HAS-ACTIVE-AFFL-PLANS)
+    AND (STATUS-V.DATE-OF-DEATH = 0)
+    AND (STATUS-V.ID-NUMBER GT 1900)
+  MOVE 'Inactive Member cannot be made deceased' TO #SCR-MSG
+  MOVE TRUE TO #ERRORS
+  ESCAPE ROUTINE
+END-IF
+*
+IF (#SCR-DOD-ST = 'C'
+    AND #SCR-DOD NE #HOLD-SCR-DOD) OR
+    ( #SCR-DOD-ST = 'C' AND #HOLD-SCR-DOD-ST = 'P' )
+  PERFORM GET-CONFIRMATION
+END-IF
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE DB-UPDATE
+*****************
+*
+RESET #UPDATED
+IF #SCR-DOD NE #SAVE-DOD OR
+    #SCR-DOD-ST NE #SAVE-DOD-ST OR
+    #SCR-DOC-VAL NE #SAVE-DOC-VAL OR
+    #SCR-CERT-CDE NE #SAVE-CERT-CDE OR
+    #SCR-CAUSE-OF-DEATH NE #SAVE-CAUSE-OF-DEATH OR
+    #SCR-PLACE NE #SAVE-PLACE OR
+    #SCR-PLACE-BIRTH NE #SAVE-PLACE-BIRTH OR
+    #SCR-HOMICIDE-IND NE #SAVE-HOMICIDE-IND OR
+    #SCR-BUR-LOC NE #SAVE-BUR-LOC OR
+    #SCR-BUR-INFO NE #SAVE-BUR-INFO OR
+    #SCR-DN-REMARKS(1) NE #SAVE-DN-REMARKS(1) OR
+    #SCR-DN-REMARKS(2) NE #SAVE-DN-REMARKS(2) OR
+    #SCR-DN-REMARKS(3) NE #SAVE-DN-REMARKS(3)
+  IGNORE
+ELSE
+  ESCAPE ROUTINE
+END-IF
+*
+GET STATUS-V #ST-ISN
+*
+MOVE STATUS-V.ID-NUMBER TO #ID-NUMBER
+RESET #KEY
+*
+RESET PDA-CONTACT #DOB-SPOUSE #SEX-SP  #DATE-OF-BIRTH           /* TT1
+P-CONTACT-ID := STATUS-V.MEMBER-CONTACT-ID                      /* TT1
+CALLNAT 'CONTS001' PDA-CONTACT #DOB-SPOUSE #SEX-SP              /* TT1
+#DATE-OF-BIRTH := P-DATE-OF-BIRTH                             /* TT1
+#SEX           := P-GENDER                                    /* TT1
+*
+IF STATUS-V.WIDOW-FLAG = 'Y'
+  MOVE STATUS-V.ID-NUMBER TO #ID-NUMBER-KEY
+  FIND (1) FIRS-V WITH WIDOW-KEY = #KEY
+    IF NO RECORDS FOUND
+      MOVE 'NO FIRS RECORD ON FILE' TO #SCR-MSG
+      MOVE TRUE TO #NO-FIRS-FOUND
+    END-NOREC
+    IF #NO-FIRS-FOUND
+      IF #AFFL-CLIENT
+          AND #HAS-3SW
+        MOVE 'Y'                TO FIRS-V.WIDOW-FLAG
+        MOVE 'Y'                TO FIRS-V.MEMBER-FLAG
+        MOVE STATUS-V.ID-NUMBER TO FIRS-V.ID-NUMBER
+        CONTACT-ID-NUMBER := STATUS-V.MEMBER-CONTACT-ID           /* bz1
+        STORE FIRS-V
+        MOVE *ISN (0815) TO #HOLD-FIRS-ISN
+      END-IF
+    ELSE              /* firs record is found
+      MOVE *ISN TO #HOLD-FIRS-ISN
+      MOVE TRUE TO #WIDOW-KEY-FOUND
+      IF #SCR-DOD NE ' '                               /* VT1 12272010
+        MOVE #SCR-DOD-YYYY TO #W-MDOD-YYYY
+        MOVE #SCR-DOD-MM   TO #W-MDOD-MM
+        MOVE #SCR-DOD-DD   TO #W-MDOD-DD
+      END-IF
+*
+      IF #W-MDOD NE #HOLD-MDOD
+        PERFORM CALC-DTH-BENEFIT
+      END-IF
+*
+      IF (#W-MDOD NE 0) AND (#HOLD-MDOD NE 0)
+          AND (#W-MDOD NE #HOLD-MDOD)
+        MOVE '*Chk Death Bene due to DOD chg*' TO #DOD-CHG-MSG
+      END-IF
+*
+*      perform process-for-id-gt-1900
+*
+      IF STATUS-V.ID-NUMBER GT 1900  /* do not do samples
+        IF #UPDATE-PD-SCN
+          PERFORM UPDATE-PD-SCREEN
+        END-IF
+*
+        IF #NO-HISTORY
+          PERFORM NO-HIST-NX     /* DW7
+          MOVE 'Record successfully updated-no death benefit calculated'
+            TO  #SCR-MSG
+          #MODE := '2'
+**         PERFORM DO-DR                        /* bz1  2    FOR TEST
+        ELSE
+          COMPRESS 'Record successfully updated' #DOD-CHG-MSG INTO #SCR-MSG
+          #MODE := "3"
+**          PERFORM DO-DR                        /* bz1  3  FOR TEST
+        END-IF
+      ELSE
+        MOVE 'NO UPDATES REQUESTED' TO #MSG
+        CALLNAT 'DNXUN005' #ISN #CLERK-ID #MODE-2 #MSG
+      END-IF
+    END-IF
+  END-FIND
+ELSE         /* widow-flag = ' '
+  MOVE TRUE TO #FIRST-WN
+  MOVE 'N' TO DEATH-CERT-CODE
+  IF NOT INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    MOVE 'A' TO ALOT-SW
+  END-IF
+*
+  IF DATE-BOOK = '2'     /* had been 2 for mbr & sps
+    MOVE '1' TO DATE-BOOK  /* now 1 for sps only
+  END-IF
+*
+  MOVE STATUS-V.ID-NUMBER TO #ID-NUMBER-KEY
+  FIND (1) FIRS-V WITH MEMBER-KEY = #KEY
+    IF NO RECORDS FOUND
+      MOVE 'Y'                TO FIRS-V.WIDOW-FLAG
+      MOVE 'Y'                TO FIRS-V.MEMBER-FLAG
+      MOVE STATUS-V.ID-NUMBER TO FIRS-V.ID-NUMBER
+      MOVE 'ADD   ' TO #TXN-TYPE
+      MOVE TRUE TO #NO-FIRS-FOUND
+    END-NOREC
+*
+    IF #NO-FIRS-FOUND
+      IGNORE
+    ELSE
+      MOVE *ISN TO #HOLD-FIRS-ISN
+*
+      FOR #I1 1 TO 45
+        IF FIRS-V.POL-NAME (#I1) = 'NSLI'
+          RESET #OVER-AGE
+*
+          IF   (FIRS-V.POL-TYPE (#I1) = 'ML65')
+              AND ((#DATE-OF-BIRTH + 650000)               /* TT1
+              LE STATUS-V.DATE-OF-DEATH)
+            MOVE TRUE TO #OVER-AGE
+          END-IF
+*
+          IF   (FIRS-V.POL-TYPE (#I1) = 'ML70')
+              AND ((#DATE-OF-BIRTH + 700000)               /* TT1
+              LE STATUS-V.DATE-OF-DEATH)
+            MOVE TRUE TO #OVER-AGE
+          END-IF
+*
+          IF #OVER-AGE
+            MULTIPLY FIRS-V.POL-AMOUNT (#I1) BY 2
+          END-IF
+        END-IF
+      END-FOR
+    END-IF
+*
+    PERFORM DEVELOPE-INFO
+*
+    IF #W-MDOD NE 0
+      PERFORM CALC-DTH-BENEFIT
+    END-IF
+    IF #TXN-TYPE = 'ADD'                                   /* vt2
+      CONTACT-ID-NUMBER := STATUS-V.MEMBER-CONTACT-ID           /* bz1
+      STORE FIRS-V
+      MOVE *ISN (0916) TO #HOLD-FIRS-ISN                   /* vt2
+    ELSE
+      IF #NO-HISTORY
+        PERFORM NO-HIST-NX
+        MOVE 'Record successfully updated-no death benefit calculated' TO #SCR-MSG
+      ELSE
+        MOVE 'Record successfully updated' TO #SCR-MSG
+      END-IF
+    END-IF
+    IF #FIRST-WN
+
+      examine status-v.plan(*) for 'GT1' index #idx                         /* vt4
+      if (#idx ne 0) and (status-v.plan(#idx) ne 'GT1'  )                   /* vt4
+        RESET #SEG-I
+        CALLNAT 'GCONTSXX' STATUS-V.ID-NUMBER #SEG-I #HAS-CONTESTABILITY
+          #NO-LONGER-CONTESTABLE #CONTESTABLE-BUT-PAID       /* DW23 DW24
+        IF #HAS-CONTESTABILITY
+          RESET #NOTE-TEXT (*)
+          COMPRESS 'CN' STATUS-V.ID-NUMBER 'DOD' STATUS-V.DATE-OF-DEATH                   /* TEMP
+            'has a Contestable Death Policy' INTO #NOTE-TEXT (1)
+          MOVE '*NX' TO #SUFFIX-NX
+          MOVE 'BMG' TO #TO-INIT
+          FETCH RETURN 'DN090SNX' #SUFFIX-NX #CLERK-ID #TO-INIT #NOTE-TEXT (*)
+          MOVE 'KHB' TO #TO-INIT
+          FETCH RETURN 'DN090SNX' #SUFFIX-NX #CLERK-ID #TO-INIT #NOTE-TEXT (*)
+*        PERFORM END-TRANSACTION
+        END-IF
+      end-if                                                                /* vt4
+    END-IF
+*
+    CALLNAT 'DEATHNOT'                     /* gOVERMENT ALLOTMENT NOTIFICATION SCREEN
+      STATUS-V.ID-NUMBER
+*
+  END-FIND
+  IF #SCR-DOD NE ' '                               /* VT1 12272010
+    MOVE #SCR-DOD-YYYY TO #W-MDOD-YYYY
+    MOVE #SCR-DOD-MM   TO #W-MDOD-MM
+    MOVE #SCR-DOD-DD   TO #W-MDOD-DD
+  END-IF
+*
+END-IF
+*******************************************************
+*
+IF #SCR-DOD  NE #HOLD-SCR-DOD
+  MOVE TRUE TO #UPDATED
+END-IF
+*
+IF (#YYYYMMDD-N NE #HOLD-MDOD) OR
+    (#SCR-DOD-ST   NE CONTACT-V.DATE-OF-DEATH-STATUS-CODE)
+  MOVE TRUE TO #UPDATED
+  MOVE #SCR-DOD-ST   TO CONTACT-V.DATE-OF-DEATH-STATUS-CODE
+  MOVE *DATN TO CONTACT-V.DATE-OF-DEATH-STATUS-DATE
+  IF #SCR-MDOD-N > 0
+    MOVE #SCR-MDOD TO #SCR-DOD
+  END-IF
+  IF #SCR-DOD-ST   = 'P'
+    COMPRESS #SCR-DOD-YYYY #SCR-DOD-MM #SCR-DOD-DD
+      INTO #DATE-OF-DEATH LEAVING NO
+    MOVE #DATE-OF-DEATH-N TO CONTACT-V.DATE-OF-DEATH-REPORTED
+  ELSE
+    COMPRESS #SCR-DOD-YYYY #SCR-DOD-MM #SCR-DOD-DD
+      INTO #DATE-OF-DEATH LEAVING NO
+    MOVE #DATE-OF-DEATH-N TO CONTACT-V.DATE-OF-DEATH
+    MOVE CONTACT-V.DATE-OF-DEATH TO STATUS-V.DATE-OF-DEATH
+      CONTACT-V.DATE-OF-DEATH-REPORTED
+  END-IF
+END-IF
+*
+IF #SCR-DOD-8-N NE CONTACT-V.DATE-OF-DEATH-REPORTED   /* VXT 12/27/2010
+  MOVE #SCR-DOD-8-N TO CONTACT-V.DATE-OF-DEATH-REPORTED
+  MOVE TRUE TO #UPDATED
+END-IF
+*
+IF #SCR-DOD-ST NE CONTACT-V.DATE-OF-DEATH-STATUS-CODE
+  MOVE #SCR-DOD-ST TO CONTACT-V.DATE-OF-DEATH-STATUS-CODE
+  MOVE TRUE TO #UPDATED
+END-IF
+*
+IF CONTACT-V.DATE-OF-DEATH-STATUS-DATE EQ 0
+  COMPRESS #CURR-DATE-MM '/' #CURR-DATE-DD '/' #CURR-DATE-YYYY INTO #SCR-ST-DTE LEAVING NO
+ELSE
+  COMPRESS DATE-OF-DEATH-STATUS-DATE-MM '/' DATE-OF-DEATH-STATUS-DATE-DD '/'
+    DATE-OF-DEATH-STATUS-DATE-YYYY
+    INTO #SCR-ST-DTE LEAVING NO
+END-IF
+*
+IF #SCR-DOC-VAL NE CONTACT-V.DEATH-DOCUMENT-VALIDATION-CODE           /* RE8
+  MOVE TRUE TO #UPDATED                                               /* RE8
+  MOVE #SCR-DOC-VAL TO CONTACT-V.DEATH-DOCUMENT-VALIDATION-CODE       /* RE8
+END-IF                                                                /* RE8
+*
+IF #SCR-CERT-CDE NE CONTACT-V.DEATH-CERT-CODE
+  MOVE TRUE TO #UPDATED
+  MOVE #SCR-CERT-CDE TO CONTACT-V.DEATH-CERT-CODE STATUS-V.DEATH-CERT-CODE
+END-IF
+*
+IF #SCR-HOMICIDE-IND NE CONTACT-V.HOMICIDE-SUICIDE-ACCIDENT-IND
+  MOVE TRUE TO #UPDATED
+  MOVE #SCR-HOMICIDE-IND TO CONTACT-V.HOMICIDE-SUICIDE-ACCIDENT-IND
+END-IF
+*
+IF #SCR-PLACE NE CONTACT-V.PLACE-OF-DEATH
+  MOVE TRUE TO #UPDATED
+  MOVE #SCR-PLACE TO CONTACT-V.PLACE-OF-DEATH
+    FIRS-V.PLACE-OF-DEATH
+END-IF
+*
+IF #SCR-CAUSE-OF-DEATH NE CONTACT-V.CAUSE-OF-DEATH
+  MOVE #SCR-CAUSE-OF-DEATH TO CONTACT-V.CAUSE-OF-DEATH
+    FIRS-V.CAUSE-OF-DEATH
+  MOVE TRUE TO #UPDATED
+END-IF
+*
+IF #SCR-BUR-INFO NE CONTACT-V.BURIAL-INFO
+  MOVE #SCR-BUR-INFO TO CONTACT-V.BURIAL-INFO
+  MOVE TRUE TO #UPDATED
+END-IF
+*
+IF #SCR-BUR-LOC NE CONTACT-V.BURIAL-LOC
+  MOVE #SCR-BUR-LOC TO CONTACT-V.BURIAL-LOC
+  MOVE TRUE TO #UPDATED
+END-IF
+*
+FOR #I1 1 TO 3                                        /* DW34
+  IF #SCR-DN-REMARKS (#I1) NE FIRS-V.DN-REMARKS (#I1)
+    MOVE #SCR-DN-REMARKS (#I1) TO FIRS-V.DN-REMARKS (#I1)
+    MOVE TRUE TO #UPDATED
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE STATUS-UPDATE
+*****************
+*
+RESET #STATUS-DATE-A
+GET CONTACT-V #ISN
+COMPRESS #SCR-DOD-YYYY #SCR-DOD-MM #SCR-DOD-DD INTO #SCR-MDOD LEAVING NO
+IF #SCR-DOD-ST = 'C'
+  IF CONTACT-V.DATE-OF-DEATH = 0
+    PERFORM PREPARE-MBRSHIP-DET
+  END-IF
+  MOVE #SCR-MDOD-N         TO CONTACT-V.DATE-OF-DEATH
+    CONTACT-V.DATE-OF-DEATH-REPORTED
+ELSE
+  IF #SCR-DOD-ST = 'P'               /* RE20
+    MOVE #SCR-MDOD-N         TO CONTACT-V.DATE-OF-DEATH-REPORTED
+  END-IF
+END-IF
+MOVE #SCR-DOC-VAL        TO CONTACT-V.DEATH-DOCUMENT-VALIDATION-CODE
+MOVE #SCR-DOD-ST         TO CONTACT-V.DATE-OF-DEATH-STATUS-CODE
+COMPRESS #SCR-ST-DTE-YYYY #SCR-ST-DTE-MM #SCR-ST-DTE-DD INTO #STATUS-DATE-A LEAVING NO
+MOVE #STATUS-DATE-N      TO CONTACT-V.DATE-OF-DEATH-STATUS-DATE
+MOVE #SCR-CERT-CDE       TO CONTACT-V.DEATH-CERT-CODE
+MOVE #SCR-CAUSE-OF-DEATH TO CONTACT-V.CAUSE-OF-DEATH
+MOVE #SCR-PLACE          TO CONTACT-V.PLACE-OF-DEATH
+MOVE #SCR-HOMICIDE-IND   TO CONTACT-V.HOMICIDE-SUICIDE-ACCIDENT-IND
+MOVE #SCR-BUR-LOC        TO CONTACT-V.BURIAL-LOC
+MOVE #SCR-BUR-INFO       TO CONTACT-V.BURIAL-INFO
+MOVE *DATN               TO CONTACT-V.LAST-DEATH-DATE-UPD
+MOVE #CLERK-ID           TO  CONTACT-V.LAST-DEATH-USER-UPD
+MOVE #SCR-PLACE-BIRTH    TO CONTACT-V.PLACE-OF-BIRTH
+UPDATE (1054)
+END TRANSACTION
+*
+*  PERFORM SEND-DEATH-MESSAGE
+*
+* get firs-v #fir-isn                                 /* vt2
+GET FIRS-V #HOLD-FIRS-ISN                             /* vt2
+GET STATUS-V #ST-ISN
+IF #SCR-DOD-ST = 'C'
+  MOVE 'Y' TO FIRS-V.WIDOW-FLAG
+  IF #W-MDOD NE #HOLD-MDOD
+    PERFORM CALC-DTH-BENEFIT
+  END-IF
+END-IF
+MOVE #SCR-CAUSE-OF-DEATH TO FIRS-V.CAUSE-OF-DEATH
+MOVE #SCR-PLACE          TO FIRS-V.PLACE-OF-DEATH
+FOR #I1 1 TO 3
+  MOVE #SCR-DN-REMARKS (#I1) TO FIRS-V.DN-REMARKS (#I1)
+END-FOR
+IF CONTACT-ID-NUMBER = 0                                       /* bz1
+  CONTACT-ID-NUMBER := STATUS-V.MEMBER-CONTACT-ID              /* bz1
+END-IF                                                         /* bz1
+MOVE *DATN TO FIRS-V.DP-LAST-FM-DATE
+MOVE *DATN TO FIRS-V.DTS-DATN
+MOVE *TIMN TO FIRS-V.DTS-TIMN
+MOVE *DATN TO FIRS-V.DOCU-LAST-FM-DATE
+* Update fir
+UPDATE (1086)                                     /* vt2 was (1085)
+*
+IF STATUS-V.WIDOW-FLAG = ' '
+  IF NOT INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    MOVE 'A' TO ALOT-SW
+  END-IF
+*
+  IF DATE-BOOK = '2'     /* had been 2 for mbr & sps
+    MOVE '1' TO DATE-BOOK  /* now 1 for sps only
+  END-IF
+END-IF
+*
+IF #SCR-DOD-ST = 'C'                                      /* RE2
+  MOVE 'Y' TO STATUS-V.WIDOW-FLAG
+  MOVE #SCR-MDOD-N TO STATUS-V.DATE-OF-DEATH
+END-IF
+MOVE #SCR-CERT-CDE TO STATUS-V.DEATH-CERT-CODE
+IF #SAVE-DOD = ' ' AND #SCR-DOD NE ' '
+    AND STATUS-V.DATE-DEATH-NOTIFY = 0                       /* RE1 START
+  MOVE *DATN TO STATUS-V.DATE-DEATH-NOTIFY                 /* RE1 END
+END-IF
+* move #scr-svc-conn to status-v.death-service-con
+UPDATE (1087)
+*
+* send e-mail
+*
+IF #SCR-DOD-ST = 'C' OR
+    #SCR-DOD-ST = 'B' OR                                    /* RE4
+    #SCR-DOD-ST = 'P' AND #INIT-CREATED
+  #MODE := '1'
+  PERFORM DO-DR
+END-IF
+IF #SCR-DOD-ST = 'C'
+  PERFORM PROCESS-FOR-ID-GT-1900
+END-IF
+PERFORM TRANS-LOG-UPDATE
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE INITIAL-SETTINGS
+*****************
+/*
+MOVE #MSG TO #PARM
+RESET #MSG
+*
+MOVE (AD=U) TO #MAP-CV
+  #SCR-DOD-CV
+  #SCR-DOD-ST-CV
+  #SCR-DOC-VAL-CV
+  #SCR-CERT-CDE-CV
+  #SCR-CAUSE-OF-DEATH-CV
+  #SCR-PLACE-CV
+  #SCR-PLACE-BIRTH-CV
+  #SCR-HOMICIDE-IND-CV
+  #SCR-BUR-LOC-CV
+  #SCR-BUR-INFO-CV
+*
+PERFORM CHECK-SECURITY
+*
+MOVE *DATX TO #CURR-DATE-D
+MOVE EDITED #CURR-DATE-D (EM=YYYYMMDD)  TO #CURR-DATE-A
+* write #curr-date-a
+*
+GET CONTACT-V #ISN
+#CONTACT-ID := CONTACT-V.CONTACT-ID
+*
+CALLNAT 'ADRN0004' #CONTACT-ID #H1 #H2
+*
+FIND STATUS-V WITH ID-NUMBER = CONTACT-V.ID-NUMBER
+  MOVE *ISN TO #ST-ISN
+END-FIND
+*
+FIND FIRS-V WITH ID-NUMBER = CONTACT-V.ID-NUMBER
+  MOVE *ISN TO #FIR-ISN
+END-FIND
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE LOAD-DATA
+*****************
+GET CONTACT-V #ISN
+*
+IF CONTACT-V.DATE-OF-DEATH > 0                                  /* RE3
+  COMPRESS DATE-OF-DEATH-MM DATE-OF-DEATH-DD DATE-OF-DEATH-YYYY /* RE3
+    INTO #SCR-DOD LEAVING NO                                    /* RE3
+ELSE
+  IF DATE-OF-DEATH-REPORTED > 0
+    COMPRESS DATE-OF-DEATH-REPORTED-MM DATE-OF-DEATH-REPORTED-DD DATE-OF-DEATH-REPORTED-YYYY
+      INTO #SCR-DOD LEAVING NO
+  END-IF
+END-IF
+*
+MOVE #SCR-DOD TO #HOLD-SCR-DOD
+*
+IF CONTACT-V.DATE-OF-DEATH-STATUS-DATE EQ 00000000
+  COMPRESS #CURR-DATE-MM '/' #CURR-DATE-DD '/' #CURR-DATE-YYYY
+    INTO #SCR-ST-DTE LEAVING NO
+END-IF
+*
+RESET #INIT-CREATED
+IF CONTACT-V.DATE-OF-DEATH-STATUS-CODE = ' '
+  MOVE TRUE TO #INIT-CREATED
+  #SCR-DOD-ST     := 'P'
+  #SCR-DOD-ST-TXT := 'Pending Confirmation'
+  COMPRESS DATE-OF-DEATH-REPORTED-MM DATE-OF-DEATH-REPORTED-DD DATE-OF-DEATH-REPORTED-YYYY
+    INTO  #SCR-MDOD LEAVING NO
+  MOVE CONTACT-V.DATE-OF-DEATH-REPORTED   TO #HOLD-MDOD
+  COMPRESS #CURR-DATE-MM '/' #CURR-DATE-DD '/' #CURR-DATE-YYYY
+    INTO #SCR-ST-DTE LEAVING NO
+ELSE
+  COMPRESS DATE-OF-DEATH-STATUS-DATE-MM '/' DATE-OF-DEATH-STATUS-DATE-DD '/' DATE-OF-DEATH-STATUS-DATE-YYYY
+    INTO #SCR-ST-DTE LEAVING NO
+  #SCR-DOD-ST     := CONTACT-V.DATE-OF-DEATH-STATUS-CODE
+  COMPRESS DATE-OF-DEATH-MM DATE-OF-DEATH-DD  DATE-OF-DEATH-YYYY INTO #SCR-MDOD  LEAVING NO
+  MOVE CONTACT-V.DATE-OF-DEATH   TO #HOLD-MDOD
+END-IF
+*
+MOVE #SCR-DOD-ST TO #HOLD-SCR-DOD-ST
+*
+#SCR-DOD-ST-TXT       := FUNCTION-CODE-1-DESC(<'029',#SCR-DOD-ST>)
+IF CONTACT-V.DEATH-DOCUMENT-VALIDATION-CODE = ' '
+  MOVE 'N' TO #SCR-DOC-VAL
+ELSE
+  #SCR-DOC-VAL        := CONTACT-V.DEATH-DOCUMENT-VALIDATION-CODE
+END-IF
+#SCR-DOC-VAL-TXT      := FUNCTION-CODE-10-DESC(<'036',#SCR-DOC-VAL>)
+#SCR-CERT-CDE         := CONTACT-V.DEATH-CERT-CODE
+IF #SCR-CERT-CDE = ' '
+  MOVE 'N' TO #SCR-CERT-CDE
+END-IF
+#SCR-CERT-CDE-TEXT    := FUNCTION-CODE-1-DESC(<'033',#SCR-CERT-CDE>)
+#SCR-CAUSE-OF-DEATH   := CONTACT-V.CAUSE-OF-DEATH
+#SCR-PLACE            := CONTACT-V.PLACE-OF-DEATH
+#SCR-PLACE-BIRTH      := CONTACT-V.PLACE-OF-BIRTH
+#SCR-HOMICIDE-IND     := CONTACT-V.HOMICIDE-SUICIDE-ACCIDENT-IND
+IF #SCR-HOMICIDE-IND   = ' '
+  MOVE 'N' TO #SCR-HOMICIDE-IND
+END-IF
+#SCR-HOMICIDE-IND-TXT := FUNCTION-CODE-1-DESC(<'035',#SCR-HOMICIDE-IND>)
+#SCR-BUR-LOC          := CONTACT-V.BURIAL-LOC
+IF #SCR-BUR-LOC = ' '
+  MOVE 'U'  TO #SCR-BUR-LOC
+END-IF
+#SCR-BUR-LOC-TXT      := FUNCTION-CODE-1-DESC(<'037',#SCR-BUR-LOC>)
+#SCR-BUR-INFO         := CONTACT-V.BURIAL-INFO
+IF CONTACT-V.LAST-DEATH-DATE-UPD NE 0
+  COMPRESS #LAST-DEATH-DATE-UPD-MM '-' #LAST-DEATH-DATE-UPD-DD '-' #LAST-DEATH-DATE-UPD-YYYY
+    INTO #LAST-DATE-UPD LEAVING NO
+END-IF
+*
+FIND (1) TERM-V WITH CLERK-ID = CONTACT-V.LAST-DEATH-USER-UPD
+  MOVE COMMENTS TO #LAST-USER-UPD
+END-FIND
+*
+RESET #VERIFY-NOTIFY-MSG(*)
+FIND FIRS-V WITH ID-NUMBER = CONTACT-V.ID-NUMBER
+  DECIDE FOR EVERY CONDITION
+    WHEN VERIFIED-MSG NE ' '
+      COMPRESS 'Old Verified By:' VERIFIED-MSG INTO #VERIFY-NOTIFY-MSG(1)
+    WHEN NOTICE-RCVD-FROM NE ' '
+      IF #VERIFY-NOTIFY-MSG(1) = ' '
+        IF DATE-DEATH-NOTIFY > 0
+          COMPRESS '(' DATE-DEATH-NOTIFY ')' INTO #VERIFY-NOTIFY-MSG(1) LEAVING NO
+        END-IF
+        COMPRESS 'Old Notified By:' NOTICE-RCVD-FROM #VERIFY-NOTIFY-MSG(1) INTO #VERIFY-NOTIFY-MSG(1)
+      ELSE
+        IF DATE-DEATH-NOTIFY > 0
+          COMPRESS '(' DATE-DEATH-NOTIFY ')' INTO #VERIFY-NOTIFY-MSG(2) LEAVING NO
+        END-IF
+        COMPRESS 'Old Notified By:' NOTICE-RCVD-FROM #VERIFY-NOTIFY-MSG(2) INTO #VERIFY-NOTIFY-MSG(2)
+      END-IF
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+  MOVE DN-REMARKS(*) TO #SCR-DN-REMARKS(*)
+END-FIND
+*
+IF (STATUS-V.CHIEF-OF-STAFF-IND = 'Y')
+  IF #NOTES-EXIST
+    MOVE 'NOTES - CHIEF OF STAFF ENTITLEMENTS APPLY' TO #SCR-MSG
+  ELSE
+    MOVE 'CHIEF OF STAFF ENTITLEMENTS APPLY' TO #SCR-MSG
+  END-IF
+  MOVE TRUE TO #ERRORS
+END-IF
+*
+examine status-v.plan(*) for 'GT1' index #idx                 /* vt4
+if (#idx ne 0) and (status-v.plan(#idx) ne 'GT1')             /* vt4
+
+  RESET #SEG-I #HAS-CONTESTABILITY
+  CALLNAT 'GCONTSXX' STATUS-V.ID-NUMBER #SEG-I #HAS-CONTESTABILITY
+    #NO-LONGER-CONTESTABLE #CONTESTABLE-BUT-PAID
+  IF #HAS-CONTESTABILITY
+    COMPRESS #SCR-MSG 'Has a Contestable Death Claim' INTO #SCR-MSG
+*  move true to #errors
+  END-IF
+end-if                                                        /* vt4
+*
+#SAVE-DOD             := #SCR-DOD
+#SAVE-DOD-ST          := #SCR-DOD-ST
+#SAVE-DOC-VAL         := #SCR-DOC-VAL
+#SAVE-CERT-CDE        := #SCR-CERT-CDE
+#SAVE-CAUSE-OF-DEATH  := #SCR-CAUSE-OF-DEATH
+#SAVE-PLACE           := #SCR-PLACE
+#SAVE-PLACE-BIRTH     := #SCR-PLACE-BIRTH
+#SAVE-HOMICIDE-IND    := #SCR-HOMICIDE-IND
+#SAVE-BUR-LOC         := #SCR-BUR-LOC
+#SAVE-BUR-INFO        := #SCR-BUR-INFO
+#SAVE-DN-REMARKS(*)   := #SCR-DN-REMARKS(*)
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE CHECK-SECURITY
+*****************
+*
+MOVE *USER TO #USER-ID
+MOVE TRUE TO #SPECIAL-USER
+MOVE '034' TO #SUB-KEY
+MOVE 'CODE' TO #GEN-KEY
+FIND CODES WITH SEC-KEY = #TABLE-KEY
+  IF NO
+    ESCAPE BOTTOM
+  END-NOREC
+  IF #USER-ID = GEN-ALPHA-VALUE
+    RESET #SPECIAL-USER
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+IF  (#USER-COMPANY = 'S')
+    AND (STATUS-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G')                       /* AFFL can't DN INS-ONLY
+  MOVE 'AFA cannot do DN on an INS-ONLY (SPS/GEN)' TO #SCR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+IF  (#USER-COMPANY = 'I')
+    AND (NOT #CLERK-ID = 'BMG' OR = 'KHB'                                       /*IAS users OK for DN
+    OR = 'CEB' OR = 'SKS' OR = 'ACN' OR = 'ALB' OR = 'WRL' OR = 'ALS'        /* PM1
+    OR = 'JC' OR = 'BZ' OR = 'LR'    OR = 'VXT')                            /* MS USERS vt remove dSV and RE
+  MOVE TRUE TO #UPDATE-NOT-ALLOWED
+  MOVE (AD=P) TO #SCR-DOD-CV                                                     /* Can't even enter/chg DOD
+END-IF
+*
+IF   (#USER-COMPANY = 'S')
+    AND ((NOT #SECURITY-CODE = 97 OR = 98)                                /*All ALL-Powerful OK for DN
+    OR  (STATUS-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'))                    /*AAFM can only DN INS-ONLY
+  MOVE TRUE TO #UPDATE-NOT-ALLOWED
+  MOVE (AD=P) TO #SCR-DOD-CV                                                  /* Can't even enter/chg DOD
+END-IF
+*
+IF #UPDATE-NOT-ALLOWED
+  MOVE 'Only Authorized Users can enter DN or CHG Info on this Member'
+    TO #SCR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE CALC-DTH-BENEFIT
+*****************
+*
+MOVE TRUE TO #SEND-DTH-MSG
+*
+MOVE 1 TO #F-X
+MOVE FIRS-V.C*POLICY-TABLE TO #C-X
+*
+#k := 1                                    /* vt3
+FOR #ST-X 1 TO C*ACTIVE-SEGMENTS
+  IF STATUS-V.STATUS (#ST-X) NE 'D'               /* Bypass if termed prior to
+    ESCAPE TOP                                    /* 1st DN - Subsequent DN's after CI DEAD when status
+  END-IF                                          /* becomes 'E/F' will not recalculate Death benefit
+*
+  IF #FIRST-WN
+      AND (#C-X GT 0)
+    FOR #N-X #C-X TO 1 STEP -1
+      IF FIRS-V.POL-NAME (#N-X) = 'AMAA' OR = 'AAFMAA' OR = 'AFSC'
+        IGNORE   /* Don't shift if not AAFMAA Pol
+      ELSE
+        MOVE FIRS-V.POL-NAME  (#N-X)  TO FIRS-V.POL-NAME  (#N-X + 1)
+        MOVE FIRS-V.POL-CODE  (#N-X)  TO FIRS-V.POL-CODE  (#N-X + 1)
+        MOVE FIRS-V.POL-NUMBER(#N-X)  TO FIRS-V.POL-NUMBER(#N-X + 1)
+        MOVE FIRS-V.POL-MODE  (#N-X)  TO FIRS-V.POL-MODE  (#N-X + 1)
+        MOVE FIRS-V.POL-712   (#N-X)  TO FIRS-V.POL-712   (#N-X + 1)
+*
+        FOR #B-X 1 TO 3
+          MOVE FIRS-V.POL-BENEFIC(#N-X,#B-X) TO
+            FIRS-V.POL-BENEFIC(#N-X + 1,#B-X)
+        END-FOR
+*
+        MOVE FIRS-V.POL-TYPE    (#N-X) TO FIRS-V.POL-TYPE   (#N-X + 1)
+        MOVE FIRS-V.POL-REMARKS(#N-X) TO FIRS-V.POL-REMARKS (#N-X + 1)
+        RESET FIRS-V.POL-REMARKS (#N-X)
+        MOVE FIRS-V.POL-AMOUNT (#N-X) TO FIRS-V.POL-AMOUNT  (#N-X + 1)
+        MOVE FIRS-V.POL-DATE   (#N-X) TO FIRS-V.POL-DATE    (#N-X + 1)
+        MOVE FIRS-V.POL-AMT-PAID(#N-X) TO FIRS-V.POL-AMT-PAID(#N-X + 1)
+        MOVE FIRS-V.POL-DATE-SENT-TO-WIDOW(#N-X) TO
+          FIRS-V.POL-DATE-SENT-TO-WIDOW(#N-X + 1)
+        MOVE FIRS-V.POL-DATE-CLM-FILED(#N-X) TO
+          FIRS-V.POL-DATE-CLM-FILED(#N-X + 1)
+        MOVE FIRS-V.POL-DATE-CLM-SETTLED(#N-X) TO
+          FIRS-V.POL-DATE-CLM-SETTLED(#N-X + 1)
+        MOVE FIRS-V.POL-INSTAL(#N-X) TO FIRS-V.POL-INSTAL(#N-X + 1)
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF FIRS-V.POL-DATE-CLM-FILED (#F-X) = 0
+    MOVE *DATN TO FIRS-V.POL-DATE-CLM-FILED (#F-X)
+    MOVE TRUE TO #UPDATE-PD-SCN
+  END-IF
+*
+  IF STATUS-V.ISSUE-DATE(#ST-X) LT 19870417
+    MOVE 'AMAA'   TO FIRS-V.POL-NAME(#F-X)
+  ELSE
+    MOVE 'AAFMAA' TO FIRS-V.POL-NAME(#F-X)
+  END-IF
+*
+  COMPRESS 'CN'  STATUS-V.ID-NUMBER INTO FIRS-V.POL-NUMBER(#F-X)
+    LEAVING NO SPACE
+  ADD STATUS-V.ANNUAL-PREM(#ST-X) TO #PREM-ACC
+*
+  IF   (#W-MDOD LT 19870414)
+      AND  (STATUS-V.ISSUE-DATE(#ST-X) GE 19840414)
+    IF STATUS-V.FACE-AMOUNT(#ST-X) EQ 5000.00
+      MOVE 3000.00 TO STATUS-V.FACE-AMOUNT(#ST-X)
+    END-IF
+*
+    IF STATUS-V.FACE-AMOUNT(#ST-X) EQ 10000.00
+      MOVE 6000.00 TO STATUS-V.FACE-AMOUNT(#ST-X)
+    END-IF
+*
+    IF STATUS-V.FACE-AMOUNT(#ST-X) EQ 15000.00
+      MOVE 9000.00 TO STATUS-V.FACE-AMOUNT(#ST-X)
+    END-IF
+*
+    IF STATUS-V.FACE-AMOUNT(#ST-X) EQ 20000.00
+      MOVE 12000.00 TO STATUS-V.FACE-AMOUNT(#ST-X)
+    END-IF
+  ELSE
+    IF   (#W-MDOD LT 19880412)
+        AND (#W-MDOD GE 19880401)
+        AND (STATUS-V.ISSUE-DATE(#ST-X) GE 19850401)
+        AND (STATUS-V.CONVERSION-FLAG(#ST-X) = 'C')
+      MOVE STATUS-V.FACE-AMOUNT (#ST-X)
+        TO STATUS-V.DEATH-BENEFIT(#ST-X)
+    END-IF
+  END-IF
+*
+
+* display issue-date (#i1) date-of-death POL-DATE-CLM-SETTLED (#i1) #seg-x
+  if   (status-v.issue-date (#st-x) ne 0)                                           /* vt5 \/
+      and ((#eff-date - status-v.issue-date (#st-x)) lt 20000)
+      and (status-v.plan(#st-x) ne 'GT1')
+    move 'Y' to firs-v.contestable-ind (#f-x)
+  end-if                                                                            /* vt5 /\
+
+*
+  MOVE STATUS-V.FACE-AMOUNT       (#ST-X) TO FIRS-V.POL-AMOUNT(#F-X)
+  MOVE STATUS-V.FACE-AMOUNT       (#ST-X) TO #POL-AMOUNT
+  MOVE STATUS-V.FIRS-LOCATION-CODE(#ST-X) TO FIRS-V.POL-CODE  (#F-X)
+  MOVE STATUS-V.ISSUE-DATE        (#ST-X) TO FIRS-V.POL-DATE  (#F-X)
+  MOVE STATUS-V.PLAN              (#ST-X) TO FIRS-V.POL-TYPE  (#F-X)
+  IF PLAN(#ST-X) = 'GPL' AND DATE-OF-BIRTH + 210000 > DATE-OF-DEATH           /* bz-GPL/GP2
+      OR PLAN(#ST-X) = 'GP2' AND DATE-OF-BIRTH + 180000 > DATE-OF-DEATH         /* bz-GPL/GP2
+    MOVE STATUS-V.FACE-AMOUNT     (#ST-X) TO #DEATH-BN                        /* bz-GPL/GP2
+  ELSE                                                                        /* bz-GPL/GP2
+    MOVE STATUS-V.DEATH-BENEFIT     (#ST-X) TO #DEATH-BN
+  END-IF                                                                      /* bz-GPL/GP2
+  CALLNAT 'GP-P2P' 3 POLICY-ID(#ST-X) v_RC  v_GIPO                            /* bz-GPL/GP2
+  IF v_GIPO > 0 CONTESTABLE-IND(#F-X) := 'N' END-IF                           /* bz-GPL/GP2
+
+  MOVE STATUS-V.CASH-VALUE        (#ST-X) TO #CASH-VALUE       /* PM25
+  MOVE STATUS-V.PLAN              (#ST-X) TO #PLAN-3
+  MOVE STATUS-V.BEG-CASH-VALUE    (#ST-X) TO #CONT-FUND        /* PM25
+
+  move #st-x to #seg(#k)        /* vt3
+  add 1 to #k                   /* vt3
+*
+  IF FUNCTION-TERM-POLICY(<#PLAN-3>)                /* YK1
+*     OR (#PLAN-3 = 'AL')
+      OR IS-ANNUITY-LIFE(<#PLAN-3>)                 /* YK3
+    MOVE #W-MDOD TO #EFF-DATE
+    MOVE STATUS-V.PLAN (#ST-X) TO #PLAN-3
+*
+    IF  ((#PLAN-3 = 'LT')
+        AND (#DATE-OF-BIRTH LE (#EFF-DATE - 400000)))               /* TT1
+        OR  ((#PLAN-3 = 'RT')
+        AND (STATUS-V.ISSUE-AGE(#ST-X) GT '65'))
+        OR  ((#PLAN-3 = 'EZ')                             /* YK2
+        AND (STATUS-V.PAID-UP-DATE(#ST-X) LE #EFF-DATE))  /* YK2
+*       OR  (((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z'))    /* YK1
+        OR (F-LT2-TRUE(<#PLAN-3>)                         /* YK1
+        AND ((STATUS-V.ISSUE-DATE(#ST-X) + 40000) LE #EFF-DATE))
+*       OR (#PLAN-3 = 'AL')                                       /* DW1   YK3
+        OR (IS-ANNUITY-LIFE(<#PLAN-3>))                   /* YK3
+*
+*     IF #PLAN-3 = 'AL'                                        /* PM25
+      IF IS-ANNUITY-LIFE(<#PLAN-3>)                            /* YK3
+        MOVE STATUS-V.ISSUE-DATE(#ST-X) TO #WYYYYMMDD-ISS      /* PM25
+        MOVE *DATN                      TO #WYYYYMMDD-TOD      /* PM25
+        MOVE #W-MDOD                    TO #WYYYYMMDD-DOD      /* PM25
+*
+        IF   (#WYYYY-DOD = #WYYYY-TOD)           /* IF DIED THIS  PM25
+            AND (#WMM-DOD = #WMM-TOD)               /* MONTH         PM25
+          IF   (#WDD-ISS = 1)                                  /* PM25
+              OR (#WDD-DOD GE #WDD-ISS)                           /* PM25
+            IGNORE                                             /* PM25
+          ELSE                                                 /* PM25
+            PERFORM USE-HISTORY                                /* PM25
+          END-IF                                               /* PM25
+        ELSE                                                   /* PM25
+          PERFORM USE-HISTORY                                  /* PM25
+        END-IF                                                 /* PM25
+      END-IF                                                   /* PM25
+*
+      CALLNAT 'GDROPSTM' USING
+        STATUS-V.PLAN          (#ST-X)
+        STATUS-V.SMOKER-FLAG   (#ST-X)
+        #DATE-OF-BIRTH                                        /* TT1
+        STATUS-V.ISSUE-DATE    (#ST-X)
+        STATUS-V.PAID-UP-DATE  (#ST-X)
+        #EFF-DATE
+        STATUS-V.ISSUE-AGE     (#ST-X)
+        #PAY-STAT
+        #POL-AMOUNT
+        #DEATH-BN
+        #CASH-VALUE                                            /* PM25
+        #CONT-FUND                                             /* PM25
+      MOVE #DEATH-BN TO FIRS-V.POL-AMT-PAID(#F-X)             /* DW4
+    ELSE
+      MOVE FIRS-V.POL-AMOUNT (#F-X) TO FIRS-V.POL-AMT-PAID (#F-X)
+    END-IF
+*
+    ADD 1 TO #C-X
+    ADD 1 TO #F-X
+    ESCAPE TOP
+  END-IF
+*
+  IF   (#W-MDOD LT 19880412)
+      AND (#W-MDOD GE 19880401)
+      AND (STATUS-V.ISSUE-DATE(#ST-X) GE 19850401)
+      AND (STATUS-V.CONVERSION-FLAG(#ST-X) = 'C')
+    MOVE STATUS-V.DEATH-BENEFIT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)
+  ELSE
+    IF STATUS-V.CONVERSION-FLAG(#ST-X) = 'N' OR = 'C'
+      IF #W-MDOD NE 0
+        MOVE *DATN                      TO #WYYYYMMDD-TOD
+        MOVE #W-MDOD                    TO #WYYYYMMDD-DOD
+        MOVE STATUS-V.ISSUE-DATE(#ST-X) TO #WYYYYMMDD-ISS
+        IF   (#WYYYY-TOD = #WYYYY-DOD)   /* IF DIED THIS
+            AND (#WMM-TOD = #WMM-DOD)       /* MONTH
+          IF (#WDD-ISS = 1)
+              OR (#WDD-DOD GE #WDD-ISS)
+            IF PLAN(#ST-X) = 'GPL' AND DATE-OF-BIRTH + 210000 > DATE-OF-DEATH           /* bz-GPL/GP2
+                OR PLAN(#ST-X) = 'GP2' AND DATE-OF-BIRTH + 180000 > DATE-OF-DEATH         /* bz-GPL/GP2
+              MOVE STATUS-V.FACE-AMOUNT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)             /* bz-GPL/GP2
+            ELSE                                                                        /* bz-GPL/GP2
+              MOVE STATUS-V.DEATH-BENEFIT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)
+            END-IF
+            PERFORM CHECK-4-AVL-TDIV    /* <<<<<<<<<<<   TDIV
+          ELSE
+            IF PLAN(#ST-X) = 'GPL' AND DATE-OF-BIRTH + 210000 > DATE-OF-DEATH           /* bz-GPL/GP2
+                OR PLAN(#ST-X) = 'GP2' AND DATE-OF-BIRTH + 180000 > DATE-OF-DEATH         /* bz-GPL/GP2
+              MOVE STATUS-V.FACE-AMOUNT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)             /* bz-GPL/GP2
+            ELSE                                                                        /* bz-GPL/GP2
+              MOVE STATUS-V.NXT-MON-DEATH-BENEFIT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)
+            END-IF
+          END-IF
+*
+          IF STATUS-V.ISSUE-DATE(#ST-X) GE 19970101
+              AND STATUS-V.MONTH-ALLOC-AMT(#ST-X) NE 999.99
+              AND STATUS-V.LAST-ANN-CASH-VALUE(#ST-X) GT
+              FIRS-V.POL-AMT-PAID(#F-X)
+            MOVE STATUS-V.LAST-ANN-CASH-VALUE(#ST-X) TO
+              FIRS-V.POL-AMT-PAID(#F-X)
+          END-IF
+*
+        ELSE
+          SUBTRACT 1 FROM #WMM-TOD
+*
+          IF #WMM-TOD = 0
+            MOVE 12 TO #WMM-TOD
+            SUBTRACT 1 FROM #WYYYY-TOD
+          END-IF
+*
+          IF   (#WYYYY-DOD = #WYYYY-TOD)   /* IF DIED LAST
+              AND (#WMM-DOD = #WMM-TOD)   /* MONTH
+            IF   (#WDD-ISS = 1)
+                OR (#WDD-DOD GE #WDD-ISS)
+              IF STATUS-V.ISSUE-DATE(#ST-X) GE 19970101
+                  AND STATUS-V.MONTH-ALLOC-AMT(#ST-X) NE 999.99
+                  AND STATUS-V.LAST-ANN-CASH-VALUE(#ST-X) GT
+                  STATUS-V.NXT-MON-DEATH-BENEFIT(#ST-X)
+                MOVE STATUS-V.LAST-ANN-CASH-VALUE(#ST-X) TO
+                  FIRS-V.POL-AMT-PAID(#F-X)
+              ELSE
+                IF PLAN(#ST-X) = 'GPL' AND DATE-OF-BIRTH + 210000 > DATE-OF-DEATH           /* bz-GPL/GP2
+                    OR PLAN(#ST-X) = 'GP2' AND DATE-OF-BIRTH + 180000 > DATE-OF-DEATH         /* bz-GPL/GP2
+                  MOVE STATUS-V.FACE-AMOUNT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)             /* bz-GPL/GP2
+                ELSE                                                                        /* bz-GPL/GP2
+                  MOVE STATUS-V.NXT-MON-DEATH-BENEFIT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X) /* LAST DB
+                END-IF
+              END-IF
+            ELSE
+              PERFORM USE-HISTORY
+            END-IF
+          ELSE
+            PERFORM USE-HISTORY
+          END-IF
+        END-IF
+      END-IF
+    ELSE
+      IF PLAN (#ST-X) = 'SO'   /* DW10
+        MOVE STATUS-V.FACE-AMOUNT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)
+
+      ELSE
+        PERFORM CALC-TERM-DTH-BENE
+      END-IF
+    END-IF
+  END-IF
+*
+  IF ((STATUS-V.ONLINE-ACTION (#ST-X) = '1')       /* DW2
+      OR (STATUS-V.ONLINE-ACTION-GN = '2'))
+      AND (FIRS-V.POL-AMT-PAID( #F-X) = 0)
+    MOVE FACE-AMOUNT (#ST-X) TO FIRS-V.POL-AMT-PAID (#F-X)
+  END-IF
+*
+  ADD 1 TO #C-X
+  ADD 1 TO #F-X
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE GET-CONFIRMATION
+*****************
+*
+GET STATUS-V #ST-ISN
+MOVE STATUS-V.NAME TO #SCR-MNAME
+MOVE STATUS-V.SSN  TO #SCR-SSN
+MOVE STATUS-V.RANK TO #SCR-RANK
+MOVE '?' TO #Y-N
+* end-if
+COMPRESS #SCR-DOD-MM #SCR-DOD-DD #SCR-DOD-YYYY INTO  #SCR-DOD  LEAVING NO
+MOVE #SCR-DOD TO #SCR-MDOD
+MOVE '?' TO #Y-N
+MOVE #SCR-DOD  TO #MMDDYYYY-A
+MOVE BY NAME #MMDDYYYY TO #YYYYMMDD
+MOVE #YYYYMMDD-N TO #WYYYYMMDD-DOD
+*
+MOVE *DATN TO #YYYYMMDD-N
+SUBTRACT 4 FROM #YYYYMMDD.#MM
+IF #YYYYMMDD.#MM LT 1
+  ADD 12 TO #YYYYMMDD.#MM
+  SUBTRACT 1 FROM #YYYYMMDD.#YYYY
+END-IF
+MOVE #YYYYMMDD-N TO #SAVE-YYYYMMDD
+*
+REPEAT
+  MOVE #SCR-MDOD  TO #PRIOR-DOD
+  MOVE '?' TO #Y-N
+  IF #WYYYYMMDD-DOD LT #SAVE-YYYYMMDD /* Over 4 months ago
+    INPUT MARK *#Y-N USING MAP 'DNXUM05B'
+  ELSE
+    INPUT MARK *#Y-N USING MAP 'DNXUM05A'
+  END-IF
+*
+  IF *PF-KEY = 'pf3'                                         /* vt 12282010
+    MOVE TRUE TO #PF3
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #Y-N = ' '
+    REINPUT 'Must Enter (Y)es or (N)o'
+      MARK *#Y-N
+  END-IF
+*
+  IF  (#Y-N = 'Y') AND #PRIOR-DOD = #SCR-MDOD   /* RE7
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #SCR-MDOD NE MASK(MMDDYYYY)
+    REINPUT 'Must be (MMDDYYYY) format'
+      MARK *#SCR-MDOD
+  ELSE
+    IF #SCR-MDOD NE MASK(MMDDYYYY)
+      REINPUT 'Must be (MMDDYYYY) format'
+        MARK *#SCR-MDOD
+    ELSE
+      MOVE #SCR-MDOD TO #MMDDYYYY-A
+      MOVE BY NAME #MMDDYYYY TO #YYYYMMDD
+      IF #YYYYMMDD-N LT (*DATN - 200000)                     /* DW19
+        REINPUT 'DOD is more than 20 years ago - Chg Command to exit'
+          MARK *#SCR-MDOD
+      ELSE
+        IF #YYYYMMDD-N > *DATN
+          REINPUT 'Greater than today"s date'
+            MARK *#SCR-MDOD
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-REPEAT
+*
+MOVE #SCR-MDOD TO #SCR-DOD
+END-SUBROUTINE
+*
+*
+*****************
+DEFINE SUBROUTINE UPDATE-PD-SCREEN
+*****************
+*
+* write 'inside update-pd-screen'  '=' #st-x '=' #f-x     /* vt3
+FOR #N-X 1 TO 9
+  IF FIRS-V.POL-NAME (#N-X) = 'AMAA' OR = 'AAFMAA'
+    RESET MBRSHIP-MTD-DET-V
+    MOVE FIRS-V.POL-DATE-CLM-FILED (#N-X)
+      TO MBRSHIP-MTD-DET-V.ENTRY-DATE
+    MOVE #HOLD-FIRS-ISN TO MBRSHIP-MTD-DET-V.REC-ISN
+    MOVE 'A'            TO MBRSHIP-MTD-DET-V.CODE
+    move #seg(#n-x) to mbrship-mtd-det-v.issue-date            /* vt3
+*    MOVE #N-X  TO MBRSHIP-MTD-DET-V.ISSUE-DATE                /* segment # of DP    /* vt3
+    MOVE CONTACT-V.ID-NUMBER  TO MBRSHIP-MTD-DET-V.ID-NUMBER
+*
+    IF #USER-COMPANY = 'S'
+      MOVE 'S' TO MBRSHIP-MTD-DET-V.USER-COMPANY
+    ELSE
+      MOVE 'I' TO MBRSHIP-MTD-DET-V.USER-COMPANY
+    END-IF
+*
+    STORE MBRSHIP-MTD-DET-V
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE SEND-DEATH-MESSAGE
+*****************
+*
+RESET #LNK #NOTE-TEXT (*) #NX-STATUS
+FOR #I1 1 TO 30
+  IF LINKED-CN (#I1) NE 0
+    FIND LK-V WITH MEMBER-KEY = LINKED-CN-A (#I1)
+      IF LK-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+        MOVE '- has linked policy(s)' TO #LNK
+        ESCAPE BOTTOM
+      END-IF
+    END-FIND
+  END-IF
+END-FOR
+*
+RESET #NOTE-TEXT (*)
+SEPARATE STATUS-V.NAME INTO #LAST #FIRST/MID #SUFF #NAME-OVRFLO
+  WITH DELIMITER ','
+COMPRESS #FIRST/MID-R #LAST #SUFF-R INTO #NAME
+COMPRESS #SCR-DOD-MM  '/' #SCR-DOD-DD '/' #SCR-DOD-YYYY INTO #DOD LEAVING NO
+COMPRESS 'ID' STATUS-V.ID-NUMBER 'DECEASED' #SCR-DOD
+  STATUS-V.RANK #NAME #NX-STATUS INTO #NOTE-TEXT (1)
+*
+MOVE 'VXT' TO #TO-INIT    /* for testing purposes  /vt removed SV
+MOVE '*NX' TO #SUFFIX-NX               /* TEMP
+CALLNAT 'DN090SNX' #SUFFIX-NX #CLERK-ID #TO-INIT #NOTE-TEXT (*)
+RESET #NOTE-TEXT (*)
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE BD-NX-MSG
+*****************
+*
+MOVE 'SKS' TO #TO-INIT    /* AAFMAA notification person (was ELB)            /* was LCE  09/20/2017
+ADD 1 TO #BD-X
+COMPRESS 'Verify BD Beneficiary Information and enter Y/N on BD'
+  'to' INTO #NOTE-TEXT (#BD-X)
+ADD 1 TO #BD-X
+COMPRESS 'notify ELB to do CI xxxxx DEAD on CN' STATUS-V.ID-NUMBER
+  INTO #NOTE-TEXT (#BD-X)
+*
+IF #LNK NE ' '
+  ADD 1 TO #BD-X
+  COMPRESS 'ID' STATUS-V.ID-NUMBER #LNK INTO #NOTE-TEXT (#BD-X)
+END-IF
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE DO-DR
+*****************
+*
+CALLNAT 'dnxun05b' V_SCR_2 #CLERK-ID  #MODE
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE USE-HISTORY
+*****************
+*
+MOVE STATUS-V.ID-NUMBER TO #START-ID
+MOVE STATUS-V.ISSUE-DATE(#ST-X) TO #START-ISSUE
+MOVE STATUS-V.SPLIT-IND(#ST-X) TO #START-SPLIT-IND
+*
+FIND (1) HIST-V WITH RECORD-KEY = #START-KEY
+  IF  (#WDD-ISS = 1)               /* IF ISS DAY = 01
+      OR (#WDD-DOD GE #WDD-ISS)       /* OR IF dod-day ge ISS DAY
+    SUBTRACT 1 FROM #WMM-DOD       /* USE YYYYMM - 000001
+  ELSE
+    SUBTRACT 2 FROM #WMM-DOD       /* USE YYYYMM - 000002
+  END-IF
+*
+  IF #WMM-DOD LT 1
+    ADD 12 TO #WMM-DOD
+    SUBTRACT 1 FROM #WYYYY-DOD
+  END-IF
+*
+  FOR #H-X 1 TO 49
+    IF HIST-V.YEAR-MONTH-M(#H-X) EQ #WYYYYMM-DOD
+      MOVE HIST-V.DEATH-BENEFIT-M(#H-X) TO
+        FIRS-V.POL-AMT-PAID(#F-X)
+      MOVE TRUE TO #MATCH-FOUND
+      MOVE HIST-V.DEATH-BENEFIT-M(#H-X) TO #DEATH-BN
+      MOVE HIST-V.CASH-VALUE-M(#H-X)    TO #CASH-VALUE
+      RESET                                #CONT-FUND
+    END-IF
+  END-FOR
+*
+  IF STATUS-V.ISSUE-DATE(#ST-X) GE 19970101
+      AND STATUS-V.MONTH-ALLOC-AMT(#ST-X) NE 999.99
+      AND STATUS-V.LAST-ANN-CASH-VALUE(#ST-X) GT
+      FIRS-V.POL-AMT-PAID(#F-X)
+      AND #WYYYYMM-DOD GT 19991001
+    MOVE STATUS-V.LAST-ANN-CASH-VALUE(#ST-X) TO
+      FIRS-V.POL-AMT-PAID(#F-X)
+  END-IF
+END-FIND
+*
+IF NOT #MATCH-FOUND
+  MOVE TRUE TO #NO-HISTORY
+END-IF
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE PROCESS-FOR-ID-GT-1900
+*****************
+*
+IF STATUS-V.ID-NUMBER GT 1900  /* do not do samples
+  IF #UPDATE-PD-SCN
+    PERFORM UPDATE-PD-SCREEN
+  END-IF
+*
+  IF #SEND-DTH-MSG
+    PERFORM SEND-DEATH-MESSAGE
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE PREPARE-MBRSHIP-DET
+*****************
+*
+RESET MBRSHIP-MTD-DET-V     /* IF 1ST TIME AND NO FIRS
+COMPUTE MBRSHIP-MTD-DET-V.ENTRY-DATE = 99999999 - *DATN
+MOVE #HOLD-ISN  TO MBRSHIP-MTD-DET-V.REC-ISN
+MOVE 'D'        TO MBRSHIP-MTD-DET-V.CODE
+MOVE 99999999   TO MBRSHIP-MTD-DET-V.ISSUE-DATE
+MOVE CONTACT-V.ID-NUMBER TO MBRSHIP-MTD-DET-V.ID-NUMBER
+MOVE #NUM-UNITS TO MBRSHIP-MTD-DET-V.NUM-MBRSHIPS
+*
+IF #USER-COMPANY = 'S'                 /* DW33
+  MOVE 'S' TO MBRSHIP-MTD-DET-V.USER-COMPANY
+ELSE
+  MOVE 'I' TO MBRSHIP-MTD-DET-V.USER-COMPANY
+END-IF
+*
+STORE MBRSHIP-MTD-DET-V
+MOVE *PROGRAM TO #PROGRAM
+CALLNAT 'MSSNL005'           /* NG1
+  MBRSHIP-MTD-DET-V.ID-NUMBER
+  MBRSHIP-MTD-DET-V.CODE
+  MBRSHIP-MTD-DET-V.USER-COMPANY
+  MBRSHIP-MTD-DET-V.ISSUE-DATE
+  #PROGRAM
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE CHECK-4-AVL-TDIV
+**********************************
+*
+IF   (ISSUE-DATE (#ST-X) GE 19970101)
+    AND (MONTH-ALLOC-AMT (#ST-X) NE 999.99)
+  COMPUTE #AVL-TDIV = BEG-CASH-VALUE (#ST-X) - MONTH-ALLOC-AMT (#ST-X)
+  IF #AVL-TDIV LT 0
+    RESET #AVL-TDIV
+  END-IF
+*
+  IF STATUS-V.ID-NUMBER = 124156
+      AND STATUS-V.ISSUE-DATE (#ST-X) = 20040413
+      AND STATUS-V.DEATH-BENEFIT (#ST-X) = 226000
+    MOVE 10150.58 TO #AVL-TDIV
+  END-IF
+*
+  ADD #AVL-TDIV TO POL-AMT-PAID (#F-X)
+END-IF
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE CALC-TERM-DTH-BENE
+*************************************
+*
+MOVE STATUS-V.FACE-AMOUNT(#ST-X) TO FIRS-V.POL-AMT-PAID(#F-X)
+*
+IF #W-MDOD GE 19800101
+  MOVE STATUS-V.ISSUE-DATE(#ST-X) TO #WYYYYMMDD-ISS
+  ADD 3 TO #WYYYY-ISS
+*
+  IF #WYYYYMMDD-DOD GE #WYYYYMMDD-ISS
+    MOVE STATUS-V.FACE-AMOUNT(#ST-X) TO #W-FACE-AMT
+*
+    IF #WYYYYMMDD-DOD GE 19850101
+      COMPUTE FIRS-V.POL-AMT-PAID(#F-X) = 1.8 *
+        FIRS-V.POL-AMT-PAID(#F-X)
+    ELSE
+      IF #WYYYYMMDD-DOD GE 19840101
+        COMPUTE FIRS-V.POL-AMT-PAID(#F-X) = 1.6 *
+          FIRS-V.POL-AMT-PAID(#F-X)
+      ELSE
+        IF #WYYYYMMDD-DOD GE 19830101
+          COMPUTE FIRS-V.POL-AMT-PAID(#F-X) = 1.5 *
+            FIRS-V.POL-AMT-PAID(#F-X)
+        ELSE
+          COMPUTE FIRS-V.POL-AMT-PAID(#F-X) = 1.3 *
+            FIRS-V.POL-AMT-PAID(#F-X)
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE DEVELOPE-INFO
+********************************
+*
+IF #SEX = 'F'                               /* TT1
+  MOVE 'M' TO #SEX-SP                       /* TT1
+  MOVE 'MR  ' TO STATUS-V.TITLE-SP
+ELSE
+  MOVE 'F' TO #SEX-SP                       /* TT1
+  MOVE 'MRS ' TO STATUS-V.TITLE-SP
+END-IF
+RESET #HOLD-VCN #HOLD-OLD-VCN
+IF STATUS-V.VA-CLAIM-NUMBER > '            '
+  IF STATUS-V.VA-CLAIM-NUMBER = MASK ('XSS'NNNNNNNNN)
+    IGNORE
+  ELSE
+    IF STATUS-V.VA-CLAIM-NUMBER = 'C           '
+      IGNORE
+    ELSE
+      IF STATUS-V.VA-CLAIM-NUMBER = MASK (NNNNNNNNN)
+        COMPRESS 'XSS' VCN-A INTO #HOLD-VCN LEAVING NO SPACE
+      ELSE
+        IF STATUS-V.VA-CLAIM-NUMBER = MASK(.NNNNNNNNN)
+          COMPRESS 'XSS' VCN-B INTO #HOLD-VCN LEAVING NO SPACE
+        ELSE
+          IF STATUS-V.VA-CLAIM-NUMBER = MASK(..NNNNNNNNN)
+            COMPRESS 'XSS' VCN-C INTO #HOLD-VCN LEAVING NO SPACE
+          ELSE
+            IF STATUS-V.VA-CLAIM-NUMBER = MASK (...NNNNNNNNN)
+              COMPRESS 'XSS' VCN-D INTO #HOLD-VCN LEAVING NO SPACE
+            ELSE
+              IF STATUS-V.VA-CLAIM-NUMBER = MASK('C'NNN' 'NN' 'NNNN)
+                COMPRESS 'XSS' VCN-D-3 VCN-D-2 VCN-D-4 INTO #HOLD-VCN
+                  LEAVING NO SPACE
+              ELSE
+                IF STATUS-V.VA-CLAIM-NUMBER = MASK('XC')
+                  MOVE VCN-10-A TO #HOLD-OLD-VCN
+                  PERFORM TEST-DIGIT
+                ELSE
+                  MOVE STATUS-V.VA-CLAIM-NUMBER TO #HOLD-OLD-VCN
+                  PERFORM TEST-DIGIT
+                END-IF
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+    MOVE #HOLD-VCN TO VA-CLAIM-NUMBER
+  END-IF
+END-IF
+RESET #HOLD-VCN #HOLD-OLD-VCN
+IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM > '            '
+  IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM = MASK ('XSS'NNNNNNNNN)
+    IGNORE
+  ELSE
+    IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM = 'C           '
+      IGNORE
+    ELSE
+      IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM = MASK (NNNNNNNNN)
+        COMPRESS 'XSS' FH-VCN-A INTO #HOLD-VCN LEAVING NO SPACE
+      ELSE
+        IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM = MASK(.NNNNNNNNN)
+          COMPRESS 'XSS' FH-VCN-B INTO #HOLD-VCN LEAVING NO SPACE
+        ELSE
+          IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM = MASK(..NNNNNNNNN)
+            COMPRESS 'XSS' FH-VCN-C INTO #HOLD-VCN LEAVING NO SPACE
+          ELSE
+            IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM = MASK (...NNNNNNNNN)
+              COMPRESS 'XSS' FH-VCN-D INTO #HOLD-VCN LEAVING NO SPACE
+            ELSE
+              IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM =
+                  MASK('C'NNN' 'NN' 'NNNN)
+                COMPRESS 'XSS' FH-VCN-D-3 FH-VCN-D-2 FH-VCN-D-4 INTO #HOLD-VCN
+                  LEAVING NO SPACE
+              ELSE
+                IF STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM = MASK('XC')
+                  MOVE FH-VCN-10-A TO #HOLD-OLD-VCN
+                  PERFORM TEST-DIGIT
+                ELSE
+                  MOVE STATUS-V.FORMER-HUSBAND-VA-CLAIM-NUM TO #HOLD-OLD-VCN
+                  PERFORM TEST-DIGIT
+                END-IF
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+    MOVE #HOLD-VCN TO FORMER-HUSBAND-VA-CLAIM-NUM
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE NO-HIST-NX     /* DW7
+*****************
+*
+RESET #NOTE-TEXT (*)
+SEPARATE STATUS-V.NAME INTO #LAST #FIRST/MID #SUFF #NAME-OVRFLO
+  WITH DELIMITER ','
+COMPRESS #FIRST/MID-R #LAST #SUFF-R INTO #NAME
+COMPRESS #W-MDOD-MM '/' #W-MDOD-DD '/' #W-MDOD-YYYY INTO #DOD LEAVING NO
+COMPRESS 'ID' STATUS-V.ID-NUMBER 'DECEASED' #DOD
+  STATUS-V.RANK #NAME INTO #NOTE-TEXT (1)
+*
+MOVE 'ELB' TO #TO-INIT
+COMPRESS 'DOD out of range of History File - You must calculate'
+  'and' INTO #NOTE-TEXT (2)
+COMPRESS 'enter the Death Benefit(s) Manually on DP and CA screens'
+  TO #NOTE-TEXT (3)
+*
+MOVE '*NX' TO #SUFFIX-NX
+CALLNAT 'DN090SNX' #SUFFIX-NX #CLERK-ID #TO-INIT #NOTE-TEXT (*)
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE TEST-DIGIT
+*****************************
+*
+MOVE 'XC          ' TO #HOLD-VCN
+ASSIGN #IN = 3
+FOR #IO 1 TO 12
+  IF #HOV(#IO) = MASK(N)
+    MOVE #HOV(#IO) TO #HNV(#IN)
+    ADD 1 TO #IN
+    IF #IN > 12
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE TRANS-LOG-UPDATE
+**********************************
+*
+#LOG-DESCRIPTION    := 'DN-MAINTENANCE'
+#TR-NAME            := STATUS-V.NAME
+#TR-ID-NUMBER       := STATUS-V.ID-NUMBER
+#TR-CLERK-ID        := #CLERK-ID
+#TR-DATE-LAST-UPDATE:= *DATN
+*
+IF #SCR-DOD NE #SAVE-DOD
+  #OLD-DATA(1)          := #SAVE-DOD
+  #FIELD-DESCRIPTION(1) := 'DOD'
+  #NEW-DATA(1)          := #SCR-DOD
+  #LOG-DESCRIPTION    := 'DN----DOD'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-DOD-ST NE #SAVE-DOD-ST
+  IF #SAVE-DOD-ST = 'P'
+    COMPRESS #SAVE-DOD-ST '- Pending' TO #OLD-DATA(1)
+  ELSE
+    IF #SAVE-DOD-ST = 'C'
+      COMPRESS #SAVE-DOD-ST '- Confirmed' TO #OLD-DATA(1)
+    ELSE
+      COMPRESS #SAVE-DOD-ST '- Beneficiary Final' TO #OLD-DATA(1)
+    END-IF
+  END-IF
+  #FIELD-DESCRIPTION(1) := 'DOD-ST'
+  IF #SCR-DOD-ST = 'P'
+    COMPRESS #SCR-DOD-ST '- Pending' TO #NEW-DATA(1)
+  ELSE
+    IF #SCR-DOD-ST = 'C'
+      COMPRESS #SCR-DOD-ST '- Confirmed' TO #NEW-DATA(1)
+    ELSE
+      COMPRESS #SCR-DOD-ST '- Beneficiary Final' TO #NEW-DATA(1)
+    END-IF
+  END-IF
+  #LOG-DESCRIPTION      := 'DN-DOD-ST'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-DOC-VAL NE #SAVE-DOC-VAL
+  #OLD-DATA(1)          := #SAVE-DOC-VAL
+  #FIELD-DESCRIPTION(1) := 'DOCVAL'
+  #NEW-DATA(1)          := #SCR-DOC-VAL
+  #LOG-DESCRIPTION    := 'DN-DOCVAL'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-CERT-CDE NE #SAVE-CERT-CDE
+  #OLD-DATA(1)          := #SAVE-CERT-CDE
+  #FIELD-DESCRIPTION(1) := 'CERTCD'
+  #NEW-DATA(1)          := #SCR-CERT-CDE
+  #LOG-DESCRIPTION      := 'DN-CERTCD'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-CAUSE-OF-DEATH NE #SAVE-CAUSE-OF-DEATH
+  #OLD-DATA(1)          := #SAVE-CAUSE-OF-DEATH
+  #FIELD-DESCRIPTION(1) := 'CAUSE-DTH'
+  #NEW-DATA(1)          := #SCR-CAUSE-OF-DEATH
+  #LOG-DESCRIPTION      := 'DN-CAUSE-'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-PLACE NE #SAVE-PLACE
+  #OLD-DATA(1)          := #SAVE-PLACE
+  #FIELD-DESCRIPTION(1) := 'PLACE-DTH'
+  #NEW-DATA(1)          := #SCR-PLACE
+  #LOG-DESCRIPTION      := 'DN-PLACE-'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-PLACE-BIRTH NE #SAVE-PLACE-BIRTH
+  #OLD-DATA(1)          := #SAVE-PLACE-BIRTH
+  #FIELD-DESCRIPTION(1) := 'PLACE-BTH'
+  #NEW-DATA(1)          := #SCR-PLACE-BIRTH
+  #LOG-DESCRIPTION      := 'DN-PLACE-'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-HOMICIDE-IND NE #SAVE-HOMICIDE-IND
+  #OLD-DATA(1)          := #SAVE-HOMICIDE-IND
+  #FIELD-DESCRIPTION(1) := 'HOM-IND'
+  #NEW-DATA(1)          := #SCR-HOMICIDE-IND
+  #LOG-DESCRIPTION      := 'DN-HOM-IN'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-BUR-LOC NE #SAVE-BUR-LOC
+  #OLD-DATA(1)          := #SAVE-BUR-LOC
+  #FIELD-DESCRIPTION(1) := 'BURL-LOC'
+  #NEW-DATA(1)          := #SCR-BUR-LOC
+  #LOG-DESCRIPTION      := 'DN-BURL-L'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-BUR-INFO NE #SAVE-BUR-INFO
+  #OLD-DATA(1)          := #SAVE-BUR-INFO
+  #FIELD-DESCRIPTION(1) := 'BURL-INFO'
+  #NEW-DATA(1)          := #SCR-BUR-INFO
+  #LOG-DESCRIPTION      := 'DN-BURL-I'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-DN-REMARKS(1) NE #SAVE-DN-REMARKS(1)
+  #OLD-DATA(1)          := #SAVE-DN-REMARKS(1)
+  #FIELD-DESCRIPTION(1) := 'DN-REMARKS-1'
+  #NEW-DATA(1)          := #SCR-DN-REMARKS(1)
+  #LOG-DESCRIPTION      := 'DN-DN-REM'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-DN-REMARKS(2) NE #SAVE-DN-REMARKS(2)
+  #OLD-DATA(1)          := #SAVE-DN-REMARKS(2)
+  #FIELD-DESCRIPTION(1) := 'DN-REMARKS-2'
+  #NEW-DATA(1)          := #SCR-DN-REMARKS(2)
+  #LOG-DESCRIPTION      := 'DN-DN-REM'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+IF #SCR-DN-REMARKS(3) NE #SAVE-DN-REMARKS(3)
+  #OLD-DATA(1)          := #SAVE-DN-REMARKS(3)
+  #FIELD-DESCRIPTION(1) := 'DN-REMARKS-3'
+  #NEW-DATA(1)          := #SCR-DN-REMARKS(3)
+  #LOG-DESCRIPTION      := 'DN-DN-REM'
+  PERFORM WRITE-TRANS-REG
+END-IF
+*
+END-SUBROUTINE
+*********************************
+DEFINE SUBROUTINE WRITE-TRANS-REG
+*********************************
+CALLNAT 'GPRN0004'
+  #TR-FIELDS #SYNC-FIELD-TABLE(*)
+  #OLD-DATA-TABLE(*) #NEW-DATA-TABLE(*)
+RESET #FIELD-DESCRIPTION(*)
+*
+END-SUBROUTINE
+*
+END

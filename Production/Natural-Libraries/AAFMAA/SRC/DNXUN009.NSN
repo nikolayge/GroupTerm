@@ -1,0 +1,178 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************************
+* SUBPROGRAM-ID: DNXUN009
+* DESCRIPTION:   DEATH MAINTENANCE
+**************************************************************************
+*        MODIFICATION LOG
+**************************************************************************
+* USER   DATE      TAG  REASON
+* NGG  12/09/2010  None Creation
+* RSE  07/13/2011  RE1  Change 'CB' to 'DN'; reset #MSG
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital  
+**************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #ISN              (P8)   /* STATUS RECORD ISN
+1 #CLERK-ID         (A3)
+1 #MODE             (A1)
+1 #MSG                       (A72) 1 redefine #MSG
+  2 #GLOBAL-USER-COMPANY     (A1)
+  2 #GLOBAL-SECURITY-CODE    (N2)
+LOCAL
+1 #CGA-USER-COMPANY  (A1)
+1 #ORIG-COMMAND      (A2)  INIT <'DN'>   /* RE1
+
+1 STATUS VIEW OF A-STATUS
+  2 ID-NUMBER        (N6)
+  2 MEMBER-CONTACT-ID
+  2 NOK-CONTACT-ID
+  2 PROCESS-IND
+  2 DTS-DATN         (N9)
+1 #NOK-CONTACT-ID   (N8)
+1 CONTACT VIEW OF A-CONTACTS
+1 P_PARMS
+  2 P_ERROR_NUM (I4) /*ERROR NUMBER
+  2 P_ERROR_LINE (I4) /*ERROR LINE
+  2 P_ERROR_PROGRAM (A32)
+  2 P_ERROR_LIB (A32)
+  2 P_ERROR_DBID (I4)
+  2 P_ERROR_FNR (I4)
+  2 P_ERROR_TIME (T)
+  2 P_ERROR_PGM_TYPE (A1)
+  2 P_ERROR_PGM_TYPE_LONG (A11)
+  2 P_ERROR_LANG (I4)
+  2 P_ERROR_LEVEL (I4)
+  2 P_ERROR_CLASS (I1)
+  2 P_ERROR_TYPE (I1)
+
+ 1 TR-V VIEW OF A-TRANSACTION-REGISTER
+     2 ID-NUMBER (N6.0)                       /* ok
+     2 NAME (A25)                             /* ok 
+     2 DATE-LAST-UPDATE                       /* ok 
+     2 TERMINAL-ID (A8)                       /* ok 
+     2 CLERK-ID (A3)                          /* ok 
+     2 TRANSACTION-DATN (P9.0)                /* ok 
+     2 TRANSACTION-TIMN (P7.0)                /* ok 
+     2 OLD-DATA (A125/1)              /* More There
+     2 REDEFINE OLD-DATA
+       3 O-DESCR        (A10)                 /* ok
+       3 O-DATA          (A115)               /* ok
+     2 NEW-DATA          (A125/1)
+     2 REDEFINE NEW-DATA
+       3 N-DESCR        (A10)                 /* ok
+       3 N-DATA          (A115)               /* ok
+     2 PROCESS-IND         (A1)               /* ok 
+     2 USER-COMPANY        (A1)               /* ok 
+1 v_TR                     (I2)        /* index for tr_reg
+1  p_Name     (A)    DYNAMIC
+END-DEFINE
+DEFINE WINDOW Appl-error
+  SIZE 5 * 77
+  BASE 11/3
+  FRAMED ON POSITION SYMBOL AUTO
+
+SET KEY PF3 NAMED 'Exit'
+SET KEY PF7 NAMED 'Prev'
+SET KEY PF8 NAMED 'Next'
+
+#CGA-USER-COMPANY := #GLOBAL-USER-COMPANY
+RESET #MSG
+
+GET STATUS #ISN
+IF NOK-CONTACT-ID = 0
+  RESET #NOK-CONTACT-ID
+  CALLNAT 'DNXUN09A' MEMBER-CONTACT-ID #NOK-CONTACT-ID
+    #GLOBAL-USER-COMPANY
+    #CLERK-ID
+    #MSG
+  IF #NOK-CONTACT-ID > 0
+    GET STATUS #ISN
+    O-DATA := ' '                             /* bz1
+    NOK-CONTACT-ID := #NOK-CONTACT-ID
+    UPDATE (0094)
+    PERFORM DO-TRREG                          /* bz1
+  END-IF
+ELSE
+  #NOK-CONTACT-ID := NOK-CONTACT-ID
+  IF #CLERK-ID = 'NG'
+    PRINT
+      /  MEMBER-CONTACT-ID
+      /  #NOK-CONTACT-ID
+      /  #ORIG-COMMAND
+      /  STATUS.ID-NUMBER
+      /  #CGA-USER-COMPANY
+      /  #CLERK-ID
+      /  #MODE
+  END-IF
+  FIND CONTACT WITH CONTACT-ID = NOK-CONTACT-ID
+    IF NO RECORDS FOUND
+      RESET #NOK-CONTACT-ID
+      GET STATUS #ISN
+      O-DATA := NOK-CONTACT-ID                /* bz1
+      NOK-CONTACT-ID := #NOK-CONTACT-ID
+      UPDATE (0115)
+      PERFORM DO-TRREG                          /* bz1
+      ESCAPE BOTTOM
+    END-NOREC
+  
+    CALLNAT 'GUPCISXX'
+      MEMBER-CONTACT-ID          /* Members CONTACT-ID
+      #NOK-CONTACT-ID            /* Spouse/Dependent/Other CONTACT-ID
+      #ORIG-COMMAND
+      ID-NUMBER                  /* CN or ID-NUMBER
+      #CGA-USER-COMPANY
+      #CLERK-ID
+      #MODE
+      #MSG
+    RESET #MSG     /* RE1
+
+  END-FIND
+END-IF
+
+END TRANSACTION
+
+ON ERROR
+  SET WINDOW 'Appl-error'
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  COMPRESS 'Application error' P_ERROR_NUM 'In program' P_ERROR_PROGRAM
+    'Error line' P_ERROR_LINE
+    INTO #MSG
+   INPUT WINDOW='Appl-error'
+    #MSG (AD=IO)
+    / 'Please call production support'
+  #MSG := 'PF3'
+  SET WINDOW OFF
+  ESCAPE ROUTINE
+END-ERROR
+
+DEFINE SUBROUTINE DO-TRREG
+
+  TR-V.ID-NUMBER            := STATUS.ID-NUMBER
+  p_Name := '!'               /* bz-Name-C
+  CALLNAT 'GPRS0CNT' STATUS.MEMBER-CONTACT-ID p_Name
+  TR-V.NAME                 := p_Name
+  TR-V.DATE-LAST-UPDATE     := DTS-DATN
+  TR-V.CLERK-ID             := #CLERK-ID
+  TR-V.TERMINAL-ID          := *INIT-ID
+  TR-V.TRANSACTION-DATN     := *DATN
+  TR-V.TRANSACTION-TIMN     := *TIMN
+  TR-V.USER-COMPANY         := #CGA-USER-COMPANY
+  TR-V.PROCESS-IND          := STATUS.PROCESS-IND
+  O-DESCR                   := 'DN-NOK-CI'
+  N-DESCR                   := 'DN-NOK-CI'
+
+  p_Name := '!'             /* bz-Name-C 
+  CALLNAT 'GPRS0CNT' NOK-CONTACT-ID p_Name
+  COMPRESS 'CID:' NOK-CONTACT-ID  INTO N-DATA LEAVING NO SPACE
+  COMPRESS p_Name ' ' N-DATA INTO N-DATA
+*  N-DATA :=  NOK-CONTACT-ID
+  STORE TR-V
+
+END-SUBROUTINE
+
+END

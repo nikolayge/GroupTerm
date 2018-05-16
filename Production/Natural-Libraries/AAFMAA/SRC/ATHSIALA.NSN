@@ -1,0 +1,192 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHSIALA ******* Update Automatic Loan Payment Amounts *******
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* ------ --------- ------- ------------------------------------------- *
+*                                                                      *
+* PAM    10242007  None    Program written.                            *
+*                                                                      *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #ID-NUMBER              (N6)
+1 REDEFINE #ID-NUMBER
+ 2 #ID-NUMBER-A           (A6)
+1 #FIXED-LP-AMT           (P5.2)
+1 #FIXED-LP-IND           (A1)
+1 #VARIABLE-LP-AMT        (P5.2)
+1 #VARIABLE-LP-IND        (A1)
+1 #I1                     (I2)
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 NAME
+ 2 PROCESS-IND
+ 2 DATE-ACCT-UPDATE
+ 2 DTS-DATN
+ 2 DTS-TIMN
+ 2 X-ALT-LP-AMT           (9)
+ 2 X-ALT-LP-AMT-2         (9)
+ 2 X-ALT-LP-IND           (9)
+ 2 X-ALT-LP-IND-2         (9)
+*
+1 TR-REG-V VIEW OF A-TRANSACTION-REGISTER
+ 2 ID-NUMBER
+ 2 PROCESS-IND
+ 2 NAME
+ 2 DATE-LAST-UPDATE
+ 2 TERMINAL-ID
+ 2 CLERK-ID
+ 2 TRANSACTION-DATN
+ 2 TRANSACTION-TIMN
+ 2 OLD-DATA               (1)
+ 2 NEW-DATA               (1)
+*
+1 #TR-LOG-FIL-MNT-DESC    (A125)
+1 REDEFINE #TR-LOG-FIL-MNT-DESC
+ 2 #TR-L-SALP-LB1         (A12)
+ 2 #TR-L-SALP-FLG         (A2)
+ 2 #TR-L-SALP-LB2         (A8)
+ 2 #TR-L-SALP-AMT         (A9)
+ 2 #TR-L-SALP-F1          (A94)
+*
+1 #GDATESXX-PARMS
+ 2 #TO-DATE               (N8)
+  2 REDEFINE #TO-DATE
+  3 #TO-DATE-YYYYMM       (N6)
+  3 #TO-DATE-DD           (N2)
+ 2 #FROM-DATE             (N8)
+ 2 #RETURN-CALC           (N8)
+ 2 #REQUEST               (A1)  INIT <'B'>
+*
+1 #CVALUSXX-PARMS
+ 2 #CN                    (N6)
+ 2 #SUFFIX                (A3)
+ 2 #AS-OF-YYYYMMDD        (N8)
+ 2 #LOAN-BAL              (N7.2/9)
+ 2 #LOAN-BAL-2            (N7.2/9)
+ 2 #ACC-INT               (N7.2/9)
+ 2 #ACC-INT-2             (N7.2/9)
+ 2 #CSV                   (N7.2/9)
+ 2 #CVALUE                (N7.2/9)
+ 2 #LVALUE                (N7.2/9)
+ 2 #MCSV                  (N7.2/9)
+ 2 #DB                    (N7.2/9)
+ 2 #ANN-PREM              (N7.2/9)
+ 2 #FACE-AMT              (N7.2/9)
+ 2 #TPP                   (N7.2/9)
+
+1 #CONSTANTS
+ 2 #ALP-IND               (A1)  INIT <'1'>
+ 2 #AIP-IND               (A1)  INIT <'2'>
+*
+1 #WORK-PARMS
+ 2 #FIX                   (L)
+ 2 #UPDATE                (L)
+ 2 #NEW-AIP-AMT           (N5.2)
+
+*
+END-DEFINE
+************************************************************************
+*
+PERFORM CALL-GDATESXX
+PERFORM CALL-CVALUSXX
+*
+RESET #NEW-AIP-AMT #FIX #UPDATE
+*
+IF   (#FIXED-LP-AMT GT 0)
+ AND (#FIXED-LP-AMT GT (#LOAN-BAL (#I1) + #ACC-INT (#I1)))
+  COMPUTE #NEW-AIP-AMT = #LOAN-BAL (#I1) + #ACC-INT (#I1)
+  WRITE 'LOWERING FIXED LOAN FOR ' #ID-NUMBER 1X #NEW-AIP-AMT
+  #FIX    := TRUE
+  PERFORM CREATE-TR
+  #FIXED-LP-AMT := #NEW-AIP-AMT
+END-IF
+*
+RESET #NEW-AIP-AMT #FIX #UPDATE
+*
+IF   (#VARIABLE-LP-AMT GT 0)
+ AND (#VARIABLE-LP-AMT GT (#LOAN-BAL-2 (#I1) + #ACC-INT-2 (#I1)))
+  COMPUTE #NEW-AIP-AMT = #LOAN-BAL-2 (#I1) + #ACC-INT-2 (#I1)
+  WRITE 'LOWERING VARIABLE LOAN FOR ' #ID-NUMBER 1X #NEW-AIP-AMT
+  PERFORM CREATE-TR
+  #VARIABLE-LP-AMT := #NEW-AIP-AMT
+END-IF
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-TR
+************************************************************************
+*
+RESET TR-REG-V
+RESET #TR-LOG-FIL-MNT-DESC
+IF #FIX
+  #TR-L-SALP-LB1           := 'AM-SALF ALP FLG'
+  #TR-L-SALP-LB2           := 'ALP AMT'
+  #TR-L-SALP-FLG           := #FIXED-LP-IND
+  MOVE EDITED #FIXED-LP-AMT (EM=Z,ZZZ.99-) TO #TR-L-SALP-AMT
+ELSE
+  #TR-L-SALP-LB1           := 'AM-SALV ALP FLG'
+  #TR-L-SALP-LB2           := 'ALP AMT'
+  #TR-L-SALP-FLG           := #VARIABLE-LP-IND
+  MOVE EDITED #VARIABLE-LP-AMT (EM=Z,ZZZ.99-) TO #TR-L-SALP-AMT
+END-IF
+*
+TR-REG-V.OLD-DATA (1)      := #TR-LOG-FIL-MNT-DESC
+*
+MOVE EDITED #NEW-AIP-AMT (EM=Z,ZZZ.99-) TO #TR-L-SALP-AMT
+*
+TR-REG-V.NEW-DATA (1)      := #TR-LOG-FIL-MNT-DESC
+*
+TR-REG-V.ID-NUMBER         := #ID-NUMBER
+TR-REG-V.TERMINAL-ID       := *INIT-ID
+TR-REG-V.CLERK-ID          := 'EDS'
+TR-REG-V.TRANSACTION-DATN  := *DATN
+TR-REG-V.TRANSACTION-TIMN  := *TIMN
+*
+FIND (1) ST-V WITH ST-V.MEMBER-KEY = #ID-NUMBER-A
+  TR-REG-V.PROCESS-IND       := ST-V.PROCESS-IND
+  TR-REG-V.NAME              := ST-V.NAME
+  TR-REG-V.DATE-LAST-UPDATE  := ST-V.DATE-ACCT-UPDATE
+END-FIND
+*
+STORE TR-REG-V
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALL-GDATESXX
+************************************************************************
+*
+#FROM-DATE  := *DATN
+*
+CALLNAT 'GDATESXX'
+  #TO-DATE
+  #FROM-DATE
+  #RETURN-CALC
+  #REQUEST
+*
+ADD +1 TO #TO-DATE-DD   /* CVALUSXX always subtracts 1 day from calculation
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALL-CVALUSXX
+************************************************************************
+*
+#CN             := #ID-NUMBER
+#AS-OF-YYYYMMDD := #TO-DATE
+*
+CALLNAT 'CVALUSXX'
+  #CVALUSXX-PARMS
+*
+END-SUBROUTINE
+*
+END

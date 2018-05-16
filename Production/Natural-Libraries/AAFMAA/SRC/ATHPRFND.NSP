@@ -1,0 +1,702 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPRFND - Refund Processing
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06172004  PM1     Added extra DO NOT REFUND note              *
+*                          possibilities.                              *
+* PAM    07152004  PM2     Adjusted column 26 from 4010 to 2236 per    *
+*                          Elizabeth McGrail.                          *
+* PAM    08162004  PM3     Reject refunds for CN's with non-member     *
+*                          owners per Kathie Ballard and Elizabeth M.  *
+* PAM    10212004  PM4     Use new suffix 'BTR' instead of 'RTC' for   *
+*                          FA calculation. 'RTC' is used for RT        *
+*                          renewal purposes only.                      *
+* PAM    11052004  PM5     Reject refunds for deceased members as per  *
+*                          Lyne B.                                     *
+* PAM    01102005  PM6     ADDED CAP PAYOFF LETTER PROCESSING.         *
+* PAM    06012005  PM7     Changed NX to CEJ instead of ALB            *
+* PAM    10112005  PM8     Modified peacthree file layout for upgrade  *
+* PAM    11092005  PM9     allign amount field to left for truncation  *
+*                          issues                                      *
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII                     *
+* SAG-AB 20061031    Write replaced by Write (1) to come out on report1*
+* PAM    10032007  PM10    Send NX to Srey and Barbara                 *
+* PAM    03242008  PM11    Changed to CASH type transaction            *
+* PAM    04282008  PM12    Changed to PAY type transaction             *
+* DRW   03/09/2009 DW13    Increase Notes Occurance from 60 to 500     *
+* PAM   03/09/2009 PM14    Remove BHL from refund NX messages          *
+* bz    07/16/2012  bz1    Change data parsing
+* vxt   01/16/2014 vt1     Fix production abend
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING ATHLTMRF
+LOCAL
+*
+1 #INPUT   (A50)
+1 REDEFINE #INPUT
+  2 #INPUT-X  (A1/50)
+*
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+1 #NEG    (L)
+1 #DO-NOT-REF (L)
+1 #REF-NOTE   (A60)
+1 #PEACHTREE  (A130)
+1 #FIELD    (A6)
+1 REDEFINE #FIELD
+  2 #FIELD-N  (N6)
+1 REDEFINE #FIELD
+  2 #FIELD-X  (A1/6)
+*
+1 #FA-ALOT   (P5.2)
+1 #TO-INIT   (A3)
+1 #ST-X   (I2)
+1 #ST-ISN   (P8)
+1 #FOUND-ISS-DT   (L)
+1 #CANCEL         (L)
+1 #ST-NOT-FOUND   (L)
+1 #TRM-REFUND-NOTE  (A60)
+*
+1 #INP-CN      (N6)
+1 REDEFINE #INP-CN
+  2 #INP-CN-A   (A6)
+1 #INP-DB-CR   (N6.2)
+*
+1 #AMT    (N6.2)
+1 REDEFINE #AMT
+  2 #AMT-DOLS     (N6)
+  2 #AMT-CENTS    (N2)
+1 REDEFINE #AMT
+  2 #AMT-X        (A1/8)
+1 REDEFINE #AMT
+  2 #AMT-A        (A8)
+*
+1 #ISS-DT-FOR-NOTE     (N8)
+1 REDEFINE #ISS-DT-FOR-NOTE
+  2 #ISS-DT-YYYY-FOR-NOTE-A (A4)
+  2 #ISS-DT-MM-FOR-NOTE-A   (A2)
+  2 #ISS-DT-DD-FOR-NOTE-A   (A2)
+*
+1 #COMMA    (A1) INIT <','>
+1 #LAST    (A25)
+1 REDEFINE #LAST
+  2 #LAST-X (A1/25)
+1 #NAME    (A25)
+1 #FIRST-20 (A20)
+1 #MI       (A1)
+1 #NAME-FML (A25)
+1 REDEFINE #NAME-FML
+  2 #NAME-FML-X (A1/25)
+1 #ERR-MSG  (A60)
+1 #AMT-8    (A8)
+1 #DEAR-FORMATED-NAME  (A45)
+1 #TOT-REFUND    (P7.2)
+1 #TOT-DB-CR     (P7.2)
+1 #TOT-MISMATCH  (P7.2)
+1 #TOT-BYPASSED  (P7.2)
+* 1 #TOT-BILL-ADJ  (P7.2)
+1 #DB-CR-REFD    (P7.2)
+1 #DB-CR-REFD-DISP (A10)
+1 #NUM-DB-CR     (N5)
+1 #MISMATCH-CNT (N5)
+1 #BYPASSED-CNT   (N5)
+* 1 #BILL-ADJ-REFD (P7.2)
+* 1 #BILL-ADJ-REFD-DISP (A10)
+* 1 #NUM-BILL-ADJ  (N5)
+* 1 #OLD-BILL-ADJ  (P7.2)
+1 #UPDATE    (L)
+1 #HOLD-CUR-ACCT-UPDT (N8)
+1 #MODAL-PREM    (N5.2)
+*
+1 NT-V VIEW OF A-NOTES
+  2 C*NOTE-TABLE                     /* DW13
+  2 NOTE-CLERK-ID (A3/500)           /* DW13
+  2 NOTE-LINE-NUM (N1/500)           /* DW13
+  2 NOTE-DATE     (N8/500)           /* DW13
+  2 REDEFINE NOTE-DATE
+    3 NOTE-DATE-OCC  (500)            /* DW13
+      4 NOTE-DATE-YYYY  (N4)
+      4 NOTE-DATE-MMDD  (N4)
+  2 NOTE-TEXT     (A60/500)          /* DW13
+  2 REDEFINE NOTE-TEXT
+    3 NOTE-TEXT-OCC   (500)           /* DW13
+      4 NOTE-TEXT-60  (A60)
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-14   (A14)
+        5 NT-DO-NOT-REF  (A13)
+        5 NT-REST        (A33)
+*
+      4 REDEFINE NOTE-TEXT-60
+        5 NOTE-TEXT-1-20  (A20)
+        5 REDEFINE NOTE-TEXT-1-20
+          6 NOTE-TEXT-11-20    (A10)
+          6 NOTE-TEXT-ISS-MM   (A2)
+          6 NOTE-TEXT-ISS-/1   (A1)
+          6 NOTE-TEXT-ISS-DD   (A2)
+          6 NOTE-TEXT-ISS-/2   (A1)
+          6 NOTE-TEXT-ISS-YYYY (A4)
+        5 NOTE-TEXT-21-22 (A2)     /* '-2' FOR POLICY #
+        5 REDEFINE NOTE-TEXT-21-22
+          6 NOTE-TEXT-21   (A1)
+          6 NOTE-TEXT-22   (N1)    /* POLICY #
+        5 NOTE-TEXT-23-60 (A38)
+        5 REDEFINE NOTE-TEXT-23-60
+          6 NOTE-TEXT-23-31    (A09) /* ' RT TO LT' OR ' LT TO RT'
+          6 REDEFINE NOTE-TEXT-23-31
+            7 NOTE-TEXT-23           (A1)
+            7 NOTE-TEXT-PRIOR-PLAN   (A2)
+          6 NOTE-TEXT-34-60    (A29)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NBR       (A6)
+  2 member-contact-id                    /* vt1
+  2 DTS-DATN
+  2 DTS-TIMN
+  2 DATE-ACCT-UPDATE
+  2 WIDOW-FLAG     (A1)
+  2 ALOT-AMT
+  2 PROCESS-IND    (A1)
+  2 NAME
+  2 DATE-OF-DEATH                                                  /* PM5
+  2 PAD-CODE
+  2 INTRO-FLAG
+  2 DEBIT-CREDIT-AMT
+  2 X-BILL-ADJUST    (9)
+  2 ISSUE-DATE          (N8/9)
+  2 REDEFINE ISSUE-DATE
+    3 ISS-DT-OCC (9)
+      4 ISS-DT-YYYY    (N4)
+      4 ISS-DT-MM      (N2)
+      4 ISS-DT-DD      (N2)
+  2 STATUS              (A1/9)
+  2 PLAN                (A3/9)
+  2 ANNUAL-PREM         (9)
+  2 MODE                (9)
+*  2 ADDRESS-CHG-CODE                        /* vt1
+*  2 ADDRESS-1                               /* vt1
+*
+1 #TR-LOG-FIL-MNT-DESC  (A125)
+1 REDEFINE #TR-LOG-FIL-MNT-DESC
+  2 #TR-L-BADJ-LB1 (A12)
+  2 #TR-L-BADJ-AMT (A10)
+  2 #TR-L-APPD-DT  (A16)
+  2 #TR-L-BADJ     (A87)
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER             (N6)
+  2 PROCESS-IND           (A1)
+  2 TRANSACTION-DATN      (P9)
+  2 TRANSACTION-TIMN      (P7)
+  2 TXN-CODE              (A4)
+  2 SEQUENCE-NUM          (N1)
+  2 NAME                  (A25)
+  2 TXN-ACCT-NUMBER       (N3)
+  2 ACCT-DATE             (N8)
+  2 DATE-LAST-ACCT-UPDATE (N8)
+  2 DEBIT-AMOUNT          (P7.2)
+  2 CREDIT-AMOUNT         (P7.2)
+  2 DESCRIPTION           (A20)
+  2 MESSAGE-CODE          (A1)
+  2 AALP-FLAG             (A1)
+  2 CLERK-ID              (A3)
+  2 TERMINAL-ID           (A8)
+  2 CASH-CODE             (A1)
+  2 SG-CATEGORY-1         (A2/15)
+  2 SG-CATEGORY-2         (A2/15)
+  2 SG-AMOUNT             (N6.2/15)
+*
+1 #RF-AMT-DISP  (A9)  /* $1,234.56
+*
+1 #COUNTERS
+  2 #RECS-READ        (P5)
+  2 #RECS-SELECTED    (P5)
+  2 #CNT              (P5)
+  2 #CNT-2            (P5)
+  2 #CNT-3            (P5)
+  2 #CNT-4            (P5)
+  2 #CNT-5            (P5)
+  2 #CNT-6            (P5)
+  2 #CNT-7            (P5)
+  2 #CNT-8            (P5)
+  2 #CNT-9            (P5)
+  2 #CNT-10           (P5)
+  2 #CNT-11           (P5)
+  2 #CNT-12           (P5)
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #I3               (I2)
+  2 #I4               (I2)
+  2 #I5               (I2)
+1 #NUM-RECS          (N5)
+1 #NUM-POLS          (P5)
+1 #INT      (I2)
+1 #NOTE-TEXT (A60/10)
+*
+1 #TODAY-MMDDYYYY (N8)
+1 REDEFINE #TODAY-MMDDYYYY
+  2 #TODAY-MMDDYYYY-A (A8)
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A    (A8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY          (N4)
+  2 #MM            (N2)
+  2 #DD            (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A        (A4)
+  2 #MM-A          (A2)
+  2 #DD-A          (A2)
+*
+1 #MULTIPLE-OWNER (L)                                             /* PM3
+1 #NON-INS-OWNER  (L)                                             /* PM3
+1 #OWNER-OCC-9    (9)                                             /* PM3
+  2 #OWNER-FLAG    (A1)                                            /* PM3
+  2 #OWNER-CN      (N6/10)                                         /* PM3
+  2 #OWNER-CN-BY-POL (N6)                                          /* PM3
+  2 #OWNER-CN-SEG    (I2/9)                                        /* PM3
+  2 #ISS-DATE        (N8/9)                                        /* PM3
+  2 #ISS-DATE-DISP   (A10/9)                                       /* PM3
+*     beneficiary info output                                     /* PM3
+  2 #BENE-TYPE       (A1/2)                                        /* PM3
+  2 #BENE-TEST       (A60/10)                                      /* PM3
+*
+1 #JCL-PARM         (A3)                                          /* PM6
+*
+1 v_A6    (A6)
+1 v_A10   (A10)
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+FORMAT LS=133 PS=76
+WRITE  TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'PROGRAM EXCEPTIONS'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (1) LS=133 PS=76
+WRITE  (1) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'PROGRAM EXCEPTIONS'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'DFAS Refunds'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'DFAS Refunds Notes and Tr Reg'
+  5X 'DATE: ' *DAT4U 5X 'TIME: ' *TIMX
+*
+COMPRESS '1,2,3,4,5,6,7,8,9,10' INTO #PEACHTREE LEAVING NO        /* PM8
+WRITE WORK 2 #PEACHTREE
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #TODAY-MMDDYYYY-A LEAVING NO
+*
+INPUT #JCL-PARM                                                   /* PM6
+*
+READ WORK 1 RECORD #INPUT
+  IF #INPUT = MASK ('CN')
+    ESCAPE TOP
+  END-IF
+*
+*   MOVE 1 TO #I3  /* beginning of field
+*   RESET #I5   /* field #
+*   RESET #NEG
+*   FOR #I1 1 TO 50
+*     IF #INPUT-X (#I1) = #TAB OR = ' ' OR = '.' OR = ','
+*       ADD 1 TO #I5  /* field #
+*       MOVE 6 TO #I4
+*       COMPUTE #I2 = #I1 - 1
+* *
+*       IF   (#I5 = 3)   /* cents
+*        AND (#I2 = #I3) /* only leading diget entered (is 12.3)
+*         SUBTRACT 1 FROM #I4   /* start 1 pos to the left
+*       END-IF
+* *
+*       FOR #I2 #I2 TO #I3 STEP -1
+*         IF #INPUT-X (#I2) = '-'
+*           MOVE TRUE TO #NEG
+*           ESCAPE TOP
+*         END-IF
+* *
+*         MOVE #INPUT-X (#I2) TO #FIELD-X (#I4)
+*         SUBTRACT 1 FROM #I4
+*       END-FOR
+*       COMPUTE #I3 = #I1 + 1   /* beginning of next field
+* *
+*       IF #I5 = 1 MOVE #FIELD-N TO #INP-CN   END-IF
+*       IF #I5 = 2 MOVE #FIELD-N TO #AMT-DOLS END-IF
+*       IF #I5 = 3 MOVE #FIELD-N TO #AMT-CENTS
+*                  MOVE #AMT     TO #INP-DB-CR END-IF
+*       RESET #FIELD
+*       IF #I5 = 3
+*         ESCAPE BOTTOM
+*       END-IF
+*     END-IF
+*   END-FOR
+*
+  SEPARATE #INPUT INTO v_A6 v_A10 IGNORE WITH DELIMITER  H'09' /* bz1 begin
+  IF v_A6 IS( N6 )
+    #INP-CN := VAL(v_A6)
+  ELSE WRITE (1) #INPUT 'Bypassed - Wrong format'
+    WRITE (2) #INPUT 'Bypassed - Wrong format'
+    ESCAPE TOP
+  END-IF
+  EXAMINE v_A10 FOR '(' DELETE
+  EXAMINE v_A10 FOR ')' DELETE
+  EXAMINE v_A10 FOR '$' DELETE
+  IF v_A10 IS (N6.2)
+    #INP-DB-CR := VAL(v_A10)
+  ELSE WRITE (1) #INPUT 'Bypassed - Wrong format'
+    WRITE (2) #INPUT 'Bypassed - Wrong format'
+    ESCAPE TOP
+  END-IF                                                       /* bz1 end
+
+*
+  RESET #ST-NOT-FOUND
+  RESET #FOUND-ISS-DT #DB-CR-REFD
+  FIND (1) ST-V WITH MEMBER-KEY = #INP-CN-A
+    IF NO RECORD FOUND
+      MOVE TRUE TO #ST-NOT-FOUND
+      ESCAPE BOTTOM
+    END-NOREC
+    MOVE *ISN TO #ST-ISN
+  END-FIND
+*
+  IF #ST-NOT-FOUND
+    WRITE (1) #INP-CN 'Bypassed - CN not found'
+    WRITE (2) #INP-CN 'Bypassed - CN not found'
+    ESCAPE TOP
+  END-IF
+*
+  MOVE ST-V.NAME TO #NAME
+  RESET #LAST #MI #FIRST-20
+  CALLNAT 'GFMLNSXX' /* split name
+    #NAME
+    #FIRST-20
+    #MI
+    #LAST
+    #ERR-MSG
+  COMPRESS #FIRST-20 #MI #LAST INTO #NAME-FML
+*
+*  CHECK FOR DB-CREDIT REFUND
+*
+  IF #INP-DB-CR NE (DEBIT-CREDIT-AMT * -1)
+    IF NOT #NEG /* if positive - remove amount from mismatch
+      COMPUTE #INP-DB-CR = #INP-DB-CR * -1
+    END-IF
+*
+    WRITE (1) ST-V.ID-NUMBER 'Bypassed - DB/CR Mismatch - File DB/CR='
+      #AMT 'ST DB/CR =' DEBIT-CREDIT-AMT
+    WRITE (2) ST-V.ID-NUMBER 'Bypassed - DB/CR Mismatch - File DB/CR='
+      #AMT 'ST DB/CR =' DEBIT-CREDIT-AMT
+    ADD +1 TO #MISMATCH-CNT
+    ADD #INP-DB-CR TO #TOT-MISMATCH
+    ESCAPE TOP
+  END-IF
+*
+  GET ST-V #ST-ISN
+*
+  RESET #CANCEL #TRM-REFUND-NOTE #DO-NOT-REF #REF-NOTE
+  FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+    FOR #I1 1 TO C*NOTE-TABLE                             /* DW13
+      IF NOTE-TEXT (#I1) = MASK ('*CANCEL INSURANCE WHEN CAP LOAN IS')
+        MOVE TRUE TO #CANCEL
+      END-IF
+*
+      IF NT-DO-NOT-REF (#I1) = 'DO NOT REFUND'
+          OR NOTE-TEXT (#I1) = MASK ('DO NOT REFUND')                /* PM1
+          OR NOTE-TEXT (#I1) = MASK ('*DO NOT REFUND')               /* PM1
+          OR NOTE-TEXT (#I1) = MASK ('* DO NOT REFUND')              /* PM1
+          OR NOTE-TEXT (#I1) = MASK ('**DO NOT REFUND')              /* PM1
+        MOVE TRUE TO #DO-NOT-REF
+        MOVE NOTE-TEXT (#I1) TO #REF-NOTE
+      END-IF
+*
+      IF  ((NOTE-TEXT (#I1) = MASK ('Outstanding Trm Rfnd'))
+          OR   (NOTE-TEXT (#I1) = MASK ('OUTSTANDING TRM RFND')))
+          AND (NOTE-DATE (#I1) = 20030529)    /* specific note)
+        MOVE NOTE-TEXT (#I1) TO #TRM-REFUND-NOTE
+*       WRITE (1) ST-V.ID-NUMBER NOTE-TEXT (#I1)
+      END-IF
+    END-FOR
+  END-FIND
+*
+  IF #DO-NOT-REF
+      and st-v.id-number ne 109878
+    WRITE (1) #INP-CN 'Bypassed' #REF-NOTE
+    WRITE (2) #INP-CN 'Bypassed' #REF-NOTE
+    ADD +1 TO #BYPASSED-CNT
+    ADD #INP-DB-CR TO #TOT-BYPASSED
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+*   IF ST-V.ADDRESS-CHG-CODE = 'U'                         /* vt1
+*    OR ST-V.ADDRESS-CHG-CODE = 'V'                        /* vt1
+*    OR ST-V.ADDRESS-1 = ' '                               /* vt1
+  if f-undel-address(<st-v.member-contact-id>)               /* vt1
+    WRITE (1) #INP-CN 'Bypassed - Undeliverable Address'
+    WRITE (2) #INP-CN 'Bypassed - Undeliverbale Address'
+    ADD +1 TO #BYPASSED-CNT
+    ADD #INP-DB-CR TO #TOT-BYPASSED
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  CALLNAT 'GOWNRSXX'                                              /* PM3
+    ST-V.ID-NUMBER                                                /* PM3
+    #NON-INS-OWNER                                                /* PM3
+    #MULTIPLE-OWNER                                               /* PM3
+    #OWNER-OCC-9 (1:9)                                            /* PM3
+*
+  IF #NON-INS-OWNER                                               /* PM3
+    WRITE (1) #INP-CN 'Bypassed - Non-Insured Owner'              /* PM3
+    WRITE (2) #INP-CN 'Bypassed - Non-Insured Owner'              /* PM3
+    ADD +1 TO #BYPASSED-CNT                                       /* PM3
+    ADD #INP-DB-CR TO #TOT-BYPASSED                               /* PM3
+    END TRANSACTION                                               /* PM3
+    ESCAPE TOP                                                    /* PM3
+  END-IF                                                          /* PM3
+*
+  IF ST-V.DATE-OF-DEATH NE 0                                      /* PM5
+    WRITE (1) #INP-CN 'Bypassed - Member Deceased'                /* PM5
+    WRITE (2) #INP-CN 'Bypassed - Member Deceased'                /* PM5
+    ADD +1 TO #BYPASSED-CNT                                       /* PM5
+    ADD #INP-DB-CR TO #TOT-BYPASSED                               /* PM5
+    END TRANSACTION                                               /* PM5
+    ESCAPE TOP                                                    /* PM5
+  END-IF                                                          /* PM5
+*
+  COMPUTE #DB-CR-REFD = DEBIT-CREDIT-AMT * -1
+  ADD #DB-CR-REFD TO #TOT-REFUND
+  ADD #DB-CR-REFD TO #TOT-DB-CR
+  MOVE EDITED #DB-CR-REFD (EM=ZZ,ZZZ.99) TO #DB-CR-REFD-DISP
+*
+  IF #JCL-PARM = 'CAP'                                            /* PM6
+    PERFORM CAP-PAYOFF-LETTER-PROCESS
+  ELSE
+    PERFORM REFUND-LETTER-PROCESS
+  END-IF
+*
+*
+  MOVE ST-V.DATE-ACCT-UPDATE TO #HOLD-CUR-ACCT-UPDT
+  MOVE *DATN TO ST-V.DATE-ACCT-UPDATE
+  MOVE *DATN TO ST-V.DTS-DATN
+  MOVE *TIMN TO ST-V.DTS-TIMN
+*
+  ADD 1 TO #NUM-DB-CR
+  ADD #DB-CR-REFD TO ST-V.DEBIT-CREDIT-AMT  /* <***************
+  PERFORM ACCT-REG-AND-NOTE
+*
+  PERFORM PEACHTREE
+*
+  ADD 1 TO #CNT-2
+  DISPLAY (2) #CNT-2
+    'CN'       ST-V.ID-NUMBER
+*   'Iss/Date' ST-V.ISSUE-DATE (#ST-X)
+    'DB-CR/Adjust' #DB-CR-REFD  (EM=-ZZ,ZZZ.99)
+    'New/DB-CR' DEBIT-CREDIT-AMT (EM=-ZZZ,ZZZ.99)
+    'Name'         NAME
+*
+  UPDATE (0410)
+  END TRANSACTION
+END-WORK
+*
+NEWPAGE (1)                              /* SAG-AB 20061031
+WRITE (1) ///                            /* SAG-AB 20061031
+WRITE (1) #NUM-DB-CR    (EM=Z,ZZ9)      '     Num DB/CR Adjustments'
+WRITE (1) #TOT-DB-CR    (EM=ZZZ,ZZZ.99) 'Debit-credit Adj'
+WRITE (1) #TOT-REFUND   (EM=ZZZ,ZZZ.99) 'TOT DFAS REFUND'
+WRITE (1) ' '
+WRITE (1) #MISMATCH-CNT (EM=Z,ZZ9)      '     Num Mismatched'
+WRITE (1) #TOT-MISMATCH (EM=ZZZ,ZZZ.99) 'Total mismatch amt'
+WRITE (1) ' '
+WRITE (1) #BYPASSED-CNT (EM=Z,ZZ9)      '     Num Bypassed - other'
+WRITE (1) #TOT-BYPASSED (EM=ZZZ,ZZZ.99) 'Total bypassed - other'
+*
+WRITE (2) ///
+WRITE (2) #NUM-DB-CR    (EM=Z,ZZ9)      '     Num DB/CR Adjustments'
+WRITE (2) #TOT-DB-CR    (EM=ZZZ,ZZZ.99) 'Debit-credit Adj'
+WRITE (2) #TOT-REFUND   (EM=ZZZ,ZZZ.99) 'TOT DFAS REFUND'
+WRITE (2) ' '
+WRITE (2) #MISMATCH-CNT (EM=Z,ZZ9)      '     Num Mismatched'
+WRITE (2) #TOT-MISMATCH (EM=ZZZ,ZZZ.99) 'Total mismatch amt'
+WRITE (2) ' '
+WRITE (2) #BYPASSED-CNT (EM=Z,ZZ9)      '     Num Bypassed - other'
+WRITE (2) #TOT-BYPASSED (EM=ZZZ,ZZZ.99) 'Total bypassed - other'
+*
+MOVE EDITED #TOT-DB-CR    (EM=ZZ,ZZZ.99) TO #DB-CR-REFD-DISP
+COMPRESS #NUM-DB-CR 'DFAS DB/CR Adjustments for $' #DB-CR-REFD-DISP
+  'have been processed' TO #NOTE-TEXT (1)
+* MOVE 'and "ftp/apps/caplMMYY.txt"' TO #NOTE-TEXT (2)
+MOVE 'EDS' TO #CGA-CLERK
+MOVE '*NX' TO #CGA-SCR-SUFFIX
+MOVE 'SKS' TO #TO-INIT                                            /* PM10
+FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)
+* MOVE 'BHL' TO #TO-INIT                                          /* PM10 PM14
+* FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT #NOTE-TEXT (1:5)    /* PM14
+END TRANSACTION
+WRITE (1) #NOTE-TEXT (1)
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE PEACHTREE
+* * * * * * * * * * * * * *
+*
+FOR #I1 1 TO 25
+  IF #NAME-FML-X (#I1) = ','
+    RESET #NAME-FML-X (#I1)
+  END-IF
+END-FOR
+*
+FOR #I1 1 TO 25
+  IF #LAST-X (#I1) = ','
+    RESET #LAST-X (#I1)
+  END-IF
+END-FOR
+*
+MOVE EDITED #DB-CR-REFD (EM=ZZZZZ.99) TO #AMT-8
+MOVE LEFT #AMT-8 TO #AMT-8                                        /* PM9
+*
+COMPRESS     /* first field is blank                              /* PM8
+  #COMMA #NAME-FML                   /* col 2
+  #COMMA #NAME-FML                   /* col 3
+  #COMMA #TODAY-MMDDYYYY-A           /* col 4
+  #COMMA 'Refund CN' ST-V.ID-NUMBER  /* col 5
+  #COMMA '1010 - 00'                 /* col 6
+  #COMMA '1'                         /* col 7
+  #COMMA #LAST 'CN' ST-V.ID-NUMBER   /* col 8
+  #COMMA '2236 - 00'                 /* col 9                     /* PM2
+  #COMMA #AMT-8                      /* col 10
+  INTO #PEACHTREE LEAVING NO
+*
+WRITE WORK 2 #PEACHTREE
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCT-REG-AND-NOTE
+* * * * * * * * * * * * * *
+*
+RESET ACCT-REG-V
+MOVE ST-V.ID-NUMBER        TO ACCT-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND      TO ACCT-REG-V.PROCESS-IND /* PM - 06/2000
+MOVE *DATN                 TO ACCT-REG-V.TRANSACTION-DATN
+MOVE *TIMN                 TO ACCT-REG-V.TRANSACTION-TIMN
+MOVE *INIT-ID              TO ACCT-REG-V.TERMINAL-ID
+MOVE 'EDS'                 TO ACCT-REG-V.CLERK-ID
+MOVE ST-V.NAME             TO ACCT-REG-V.NAME
+MOVE 'P'                   TO ACCT-REG-V.CASH-CODE   /* PM11 PM12
+
+RESET                         ACCT-REG-V.AALP-FLAG
+MOVE *DATN                 TO ACCT-REG-V.ACCT-DATE
+MOVE 'RDCR'                TO ACCT-REG-V.TXN-CODE
+*
+IF #HOLD-CUR-ACCT-UPDT = 0
+  MOVE *DATN               TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+ELSE
+  MOVE #HOLD-CUR-ACCT-UPDT TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+END-IF
+*
+MOVE #DB-CR-REFD TO ACCT-REG-V.DEBIT-AMOUNT
+*
+MOVE 450 TO ACCT-REG-V.TXN-ACCT-NUMBER
+*
+IF ST-V.INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q'
+  MOVE 'CAP MBR' TO ACCT-REG-V.DESCRIPTION
+END-IF
+COMPRESS ACCT-REG-V.DESCRIPTION 'DFAS REFUND' INTO DESCRIPTION
+*
+* SG-category info not needed ???
+*
+STORE ACCT-REG-V
+* WRITE (3) ST-V.ID-NUMBER 'ACCT-REG' #DB-CR-REFD DEBIT-CREDIT-AMT
+*
+MOVE EDITED #DB-CR-REFD (EM=Z,ZZZ.99) TO #RF-AMT-DISP
+COMPRESS '$' #RF-AMT-DISP INTO #RF-AMT-DISP LEAVING NO
+COMPRESS 'Refund processed to Finance' #RF-AMT-DISP INTO #NOTE-TEXT(1)
+* WRITE (3) 'NOTE WRITTEN' ST-V.ID-NUMBER #NOTE-TEXT (1)
+MOVE 1 TO #INT
+MOVE 'EDS' TO #CGA-CLERK
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE REFUND-LETTER-PROCESS                           /* PM6
+* * * * * * * * * * * * * * * * * * * * *
+*
+MOVE 'FA' TO #CGA-SCR-COMMAND      #CGA-ORIG-COMMAND
+MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID
+* MOVE 'RTC' TO #CGA-SCR-SUFFIX      #CGA-ORIG-SUFFIX             /* PM4
+MOVE 'BTR' TO #CGA-SCR-SUFFIX      #CGA-ORIG-SUFFIX               /* PM4
+MOVE #ST-ISN TO #CGA-ISN
+RESET #CGA-MF-SCR-PARM-1-N
+FETCH RETURN 'C2800PFA' /* get current alot
+COMPUTE #FA-ALOT = #CGA-MF-SCR-PARM-1-N / 100
+* WRITE (1) ST-V.ID-NUMBER 'FA alot amt =' #FA-ALOT 'alot=' ALOT-AMT
+*
+MOVE #ST-ISN TO #CGA-ISN
+MOVE 'AD' TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID
+*
+IF  (ALOT-AMT = #FA-ALOT)
+    OR (PAD-CODE = 'P' OR = 'N' OR = 'D' OR = 'L'
+    OR = 'V' OR = 'W' OR = 'X' OR = 'Z' OR = 'E')
+  MOVE 'RFX' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+ELSE
+  MOVE 'REF' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+END-IF
+FETCH RETURN 'G3500PAD'
+*
+IF   (ALOT-AMT NE #FA-ALOT)
+    AND (NOT PAD-CODE = 'P' OR = 'N' OR = 'D' OR = 'L'
+    OR = 'V' OR = 'W' OR = 'X' OR = 'Z' OR = 'E')
+  MOVE #ST-ISN TO #CGA-ISN
+  MOVE 'FA' TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+  MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID
+  MOVE 'CLD' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX /* must remain (DFAS)
+*
+  RESET #CGA-SCR-SUFFIX
+  IF #CANCEL
+    MOVE 'CLP' TO #CGA-SCR-SUFFIX /* orig must always be CLD
+  END-IF
+*
+  FETCH RETURN 'C2800PFA'
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CAP-PAYOFF-LETTER-PROCESS                       /* PM6
+* * * * * * * * * * * * * * * * * * * * * *
+*
+MOVE #ST-ISN TO #CGA-ISN
+MOVE 'AD' TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID #CGA-ID
+MOVE 'CLP' TO #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+FETCH RETURN 'G3500PAD'
+RESET #CGA-SCR-SUFFIX
+IF #CANCEL
+  MOVE 'CLP' TO #CGA-SCR-SUFFIX /* orig must always be clp
+ELSE
+  MOVE 'CLK' TO #CGA-SCR-SUFFIX /* orig must always be clp
+END-IF
+MOVE 'FA' TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+FETCH RETURN 'C2800PFA'
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,170 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* <Natural Source Header
+/** New Subprogram RTEN0007.
+/** Calculating PV factor using mortality tables
+/** Version 4 is using database mortality tables (see RTEN0004)
+/** Other versions are using ATHISMTD local
+/** :author nguentchev
+/*
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-ID         (N9)
+1 #PREM-AGE           (N2)
+1 #SEX                (A1)
+1 #DESIRED-YEARS      (N3)
+1 #SMOKER-FLAG        (A1)
+1 #SEGMENT            (I2)
+1 #ISSUE-DATE         (N8)
+1 #PV                 (P9.7)  /* OUT
+LOCAL USING ATHISMTD
+LOCAL
+1 #MORT-RATE (P11.7)
+1 #WORK-X    (P11.7)
+1 #MAX-AGE   (I2) CONST <120>
+1 #MORT-R    (P7.6/#MAX-AGE)
+1 #ATT-AGE   (P3/#MAX-AGE)
+1 #COI       (P2.3/#MAX-AGE)
+1 #QX        (P3.7/#MAX-AGE)
+1 #LX        (P8/#MAX-AGE)
+1 #DX-X      (P8/#MAX-AGE)
+1 #DX        (P8/#MAX-AGE)
+1 #NX        (P9/#MAX-AGE)
+1 #SM-X      (I2)
+1 #DUR-X     (I2)
+1 #ATT-X     (I2)
+1 #ATT-XX    (I2)
+1 #ISS-X     (I2)
+LOCAL
+1 #VER-DATE   (N8) CONST <20151231>
+1 #CONTACT-ID (N8)
+1 #AGE        (P3)
+1 #DURATION   (P3)
+1 #CN         (N6)
+1 #VERSION    (A1)
+1 CNT-V VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 ID-NUMBER
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 CONTACT-ID
+  2 MEMBER-CN 2 REDEFINE MEMBER-CN
+    3 MEMBER-CN-N (N6)
+1 #TITLES (A9/6) INIT <
+  'Duration ',
+  'MortRate ',
+  'Qx...... ',
+  'Lx...... ',
+  'Dx...... ',
+  'Nx...... '
+  >
+END-DEFINE
+/*
+RESET #VERSION
+DECIDE FOR FIRST CONDITION
+  WHEN #CGA-SCR-ID > 999999 /* SSN
+    FIND CNT-V WITH SSN = #CGA-SCR-ID
+      #CONTACT-ID := CNT-V.CONTACT-ID
+      #CN := CNT-V.ID-NUMBER
+    END-FIND
+  WHEN #CGA-SCR-ID > 499999 /* AT
+    FIND AT-V WITH ID-NUMBER = #CGA-SCR-ID
+      #CONTACT-ID := AT-V.CONTACT-ID
+      MOVE RIGHT AT-V.MEMBER-CN TO AT-V.MEMBER-CN
+      #CN := AT-V.MEMBER-CN-N
+    END-FIND
+  WHEN NONE
+    #CN := #CGA-SCR-ID
+END-DECIDE
+/*
+IF #CN = 0 OR #SEGMENT = 0
+  IF #ISSUE-DATE > #VER-DATE
+    #VERSION := '4'
+  END-IF
+ELSE
+  CALLNAT 'RTEN0004'
+    #CN
+    #SEGMENT
+    #VERSION   /* OUT
+END-IF
+/*
+IF #SMOKER-FLAG = 'S'
+  MOVE 2 to #SM-X
+ELSE
+  MOVE 1 to #SM-X
+END-IF
+*
+RESET #DUR-X
+*
+FOR #ATT-X #PREM-AGE TO #MAX-AGE
+  IF #DUR-X >= #MAX-AGE   /* In case #PREM-AGE = 0
+    ESCAPE BOTTOM
+  END-IF
+  ADD 1 TO #DUR-X
+  MOVE #DUR-X TO #ATT-XX
+  COMPUTE #ISS-X = #PREM-AGE + 1
+  IF #ATT-XX GT +16
+    COMPUTE #ISS-X = #ISS-X + (#ATT-XX - 16)
+    MOVE 16 TO #ATT-XX
+    IF #ISS-X GT 86    /* V3 limits
+      MOVE 86 TO #ISS-X
+    END-IF
+  END-IF
+*
+  IF #VERSION = '4'
+    #AGE := #PREM-AGE
+    #DURATION := #DUR-X
+    CALLNAT 'RTEN0003'
+      #CONTACT-ID
+      #SMOKER-FLAG
+      #SEX
+      #AGE
+      #DURATION
+      #MORT-RATE  /* OUT
+  ELSE
+    MOVE TD-MORT (#SM-X, #ISS-X, #ATT-XX) TO #MORT-RATE
+  END-IF
+  #MORT-R (#DUR-X) := #MORT-RATE
+*
+  MOVE #ATT-X TO #ATT-AGE (#DUR-X)
+  IF #VERSION = '4'
+    COMPUTE ROUNDED #QX (#DUR-X) = #MORT-RATE / 1000
+  ELSE
+    COMPUTE ROUNDED #QX (#DUR-X) = (#MORT-RATE * .65) / 1000
+  END-IF
+*
+  IF #DUR-X = 1
+    MOVE 10000000 TO #LX (1)
+  ELSE
+    COMPUTE ROUNDED #LX (#DUR-X) = #LX (#DUR-X - 1) - #DX-X (#DUR-X - 1)
+  END-IF
+*
+  COMPUTE ROUNDED #DX-X (#DUR-X) = #QX (#DUR-X) * #LX (#DUR-X)
+  IF #VERSION = '4'
+    COMPUTE ROUNDED #WORK-X = (1 / 1.045) ** (#DUR-X - 1)
+  ELSE
+    COMPUTE ROUNDED #WORK-X = (1 / 1.0525) ** (#DUR-X - 1)
+  END-IF
+  COMPUTE ROUNDED #DX (#DUR-X) = #LX (#DUR-X) * #WORK-X
+END-FOR
+*
+MOVE #DX (#DUR-X) TO #NX (#DUR-X) /* fill in att age 100
+SUBTRACT 1 FROM #DUR-X
+FOR #ATT-X #DUR-X TO 1 STEP -1
+  COMPUTE #NX (#ATT-X) = #NX (#ATT-X + 1) + #DX (#ATT-X)
+END-FOR
+*
+COMPUTE ROUNDED #PV = (#NX (1) - #NX (#DESIRED-YEARS + 1)
+  - (11/24 * (#DX (1) - #DX (#DESIRED-YEARS + 1)))) / #DX (1)
+/*
+* PRINT *PROGRAM 'Version:' #VERSION
+* PRINT #TITLES(*)
+* ADD 1 TO #DUR-X
+* FOR #ATT-X 1 TO #DUR-X
+*   PRINT
+*   #ATT-X #MORT-R (#ATT-X) #QX (#ATT-X) #LX (#ATT-X)
+*     #DX (#ATT-X) #NX (#ATT-X)
+* END-FOR
+* PRINT 'PV Factor..:' #PV
+/*
+END

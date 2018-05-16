@@ -1,0 +1,240 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**********************************************************************************
+* Pgm ID : PAY-RIDP
+*
+* Function : pay premium rider amounts per policy
+*
+* 10/20/2011 vt Initial creation
+* 08/19/2013 vt1 Add PS payments /ticket 2177/
+**********************************************************************************
+define data parameter
+1 #rest-amt           (n7.2)
+1 #STATUS-ISN         (P8)
+1 CC-PAYMENT
+  2 PARM-DATE             (N8.0)
+  2 ID-NUMBER             (N6.0)
+  2 INSURED-NAME          (A50)
+  2 C@PAY-POLICY          (N2.0)
+  2 PAY-POLICY     (1:9)
+    3 POLICY-NBR          (A16)
+    3 segment             (i2)              /* vt
+    3 cap-policy          (a1)
+    3 PLAN-TYPE           (A3)
+    3 ISSUE-DATE          (N8.0)
+    3 FACE-AMOUNT         (N7.2)
+    3 MAX-PREMIUMS        (N4)
+    3 MIN-PREMIUMS        (N2)
+    3 DEFAULT-PREM        (N2)
+    3 C@AVAILABLE-PAYMENT (N2.0)
+    3 AVAILABLE-PAYMENT (1:10)
+      4 PAYMENT-NOTE      (A) DYNAMIC
+      4 CC-PAYABLE        (A1)
+      4 VAR-AMOUNT        (A1)
+      4 EXCEED-AMT        (A1)
+      4 TRAN-TYPE         (A6)                         /* vt1 was a4
+      4 PAID-TO-DATE      (N8.0)
+      4 PAYMENT-MODE      (A1)
+      4 DEFAULT-AMOUNT    (N6.2)
+      4 DUE-AMOUNT        (N6.2)
+1 #timn               (n7)
+1 #error-message      (a75)
+*
+LOCAL USING C2500AAM
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 name
+  2 PROCESS-IND
+  2 MODE                  (9)
+  2 X-RID-FPF             (9)
+  2 X-RID-BALANCE         (9)
+  2 RID-TOT-PAID
+  2 RID-PLAN              (9)
+  2 RID-EFF-DT            (9)
+  2 RID-PD-TO             (9)
+*
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 id-number         (n6)
+  2 name              (a25)
+  2 transaction-datn  (p9)
+  2 transaction-timn  (p7)
+  2 cash-code         (a1)
+  2 clerk-id          (a3)
+  2 terminal-id       (a8)
+  2 PROCESS-IND       (A1)
+  2 POLICY-NUMBER     (A16)
+  2 AALP-FLAG         (A1)
+  2 TXN-CODE          (A4)
+  2 TXN-ACCT-NUMBER   (N3)
+  2 MESSAGE-CODE      (A1)
+  2 credit-amount     (p7.2)
+  2 acct-date         (n8)
+  2 debit-amount      (p7.2)
+  2 description       (a20)
+  2 SG-CATEGORY-1     (a2/15)
+  2 SG-CATEGORY-2     (a2/15)
+  2 SG-AMOUNT         (n6.2/15)
+*
+1 #l                       (i2)
+1 #m                       (i2)
+1 #cc-x                    (i2)
+1 #iln1                    (i2)
+1 #iln2                    (i2)
+1 #lx                      (i2)
+1 #pol-nbr                 (a16)
+1 #fpf-amt                 (p7.2)
+1 #inp-amt                 (p7.2)
+1 #inp-tr-cd               (a4)
+1 #cash-code               (a1)
+1 #issue-date              (n8)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-A          (A8)
+1 #DATE-MMDDYYYY           (N8)
+1 REDEFINE #DATE-MMDDYYYY
+  2 #MMDD                  (N4)
+  2 #YYYY                  (N4)
+1 REDEFINE #DATE-MMDDYYYY
+  2 #DATE-MMDDYYYY-A       (A8)
+1 #update-mode             (l) init<TRUE>
+1 #SG-TBL                  (15)
+  2 #SG-CAT1               (A2)
+  2 #SG-CAT2               (A2)
+  2 #SG-AMT                (N6.2)
+1 #datn                    (n8)
+1 redefine #datn
+  2 #datn-yyyy             (n4)
+  2 #datn-mm               (n2)
+  2 #datn-dd               (n2)
+1 #datn-a                  (a10)
+1 #amount                  (a10)
+1 #orig-mode                     (a1/9)
+1 #CAP-POLICY               (L)
+1 #WEB-CHARGE               (A1) INIT <'N'>
+1 #1-YR-ago-a               (a8)
+1 redefine #1-YR-ago-a
+  2 #1-YR-AGO               (N8)
+1 #YYYYMMDD                 (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY                   (N4)
+  2 #MM                     (N2)
+  2 #DD                     (N2)
+*
+1 #out-rec            (a100)
+1 #tab                (a1) INIT <H'09'>
+1 #tran-code          (a4)
+*
+end-define
+*
+GET ST-V #STATUS-ISN
+*
+#datn          := *datn
+#DATE-MMDDYYYY := FUNCTION-DATE(<#DATN>)
+#YYYYMMDD      := *DATN
+SUBTRACT 1 FROM #YYYYMMDD.#YYYY
+compress #YYYYMMDD.#mm #YYYYMMDD.#dd #YYYYMMDD.#yyyy into #1-yr-ago-a leaving no
+*
+for #l 1 9
+  if  cap-policy(#l) ne 'Y'
+    for #m 1 9
+      if tran-type(#l,#m) = 'RIDP'
+        move policy-nbr(#l) to #pol-nbr
+        move due-amount (#l,#m) to #fpf-amt
+        if  #rest-amt ge #fpf-amt
+          compute #rest-amt = #rest-amt - #fpf-amt
+          move segment(#l) to #cc-x               /* vt
+          #inp-amt   := #fpf-amt
+          #inp-tr-cd := 'RIDP'
+          #cash-code := 'I'
+          perform apply-ridp
+          perform prepare-ACCT-REG
+          perform write-report
+        end-if
+      end-if
+    end-for
+  end-if
+end-for
+*****************
+DEFINE SUBROUTINE APPLY-RIDP
+*****************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER   TO #SCR-ID-SSN    (1)
+MOVE #DATE-MMDDYYYY-A TO #SCR-EFF-DT (1)
+MOVE #INP-TR-CD       TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT         TO #SCR-TRAN-AMT  (1)
+MOVE #CASH-CODE       TO #SCR-CASH-CODE (1) /* PM1
+* MOVE 'C'            TO #SCR-CASH-CODE (1) /* PM1
+*
+CALLNAT 'CRIDRSAM' #SCR-LINES
+  ST-V.X-RID-FPF     (1:9)
+  ST-V.X-RID-BALANCE (1:9)
+  ST-V.RID-TOT-PAID
+  ST-V.RID-PLAN      (1:9)
+  ST-V.RID-EFF-DT    (1:9)
+  ST-V.RID-PD-TO     (1:9)
+  #ORIG-MODE        (1:9)
+*
+  #ILN1
+  #ILN2
+  #SG-TBL (1:15)
+  #LX
+  #ERROR-MESSAGE
+*
+update (0132)
+END-SUBROUTINE
+*
+*****************
+define subroutine Prepare-ACCT-REG
+*****************
+*
+* write '=' #scr-tran-amt(1) '=' #iln1
+*
+RESET AR-V
+ar-v.id-number               := ST-V.id-number
+ar-v.transaction-datn        := #datn
+ar-v.acct-date               := #datn
+ar-v.transaction-timn        := #timn
+ar-v.cash-code               := 'I'
+ar-v.name                    := ST-V.name
+ar-v.clerk-id                := 'EDS'
+ar-v.terminal-id             := *init-id
+AR-V.TXN-CODE                := 'RIDP'
+AR-V.PROCESS-IND             := ST-V.PROCESS-IND
+AR-V.AALP-FLAG               := #SCR-ALP-CODE  (1)
+AR-V.POLICY-NUMBER           := #POL-Nbr
+AR-V.SG-AMOUNT           (1) := #scr-tran-amt(1)
+AR-V.credit-amount           := #scr-tran-amt(1)
+AR-V.MESSAGE-CODE            := '1'
+AR-V.TXN-ACCT-NUMBER         := 434
+AR-V.DESCRIPTION             := 'INV'
+*
+IF #ISSUE-DATE GT #1-YR-AGO
+  AR-V.SG-CATEGORY-1 (1)   := '1Y'
+ELSE
+  AR-V.SG-CATEGORY-1 (1)   := 'RN'
+END-IF
+AR-V.SG-AMOUNT (1)           := #SCR-TRAN-AMT (#ILN1)
+STORE AR-V
+end-subroutine
+*
+*****************
+define subroutine write-report
+*****************
+#tran-code := 'RIDP'
+compress #datn-mm '/' #datn-dd '/' #datn-yyyy into #datn-a leaving no
+move edited #scr-tran-amt(1) (EM=zzzzzz9.99) to #amount
+compress st-v.id-number #tab
+  #tran-code              #tab
+  #amount                 #tab
+  #datn-a                 #tab
+  into #out-rec leaving no
+write work 3 #out-rec
+*
+end-subroutine
+*
+end

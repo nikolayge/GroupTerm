@@ -1,0 +1,307 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Read request file and process payment requests scheduled for today
+* Get bank account information from request data
+* Call webservice to process charge for reuqest payment amount
+* Call payment program to apply payment to member account
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    08052014       Initial Creation
+* YAK    12192014  YK1  Populate an Invoice number with 
+*                       Policy Number (not CN)  
+********************************************************
+*
+DEFINE DATA
+*
+LOCAL USING OBJLPRST
+LOCAL USING GPRA0003
+LOCAL USING P_PARMS
+LOCAL USING GPRL0EML
+LOCAL USING WECA0030
+LOCAL USING PARSER-X
+LOCAL USING GPRA0005       /* E-mail Information
+LOCAL
+1 LOG-MESSAGE       (A10000)
+1 LOG_ACTION        (A) DYNAMIC
+1 #SCHEDULED        (A) DYNAMIC CONST <'S'>
+1 #ErrorTag         (A) Dynamic
+1 #ErrorTagClose    (A) Dynamic
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+1 PROCESS-NAME      (A) DYNAMIC CONST <'ProcessPayment'>
+1 #SUCCESS-XML      (A) DYNAMIC CONST <'<ErrorCode>0</ErrorCode>'>
+1 #SUCCESS-CODE     (A) DYNAMIC CONST <'0'>
+1 #ERROR-DESCRIPTION(A) DYNAMIC CONST <'<ErrorDescription>'>
+1 #PAYMENT-METHOD   (A) DYNAMIC
+1 #ECHECK           (A) DYNAMIC CONST <'eCheck'>
+1 #CCARD            (A) DYNAMIC CONST <'CCard'>
+1 #CHECK            (A) DYNAMIC CONST <'check'>
+1 RETURN-MESSAGE    (A78)
+1 #COMPLETED        (A) DYNAMIC CONST <'C'>
+1 #FAILED           (A) DYNAMIC CONST <'F'>
+1 #ISN              (P9)
+1 #I                (I2)
+1 #DATN             (N8)
+1 v_A               (A)  DYNAMIC
+1 #TIMN             (N7)
+1 #OWNER-CN         (A6)
+1 REDEFINE #OWNER-CN
+  2 #OWNER-CN-N     (N6)
+1 #REQUEST_LOG_FILE (A) DYNAMIC INIT <"/usr/SAG/tmp/payment_request_process_@DB_@DATE.log">
+1 #EMAIL-DAILY-FILE (A) DYNAMIC INIT <"/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/EmailDailyFile.txt">
+1 #WEBCHARGE-LOG-FILE (A) DYNAMIC INIT <'/usr/SAG/tmp/Webcharge_@DATE.log'>
+1 #CREDIT-CARD-DECLINED-TEMPLATE (A3) INIT <'WCD'>
+1 #ECHECK-DECLINED-TEMPLATE      (A3) INIT <'WED'>
+1 #MC-SCHEDULED-PAYMENT (A) DYNAMIC CONST <'MCBatch'>
+1 #MEMBER               (A) DYNAMIC CONST <'MEMBER'>
+1 #PaymentSuccessful    (L)
+1 #ErrorCode            (A3)
+1 ErrorCode             (A) DYNAMIC
+1 ErrorDescription      (A) DYNAMIC
+1 #UserAD               (A) DYNAMIC
+*
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #PAYMENT-DATE-STATUS-KEY  (A9)
+1 REDEFINE #PAYMENT-DATE-STATUS-KEY
+  2 #PAYMENT-DATE     (N8)
+  2 #REQUEST-STATUS   (A1)
+*
+END-DEFINE
+*
+#DATN         := 20150518
+#TIMN         := *TIMN
+#PAYMENT-DATE := #DATN
+#REQUEST-STATUS := #SCHEDULED
+*
+MOVE  GET_DBN(<>)  TO v_A
+EXAMINE #REQUEST_LOG_FILE FOR '@DB' REPLACE v_A
+MOVE EDITED *DATX (EM=DD) TO v_A
+EXAMINE #REQUEST_LOG_FILE FOR '@DATE' REPLACE v_A
+EXAMINE #WEBCHARGE-LOG-FILE FOR '@DATE' REPLACE v_A
+
+DEFINE WORK FILE 1 #REQUEST_LOG_FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 2 #EMAIL-DAILY-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 3 #WEBCHARGE-LOG-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+*
+ON ERROR
+  BACKOUT TRANSACTION
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  ERROR-PROGRAM := *PROGRAM
+  ERROR-OBJECT  := P_ERROR_PROGRAM
+  ERROR-LINE    := P_ERROR_LINE
+  ERROR-NUMBER  := P_ERROR_NUM
+  RESET LOG-MESSAGE
+  COMPRESS ERROR-NUMBER ERROR-LINE ERROR-PROGRAM ERROR-OBJECT *DATN *TIME INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+  CLOSE WORK FILE 1
+END-ERROR
+*
+FIND PAY-REQUEST-V WITH PAYMENT-DATE-STATUS = #PAYMENT-DATE-STATUS-KEY
+  #ISN := *ISN
+  RESET REQUEST-DATA RESPONSE-DATA #PaymentSuccessful #EC-CHARGE-FIELDS EMAIL-INFORMATION
+  FOR #I = 1 TO C*REQUEST-LINE
+    COMPRESS REQUEST-DATA REQUEST-LINE(#I) INTO REQUEST-DATA LEAVING NO
+  END-FOR
+*
+  COMPRESS *DATN *TIMN PROCESS-NAME INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+  COMPRESS *DATN *TIMN PROCESS-NAME REQUEST-DATA INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+*
+  DECIDE ON FIRST VALUE PAY-REQUEST-V.REQUEST-TYPE
+    VALUE #ECHECK
+* Parse request and process eCheck payment
+      #PAYMENT-METHOD := #CHECK
+      #UserAD := FUNCTION-CLERK-AD(<PAY-REQUEST-V.LAST-UPD-USER>)
+* Get bank account information from request data
+      PERFORM POPULATE-EC-CHARGE-FIELDS
+* Call webservice to process charge
+      CALLNAT 'WECN0030' #EC-CHARGE-FIELDS
+      COMPRESS *DATN *TIMN CNumber ResultCode ResultMessage INTO LOG-MESSAGE
+      WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+      IF ResultCode = '0'
+        #PaymentSuccessful := true
+      ELSE
+        EMAIL-INFORMATION.TEMPLATE-TYPE := #ECHECK-DECLINED-TEMPLATE
+      END-IF
+    VALUE #CCARD
+      IGNORE
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+  IF #PaymentSuccessful
+* Create Request record in the format payment program expects
+    COMPRESS '<Members>'
+      '<CN>' PAY-REQUEST-V.ID-NUMBER '</CN>'
+      '<User>' #UserAD '</User>'
+      '<PaymentMethod>' #PAYMENT-METHOD '</PaymentMethod>'
+      '<ProcessType>' PAY-REQUEST-V.PROCESS-TYPE '</ProcessType>'
+      REQUEST-DATA
+      '</Members>' INTO REQUEST-DATA LEAVING NO
+* Apply payment to the member account if payment was successful
+    CALLNAT 'MBCNEP20' REQUEST-DATA RESPONSE-DATA PROCESS-NAME
+    PERFORM UPDATE-REQUEST-RECORD
+  ELSE
+    PERFORM CREATE-REJECTED-EMAIL
+    GT.
+    GET PAY-REQUEST-V #ISN
+    PAY-REQUEST-V.REQUEST-STATUS := #FAILED
+    UPDATE (GT.)
+    END TRANSACTION
+  END-IF
+*
+END-FIND
+PERFORM COMPOSE-RESPONSE-DATA
+*
+*******************************************
+DEFINE SUBROUTINE POPULATE-EC-CHARGE-FIELDS
+*******************************************
+*
+RESET #EC-CHARGE-FIELDS
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* #EC-CHARGE-FIELDS.CNumber := PAY-REQUEST-V.ID-NUMBER    /* YK1
+#EC-CHARGE-FIELDS.CNumber := PAY-REQUEST-V.POLICY-NUMBER  /* YK1     
+MOVE EDITED PAY-REQUEST-V.PAYMENT-AMOUNT (EM=ZZZZZZ9.99) TO #EC-CHARGE-FIELDS.Amount
+#EC-CHARGE-FIELDS.Amount := *trim(#EC-CHARGE-FIELDS.Amount)
+IF PAY-REQUEST-V.LAST-UPD-USER = #MEMBER
+  #EC-CHARGE-FIELDS.User          := PAY-REQUEST-V.REQUESTOR-CN
+ELSE
+  #EC-CHARGE-FIELDS.User          := #UserAD
+END-IF
+EXAMINE #EC-CHARGE-FIELDS.User FOR '\' REPLACE '\\'
+#EC-CHARGE-FIELDS.ApplicationSource := #MC-SCHEDULED-PAYMENT
+*
+END-SUBROUTINE
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'Member/BankAccounts/BankAccount/AccountHolderFirstName/$'
+    #EC-CHARGE-FIELDS.FirstName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountHolderLastName/$'
+    #EC-CHARGE-FIELDS.LastName := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/RoutingNumber/$'
+    #EC-CHARGE-FIELDS.RoutingNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountNumber/$'
+    #EC-CHARGE-FIELDS.AccountNumber := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountType/$'
+    #EC-CHARGE-FIELDS.AccountType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountStreet/$'
+    #EC-CHARGE-FIELDS.Street := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountCity/$'
+    #EC-CHARGE-FIELDS.City := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountState/$'
+    #EC-CHARGE-FIELDS.State := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Member/BankAccounts/BankAccount/AccountZipCode/$'
+    #EC-CHARGE-FIELDS.ZipCode := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET XML
+ErrorCode        := XML_PARSER_RESPONSE
+ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+END-SUBROUTINE
+*
+****************************
+DEFINE UPDATE-REQUEST-RECORD
+****************************
+COMPRESS LOG-MESSAGE RESPONSE-DATA INTO LOG-MESSAGE
+WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+CLOSE WORK FILE 1
+EXAMINE RESPONSE-DATA FOR #SUCCESS-XML POSITION #I
+IF #I NE 0
+  GT1.
+  GET PAY-REQUEST-V #ISN
+  PAY-REQUEST-V.REQUEST-STATUS := #COMPLETED
+  UPDATE (GT1.)
+  END TRANSACTION
+ELSE
+  EXAMINE RESPONSE-DATA FOR #ERROR-DESCRIPTION POSITION #I
+  LOG-MESSAGE := SUBSTRING(RESPONSE-DATA,#I)
+  P_TO     := 'ykegeles@aafmaa.com'
+  P_SUBJ   := '"Payment Process Error"'
+  P_MSG(1) := 'Error response running PRQP0001 - Testing 227'
+  P_MSG(2) := LOG-MESSAGE
+  CALLNAT 'GPRS0EML' p_EMAIL
+END-IF
+* below is test only
+IF *DEVICE <> 'BATCH'
+  REPEAT
+    RETURN-MESSAGE := RESPONSE-DATA
+    WRITE RETURN-MESSAGE
+    IF *LENGTH(RESPONSE-DATA) > 78
+      RESPONSE-DATA := SUBSTR(RESPONSE-DATA,79)
+    ELSE
+      ESCAPE BOTTOM
+    END-IF
+  END-REPEAT
+END-IF
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE CREATE-REJECTED-EMAIL
+***************************************
+*
+EMAIL-INFORMATION.E-CHARGE-AMOUNT := val(#EC-CHARGE-FIELDS.Amount)
+EMAIL-INFORMATION.PENDING-CN       := EMAIL-INFORMATION.DAL-CN
+  := EMAIL-INFORMATION.POLICY-NUMBER := #EC-CHARGE-FIELDS.CNumber
+#OWNER-CN-N := PAY-REQUEST-V.REQUESTOR-CN
+EMAIL-INFORMATION.OWNER-EMAIL := FUNCTION-CN-EMAIL(<#OWNER-CN>)
+*
+WRITE WORK FILE 2 EMAIL-INFORMATION
+CLOSE WORK FILE 2
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN ErrorCode <> ' ' AND ErrorDescription = ' '
+    #ErrorCode       := ErrorCode
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  WHEN ErrorCode = ' '
+    ErrorCode        :=  #SUCCESS-CODE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+COMPRESS
+  '<Members>' '<CN>' CNumber '</CN>'   '<User /><PaymentMethod />'
+  XML '<ErrorCode>' ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' ErrorDescription '</ErrorDescription>'
+  '</Members>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,169 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Web Charge Module - called via EntireX
+* WCCNCC20 - Accepts Payments from WebCharge
+*            calls apply payment modules by payment type
+*            creates Response XML
+* Called from    - NATSERV2 (EntireX server module)
+*
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+* USER   DATE      TAG  REASON
+* YAK    07012009       Initial Creation
+* YAK    04072014  YK1  Add "Pay By Check" functionality
+***********************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A8192)
+1 RESPONSE-DATA     (A8192)        /* Out
+1 RETURN-CODE       (A4)           /* Out
+1 RETURN-MESSAGE    (A100)         /* Out
+LOCAL USING WCCL0020
+LOCAL USING WCCA0021
+LOCAL USING PARSER-X
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+*
+LOCAL
+1 ERROR-MESSAGE   (A100)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)   /* ???
+1 XML_PARSER_RESPONSE          (I2)     /* ???
+1 #CX             (I4)
+1 #CY             (I4)
+1 #CZ             (I4)
+1 #CQ             (I4)
+1 #I              (I2)
+1 #II             (I2)
+1 #LINE                        (A50)
+*
+1 XML             (A) DYNAMIC
+1 #ERROR          (L)
+1 #FATAL-ERROR    (A4) INIT <'1011'>
+1 #SUCCESS-CODE   (A4) INIT <'0000'>
+1 #SUCCESS-MESSAGE (A50) INIT <'REQUEST PROCESSED SUCCESSFULLY'>
+END-DEFINE
+*
+EXAMINE REQUEST-DATA FOR '<Members>' DELETE
+EXAMINE REQUEST-DATA FOR '</Members>' DELETE
+XML_PARSER_INPUT := REQUEST-DATA
+* INCLUDE THE PARSER
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to repesent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of founld element
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+PERFORM APPLY-PAYMENTS
+PERFORM CREATE-XML-STRUCTURE
+*
+RESPONSE-DATA  := XML
+RETURN-CODE    := #SUCCESS-CODE
+RETURN-MESSAGE := #SUCCESS-MESSAGE
+
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+INCLUDE WCCCP002 'XML_PARSER_XPATH'   /* XPATH to repesent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of found element
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  '#CX'
+  '#CY'
+  '#CZ'
+  '#CQ'
+*
+IF NOT XML_PARSER_CONTENT_IS_EMPTY
+  #I := *LENGTH(XML_PARSER_XPATH)
+  #LINE := SUBSTR(XML_PARSER_XPATH,1,#I)
+  #I := *LENGTH(XML_PARSER_CONTENT)
+  #LINE := SUBSTR(XML_PARSER_CONTENT,1,#I)
+END-IF
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE PARSER_ERROR
+  RETURN-CODE    := XML_PARSER_RESPONSE
+  RETURN-MESSAGE := XML_PARSER_ERROR_TEXT
+  ESCAPE ROUTINE
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE APPLY-PAYMENTS
+********************************
+*
+RESET CC-PAYMENT
+IF MEMBER.CN IS (N6) THEN
+  CC-PAYMENT.ID-NUMBER := VAL(MEMBER.CN)
+END-IF
+CC-PAYMENT.USER := MEMBER.USER
+* YK1 <
+DECIDE ON FIRST VALUE MEMBER.PAYMENTMETHOD
+  VALUE 'check'
+    CC-PAYMENT.CASH-CODE := 'H'
+  NONE VALUE
+    IGNORE
+END-DECIDE
+* > YK1 
+C@PAY-POLICY := C@POLICY
+FOR #I = 1 TO C@POLICY
+  CC-PAYMENT.POLICY-NBR(#I) := MEMBER.POLICYNUMBER(#I)
+  C@APPLIED-PAYMENT(#I) := C@PAYMENT(#I)
+  FOR #II = 1 C@APPLIED-PAYMENT(#I)
+    CC-PAYMENT.TRAN-TYPE(#I,#II) := PAYMENTTYPE(#I,#II)
+    EXAMINE MEMBER.AMOUNT(#I,#II) FOR ',' DELETE
+    IF MEMBER.AMOUNT(#I,#II)IS (N5.2) THEN
+      CC-PAYMENT.DUE-AMOUNT(#I,#II):= VAL(AMOUNT(#I,#II))
+    ELSE
+      WRITE WORK FILE 1 VARIABLE 'INCORRECT VALUE FOR AMOUNT' MEMBER.AMOUNT(#I,#II)
+    END-IF
+  END-FOR
+END-FOR
+*
+* EXPAND ARRAY PAY-POLICY TO (*:1)
+* EXPAND ARRAY AVAILABLE-PAYMENT TO (1:*,1:10)
+CALLNAT 'WCCNCC21' CC-PAYMENT ERROR-MESSAGE
+  IF SUBSTR(ERROR-MESSAGE,1,4) = #FATAL-ERROR
+    RETURN-CODE    := SUBSTR(ERROR-MESSAGE,1,4)
+    RETURN-MESSAGE := SUBSTR(ERROR-MESSAGE,5)
+    RESET RESPONSE-DATA
+    ESCAPE ROUTINE
+  END-IF
+END-SUBROUTINE
+*
+* Create Response to RETURN to PayWare
+**************************************
+DEFINE SUBROUTINE CREATE-XML-STRUCTURE
+**************************************
+*
+* <line>FAILED: 12345-1 * Policy Premium * $27.00</line>
+* <line>FAILED:12345-1 * Fixed Loan Payment * $123.00</line>
+* <line>RESULT: 12345 * Add Credit * $150</line>
+*
+XML := '<PmtResultMsg>'
+FOR #I = 1 TO C@POLICY
+  FOR #II = 1 TO C@APPLIED-PAYMENT(#I)
+     IF RESULT-MESSAGE(#I,#II) NE ' '
+        WRITE WORK FILE 1 VARIABLE RESULT-MESSAGE(#I,#II)
+        COMPRESS XML '<line>' RESULT-MESSAGE(#I,#II) '</line>' INTO XML LEAVING NO
+        #ERROR := TRUE
+     END-IF
+  END-FOR
+END-FOR
+IF NOT #ERROR
+  COMPRESS XML '<line>SUCCESS</line>' INTO XML LEAVING NO
+END-IF
+COMPRESS XML '</PmtResultMsg>' INTO XML LEAVING NO
+END-SUBROUTINE
+*
+END

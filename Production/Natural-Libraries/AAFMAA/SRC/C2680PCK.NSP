@@ -1,0 +1,582 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* ************************************************************
+* PGM-ID: C2680PCK
+* PURPOSE: TO PROCESS 'CK' COMMAND OR CHECKS FOR SUNGARD
+* these programs have sungard daily check processing
+* 1. crdcrsam - when "Y" is entered on a "RDCR'
+* 2. c2300pci - all csv's and all non-cap rsgn's
+* 3. c2400plm - all non-cap new loans
+* 4. c2650pca - changing pay-switch or check-amts
+* vxt  03/19/2015  vt1 fix 1305 error /Ticket 3418/
+* ************************************************************
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL  USING GONERLXX    /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+LOCAL
+1 #JCL-PARM-TYPE  (A7) /* "CHECKS" OR "DAILY"
+*
+1 #DISPLAY-CHKS   (A1)
+1 #DISPLAY-FILE   (A1)
+1 #PROCESS-FILE   (A1)
+1 #DISP-LAST-CHKS (A1)
+1 #DISP-LAST-FILE (A1)
+1 #PROC-LAST-FILE (A1)
+1 #NT-#           (N6)
+1 #BYPASS-CLEAR   (L)
+1 #SEG-I          (I2)
+*
+1 NT-V VIEW OF A-NOTES
+ 2 ID-NUMBER    (N6)
+ 2 NOTE-DATE    (N8/2)
+ 2 NOTE-TEXT    (A60/60)
+ 2 REDEFINE NOTE-TEXT
+  3 SUNGARD-AP-OCC    (500)
+   4 SUNGARD-CHECK-TYPE (A1)
+   4 SUNGARD-CN         (N6)
+   4 REDEFINE SUNGARD-CN
+    5 SUNGARD-CN-A      (A6)
+*
+1 NT-V2 VIEW OF A-NOTES
+ 2 ID-NUMBER   (N6)
+ 2 NOTE-DATE    (N8/2)
+ 2 NOTE-TEXT   (A60/60)
+ 2 REDEFINE NOTE-TEXT
+  3 SUNGARD-AP-OCC2   (500)
+   4 SUNGARD-CHECK-TYPE2 (A1)
+   4 SUNGARD-CN2         (N6)
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER
+ 2 PAY-NOW-SWITCH
+ 2 TERM-PREM-REF-DUE
+ 2 TERM-DEBIT-CREDIT
+ 2 TERM-LOAN-PRIN
+ 2 TERM-ACC-INT
+ 2 TERM-CASH-VALUE
+ 2 LAST-LOAN-CHECK
+ 2 LAST-DB-CR-CHECK
+ 2 DATE-OF-DEATH
+ 2 NAME
+*
+1 #term-loan-prin   (p7.2)    /* vt1
+*
+1 #CHECKS     (A65)
+1 REDEFINE #CHECKS
+ 2 #CK-ACCT-NUM   (A4)
+ 2 #CK-FIL-1      (A1)
+ 2 #CK-DB-CR      (A1)   /* D OR C
+ 2 #CK-FIL-2      (A1)
+ 2 #CK-AMT        (N7.2)
+ 2 #CK-FIL-3      (A1)
+ 2 #CK-CN         (N6)
+ 2 #CK-FIL-4      (A1)
+ 2 #CK-NAME       (A25)
+ 2 #CK-FIL-5      (A1)
+ 2 #CK-TYPE       (A4)
+ 2 #CK-FIL-6      (A1)
+ 2 #CK-DATE       (A10)
+*
+1 #DISP-AMT         (A10)
+1 #CHK-RECS-OUT     (P5)
+1 #CHKS-OUT         (P5)
+1 #CHK-LINE       (A78/22)
+1 #CHECK-AMT      (N7.2)
+1 #LOAN-ACCT      (A4)
+1 #INT-ACCT       (A4)
+*
+1 #CSV-DB         (P9.2)
+1 #DEATH-BENEFIT  (P9.2)
+1 #NET-DB         (P9.2)
+1 #EARNED-INT     (P9.2)
+1 #FINAL-DB       (P9.2)
+*
+1 #RESIGN         (L)
+1 #TEXT           (A75)
+1 #I1             (I2)
+1 #I2             (I2)
+1 #SC-X           (I2)
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY    (A4)
+ 2 #MM      (A2)
+ 2 #DD      (A2)
+1 #TERM-DEBIT-CREDIT  (P7.2)
+*
+END-DEFINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+INCLUDE GONERCXX       /* NATURAL ERROR ROUTINE
+*
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #MM #DD #YYYY INTO #CK-DATE WITH '/'
+*
+IF *DEVICE = 'BATCH'
+  FORMAT (2) LS=133 PS=66
+  READ WORK 1 ONCE RECORD #JCL-PARM-TYPE  /* CHECKS OR DAILY
+  WRITE 'INPUT PARM =' #JCL-PARM-TYPE
+*
+  IF #JCL-PARM-TYPE = 'DAILY'
+    PERFORM CLEAR-CHECKS
+    ESCAPE ROUTINE
+  END-IF
+*
+  MOVE 'X' TO #DISPLAY-CHKS
+ELSE
+  MOVE '*' TO #CGA-SCR-COMMAND
+  INPUT MARK *#DISPLAY-CHKS USING MAP 'C2681MCK'
+*
+  IF #CGA-SCR-COMMAND NE '*'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+RESET #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX
+*
+IF  (#DISP-LAST-CHKS NE ' ')
+ OR (#DISP-LAST-FILE NE ' ')
+ OR (#PROC-LAST-FILE NE ' ')
+  MOVE 800112 TO #NT-#
+ELSE
+  MOVE 800111 TO #NT-#
+END-IF
+*
+FIND NT-V WITH ID-NUMBER = #NT-#
+  IF #NT-# = 800112
+    MOVE NT-V.NOTE-DATE (1) TO #YYYYMMDD
+    COMPRESS #MM #DD #YYYY INTO #CK-DATE WITH '/'
+  END-IF
+*
+  FOR #I1 1 TO 500
+    IF SUNGARD-CN (#I1) = 0
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF SUNGARD-CHECK-TYPE (#I1) = '*'
+      ESCAPE TOP
+    END-IF
+*
+    FIND (1) ST-V WITH MEMBER-KEY = SUNGARD-CN-A (#I1)
+      IF NO RECORD FOUND
+        WRITE 'No record found for' SUNGARD-CN (#I1)
+      END-NOREC
+*
+      MOVE '9990' TO #LOAN-ACCT  /* WAS 1120
+      MOVE '9990' TO #INT-ACCT   /* WAS 4316
+*
+      MOVE ST-V.ID-NUMBER TO #CK-CN
+      MOVE NAME           TO #CK-NAME
+*
+      IF SUNGARD-CHECK-TYPE (#I1) = 'D'
+        ADD 1 TO #CHKS-OUT
+        MOVE 'DETH' TO #CK-TYPE
+        PERFORM CALC-DEATH-BENE-INT
+        MOVE #DEATH-BENEFIT TO #CSV-DB
+        PERFORM CALC-CHECK-AMT
+*
+        IF  (#DISPLAY-CHKS   NE ' ')
+         OR (#DISP-LAST-CHKS NE ' ')
+          MOVE EDITED #CHECK-AMT (EM=ZZZ,ZZZ.99) TO #DISP-AMT
+          COMPRESS ST-V.ID-NUMBER #DISP-AMT #CK-TYPE INTO #CHECKS
+          PERFORM CHECK-PROCESS
+          ESCAPE BOTTOM   /* of find
+        END-IF
+*
+        MOVE '8010'         TO #CK-ACCT-NUM
+        MOVE #DEATH-BENEFIT TO #CK-AMT
+        MOVE 'D'            TO #CK-DB-CR
+        PERFORM CHECK-PROCESS
+*
+        IF TERM-PREM-REF-DUE NE 0
+          MOVE '9990' TO #CK-ACCT-NUM  /* WAS 8115
+*
+          IF TERM-PREM-REF-DUE LT 0
+            COMPUTE #CK-AMT = TERM-PREM-REF-DUE * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-PREM-REF-DUE TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF TERM-DEBIT-CREDIT NE 0
+          MOVE '9990' TO #CK-ACCT-NUM   /* WAS 2235
+*
+          IF TERM-DEBIT-CREDIT LT 0
+            COMPUTE #CK-AMT = TERM-DEBIT-CREDIT * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-DEBIT-CREDIT TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF TERM-LOAN-PRIN NE 0
+          MOVE #LOAN-ACCT TO #CK-ACCT-NUM
+*
+          IF TERM-LOAN-PRIN  LT 0
+            COMPUTE #CK-AMT = TERM-LOAN-PRIN * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-LOAN-PRIN TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          ADD 1 TO #CHK-RECS-OUT
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF TERM-ACC-INT NE 0
+          MOVE #INT-ACCT TO #CK-ACCT-NUM
+*
+          IF TERM-ACC-INT LT 0
+            COMPUTE #CK-AMT = TERM-ACC-INT * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-ACC-INT TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF #EARNED-INT NE 0
+          MOVE '8310'      TO #CK-ACCT-NUM
+          MOVE #EARNED-INT TO #CK-AMT
+          MOVE 'D'         TO #CK-DB-CR
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        MOVE '1010'     TO #CK-ACCT-NUM
+        MOVE #CHECK-AMT TO #CK-AMT
+        MOVE 'C'        TO #CK-DB-CR
+        PERFORM CHECK-PROCESS
+      END-IF
+*
+      IF SUNGARD-CHECK-TYPE (#I1) = 'C'
+        MOVE TRUE TO #RESIGN
+        ADD 1 TO #CHKS-OUT
+        MOVE 'CSV ' TO #CK-TYPE
+        MOVE TERM-CASH-VALUE TO #CSV-DB
+        PERFORM CALC-CHECK-AMT
+*
+        IF TERM-CASH-VALUE NE 0 /* IF CASH-VALU THEN IT ISN'T RSGN
+          RESET #RESIGN
+        END-IF
+*
+        IF #RESIGN
+          MOVE 'RSGN' TO #CK-TYPE
+        END-IF
+*
+        IF  (#DISPLAY-CHKS   NE ' ')
+         OR (#DISP-LAST-CHKS NE ' ')
+          MOVE EDITED #CHECK-AMT (EM=ZZZ,ZZZ.99) TO #DISP-AMT
+          COMPRESS ST-V.ID-NUMBER #DISP-AMT #CK-TYPE INTO #CHECKS
+          PERFORM CHECK-PROCESS
+          ESCAPE BOTTOM   /* of find
+        END-IF
+*
+        IF TERM-CASH-VALUE NE 0 /*
+          MOVE '8110'          TO #CK-ACCT-NUM
+          MOVE TERM-CASH-VALUE TO #CK-AMT
+          MOVE 'D'             TO #CK-DB-CR
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF TERM-PREM-REF-DUE NE 0
+          MOVE '8115' TO #CK-ACCT-NUM
+*
+          IF TERM-PREM-REF-DUE LT 0
+            COMPUTE #CK-AMT = TERM-PREM-REF-DUE * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-PREM-REF-DUE TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF TERM-DEBIT-CREDIT NE 0
+          MOVE '9990' TO #CK-ACCT-NUM    /* WAS 2235
+*
+          IF TERM-DEBIT-CREDIT LT 0
+            COMPUTE #CK-AMT = TERM-DEBIT-CREDIT * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-DEBIT-CREDIT TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF TERM-LOAN-PRIN NE 0
+          MOVE #LOAN-ACCT TO #CK-ACCT-NUM
+*
+          IF TERM-LOAN-PRIN  LT 0
+            COMPUTE #CK-AMT = TERM-LOAN-PRIN * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-LOAN-PRIN TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        IF TERM-ACC-INT NE 0
+          MOVE #INT-ACCT TO #CK-ACCT-NUM
+*
+          IF TERM-ACC-INT LT 0
+            COMPUTE #CK-AMT = TERM-ACC-INT * -1
+            MOVE 'C' TO #CK-DB-CR
+          ELSE
+            MOVE TERM-ACC-INT TO #CK-AMT
+            MOVE 'D' TO #CK-DB-CR
+          END-IF
+*
+          PERFORM CHECK-PROCESS
+        END-IF
+*
+        MOVE '1010' TO #CK-ACCT-NUM
+        MOVE #CHECK-AMT TO #CK-AMT
+        MOVE 'C' TO #CK-DB-CR
+        PERFORM CHECK-PROCESS
+      END-IF
+*
+      IF SUNGARD-CHECK-TYPE (#I1) = 'R'
+        MOVE 'RDCR' TO #CK-TYPE
+*
+        IF  (#DISPLAY-CHKS   NE ' ')
+         OR (#DISP-LAST-CHKS NE ' ')
+          MOVE EDITED LAST-DB-CR-CHECK (EM=ZZZ,ZZZ.99) TO #DISP-AMT
+          COMPRESS ST-V.ID-NUMBER #DISP-AMT #CK-TYPE INTO #CHECKS
+          PERFORM CHECK-PROCESS
+          ESCAPE BOTTOM   /* of find
+        END-IF
+*
+        MOVE '9990' TO #CK-ACCT-NUM    /* WAS 2236
+        MOVE LAST-DB-CR-CHECK TO #CK-AMT
+        MOVE 'D'               TO #CK-DB-CR
+        PERFORM CHECK-PROCESS
+*
+        MOVE '1010' TO #CK-ACCT-NUM
+        MOVE LAST-DB-CR-CHECK TO #CK-AMT
+        MOVE 'C'               TO #CK-DB-CR
+        PERFORM CHECK-PROCESS
+      END-IF
+*
+      IF SUNGARD-CHECK-TYPE (#I1) = 'L'
+        MOVE 'LOAN' TO #CK-TYPE
+*
+        IF  (#DISPLAY-CHKS   NE ' ')
+         OR (#DISP-LAST-CHKS NE ' ')
+          MOVE EDITED LAST-LOAN-CHECK (EM=ZZZ,ZZZ.99) TO #DISP-AMT
+          COMPRESS ST-V.ID-NUMBER #DISP-AMT #CK-TYPE INTO #CHECKS
+          PERFORM CHECK-PROCESS
+          ESCAPE BOTTOM   /* of find
+        END-IF
+*
+        MOVE '9990' TO #CK-ACCT-NUM
+        MOVE LAST-LOAN-CHECK TO #CK-AMT
+        MOVE 'D'              TO #CK-DB-CR
+        PERFORM CHECK-PROCESS
+*
+        MOVE '1010' TO #CK-ACCT-NUM
+        MOVE LAST-LOAN-CHECK TO #CK-AMT
+        MOVE 'C'              TO #CK-DB-CR
+        PERFORM CHECK-PROCESS
+      END-IF
+    END-FIND
+  END-FOR
+END-FIND
+*
+IF #PROCESS-FILE NE ' '
+  RESET #BYPASS-CLEAR
+  FIND (1) NT-V WITH ID-NUMBER = 800111   /* CURRENT CHECKS
+    FIND (1) NT-V2 WITH ID-NUMBER = 800112 /* YESTERDAYS CHECKS
+      IF NT-V2.NOTE-DATE (1) = *DATN
+        MOVE TRUE TO #BYPASS-CLEAR
+        WRITE 'Checks already were cleared today - BYPASSED'
+        ESCAPE BOTTOM
+      END-IF
+*
+      MOVE *DATN                       TO NT-V2.NOTE-DATE (1)
+      MOVE NT-V.SUNGARD-CN         (*) TO NT-V2.SUNGARD-CN2         (*)
+      MOVE NT-V.SUNGARD-CHECK-TYPE (*) TO NT-V2.SUNGARD-CHECK-TYPE2 (*)
+      UPDATE (0405)
+    END-FIND
+*
+    IF NOT #BYPASS-CLEAR
+      RESET NT-V.NOTE-DATE          (*)
+      RESET NT-V.SUNGARD-CN         (*)
+      RESET NT-V.SUNGARD-CHECK-TYPE (*)
+      UPDATE (0404)
+    END-IF
+  END-FIND
+*
+  END TRANSACTION
+END-IF
+*
+IF *DEVICE = 'BATCH'
+  WRITE (2) 'TOT-CHECKS = ' #CHKS-OUT
+  WRITE (2) 'TOT-RECS   = ' #CHK-RECS-OUT
+ELSE
+  IF #SC-X NE 0
+    INPUT USING MAP 'C2680MCK'
+    RESET #SC-X #CHK-LINE (*)
+*
+    IF #CGA-SCR-COMMAND NE ' '
+      FETCH 'G1000PXX'
+    END-IF
+  END-IF
+*
+  MOVE 'CK' TO #CGA-SCR-COMMAND
+  MOVE 'CHECK PROCESSING COMPLETE' TO #TEXT
+  INPUT TEXT #TEXT USING MAP 'C2680MCK'
+*
+  FETCH 'G1000PXX'
+END-IF
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CHECK-PROCESS
+* * * * * * * * * * * * * * * * *
+*
+ADD 1 TO #CHK-RECS-OUT
+*
+IF *DEVICE = 'BATCH'
+  WRITE WORK 2 #CHECKS
+  ESCAPE ROUTINE
+END-IF
+*
+ADD 1 TO #SC-X
+MOVE #CHECKS TO #CHK-LINE (#SC-X)
+*
+IF #SC-X GE 22
+  IF  *DEVICE NE 'BATCH'
+    INPUT USING MAP 'C2680MCK'
+*
+    IF #CGA-SCR-COMMAND NE ' '
+      FETCH 'G1000PXX'
+    END-IF
+  END-IF
+*
+  RESET #SC-X #CHK-LINE (*)
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-CHECK-AMT
+* * * * * * * * * * * * * * * * *
+*
+COMPUTE #CHECK-AMT = #CSV-DB
+   + TERM-PREM-REF-DUE
+   + TERM-DEBIT-CREDIT
+   + TERM-LOAN-PRIN
+   + TERM-ACC-INT
+   + #EARNED-INT
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-DEATH-BENE-INT
+* * * * * * * * * * * * * * * * * * *
+*
+MOVE TERM-DEBIT-CREDIT TO #TERM-DEBIT-CREDIT
+move term-loan-prin    to #term-loan-prin      /* vt1
+CALLNAT 'C2321SCI' SUNGARD-CN-A (#I1) #SEG-I
+     DATE-OF-DEATH
+     TERM-PREM-REF-DUE
+     #TERM-DEBIT-CREDIT
+     #TERM-LOAN-PRIN                  /* vt1 was term-loan-prin
+     TERM-ACC-INT
+     #DEATH-BENEFIT
+     #NET-DB
+     #EARNED-INT
+     #FINAL-DB
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE CLEAR-CHECKS
+* * * * * * * * * * * * * * * * * * *
+*
+WRITE (2) 'THESE CNS"S CHECKS ARE CLEARED OR BYPASSED'
+*
+FIND NT-V2 WITH ID-NUMBER = 800111   /* CURRENT CHECKS
+END-FIND
+*
+FIND NT-V WITH ID-NUMBER = 800112     /* CHECKS TO BE CLEARED
+  IF NT-V.NOTE-DATE (2) NE 0
+    WRITE 'CHECKS ALREADY CLEARED - BYPASSED'
+    ESCAPE BOTTOM
+  END-IF
+  MOVE NT-V.NOTE-DATE (1) TO NT-V.NOTE-DATE (2) /* IND HAVE BEEN CLEARED
+*
+  FOR #I1 1 TO 500
+    IF SUNGARD-CN (#I1) = 0
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF SUNGARD-CHECK-TYPE (#I1) = '*'
+      ESCAPE TOP
+    END-IF
+*
+    FIND (1) ST-V WITH MEMBER-KEY = SUNGARD-CN-A (#I1)
+      IF NO RECORD FOUND
+        WRITE 'No record found for' SUNGARD-CN (#I1)
+      END-NOREC
+*
+      RESET  #BYPASS-CLEAR
+      FOR #I2 1 TO 500
+        IF SUNGARD-CN2 (#I1) = 0
+          ESCAPE BOTTOM
+        END-IF
+*
+        IF   (SUNGARD-CN (#I1) = SUNGARD-CN2 (#I2))
+         AND (SUNGARD-CHECK-TYPE (#I1) = SUNGARD-CHECK-TYPE (#I2))
+          MOVE TRUE TO #BYPASS-CLEAR /* WAS REQUESTED AGAIN SINCE NOON
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+*
+      IF #BYPASS-CLEAR
+        WRITE (2) '  BYPASSED' ST-V.ID-NUMBER
+        ESCAPE TOP
+      END-IF
+*
+      IF SUNGARD-CHECK-TYPE (#I1) = 'C' OR = 'D'
+        RESET PAY-NOW-SWITCH
+      END-IF
+*
+      IF SUNGARD-CHECK-TYPE (#I1) = 'L'
+        RESET LAST-LOAN-CHECK
+      END-IF
+*
+      IF SUNGARD-CHECK-TYPE (#I1) = 'R'
+        RESET LAST-DB-CR-CHECK
+      END-IF
+*
+      UPDATE (0534)    /* CLEAR CHECK PROCESSING INDICATOR
+*
+      WRITE (2) '  CLEARED' ST-V.ID-NUMBER
+    END-FIND /* OF STATUS
+  END-FOR
+*
+  UPDATE (0518)    /* SET DATE
+END-FIND  /* OF NOTE REC
+*
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+END

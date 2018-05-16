@@ -1,0 +1,853 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: G3500SAD
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE       TAG  REASON                                          *
+*                                                                      *
+* PAM  02072005   PM1  Display Insured Info for SPS/GEN if SPS/GEN is  *
+*                      owner of policy.                                *
+* PAM  03112005   PM2  Reset display fields for GRANKSXX               *
+* DRW  08112005   DW3  Add MR/MRS rank if rank secure for INS-PLUS     *
+* DRW  02242006   DW4  Modify 2nd Addr Processing                      *
+* PAM  03112008   PM5  Use address from member record for applications *
+*                      for existing members                            *
+* RSE  04152010   RE1  Reformat Name using name fields from Contacts file
+* PAM  04292010   PM6  For AT Clients, use old reformat logic          *
+* RSE  04302010   RE2  Populate last name for letter salutation        *
+* PAM  08/18/2010 PM7  Added new address location                      *
+* NGG  11/12/2010 NG1  Add new fields for Rank:                        *
+*                 #EXT-RANK                Rank abbreviation           *
+*                 #EXT-FORMATED-NAME       Letter envelope             *
+*                 #EXT-NAME                First Middle Last Suffix    *
+*                 #EXT-SPS-GEN-NAME        First Middle Last Suffix    *
+*                 #EXT-DEAR-FORMATED-NAME  Dear Solutation Last name   *
+*                 #MEMO-TO-NAME            Rank abr Full name [RET]    *
+*                 #COUNTRY-CODE                                        *
+*                 #EXT-STREET                                          *
+*                 #EXT-STREET-2                                        *
+*                 #EXT-CITY                                            *
+*                 #EXT-STATE                                           *
+*                 #EXT-ZIP                                             *
+* PAM  12/22/2010 PM8  Reset all new fields to ensure blank during     *
+*                      batch processes                                 *
+* NGG  01/28/2011 NG2  Add preferred e-mail from contact-emails        *
+* NGG  01/11/2012 NG3  AD screen address missing when no living widow  *
+* NGG  20121002   NG4  CN Expansion Project -                          *
+*                      New beneficiary database file                   *
+* NGG  20130729   NG5  Address Normalization                           *
+* TMT  20140514   TT1  CONTACT NORMALIZATION - EMAILS                  *
+* bz   2014/08/08 bz   OI-2946
+* vxt  07/24/2015 vt1  /Ticket 3655/
+* NGG  20130729   NG6  Policy Ownership                                *
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital  
+************************************************************************
+*
+DEFINE DATA
+PARAMETER USING BMASTABA
+PARAMETER USING G3500AAD
+PARAMETER
+1 #POLICY-NUMBER (A16) OPTIONAL        /* NG6
+LOCAL USING ADDA0001                   /* PM7
+LOCAL USING POSAGET                    /* NG6
+LOCAL USING POSLROLE                   /* NG6
+LOCAL
+1 #POLICY-NUM    (A16)                 /* NG6
+1 CN-V VIEW OF A-STATUS
+  2 ID-NUMBER                          /* NG1
+  2 NAME
+  2 MEMBER-CONTACT-ID                  /* NG5
+  2 RANK
+  2 MILITARY-STATUS
+  2 MILITARY-SERVICE
+  2 SSN
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 SPOUSE-CONTACT-ID
+  2 WIDOW-FLAG
+  2 PROCESS-IND
+  2 LINKED-CN   (1)
+  2 REDEFINE LINKED-CN
+    3 LINKED-CN-A (A6/1)
+  2 INTRO-FLAG
+  2 CHIEF-OF-STAFF-IND
+  2 MILITARY-SERVICE
+  2 MILITARY-STATUS
+  2 SSN
+  2 RANK
+  2 TITLE-SP
+  2 NAME
+  2 NAME-SP
+  2 HANDLE-FLAG
+  2 C*ACTIVE-SEGMENTS  (N2)        /* NG6
+  2 STATUS             (9)
+  2 SPLIT-IND          (9)
+  2 ISSUE-DATE         (9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DATE-OCC   (9)
+      4 ISSUE-DATE-CENT  (N2)
+      4 ISSUE-DATE-YYMMDD (N6)
+  2 POLICY-ID  (9)                 /* NG6
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER
+  2 INTRO-FLAG
+  2 INTERNET-ADDR
+  2 RANK
+  2 MIL-STATUS
+  2 MIL-SERVICE
+  2 SEX
+  2 NAME
+  2 MEMBER-CN                                          /* PM5
+  2 REFERING-ID-NUMBER   (1)
+*
+1 IM-V VIEW OF A-INTRO-MEMBER
+  2 ID-NUMBER
+  2 INTERNET-ADDR
+  2 RANK
+  2 MIL-SERVICE
+  2 SEX
+  2 NAME
+  2 ADDRESS-1                  /* bz
+  2 ADDRESS-2
+  2 ADDRESS-3
+  2 ZIP-CODE
+  2 REDEFINE   ZIP-CODE
+    3 ZIP-5   (A5)
+    3 ZIP-4   (A4)
+  2 S-ADDRESS-1
+  2 S-ADDRESS-2
+  2 S-ADDRESS-3
+  2 S-ZIP-CODE
+*                     NG6   Start
+* NT-V VIEW OF A-NOTES    /* note file used for pending beneficiaries           /* NG4
+* 1 BENE-F-V VIEW OF A-BENE-FINAL    /* note file used for pending beneficiaries  /* NG4
+*   2 ID-NUMBER          (N6)    /* let D = bene designation (1-4)
+*   2 NOTE-DATE          (N8/60) /* LET P/A = PRINCIPAL/ALTERNATE DESING
+*   2 REDEFINE NOTE-DATE         /* let L = linked policies
+*     3 BENE-DATES-6-POLS (6)
+*       4 BENE-ISS-DT       (N6/7)   /* (D, L)
+*       4 BENE-SPLIT-IND    (N1/7)   /* (D, L)
+*       4 BENE-LST-UPD      (N8)     /* (D)
+*       4 BENE-STRT-PEND    (N8)     /* (D)
+*       4 BENE-FOL-UP-IND   (N1)     /* (D)
+*       4 BENE-OWN-TRNSF-DT (N8)     /* (D)
+*       4 BENE-SUC-OWN      (N1)     /* (d)
+*       4 BENE-NEW-LAYOUT   (N1)     /* (d)
+*       4 BENE-FIL1         (A4)
+*   2 NOTE-CLERK-ID       (A3/60)
+*   2 REDEFINE NOTE-CLERK-ID
+*     3 BENE-MISC-6-POLS  (6)
+*       4 BENE-STATUS      (A1)     /* (D)
+*       4 BENE-RESTRICT    (A1)     /* (D)
+*       4 BENE-MISC-PRIM-SEC (2)
+*         5 BENE-TYPE        (A1)    /* (D, P/A)
+*         5 BENE-SHARE-TYP   (A1)    /* (D, P/A)
+*         5 BENE-MISC-FIL-2  (A12)
+*   2 NOTE-TEXT          (A60/60)
+*   2 REDEFINE NOTE-TEXT
+*     3 BENE-TEXTS-6-POLS (6)
+*       4 BENE-TEXT-PRIM-SEC (2)
+*         5 BENE-TEXT-OCC    (5)
+*           6 BENE-TEXT        (A60)   /* (D, P/A, text-line)
+*           6 REDEFINE BENE-TEXT
+*             7 BENE-1ST-25    (A25)
+*             7 BENE-OWNER-AREA   (A35) /* can hold 5 owners
+*             7 REDEFINE BENE-OWNER-AREA
+*               8 BENE-OWNER-CN-A  (A6)   /* 1st owner
+*
+*                      NG6  End
+1 CON-V VIEW OF A-CONTACTS     /* RE1
+  2 FIRST-NAME
+  2 MIDDLE-NAME
+  2 LAST-NAME
+  2 SUFFIX
+  2 DATE-OF-DEATH              /* NG3
+*
+1 #BENE-OWNER-AREA  (A35)
+1 REDEFINE #BENE-OWNER-AREA
+  2 #BENE-OWNER-OCC   (5)
+    3 #BENE-OWNER-CN-N  (N6)
+    3 REDEFINE #BENE-OWNER-CN-N
+      4 #BENE-OWNER-CN-A  (A6)
+    3 #BENE-OWNER-FILL (A1)
+*
+1 #FOUND-CONTACT      (L)
+1 #NO-CN-ADDR (L)  /* no contact cn addr
+1 #1ST-OWNER  (N6)
+1 #CONTACT-CN (N6)
+1 REDEFINE #CONTACT-CN
+  2 #CONTACT-CN-A  (A6)
+1 #CONTACT-ID (N8)  /* RE1
+1 #USE-ST   (L)
+1 #USE-AT   (L)
+1 #USE-IM   (L)
+1 #1ST-POL  (I2)
+1 #ID-NUMBER   (N9)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-3  (A3)
+  2 #ID-NUMBER-A  (A6)
+*
+1 #I1     (I2)
+1 #I2     (I2)
+1 #I3     (I2)
+1 #INVALID   (L)
+*
+1 #RET       (A5)
+1 #SUFFIX       (A25)
+1 #EXTRA1      (A25)
+1 #EXTRA2      (A25)
+*
+1 #HOLD-EDIT-ZIP   (A10)  /* 99999-9999
+1 REDEFINE #HOLD-EDIT-ZIP
+  2 #HOLD-ZIP-5    (A5)
+  2 REDEFINE #HOLD-ZIP-5
+    3 #HOLD-ZIP-5-TBL (N1/5)
+  2 #HOLD-ZIP2     (A5)
+  2 REDEFINE #HOLD-ZIP2
+    3 #HOLD-ZIP2-FILL (A1)
+    3 #HOLD-ZIP-LST-4 (A4)
+    3 REDEFINE #HOLD-ZIP-LST-4
+      4 #HOLD-ZIP-LST-4-TBL (N1/4)
+*
+1 #HOLD-ZIP-DPB (N2)
+1 REDEFINE #HOLD-ZIP-DPB
+  2 #HOLD-ZIP-DPB-A   (A2)
+1 REDEFINE #HOLD-ZIP-DPB
+  2 #HOLD-ZIP-DPB-TBL (N1/2)
+*
+1 #HOLD-NAME       (A45)
+1 #HOLD-ADDRESS-2  (A25)
+1 #HOLD-ADDRESS-3  (A25)
+1 #HOLD-ZIP-CODE   (N9)
+1 REDEFINE #HOLD-ZIP-CODE
+  2 #HOLD-ZIP-CODE-5 (N5)
+  2 #HOLD-ZIP-CODE-4 (N4)
+1 #HOLD-ACC-INT    (P5.2)
+1 #HOLD-EDIT-INT   (A9)
+*
+1 #EDIT-INVALID (L)
+1 #RANK-LITERAL (A23)
+1 #DISPL        (P2)
+*
+1 #ZIP-SUM           (N3)
+1 REDEFINE #ZIP-SUM
+  2 #ZIP-SUM-2        (N2)
+  2 #ZIP-SUM-1        (A1)
+*
+1 #ZIP-CODE-N   (N9)                     /* vt1 \/
+1 REDEFINE #ZIP-CODE-N
+  2 #ZIP-CODE-N-5  (A5)
+  2 #ZIP-CODE-N-4  (A4)
+1 #ZIP-CODE-A    (A10)                   /* vt1 /\
+1 #SPS-GEN        (L)
+1 #PASS-COMMAND   (A2) INIT <'AD'>
+1 #RANK-ABBR            (A) DYNAMIC    /* NG1      \/
+1 #LETTER-ENV           (A) DYNAMIC
+1 #SALUTATION           (A) DYNAMIC
+1 #SALUTATION-WITH-NAME (A) DYNAMIC    /* NG1      /\
+1 #SEX                  (A1)           /* TT1
+1 #A10                  (A10)
+END-DEFINE
+*
+************************************************************************
+*  WRITE 'G3500SAD use-sec-addr=' #USE-SEC-ADDR
+MOVE #CGA-SCR-ID TO #ID-NUMBER
+*
+RESET #ERR-TEXT #ESTATE-IND #UNDEL-ADDR #SPS-GEN-ID #SPS-GEN-NAME
+RESET #FIRST-ADDRESS #SECOND-ADDRESS #THIRD-ADDRESS #ADDR-2 #ADDR-3
+RESET #ZIP-CODE #EDS-ZIP-BAR-CODE #ZIP-CODE-BAR-CODE
+RESET #MULT-OWNERS (*) #NUM-OWNERS
+RESET #EXT-RANK #EXT-FORMATED-NAME #EXT-NAME #EXT-SPS-GEN-NAME  /* PM8
+  #EXT-DEAR-FORMATED-NAME #MEMO-TO-NAME #COUNTRY-CODE       /* PM8
+  #EXT-STREET #EXT-STREET-2 #EXT-CITY #EXT-STATE #EXT-ZIP   /* PM8
+*
+IF (#ID-NUMBER LT 500000)
+    OR ((#ID-NUMBER GE 600000) AND (#ID-NUMBER LT 700000))
+  MOVE TRUE TO #USE-ST
+  FIND (1) ST-V WITH MEMBER-KEY = #ID-NUMBER-A
+    IF NO RECORDS FOUND
+      FIND (1) ST-V WITH WIDOW-KEY = #ID-NUMBER-A
+        IF NO RECORDS FOUND
+          MOVE 'CN Number not found' TO #ERR-TEXT
+        END-NOREC
+      END-FIND
+    END-NOREC
+  END-FIND
+ELSE
+  IF #ID-NUMBER LT 700000
+    MOVE TRUE TO #USE-AT
+    FIND (1) AT-V WITH ID-NUMBER= #ID-NUMBER
+      IF NO RECORDS FOUND
+        MOVE 'AT Number not found' TO #ERR-TEXT
+      END-NOREC
+*
+      IF AT-V.MEMBER-CN NE ' '                        /* PM5
+        FIND ST-V WITH MEMBER-KEY = AT-V.MEMBER-CN    /* PM5
+          IF ST-V.PROCESS-IND = 'C'                   /* PM5
+            ESCAPE TOP                                /* PM5
+          END-IF                                      /* PM5
+*                                                     /* PM5
+          RESET #USE-AT                               /* PM5
+          #USE-ST := TRUE                             /* PM5
+          ESCAPE BOTTOM                               /* PM5
+        END-FIND                                      /* PM5
+      END-IF                                          /* PM5
+    END-FIND
+  ELSE
+    IF #ID-NUMBER LT 999999
+      MOVE TRUE TO #USE-IM
+      FIND (1) IM-V WITH ID-NUMBER= #ID-NUMBER
+        IF NO RECORDS FOUND
+          MOVE 'IM Number not found' TO #ERR-TEXT
+        END-NOREC
+      END-FIND
+    ELSE  /* A/O 6/2000 WE NEVER CALL G3500SAD WITH AN SSN- CHGES MUST
+*                   BE MADE TO HANDLE COMBO MBRS IF WE DO USE SSN
+      FIND (1) ST-V WITH SSN = #ID-NUMBER
+        IF NO RECORDS FOUND
+          FIND (1) AT-V WITH SSN = #ID-NUMBER
+            IF NO RECORDS FOUND
+              FIND (1) IM-V WITH SSN = #ID-NUMBER
+                IF NO RECORDS FOUND
+                  MOVE 'SSN not found' TO #ERR-TEXT
+                END-NOREC
+*
+                MOVE TRUE TO #USE-IM
+              END-FIND
+            END-NOREC
+*
+            IF NOT #USE-IM
+              MOVE TRUE TO #USE-AT
+            END-IF
+          END-FIND
+        END-NOREC
+*
+        IF (NOT #USE-IM) AND (NOT #USE-AT)
+          MOVE TRUE TO #USE-ST
+        END-IF
+      END-FIND
+    END-IF
+  END-IF
+END-IF
+*
+IF #ERR-TEXT NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+IF #USE-AT
+  MOVE AT-V.ID-NUMBER     TO ST-V.ID-NUMBER
+  MOVE AT-V.INTRO-FLAG    TO ST-V.INTRO-FLAG
+*  MOVE AT-V.INTERNET-ADDR TO ST-V.INTERNET-ADDR        /* TT1
+  MOVE AT-V.RANK          TO ST-V.RANK
+  MOVE AT-V.MIL-STATUS    TO ST-V.MILITARY-STATUS
+  MOVE AT-V.MIL-SERVICE   TO ST-V.MILITARY-SERVICE
+*  MOVE AT-V.SEX           TO ST-V.SEX                  /* TT1
+  MOVE AT-V.NAME          TO ST-V.NAME
+*   MOVE AT-V.ADDRESS-1     TO ST-V.ADDRESS-1
+*   MOVE AT-V.ADDRESS-2     TO ST-V.ADDRESS-2
+*   MOVE AT-V.ADDRESS-3     TO ST-V.ADDRESS-3
+*   MOVE AT-V.ZIP-CODE      TO ST-V.ZIP-CODE
+*   MOVE AT-V.INTRO-FLAG    TO ST-V.INTRO-FLAG
+*
+  IF   (AT-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+*     AND (REFERING-ID-NUMBER (1) LT 200000)  /* a CN number
+      AND (REFERING-ID-NUMBER (1) LT 500000)  /* a CN number  NG4
+    MOVE REFERING-ID-NUMBER (1) TO ST-V.LINKED-CN (1)
+  END-IF
+END-IF
+*
+IF #USE-IM
+  MOVE IM-V.ID-NUMBER     TO ST-V.ID-NUMBER
+*  MOVE IM-V.INTERNET-ADDR TO ST-V.INTERNET-ADDR        /* TT1
+  MOVE IM-V.MIL-SERVICE   TO ST-V.MILITARY-SERVICE
+*  MOVE IM-V.SEX           TO ST-V.SEX                  /* TT1
+  MOVE IM-V.NAME          TO ST-V.NAME
+*   MOVE IM-V.ADDRESS-1     TO ST-V.ADDRESS-1
+*   MOVE IM-V.ADDRESS-2     TO ST-V.ADDRESS-2
+*   MOVE IM-V.ADDRESS-3     TO ST-V.ADDRESS-3
+*   MOVE IM-V.ZIP-CODE      TO ST-V.ZIP-CODE
+*   MOVE IM-V.S-ADDRESS-1   TO ST-V.S-ADDRESS-1
+*   MOVE IM-V.S-ADDRESS-2   TO ST-V.S-ADDRESS-2
+*   MOVE IM-V.S-ADDRESS-3   TO ST-V.S-ADDRESS-3
+*   MOVE IM-V.S-ZIP-CODE    TO ST-V.S-ZIP-CODE
+*
+  IF #USE-SEC-ADDR
+    MOVE '2LT' TO ST-V.RANK
+  ELSE
+    MOVE IM-V.RANK TO ST-V.RANK
+  END-IF
+END-IF
+*
+MOVE ST-V.ID-NUMBER TO #1ST-OWNER
+*                                       NG6 Start
+PERFORM NEW-OWNER
+*
+*       use this POLs OWNER contact CN for ADDR/SSN info
+**IF #CONTACT-SEG NE 0 /* use this POLs OWNER contact CN for ADDR/SSN info
+IF ( #CONTACT-SEG NE 0 OR #POLICY-NUM NE ' ' )
+    AND NOT #USE-SEC-ADDR  /* DW4
+  IF #1ST-OWNER NE ST-V.ID-NUMBER
+    FIND (1) CN-V WITH MEMBER-KEY = #CONTACT-CN-A
+      MOVE TRUE TO #FOUND-CONTACT
+      IF PRIMARY-ADDR-EXIST (< CN-V.MEMBER-CONTACT-ID >)
+        RESET #NO-CN-ADDR
+      ELSE
+        #NO-CN-ADDR := TRUE
+      END-IF
+    END-FIND
+    IF #FOUND-CONTACT
+      IF #NO-CN-ADDR  /* use insured's addr/SSN but repl NAME info
+        MOVE CN-V.NAME   TO ST-V.NAME
+        MOVE CN-V.RANK   TO ST-V.RANK
+        MOVE CN-V.MILITARY-STATUS  TO ST-V.MILITARY-STATUS
+        MOVE CN-V.MILITARY-SERVICE TO ST-V.MILITARY-SERVICE
+        #EXT-SPS-GEN-NAME := FUNCTION-MEMBER-NAME (<CN-V.ID-NUMBER>)
+      ELSE
+        SEPARATE ST-V.NAME LEFT INTO #LAST-NAME #FIRST-NAME
+          #SUFFIX #EXTRA1 #EXTRA2 WITH DELIMITER ','
+        COMPRESS #FIRST-NAME #LAST-NAME #SUFFIX #EXTRA1 #EXTRA2
+          INTO #SPS-GEN-NAME
+        MOVE ST-V.ID-NUMBER TO #SPS-GEN-ID
+        #EXT-SPS-GEN-NAME := FUNCTION-MEMBER-NAME (<#SPS-GEN-ID>)
+        FIND ST-V WITH MEMBER-KEY = #CONTACT-CN-A
+          IF ST-V.SSN = 0 /* REPL owners SSN with insured's SSN ??
+            MOVE CN-V.SSN TO ST-V.SSN
+          END-IF
+        END-FIND
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*                                      NG6 end
+IF #USE-ST AND (PROCESS-IND = 'C')
+  MOVE TRUE TO #FOUND-CONTACT
+END-IF
+*
+MOVE ST-V.INTRO-FLAG TO #INTRO-FLAG
+* WRITE 'b4 sps logic'
+IF   (#INTRO-FLAG = 'S' OR = 'K' OR  = 'G')
+*  AND ((#CONTACT-SEG = 0) OR (NOT #FOUND-CONTACT))               /* PM1
+    AND ((#CONTACT-SEG = 0) AND (NOT #FOUND-CONTACT))                /* PM1
+*   AND (#CGA-SCR-ID LT 200000)  /* a CN number
+    AND (#CGA-SCR-ID LT 500000)  /* a CN number   NG4
+    AND NOT #USE-SEC-ADDR  /* DW4
+  SEPARATE ST-V.NAME LEFT INTO #LAST-NAME #FIRST-NAME
+    #SUFFIX #EXTRA1 #EXTRA2 WITH DELIMITER ','
+  COMPRESS #FIRST-NAME #LAST-NAME #SUFFIX #EXTRA1 #EXTRA2
+    INTO #SPS-GEN-NAME
+  MOVE ST-V.ID-NUMBER TO #SPS-GEN-ID
+  #EXT-SPS-GEN-NAME := FUNCTION-MEMBER-NAME (<#SPS-GEN-ID>)   /* NG1
+*
+  MOVE 1 TO #1ST-POL
+  IF #USE-ST
+    FOR #I1 1 TO 9
+      IF STATUS (#I1) = 'D'
+        MOVE #I1 TO #1ST-POL
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF #USE-SPS-GEN-INFO  /* force use of sps/gen name/addr to show Spouse
+*  OR (ST-V.FIRS-LOCATION-CODE (#1ST-POL) = '7' OR = '8') /*removed 5/04
+      OR (#1ST-OWNER =  0 OR = ST-V.ID-NUMBER) /* owner is the insured
+    MOVE TRUE TO #SPS-GEN
+  ELSE
+    if (#1st-owner ne 0 and #1st-owner ne ST-V.ID-NUMBER)       /* vt1 07/24/2015 \/
+      reset #sps-gen
+      move #1st-owner to st-v.linked-cn(1)
+    end-if                                                      /* vt1 07/24/2015 /\
+* WRITE 'get linked mbr due to sps/gen' ST-V.LINKED-CN-A (1)
+    FIND (1) ST-V WITH MEMBER-KEY = ST-V.LINKED-CN-A (1)
+      IF NO RECORDS FOUND     /* use insured info
+        FIND (1) ST-V WITH MEMBER-KEY = #ID-NUMBER-A
+          IF NO RECORDS FOUND
+            FIND (1) ST-V WITH WIDOW-KEY = #ID-NUMBER-A
+              IF NO RECORDS FOUND
+                MOVE 'CN Number not found' TO #ERR-TEXT
+              END-NOREC
+            END-FIND
+          END-NOREC
+        END-FIND
+      END-NOREC
+*
+      IF WIDOW-FLAG = 'Y'
+        MOVE TRUE TO #ESTATE-IND
+      END-IF
+    END-FIND
+  END-IF
+END-IF
+*
+#EXT-NAME := FUNCTION-MEMBER-NAME (<ST-V.ID-NUMBER>)   /* NG1
+MOVE ST-V.ID-NUMBER        TO #ID-NUM
+MOVE ST-V.NAME             TO #NAME
+MOVE ST-V.SSN              TO #SSN
+MOVE ST-V.MILITARY-STATUS  TO #MIL-STATUS
+MOVE ST-V.MILITARY-SERVICE TO #MIL-SERVICE
+MOVE ST-V.RANK             TO #RANK
+**MOVE ST-V.ZIP-CODE         TO #ZIP-CODE
+* MOVE ST-V.INTERNET-ADDR    TO #INTERNET-ADDR         /* ng2
+*
+IF (ST-V.WIDOW-FLAG = 'Y') AND (NOT #SPS-GEN)          /* RE1
+  MOVE ST-V.SPOUSE-CONTACT-ID TO #CONTACT-ID
+  IF #CONTACT-ID = 0                                   /* NG3
+    MOVE ST-V.MEMBER-CONTACT-ID TO #CONTACT-ID
+  ELSE
+    FIND CON-V WITH CONTACT-ID = #CONTACT-ID
+      IF DATE-OF-DEATH > 0
+        MOVE ST-V.MEMBER-CONTACT-ID TO #CONTACT-ID
+      END-IF
+    END-FIND
+  END-IF                                               /* NG3
+ELSE
+  MOVE ST-V.MEMBER-CONTACT-ID TO #CONTACT-ID
+END-IF
+#INTERNET-ADDR := FUNCTION-PREFFERED-EMAIL (< #CONTACT-ID >)  /* ng2
+*
+PERFORM GET-RANK                                       /* NG1
+*
+IF #CONTACT-ID NE 0                                    /* PM6
+  FIND CON-V WITH CONTACT-ID = #CONTACT-ID
+    COMPRESS #RANK-5 FIRST-NAME INTO #FORMATED-NAME
+    COMPRESS #FORMATED-NAME MIDDLE-NAME LAST-NAME INTO #FORMATED-NAME
+    IF SUFFIX NE ' '
+      COMPRESS #FORMATED-NAME ',' INTO #FORMATED-NAME LEAVING NO
+      COMPRESS #FORMATED-NAME SUFFIX INTO #FORMATED-NAME
+    END-IF
+    COMPRESS #FORMATED-NAME #RET INTO #FORMATED-NAME LEAVING NO
+    MOVE LAST-NAME TO #LAST-NAME                       /* RE2
+    MOVE FIRST-NAME TO #FIRST-NAME                                       /* vt1
+  END-FIND                                             /* RE1
+ELSE                                                   /* PM6
+  SEPARATE #HOLD-NAME LEFT INTO #LAST-NAME #FIRST-NAME
+    #SUFFIX #EXTRA1 #EXTRA2 WITH DELIMITER ','
+  COMPRESS #RANK-5 #FIRST-NAME #LAST-NAME INTO #HOLD-NAME
+*
+  IF #SUFFIX NE ' '
+    COMPRESS #HOLD-NAME ',' INTO #HOLD-NAME LEAVING NO SPACE
+    COMPRESS #HOLD-NAME #SUFFIX INTO #HOLD-NAME
+  END-IF
+*
+  COMPRESS #HOLD-NAME #RET INTO #FORMATED-NAME LEAVING NO SPACE  /* RE1
+END-IF                                                           /* PM6
+*
+IF F-UNDEL-ADDRESS (< ST-V.MEMBER-CONTACT-ID >)                  /* NG5
+**IF ST-V.ADDRESS-CHG-CODE = 'U' OR = 'V'
+  MOVE TRUE TO #UNDEL-ADDR
+END-IF
+#ADD-TYPE := 'P'
+IF (ST-V.HANDLE-FLAG = ' ' OR = '4' OR = '5' OR = '6' OR = '7' OR = '9'
+    OR ST-V.WIDOW-FLAG = 'Y') AND NOT #USE-SEC-ADDR
+  IGNORE
+ELSE
+  #ADD-TYPE := 'S'
+END-IF
+PERFORM GET-ADDRESS
+*
+* IF (ST-V.HANDLE-FLAG = ' ' OR = '4' OR = '5' OR = '6' OR = '7' OR = '9'   /* PM7
+*     OR ST-V.WIDOW-FLAG = 'Y') AND NOT #USE-SEC-ADDR                          /* PM7
+*   IF #USE-AT OR #USE-IM                                                   /* PM7
+*     MOVE ST-V.ADDRESS-1     TO #FIRST-ADDRESS
+*     MOVE ST-V.ADDRESS-2     TO #HOLD-ADDRESS-2 #ADDR-2
+*     MOVE ST-V.ADDRESS-3     TO #HOLD-ADDRESS-3 #ADDR-3
+*     MOVE ST-V.ZIP-CODE      TO #HOLD-ZIP-CODE
+*     MOVE ST-V.ZIP-CODE-DPB  TO #HOLD-ZIP-DPB
+*   ELSE                                                                    /* PM7
+*     #ADD-TYPE       := 'P'                                                /* PM7
+*     PERFORM GET-ADDRESS                                                   /* PM7
+*     MOVE ST-V.ZIP-CODE-DPB  TO #HOLD-ZIP-DPB                              /* PM7
+*   END-IF                                                                  /* PM7
+* ELSE
+*   IF (ST-V.S-ADDRESS-CODE = ' ' OR = '4' OR = '5' OR = '6' OR = '7'       /* PM7
+*       AND ST-V.WIDOW-FLAG NE 'Y')                                            /* PM7
+*       OR #USE-SEC-ADDR                                                       /* PM7
+*     IF #USE-AT OR #USE-IM                                                /* PM7
+*       MOVE ST-V.S-ADDRESS-1     TO #FIRST-ADDRESS
+*       MOVE ST-V.S-ADDRESS-2     TO #HOLD-ADDRESS-2 #ADDR-2
+*       MOVE ST-V.S-ADDRESS-3     TO #HOLD-ADDRESS-3 #ADDR-3
+*       MOVE ST-V.S-ZIP-CODE      TO #HOLD-ZIP-CODE
+*       RESET                        #HOLD-ZIP-DPB
+*     ELSE                                                                 /* PM7
+*       #ADD-TYPE       := 'S'                                             /* PM7
+*       PERFORM GET-ADDRESS                                                /* PM7
+*       RESET                        #HOLD-ZIP-DPB                         /* PM7
+*     END-IF                                                               /* PM7
+*   END-IF
+* END-IF
+*
+IF #FIRST-ADDRESS = ' '
+  MOVE 'No Useable Address' TO #ERR-TEXT
+END-IF
+*
+IF #HOLD-ZIP-CODE = 0
+  RESET #HOLD-EDIT-ZIP
+ELSE
+  MOVE EDITED #HOLD-ZIP-CODE (EM=99999-9999) TO #HOLD-EDIT-ZIP
+END-IF
+*
+IF #HOLD-ZIP2 = '-0000'
+  MOVE '     ' TO #HOLD-ZIP2
+END-IF
+*
+IF   (#FIRST-ADDRESS NE ' ')
+    AND (#HOLD-ADDRESS-2 = ' ')
+    AND (#HOLD-ADDRESS-3 = ' ')
+  MOVE 'Insufficient lines' TO #ERR-TEXT
+END-IF
+*
+RESET #EDS-ZIP-BAR-CODE #ZIP-CODE-BAR-CODE
+RESET #ZIP-SUM
+IF #HOLD-ZIP-5 NE '00000'
+  RESET #ZIP-SUM
+  FOR #I1 1 TO 5
+    ADD #HOLD-ZIP-5-TBL (#I1) TO #ZIP-SUM
+  END-FOR
+*
+  IF   (#HOLD-ZIP-LST-4 = MASK (NNNN))
+      AND (#HOLD-ZIP-LST-4 NE '0000')
+    FOR #I1 1 TO 4
+      ADD #HOLD-ZIP-LST-4-TBL (#I1) TO #ZIP-SUM
+    END-FOR
+*
+    FOR #I1 1 TO 2
+      ADD #HOLD-ZIP-DPB-TBL (#I1) TO #ZIP-SUM
+    END-FOR
+  END-IF
+*
+  DIVIDE 10 INTO #ZIP-SUM REMAINDER #ZIP-SUM
+  COMPUTE #ZIP-SUM = 10 - #ZIP-SUM
+*
+  IF #HOLD-ZIP-LST-4 = ' '
+    COMPRESS '!' #HOLD-ZIP-5 #ZIP-SUM-1 '!'
+      INTO #EDS-ZIP-BAR-CODE LEAVING NO
+    COMPRESS #HOLD-ZIP-5 #ZIP-SUM-1 INTO #ZIP-CODE-BAR-CODE LEAVING NO
+  ELSE
+    COMPRESS '!' #HOLD-ZIP-5 #HOLD-ZIP-LST-4 #HOLD-ZIP-DPB-A
+      #ZIP-SUM-1 '!' INTO #EDS-ZIP-BAR-CODE LEAVING NO
+    COMPRESS #HOLD-ZIP-5 #HOLD-ZIP-LST-4 #HOLD-ZIP-DPB-A #ZIP-SUM-1
+      INTO #ZIP-CODE-BAR-CODE LEAVING NO
+  END-IF
+END-IF
+*
+PERFORM NO-CONTACT-DATA
+*
+************************************************************************
+DEFINE SUBROUTINE GET-ADDRESS                /* PM7
+************************************************************************
+*
+IF    #USE-IM                                                  /* bz
+  #UNDEL-ADDR := FALSE
+  MOVE IM-V.INTERNET-ADDR TO #INTERNET-ADDR
+  MOVE IM-V.ADDRESS-1     TO #FIRST-ADDRESS
+  MOVE IM-V.ADDRESS-2     TO #SECOND-ADDRESS #HOLD-ADDRESS-2
+  MOVE IM-V.ADDRESS-3     TO #THIRD-ADDRESS  #HOLD-ADDRESS-3
+  COMPRESS IM-V.ZIP-5 '-' IM-V.ZIP-4 INTO #A10 LEAVING NO SPACE
+  IF IM-V.ADDRESS-3 = ' '
+    COMPRESS IM-V.ADDRESS-2 #A10 INTO #SECOND-ADDRESS
+  ELSE
+    COMPRESS IM-V.ADDRESS-3 #A10 INTO #THIRD-ADDRESS
+  END-IF
+
+  #HOLD-ADDRESS-2 := #SECOND-ADDRESS
+  #HOLD-ADDRESS-3 := #THIRD-ADDRESS
+  MOVE IM-V.ZIP-CODE      TO #ZIP-CODE       #HOLD-ZIP-CODE
+  IF IM-V.ADDRESS-3 = ' '
+    COMPRESS IM-V.ADDRESS-2 IM-V.ZIP-CODE INTO IM-V.ADDRESS-2
+  END-IF
+  ESCAPE ROUTINE
+END-IF                                                        /* bz
+
+#ADD-CONTACT-ID := #CONTACT-ID
+CALLNAT 'ADDN0001'
+  #PDA-ADDRESS
+*
+#FIRST-ADDRESS  := #ADD-LINE-1
+#SECOND-ADDRESS := #HOLD-ADDRESS-2 := #ADD-LINE-2
+#THIRD-ADDRESS  := #HOLD-ADDRESS-3 := #ADD-LINE-3
+#ADDR-2         := #ADD-LINE-2-NO-ZIP
+#ADDR-3         := #ADD-LINE-3-NO-ZIP
+#HOLD-ZIP-CODE  := #ZIP-CODE := #ADD-ZIP-CODE    /* NG5
+**#HOLD-ZIP-CODE  := #ADD-ZIP-CODE
+#COUNTRY-CODE   := #ADD-COUNTRY-CODE
+IF #ADD-RETURNED-MAIL = 'Y'
+  #UNDEL-ADDR := TRUE
+END-IF
+*
+#EXT-STREET := #ADD-LINE-1
+IF #ADD-LINE-3 = ' '
+  RESET #EXT-STREET-2
+ELSE
+  #EXT-STREET-2 := #ADD-LINE-2
+END-IF
+#EXT-CITY     := #ADD-CITY
+#EXT-STATE    := #ADD-STATE
+#EXT-ZIP      := #ADD-ZIP-CODE
+
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE GET-RANK                /* NG1
+************************************************************************
+RESET #DISPL #RANK-LITERAL #RANK-5
+* Internally calls GRANKSXX and returns #SALUTATION and #LETTER-ENV
+CALLNAT 'RANKN001'
+  #PASS-COMMAND
+  ST-V.RANK
+  #MIL-SERVICE
+  #EDIT-INVALID
+  #DISPL
+  #RANK-LITERAL
+  #RANK-5
+*
+  #CONTACT-ID
+  #RANK-ABBR
+  #LETTER-ENV
+  #SALUTATION
+  #SALUTATION-WITH-NAME
+*
+#EXT-FORMATED-NAME      := #LETTER-ENV
+#EXT-RANK               := #RANK-ABBR
+#EXT-DEAR-FORMATED-NAME := #SALUTATION-WITH-NAME
+#SALUTATION := '!SCREEN'                              /* bz-Name-C
+CALLNAT 'GPRS0CNT' #CONTACT-ID #SALUTATION
+#MEMO-TO-NAME := #SALUTATION
+*
+MOVE #RANK-LITERAL TO #FULL-RANK
+IF #RANK-5 = ' '
+  MOVE #RANK TO #RANK-5
+END-IF
+*
+RESET #SEX                                           /* TT1
+#SEX := GET-GENDER(<ST-V.MEMBER-CONTACT-ID>)         /* TT1
+IF    (#RANK-5 = ' ')
+    AND  (NOT #FOUND-CONTACT)
+  IF #SEX NE ' '                                 /* TT1
+    IF #SEX = 'M'                                /* TT1
+      MOVE 'Mr' TO #RANK-5
+    ELSE
+      MOVE 'Ms' TO #RANK-5
+    END-IF
+    MOVE #RANK-5 TO #FULL-RANK #RANK-LITERAL #RANK-5
+  END-IF
+END-IF
+*
+IF (ST-V.WIDOW-FLAG = 'Y') AND (NOT #SPS-GEN)
+  MOVE ST-V.NAME-SP  TO #HOLD-NAME
+  MOVE ST-V.TITLE-SP TO #RANK-5
+ELSE
+  MOVE ST-V.NAME TO #HOLD-NAME
+*
+  IF ST-V.CHIEF-OF-STAFF-IND = 'R' OR = 'Q'  /* INDS RANK SECURITY
+    RESET #RANK-5
+    IF NOT PROCESS-IND = 'G' OR = 'S'    /* DW3
+      IF #SEX = 'F'  /* removed for g/f & AFSC 4/16/98 as per brad           /* TT1
+        IF ST-V.NAME-SP = ' '
+          MOVE 'MS' TO #RANK-5
+        ELSE
+          MOVE 'MRS' TO #RANK-5
+        END-IF
+      ELSE
+        MOVE 'MR' TO #RANK-5
+      END-IF
+    END-IF
+  END-IF
+*
+  IF   (#MIL-STATUS = 'R')
+      AND (ST-V.CHIEF-OF-STAFF-IND NE 'X')
+      AND (NOT #RANK-3 = 'MR' OR = 'MS' OR = 'MRS' OR = 'MIS'
+      OR = 'REV' OR = 'DR' OR = ' ')
+    MOVE ', RET' TO #RET
+  ELSE
+    RESET #RET
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+DEFINE NO-CONTACT-DATA
+DECIDE FOR EVERY CONDITION
+  WHEN #EXT-RANK = ' '
+    #EXT-RANK := #RANK
+  WHEN #EXT-FORMATED-NAME    = ' '
+    #EXT-FORMATED-NAME := #FORMATED-NAME
+  WHEN #EXT-NAME = ' '
+    #EXT-NAME  := #NAME
+  WHEN #EXT-SPS-GEN-NAME = ' '
+    #EXT-SPS-GEN-NAME := #SPS-GEN-NAME
+  WHEN #SECOND-ADDRESS = ' '  AND #THIRD-ADDRESS = ' '                              /* vt1 \/
+    MOVE #ZIP-CODE TO #ZIP-CODE-N
+    IF #ZIP-CODE-N-4 NE '0000'
+      COMPRESS #ZIP-CODE-N-5 '-' #ZIP-CODE-N-4 INTO #ZIP-CODE-A LEAVING NO
+    ELSE
+      MOVE #ZIP-CODE-N-5 TO #ZIP-CODE-A
+    END-IF
+    IF #ADDR-2 NE ' '
+      IF  #ADDR-3 = ' '
+        COMPRESS #ADDR-2 #ZIP-CODE-A INTO #SECOND-ADDRESS
+      ELSE
+        COMPRESS #ADDR-3 #ZIP-CODE-A INTO #THIRD-ADDRESS
+      END-IF
+    END-IF                                                                        /* vt1 /\
+  WHEN NONE IGNORE
+END-DECIDE
+END-SUBROUTINE
+*                     NG6 ==> new inline subroutine
+DEFINE NEW-OWNER
+/*     ---------
+* Insured CN  => ST-V.ID-NUMBER
+RESET #POLICY-NUM
+IF #POLICY-NUMBER SPECIFIED
+  IF #POLICY-NUMBER NE 'UNKNOWN'
+    #POLICY-NUM := #POLICY-NUMBER
+  END-IF
+END-IF
+IF #POLICY-NUM = ' '
+    AND #CONTACT-SEG NE 0
+  #POLICY-NUM := ST-V.POLICY-ID( #CONTACT-SEG )
+END-IF
+IF #POLICY-NUM = ' '
+  FOR #I1 1 TO C*ACTIVE-SEGMENTS
+    IF ST-V.STATUS (#I1) = 'D'
+      #POLICY-NUM := ST-V.POLICY-ID ( #I1 )
+      ESCAPE BOTTOM
+    END-IF
+    #POLICY-NUM := ST-V.POLICY-ID ( #I1 )
+  END-FOR
+END-IF
+RESET #NUMBER-OF-RELATIONS #MSG
+  #RELATIONSHIP-TYPE /* AllRoles
+  #I2
+CALLNAT 'POSNCNTS'  /* Get all contacts related to the policy
+  #POLICY-NUM
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+IF #MSG = ' '
+  #NUM-OWNERS := 1
+  FOR #I1 1 TO #NUMBER-OF-RELATIONS
+    IF RELATION (#I1) = PrimaryOwner
+        AND REFERENCE-NUMBER (#I1) NE ST-V.ID-NUMBER
+      MOVE REFERENCE-NUMBER (#I1) TO #1ST-OWNER
+        #CONTACT-CN
+        #MULT-OWNERS (8)
+    END-IF
+    IF RELATION (#I1) = CoOwner
+      ADD 1 TO #I2
+      IF #I2 > 7
+        ESCAPE BOTTOM
+      END-IF
+      MOVE REFERENCE-NUMBER (#I1) TO #MULT-OWNERS (#I2)
+    END-IF
+  END-FOR
+  ADD #I2 TO #NUM-OWNERS
+END-IF
+END-SUBROUTINE
+END

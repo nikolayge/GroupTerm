@@ -1,0 +1,151 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************************************
+* SUBPROGRAM-ID: NPPN0006 policy print beneficiary information
+**************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG  REASON
+* YAK    09282008       Initial Creation
+* NGG    11102015  NG1  Policy Ownership: Changed to read BD...SHO
+*                       data from Designation Adabas file
+**************************************************************
+DEFINE DATA
+PARAMETER USING NPPA0001      /* Policy Data
+PARAMETER
+1 #PARM-ID-NUMBER (N6)
+1 #SEQ-NBR        (N2)
+1 #PARM-ISN       (P8)
+1 #BEN-COMPLETED  (L)
+*
+LOCAL USING GPRA0003      /* Error Log file
+LOCAL
+1 #I              (I2)
+1 #I0             (I2)
+1 #I1             (I2)
+1 #I2             (I2)
+1 #I3             (I2)
+1 #I4             (I2)
+1 #I-ALT          (I2)
+1 #TAB            (A10) INIT <'          '>
+1 #TAB1           (A5) INIT <'     '>
+1 #WORK-FIELD     (A) DYNAMIC
+1 #PARM-BENEFICIARY-INFORMATION
+  2 ##CGA-ISN               (P8)
+  2 ##CGA-SCR-COMMAND       (A2)
+  2 ##CGA-SCR-ID            (N9)
+  2 ##CGA-ID                (N6)
+  2 ##CGA-SCR-SUFFIX        (A3)
+  2 ##POLICY-PRINT          (L)
+* NG1 commented
+* 1 #BENEFICIARY-INFORMATION
+*  2 ID-NUMBER          (N6)
+*   2 NOTE-DATE          (N8/60) /* LET P/A = PRIMARY/ALTERNATE DESING
+*   2 NOTE-TEXT          (A60/60)
+*   2 REDEFINE NOTE-TEXT /* below layout must match E4750SBD
+*    3 NT-CN     (N6)
+*    3 NT-ISS-DT (N8)
+*    3 NT-PLAN   (A3)
+*    3 NT-TYPE   (A1)     /* bene-type of primary bene
+*    3 NT-NEW-LAYOUT (A1) /* new layout indicator of primar
+*    3 NT-NUM-LINES (N3)  /* # of lines entered below
+*    3 NT-BENE-SHO  (A79/40)
+*    3 REDEFINE NT-BENE-SHO
+*     4 NT-BENE-SHO-OCC  (40)
+*      5 NT-BENE-SHO-1ST-1    (A1) /* "~" indicates raw new format
+*      5 NT-BENE-SHO-AFTER-1  (A78)      /* bene data
+* *
+
+1 #BENEFICIARY-LINE       (A78)
+1 REDEFINE #BENEFICIARY-LINE
+  2 #BEN-NAME             (A26)
+  2 #BEN-SSN-A            (A12)
+  2 #BEN-RELATIONSHIP     (A14)
+  2 #BEN-SHARE            (A12)
+  2 #BEN-SET-OPT          (A7)
+  2 #BEN-RESTRICTED       (A7)
+*
+1 BLANK  (A1) CONST <' '>
+1 #POLICY-NUMBER          (A16)
+1 DS-V VIEW OF A-DESIGNATION
+  2 DESIGNATION-ID (N8.0)
+  2 C*BENE-SHOW    (N3)
+  2 BENE-SHOW      (A79/1:40)
+END-DEFINE
+* NG1 commented
+* ##CGA-ISN := #PARM-ISN
+* ##CGA-SCR-COMMAND := 'BD'
+* ##CGA-SCR-ID := ##CGA-ID := #PARM-ID-NUMBER
+* ##POLICY-PRINT := TRUE
+* COMPRESS 'SH' #SEQ-NBR INTO ##CGA-SCR-SUFFIX LEAVING NO
+* STACK TOP DATA #PARM-BENEFICIARY-INFORMATION
+* FETCH RETURN 'E4700PBD'
+* *
+* IF *DATA NE 0
+*   INPUT #BENEFICIARY-INFORMATION
+*   RELEASE STACK
+* END-IF
+*
+#POLICY-NUMBER := POLICY-INFORMATION.POLICY-NUMBER
+IF #POLICY-NUMBER NE BLANK
+  DESIGNATION-ID := GET-FINAL-DSGN-ID (< #POLICY-NUMBER >)
+  FIND (1) DS-V WITH DESIGNATION-ID = DESIGNATION-ID
+  END-FIND
+END-IF
+
+**IF NT-BENE-SHO(1) NE ' '     /* NG1
+IF DS-V.BENE-SHOW (1) NE BLANK
+  #BEN-COMPLETED := TRUE
+  PERFORM POPULATE-PARAMETER-DATA
+ELSE
+  #BEN-COMPLETED := FALSE
+END-IF
+*
+DEFINE SUBROUTINE POPULATE-PARAMETER-DATA
+  EXPAND ARRAY BENEFICIARY-LINE TO (*:40)
+  FOR #I = 1 TO 40
+     #BENEFICIARY-LINE := DS-V.BENE-SHOW (#I)
+     IF SUBSTR(#BENEFICIARY-LINE,1,1) = '~'
+        #BENEFICIARY-LINE := SUBSTR(#BENEFICIARY-LINE,2)
+     END-IF
+     IF #BENEFICIARY-LINE = ' '
+        ESCAPE BOTTOM
+     END-IF
+     #WORK-FIELD := SUBSTR(#BEN-SSN-A,1,11)
+     EXAMINE #WORK-FIELD FOR '-' DELETE
+     IF #WORK-FIELD = MASK(NNNNNNNNN)
+        #WORK-FIELD := SUBSTR(#BEN-SSN-A,1,11)
+        IF #BEN-SSN-A NE ' '
+           #BEN-SSN-A := FUNCTION-MASK(<#WORK-FIELD,'X'>)
+        ELSE
+           #BEN-SSN-A := 'Not on file'
+        END-IF
+     END-IF
+*    EXAMINE #BENEFICIARY-LINE FOR '&' REPLACE 'and'
+     BENEFICIARY-LINE(#I) := #BENEFICIARY-LINE
+*     WRITE BENEFICIARY-LINE(#I)
+  END-FOR
+  C@BENEFICIARY-LINE := #I - 1
+  RESIZE ARRAY BENEFICIARY-LINE TO (*:C@BENEFICIARY-LINE)
+*  NT-NUM-LINES := 24 /* 19
+*  C@TEXT-EMPTY-LINE := NT-NUM-LINES - C@BENEFICIARY-LINE
+* C@TEXT-EMPTY-LINE := C@TEXT-EMPTY-LINE * 11 / 18
+  C@TEXT-EMPTY-LINE := 24 - C@BENEFICIARY-LINE /* NG1
+  DECIDE FOR FIRST CONDITION
+    WHEN C@TEXT-EMPTY-LINE > 0
+     RESIZE ARRAY TEXT-EMPTY-LINE TO (*:C@TEXT-EMPTY-LINE)
+    WHEN C@TEXT-EMPTY-LINE <= 0
+      C@TEXT-EMPTY-LINE := 0
+      COMPRESS 'Error in processing Policy Number - Too many Beneficiary lines'
+      POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+      ERROR-PROGRAM := *PROGRAM
+      CALLNAT 'GPRN0003' ERROR-LOG
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+END-SUBROUTINE
+*
+END

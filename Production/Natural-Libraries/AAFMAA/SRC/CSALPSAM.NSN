@@ -1,0 +1,203 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: CSALPSAM
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE      TAG  REASON                                           *
+* DRW  12272004  DW1  Increase variablw loan to handle 999,999.99.     *
+* DRW  01142005  DW2  Add SALP 8 (CIP) Credit Card Loan PMT            *
+* PAM  08072006  PM3  Allow differnt automatic loan payments for       *
+*                     multiple loans on same policy.                   *
+* DRW  04252007  DW4  Allow SAL? Code of "9" to Ind AIP Waiting (AIW)  *
+* DRW 01/17/2008 DW5  Allow SALF (Fixed CAP Loan) of "L" without a loan*
+* PAM 07/28/2008 PM6  Allow SALF (Fixed CAP Loan) of "E" without a loan*
+* PAM 02/26/2009 PM7  Allow SALF (Fixed CAP Loan) of "C" without a loan*
+* vxt 04/28/2011 vt1  add a date for CAP loans .                       *
+* vxt 12/17/2012 vt2  change 107.25 to 85.80 /ticket 1672/             *
+* vxt 08/05/2013 vt3  change the amount of 85.80 to 84.80 /ticket 2135/*
+* YAK 05/20/2017 YK1  Add validation of Bank Account for EzPay CAP Loans
+*                     issued to existing policy                        *
+* YAK 01/20/2018 YK2  Add validation for the payer bank account when   *
+*                     adding EIL/EIP, update PAD-CODE to "E" when bank *
+*                     account exist                                    *
+************************************************************************
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #ST-V-ALT-LP-IND    (A1)
+1 #ST-V-ALT-LP-AMT    (P5.2)
+1 #ST-V-ALT-LP-DATE   (N8)             /* vt1
+1 #ST-V-ALT-LP-IND-2  (A1)
+1 #ST-V-ALT-LP-AMT-2  (P5.2)
+1 #ST-V-LOAN-AMOUNT   (P5.2)
+1 #ST-V-LOAN-AMOUNT-2 (P7.2)            /* DW1
+1 #ST-V-LOAN-DATE     (N8)
+1 #ST-V-LOAN-DATE-2   (N8)
+1 #ST-V-PAD-CODE      (A1)              /* PM6
+1 #ILN1               (I2)
+1 #UPDATE-MODE        (L)
+1 #OLD-ALP-FLG        (A1)
+1 #OLD-ALP-AMT        (P5.2)
+1 #old-alp-date       (n8)              /* vt1
+1 #DISP-MSG           (A75)
+1 #APPROVAL-FLAG      (L/15)            /* PM6
+*
+LOCAL
+1 #TOTAL-AMT-DISP     (A11)
+1 #SECURITY-CODE      (N2)   INIT <90>  /* PM6
+1 #ERROR-MESSAGE      (A72)             /* YK1
+1 #PAYER-CN           (N6)              /* YK1
+END-DEFINE
+*
+********************  ALP START STOP  *********************  SALP - 365
+*
+IF #SCR-TRAN-AMT (#ILN1) GT 9999.99
+  REINPUT 'TRANSACTION AMOUNT EXCEEDS $9,999.99'
+    MARK *#SCR-TRAN-AMT (#ILN1)
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'SALV'
+  IF   (#ST-V-LOAN-DATE-2 GE 20020101)
+      AND (#SCR-ALP-CODE (#ILN1) = '1' OR = '3')
+    REINPUT 'ALP/ELP invalid on loans issued after 1/1/2002'
+      MARK *#SCR-TRAN-CODE (#ILN1)
+  END-IF
+*
+  IF   (#SCR-TRAN-AMT (#ILN1) GT #ST-V-LOAN-AMOUNT-2)
+      AND (#SCR-ALP-CODE (#ILN1) NE '0')
+    MOVE EDITED #ST-V-LOAN-AMOUNT-2 (EM=ZZ,ZZZ.99) TO #TOTAL-AMT-DISP
+    COMPRESS 'ALP amt exceeds Var loan of '
+      #TOTAL-AMT-DISP INTO #DISP-MSG
+    REINPUT #DISP-MSG
+      MARK *#SCR-TRAN-CODE (#ILN1)
+  END-IF
+*
+* IF  (#SCR-ALP-CODE (#ILN1) = #ST-V-ALT-LP-IND)                  /* PM3
+*  OR (#SCR-ALP-CODE (#ILN1) = '0')                               /* PM3
+*  OR (#ST-V-ALT-LP-IND = '0' OR = ' ')                           /* PM3
+*   IGNORE                                                        /* PM3
+* ELSE                                                            /* PM3
+*   REINPUT 'ALP CODE must match existing code'                   /* PM3
+*   MARK *#SCR-ALP-CODE (#ILN1)                                   /* PM3
+* END-IF                                                          /* PM3
+*
+  MOVE #ST-V-ALT-LP-IND-2 TO #OLD-ALP-FLG        /* SAVE PRIOR INFO
+  MOVE #ST-V-ALT-LP-AMT-2 TO #OLD-ALP-AMT        /* SAVE PRIOR INFO
+*
+  IF #SCR-ALP-CODE (#ILN1) = '1' OR = '2' OR = '3' OR = '4' OR = '6'
+      OR = '8' OR = '9'                                          /* DW2/DW4
+    MOVE #SCR-TRAN-AMT (#ILN1) TO #ST-V-ALT-LP-AMT-2
+    MOVE #SCR-ALP-CODE (#ILN1) TO #ST-V-ALT-LP-IND-2
+  ELSE
+    IF #ST-V-ALT-LP-AMT-2 NE #SCR-TRAN-AMT (#ILN1)  /* STOP ALT
+      IF #UPDATE-MODE                               /* BACKOUT TRANSACTION *
+        BACKOUT TRANSACTION                         /* IF IN UPDATE MODE   *
+      END-IF                                        /* *********************
+      MOVE EDITED #ST-V-ALT-LP-AMT-2 (EM=Z,ZZZ.99) TO #TOTAL-AMT-DISP
+      COMPRESS 'TRAN-AMT MUST EQUAL ALP-AMT OF '
+        #TOTAL-AMT-DISP INTO #DISP-MSG
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-AMT (#ILN1)
+    ELSE
+      RESET #ST-V-ALT-LP-AMT-2
+      MOVE '0' TO #ST-V-ALT-LP-IND-2   /* IND STOPPED
+    END-IF
+  END-IF
+ELSE
+  IF   (#ST-V-LOAN-DATE GE 20020101)
+      AND (#SCR-ALP-CODE (#ILN1) = '1' OR = '3')
+    REINPUT 'ALP/ELP invalid on loans issued after 1/1/2002'
+      MARK *#SCR-TRAN-CODE (#ILN1)
+  END-IF
+*
+  IF #SCR-ALP-CODE (#ILN1) = 'L' OR = 'E' OR = 'C'  /* CAP Loan Only  /* DW5 PM6 PM7
+    IF #ST-V-LOAN-AMOUNT NE 0
+      REINPUT 'ALP Code "L,E or C" only allowed if Fixed Loan = Zero' /* PM6 PM7
+        MARK *#SCR-ALP-CODE (#ILN1)
+    END-IF
+*
+    IF #SCR-ALP-CODE (#ILN1) = 'E'                                     /* PM6
+        AND NOT #ST-V-PAD-CODE = 'P' OR = 'D' OR = 'L' OR = 'V'        /* PM6
+        OR = 'X' OR = 'Y' OR = 'E' OR = 'S'                            /* PM6    /* YK2
+      REINPUT 'ALP Code "E" only allowed if EZPay is pending/ongoing'  /* PM6
+        MARK *#SCR-ALP-CODE (#ILN1)                                    /* PM6
+    END-IF                                                             /* PM6
+*
+    IF #SCR-TRAN-AMT (#ILN1) LT 84.80                                                            /* vt2 was 107.25 vt3 was 85.80
+        AND NOT #APPROVAL-FLAG (#ILN1)                                   /* PM6
+      IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A' OR = 'U'       /* PM6
+        REINPUT USING HELP                                            /* PM6
+          MARK *#SCR-TRAN-AMT (#ILN1)                                   /* PM6
+      ELSE                                                            /* PM6
+        REINPUT 'ALP Amt must be at least $84.80 for a SALP Code "L,E or C"' /* PM6 PM7         /* vt2 was 107.25 vt3 was 85.80
+          MARK *#SCR-TRAN-AMT (#ILN1)
+      END-IF                                                          /* PM6
+    END-IF
+  ELSE
+    IF   (#SCR-TRAN-AMT (#ILN1) GT #ST-V-LOAN-AMOUNT)
+        AND (#SCR-ALP-CODE (#ILN1) NE '0')
+      MOVE EDITED #ST-V-LOAN-AMOUNT (EM=ZZ,ZZZ.99) TO #TOTAL-AMT-DISP
+      COMPRESS 'ALP amt exceeds Fixed loan of '
+        #TOTAL-AMT-DISP INTO #DISP-MSG
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-CODE (#ILN1)
+    END-IF
+  END-IF
+*
+* IF  (#SCR-ALP-CODE (#ILN1) = #ST-V-ALT-LP-IND-2)                /* PM3
+*  OR (#SCR-ALP-CODE (#ILN1) = '0')                               /* PM3
+*  OR (#ST-V-ALT-LP-IND-2 = '0' OR = ' ')                         /* PM3
+*   IGNORE                                                        /* PM3
+* ELSE                                                            /* PM3
+*   REINPUT 'ALP CODE must match existing code'                   /* PM3
+*   MARK *#SCR-ALP-CODE (#ILN1)                                   /* PM3
+* END-IF                                                          /* PM3
+*
+  MOVE #ST-V-ALT-LP-IND TO #OLD-ALP-FLG        /* SAVE PRIOR INFO
+  MOVE #ST-V-ALT-LP-AMT TO #OLD-ALP-AMT        /* SAVE PRIOR INFO
+  move #st-v-alt-lp-date to #old-alp-date      /* vt1
+*
+  IF #SCR-ALP-CODE (#ILN1) = '1' OR = '2' OR = '3' OR = '4' OR = '6'
+      OR = '8' OR = '9' OR = 'L' OR = 'E' OR = 'C'               /* DW2/DW4/DW5/PM6/PM7
+    MOVE #SCR-TRAN-AMT (#ILN1) TO #ST-V-ALT-LP-AMT
+    MOVE #SCR-ALP-CODE (#ILN1) TO #ST-V-ALT-LP-IND
+  ELSE
+    IF #ST-V-ALT-LP-AMT NE #SCR-TRAN-AMT (#ILN1)  /* STOP ALT
+      IF #UPDATE-MODE                             /* BACKOUT TRANSACTION *
+        BACKOUT TRANSACTION                       /* IF IN UPDATE MODE   *
+      END-IF                                      /* *********************
+      MOVE EDITED #ST-V-ALT-LP-AMT (EM=Z,ZZZ.99) TO #TOTAL-AMT-DISP
+      COMPRESS 'TRAN-AMT MUST EQUAL ALP-AMT OF '
+        #TOTAL-AMT-DISP INTO #DISP-MSG
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-AMT (#ILN1)
+    ELSE
+      RESET #ST-V-ALT-LP-AMT
+      reset #st-v-alt-lp-date                        /* vt1
+      MOVE '0' TO #ST-V-ALT-LP-IND   /* IND STOPPED
+    END-IF
+  END-IF
+END-IF
+* YK2 >
+IF #SCR-ALP-CODE (#ILN1) = 'E' OR #SCR-ALP-CODE (#ILN1) = '4'
+  PERFORM VALIDATE-LOAN-PAYER
+  IF #ERROR-MESSAGE <> ' '
+    REINPUT #ERROR-MESSAGE
+      MARK *#SCR-ALP-CODE (#ILN1)
+  END-IF
+END-IF
+* < YK2
+*
+*************************************
+DEFINE SUBROUTINE VALIDATE-LOAN-PAYER   /* YK1
+*************************************
+*
+CALLNAT 'CSALNSAM' #SCR-ID-SSN(#ILN1) #SCR-ISS-DT(#ILN1) #ERROR-MESSAGE
+*
+END-SUBROUTINE
+
+END

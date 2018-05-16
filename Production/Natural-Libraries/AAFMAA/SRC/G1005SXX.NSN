@@ -1,0 +1,626 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: G1005SXX   USER/COMMAND SECURITY
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06042004  PM1     Allow AT for pending applications records.  *
+* PAM    08232004  PM2     Do not allow CB for pending application     *
+*                          records. - reallowed 8/24 per Cliff         *
+* PAM    10252004  PM3     Allow AFSC acces to TB on INS-ONLY mbrs     *
+* DRW    04062005  DW4     Allow PJC/SKM access to do DN's on INS-ONLY *
+* DRW    04072005  DW5     Consider Inactive AFSC pols as suspended    *
+* DRW    06062005  DW6     Test Ins-Only also when using SSN           *
+* TDM    07182005  TM1     CHG AUTH FROM SKM TO SLB                    *
+* DRW    09192005  DW7     Allow LGM to do DN                          *
+* DRW    04232006  DW8     Disallow DM/DC for AAFMAA Users             *
+* DRW    04242006  DW9     Remove above and in DM/DB protect all fields*
+* DRW    09252006  DW10    Allow CEJ/SKS to do DN                      *
+* PAM    03162007  PM11    Adjust DN access for ACN, RDR               *
+* DRW    05112007  DW12    Allow a CA & FA for Pending AT's            *
+* DRW  03/02/2009  DW13    Incresae Note occurance from 60 to 500      *
+* PAM  03/17/2009  PM14    Replaced RLB with CEB                       *
+* DRW  08/31/2009  DW15    Chg Access to DN                            *
+* DRW  09/01/2009  DW16    Modify Security Checking on Commands        *
+* RSE  06/15/2010  RE1     Comment out message per Brady               *
+* NGG  07/19/2010  NG1     Call subprogram instead of function         *
+* RSE  11/03/2010  RE2     Allow RL for IAS users                      *
+* PAM  02/09/2011  PM17    Allow CA for non-insured NG added TA        *
+* vxt  04/28/2014  vt1     /Ticket 2758/                               * 
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #SCR-COMMAND    (A2)
+1 #SCR-ID         (N9)
+1 REDEFINE #SCR-ID
+  2 #FILL-3            (A3)
+  2 #SCR-ID-6      (A6)
+1 #SCR-SUFFIX     (A3)
+1 #CLERK          (A3)
+1 #SECURITY-CODE  (N2) /* USER SECURITY CODE
+1 #USER-COMPANY   (A1)
+*
+1 #ERR-MSG            (A75)
+*
+LOCAL  USING A-IFAFFL   /* PDA used with FUNCTION F-if-AFFL     /* DW16
+LOCAL
+*
+1 CM-V VIEW OF A-COMMANDS
+  2 COMMAND
+  2 SECURITY-CODE     /* COMMAND SECURITY CODE
+  2 TYPE-OF-INPUT     /* WHETHER ID IS REQUIRED
+*
+* 1 NT-V VIEW OF A-NOTES
+*  2 C*NOTE-TABLE                      /* DW13
+*  2 NOTE-TEXT   (A60/500)             /* DW13
+*  2 REDEFINE NOTE-TEXT
+*   3 NOTE-TEXT-OCC (500)              /* DW13
+*    4 NOTE-TEXT-FST    (A31)
+*    4 OO-DATE-MM   (A2)
+*    4 OO-DATE-F1   (A1)
+*    4 OO-DATE-DD   (A2)
+*    4 OO-DATE-F2   (A1)
+*    4 OO-DATE-YYYY (A4)
+*    4 NOTE-TEXT-LST (A19)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 WIDOW-FLAG
+  2 SSN
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 ISSUE-DATE   (9)
+  2 PLAN         (9)
+  2 STATUS       (9)
+  2 PAY-STATUS   (9)
+  2 PAID-TO-DATE (9)
+  2 MODE         (9)
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER
+  2 SSN
+  2 INTRO-FLAG
+  2 MEMBER-CN
+  2 REDEFINE MEMBER-CN
+    3 MEMBER-CN-N   (N6)
+*
+1 IM-V VIEW OF A-INTRO-MEMBER
+  2 ID-NUMBER
+  2 SSN
+*
+1 #USER-SECURITY-CODE    (N2)
+1 #COMMAND-SECURITY-CODE (N2)
+1 #ID-9    (N9)
+1 REDEFINE #ID-9
+  2 #ID-6    (N6)
+  2 #ID-LST-3 (N3)
+*
+1 #I1            (I2)
+1 #I2            (I2)
+1 #VALID         (L)
+1 #FOUND-ST      (L)
+1 #FOUND-ID      (L)
+1 #SAS-USER      (L)
+1 #IAS-USER      (L)
+* 1 #99-USER       (L)
+*
+1 #INS-MBR       (L)
+1 #SVC-MBR       (L)
+1 #GF-MBR        (L)
+1 #DELQ-DATE   (N8)
+1 #OO-DATE     (N8)
+* 1 #2-MON-AGO   (N8)
+1 #YYYYMMDD  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY  (N4)
+  2 #MM    (N2)
+  2 #DD    (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A (A8)
+*
+END-DEFINE
+*
+* WRITE 'Top of Q1005SXX'
+* WRITE 'top of G1005SXX svr-command=' #SCR-COMMAND
+* WRITE 'User-company =' #USER-COMPANY
+RESET #ERR-MSG
+* MOVE *DATN TO #YYYYMMDD
+* SUBTRACT 2  FROM #MM
+* IF #MM LT 1
+*   ADD 12 TO #MM
+*   SUBTRACT 1 FROM #YYYY
+* END-IF
+* MOVE #YYYYMMDD TO #2-MON-AGO
+*
+FIND (1) CM-V WITH COMMAND = #SCR-COMMAND
+  IF NO RECORDS FOUND
+    COMPRESS 'Command' #SCR-COMMAND 'not found' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-NOREC
+*
+  MOVE CM-V.SECURITY-CODE TO #COMMAND-SECURITY-CODE
+END-FIND
+*
+MOVE #SECURITY-CODE TO #USER-SECURITY-CODE
+* WRITE 'User-security-cide =' #USER-SECURITY-CODE
+*
+IF NOT #USER-SECURITY-CODE = 1 OR = 2 OR = 4  OR = 8  OR = 12 OR = 16
+    OR = 6 OR = 20 OR = 97 OR = 98 OR = 99
+  COMPRESS 'USER' #CLERK 'has invalid Security Code' TO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+* IF #USER-COMPANY = 'B'
+*   MOVE TRUE TO #99-USER
+* ELSE
+IF #USER-COMPANY = 'S'
+  MOVE TRUE TO #SAS-USER
+ELSE
+  MOVE TRUE TO #IAS-USER
+END-IF
+* END-IF
+*
+PERFORM MEMBER-SECURITY
+*
+IF #ERR-MSG NE ' '
+  ESCAPE ROUTINE
+END-IF
+*
+PERFORM COMMAND-SECURITY
+*
+* BELOW LOGIC IS ALSO IN C2600PST/E4000PDI/C2200PCG/G4020PNS
+IF  #FOUND-ST AND (#ERR-MSG = ' ')
+    AND (#SCR-COMMAND = 'FM' OR = 'FD' OR = 'BA' OR = 'BR' OR = 'DM'
+    OR = 'GT' OR = 'BS' OR = 'DA' OR = 'DD' OR = 'DP' OR = 'RP'
+    OR = 'SI' OR = 'SU' OR = 'SO' OR = 'SS')
+
+  CALLNAT 'PLAN-AFA' ST-V.ID-NUMBER F-IF-AFFL-DATA /* NG1
+*  IF F-IF-AFFL(<ST-V.ID-NUMBER,F-IF-AFFL-DATA>)  /* TEST AFFL Conditions  DW16
+*  IGNORE
+* END-IF
+*
+IF #SAS-SUSPENDED
+  MOVE 'Command Invalid - Suspended due to lack of payment' TO #ERR-MSG
+END-IF
+END-IF
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE MEMBER-SECURITY
+* * * * * * * * * * * * * * * * *
+*
+IF   (TYPE-OF-INPUT = 'C' OR = 'Q')   /* IM number reqd or optional  /* KEEP
+    AND (#SCR-ID LT 100000) AND (#SCR-ID NE 0)
+  ADD 700000 TO #SCR-ID
+END-IF
+*
+RESET #FOUND-ID
+*
+IF  ((#SCR-ID GE 700000) /* IM NUMBER                                /* KEEP
+    AND (#SCR-ID LT 800000))
+*
+*  IF #SAS-USER                                /* DW16
+*    MOVE 'Intro Member access not valid for AFSC user' TO #ERR-MSG
+*    ESCAPE ROUTINE
+*  END-IF
+*
+  MOVE TRUE TO #FOUND-ID
+  FIND (1) IM-V WITH ID-NUMBER = #SCR-ID
+    IF NO RECORDS FOUND
+      RESET #FOUND-ID
+    END-NOREC
+  END-FIND
+*
+  IF (TYPE-OF-INPUT = 'C') OR (#SCR-ID NE 0)
+    IF NOT #FOUND-ID
+      MOVE 'IM number required or not found' TO #ERR-MSG
+    END-IF
+  ELSE
+    RESET #SCR-ID
+  END-IF
+*
+  ESCAPE ROUTINE
+END-IF
+*
+IF   (#SCR-ID GE 500000) /* AT NUMBER             /* KEEP
+    AND (#SCR-ID LT 600000)
+  FIND (1) AT-V WITH ID-NUMBER = #SCR-ID
+    IF NO RECORDS FOUND
+      MOVE 'AT number entered not found' TO #ERR-MSG
+    END-NOREC
+  END-FIND
+*
+*  IF #SAS-USER AND (AT-V.INTRO-FLAG NE 'V')            /* DW16
+*    MOVE 'Only AFSC "AT" recs are accessable to AFSC' TO #ERR-MSG
+*  END-IF
+*
+*  IF #IAS-USER AND (AT-V.INTRO-FLAG = 'V')                  /* DW16
+*    MOVE 'AFSC "AT" recs are inaccessable to AAFMAA' TO #ERR-MSG
+*    ESCAPE ROUTINE
+*  END-IF
+*
+  IF   (#SCR-COMMAND = 'ST')
+      AND (AT-V.MEMBER-CN NE ' ')
+    MOVE AT-V.MEMBER-CN-N TO #SCR-ID  /* Use Linked CN number from AT record
+  ELSE
+*                            /* AT is accessible to all
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+RESET #VALID #FOUND-ID #FOUND-ST
+IF #SCR-ID GT 999999 /* SSN                          /* KEEP
+  IF #SCR-COMMAND = 'IM' OR = 'IC' OR = 'ID'
+    FIND IM-V WITH SSN = #SCR-ID
+      MOVE TRUE TO #FOUND-ID
+      IF #IAS-USER                /* DW16
+*       OR #99-USER
+        MOVE TRUE TO #VALID
+        ESCAPE ROUTINE
+      END-IF
+    END-FIND
+  END-IF
+*
+  IF #SCR-COMMAND = 'AT' OR = 'NM' OR = 'AI'
+      OR = 'AA' OR = 'PO' OR = 'MR' OR = 'ML' OR = 'AN' OR = 'AE'
+    FIND AT-V WITH SSN = #SCR-ID
+      MOVE TRUE TO #FOUND-ID
+*
+*      IF #SAS-USER AND (#SCR-COMMAND = 'AT')
+*       AND (#SCR-SUFFIX = 'COM')  /* create afsc combo "at" from aafmaa
+*       AND (AT-V.INTRO-FLAG NE 'V')
+*        MOVE TRUE TO #VALID
+*        ESCAPE BOTTOM
+*      END-IF
+*
+      IF  #SAS-USER AND (AT-V.INTRO-FLAG NOT = 'V')
+        ESCAPE TOP
+      END-IF
+*
+      IF #IAS-USER AND (AT-V.INTRO-FLAG = 'V')
+        ESCAPE TOP
+      END-IF
+*
+      MOVE TRUE TO #VALID
+      ESCAPE BOTTOM
+    END-FIND
+  END-IF
+*
+* DISPLAY #FOUND-ST #VALID #GF-MBR #INS-MBR #SVC-MBR #IAS-USER #SCR-ID
+  FIND ST-V WITH SSN = #SCR-ID                      /* KEEP
+    IF   (PROCESS-IND = 'C')   /* to bypass trusts of members
+        AND (INTRO-FLAG NE 'A')
+      ESCAPE TOP
+    END-IF
+*
+    MOVE TRUE TO #FOUND-ID #FOUND-ST
+*
+*     IF #SAS-USER AND (#SCR-COMMAND = 'AT')   /* DW16
+*      AND (#SCR-SUFFIX = 'COM')  /* create afsc combo "at" from aafmaa
+*      AND (ST-V.PROCESS-IND = 'I' OR = 'O' OR = 'D') /* ins-only
+*       MOVE TRUE TO #VALID  /* Ins-only/opt-out/de-grandfathered
+*       ESCAPE BOTTOM
+*     END-IF
+*
+*    PERFORM CHECK-MBR-SECURITY     /* DW16
+*
+*   IF NOT #VALID
+*       RESET #SVC-MBR #INS-MBR #GF-MBR
+*     ELSE
+*       ESCAPE BOTTOM
+*     END-IF
+  END-FIND
+* DISPLAY #FOUND-ST #VALID #GF-MBR #INS-MBR #SVC-MBR #IAS-USER #SCR-ID
+*         #FOUND-ID
+  IF NOT #FOUND-ID
+    ESCAPE ROUTINE
+  END-IF
+*
+* DISPLAY #FOUND-ST #VALID #GF-MBR #INS-MBR #SVC-MBR #IAS-USER
+*  IF NOT #VALID   /* REmoved 9/17/2009  DW99
+*    IF #IAS-USER
+*      MOVE 'AAFMAA not allowed access to AFSC members' TO #ERR-MSG
+*    ELSE
+*      IF #SAS-USER
+*        IF NOT #SCR-COMMAND = 'DI' OR = 'NS' OR = 'NU' OR = 'AD'
+*                         OR = 'DA' OR = 'DD' OR = 'TB'    /* DW3
+*          MOVE 'AFSC not allowed access to AAFMAA members until death'
+*                                                      TO #ERR-MSG
+*        END-IF
+*      ELSE
+*        MOVE 'Access to this member not valid for this user'
+*           TO #ERR-MSG
+*      END-IF
+*    END-IF
+*  END-IF
+*
+  IF  #INS-MBR AND #FOUND-ST     /* DW6
+      AND (PROCESS-IND = 'C')    /* Contact Entity or Pending AT
+      AND (#ERR-MSG = ' ')
+      AND (NOT #SCR-COMMAND = 'NM' OR = 'CG' OR = 'AD' OR = 'NU'
+      OR = 'RL' OR = 'NS' OR = 'CR' OR = 'TR' OR = 'CA' OR= 'TA' or = 'TC')       /* PM17  vt1
+* MOVE 'Command Invalid for Contact Entity' TO #ERR-MSG
+    MOVE 'Command Invalid for Non-Insured' TO #ERR-MSG
+    IF PROCESS-IND = 'C'                                                 /* PM1
+        AND ST-V.INTRO-FLAG = 'A'                                        /* PM1
+        AND #SCR-COMMAND = 'AT' OR = 'ST'  OR = 'CB' OR = 'CA' OR = 'FA' /* PM2/DW12
+      RESET #ERR-MSG                                                     /* PM1
+    END-IF                                                               /* PM1
+  END-IF
+*
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE TRUE TO #FOUND-ST
+RESET #VALID
+FIND (1) ST-V WITH MEMBER-KEY = #SCR-ID-6
+  IF NO RECORDS FOUND
+    FIND (1) ST-V WITH WIDOW-KEY = #SCR-ID-6
+      IF NO RECORD FOUND
+        RESET #FOUND-ST
+      END-NOREC
+    END-FIND
+  END-NOREC
+END-FIND
+*
+* IF #FOUND-ST /* if no find let g1000pxx reject it
+*  PERFORM CHECK-MBR-SECURITY
+* DISPLAY #FOUND-ST #VALID #GF-MBR #INS-MBR #SVC-MBR #IAS-USER
+*
+*  IF NOT #VALID
+*    IF #IAS-USER
+*      MOVE 'AAFMAA not allowed access to AFSC Members' TO #ERR-MSG
+*    ELSE
+*      IF #SAS-USER
+*        IF NOT #SCR-COMMAND = 'DI' OR = 'NS' OR = 'NU' OR = 'AD'
+*                         OR = 'DA' OR = 'DD'
+*          MOVE 'AFSC not allowed access to AAFMAA Members until death'
+*                                                         TO #ERR-MSG
+*        END-IF
+*      ELSE
+*        MOVE 'Access to this Member not valid for this User'
+*            TO #ERR-MSG
+*      END-IF
+*    END-IF
+*  END-IF
+* END-IF
+*
+* IF  #INS-MBR AND #FOUND-ST
+IF (PROCESS-IND = 'C')    /* Contact Entity or Pending AT
+    AND (#ERR-MSG = ' ')
+    AND (NOT #SCR-COMMAND = 'NM' OR = 'CG' OR = 'AD' OR = 'NU'
+    OR = 'RL' OR = 'NS' OR = 'CR' OR = 'TR' OR = 'CA' OR= 'TA' or = 'TC' )       /* PM17  /* vt1
+* MOVE 'Command Invalid for Contact Entity' TO #ERR-MSG
+  MOVE 'Command Invalid for Non-Insured' TO #ERR-MSG
+  IF PROCESS-IND = 'C'                                                  /* PM1
+      AND ST-V.INTRO-FLAG = 'A'                                         /* PM1
+      AND #SCR-COMMAND = 'AT' OR = 'ST'  OR = 'CB' OR = 'CA' OR = 'FA'  /* PM2/DW12
+    RESET #ERR-MSG                                                      /* PM1
+  END-IF                                                                /* PM1
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+* DEFINE SUBROUTINE CHECK-MBR-SECURITY      /* DW16
+* * * * * * * * * * * * * * * * * * *
+*
+* IF PROCESS-IND = 'G' OR = ' '
+*   MOVE TRUE TO #GF-MBR
+* ELSE
+*   IF PROCESS-IND = 'S'
+*     MOVE TRUE TO #SVC-MBR
+*   ELSE    /* I or O
+*     MOVE TRUE TO #INS-MBR  /* proc-ind of 'O' (OPT-OUT) will be ins-mbr
+*   END-IF
+* END-IF
+*
+* FOR #I2 9 TO 1 STEP -1  /* FIND LATEST POLICY
+*   IF   (ISSUE-DATE (#I2) NE 0)
+*    AND (STATUS (#I2) = 'D')
+*     ESCAPE BOTTOM
+*   END-IF
+* END-FOR
+*
+* IF #I2 = 0
+*   MOVE 1 TO #I2
+* END-IF
+*
+* DISPLAY #GF-MBR #99-USER #INS-MBR #IAS-USER #SVC-MBR #SAS-USER
+* IF   #GF-MBR OR #99-USER
+*  OR (#INS-MBR AND #IAS-USER)
+*  OR (#SVC-MBR AND #SAS-USER)
+*  OR (#SAS-USER
+*   AND (#SCR-COMMAND = 'DN' OR = 'DF'))   /*SO AFSC CAN DO CORE SERVICES
+*  OR ((WIDOW-FLAG = 'Y') AND (NOT #SVC-MBR))
+*  OR ((#SAS-USER) AND (ISSUE-DATE (#I2) GE #2-MON-AGO)
+*      AND (#SCR-COMMAND = 'DI' OR = 'NS' OR = 'NU' OR = 'AD'
+*                          OR = 'DA' OR = 'DD'))
+*   MOVE TRUE TO #VALID
+* END-IF
+*
+* END-SUBROUTINE                   /* END DW16
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE COMMAND-SECURITY
+* * * * * * * * * * * * * * * * *
+*
+* DISPLAY 'CMND-CODE' #COMMAND-SECURITY-CODE
+*    'USER/CODE' #USER-SECURITY-CODE #GF-MBR
+*    TYPE-OF-INPUT #INS-MBR #SVC-MBR #99-USER
+* IF #IAS-USER AND (#SCR-COMMAND = 'DC' OR = 'DM')   /* DW8/DW9
+*   MOVE 'AAFMAA users now use "CB" to replace DM/DC' TO #ERR-MSG
+*   MOVE 'CB' TO #SCR-COMMAND
+*   ESCAPE ROUTINE
+* END-IF
+*
+*
+* IF  (#SCR-COMMAND = 'DN')    /* code off as dead
+* AND (#INS-MBR)    /* added  5/23/2001 as per BMG
+* aND (#IAS-USER)    /* removed 5/23/2001 as per BMG       /* DW16
+* AND  (NOT #CLERK = 'BMG' OR = 'LCE' OR = 'CEB' OR = 'DRW'              /* PM14
+*    OR = 'KHB' OR = 'SKS' OR = 'LGM' OR = 'CEJ'
+*    OR = 'RDR' OR = 'ACN') /* DW4 TM1  DW7 DW10 PM11      DW15
+* AND (NOT #USER-SECURITY-CODE = 98 OR = 99)                /* DW16
+*  COMPRESS 'Only selected AAFMAA users are valid for DN' INTO #ERR-MSG
+*  ESCAPE ROUTINE
+* END-IF
+*
+IF #COMMAND-SECURITY-CODE = 3 OR = 95 /* INVLD FOR INS-ONLY MBRS (also INS-PLUS ?)
+  IF ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'       /* SPS-GEN
+    COMPRESS #SCR-COMMAND 'Invalid for INS-ONLY Members' INTO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+*
+*  IF   (ST-V.PROCESS-IND = 'I' OR = 'D' OR = 'O')    /* INS-PLUS/DE-GF/OPT-OUT     RE1 Start
+*   AND (WIDOW-FLAG NE 'Y')                           /* Still Alive
+*    COMPRESS #SCR-COMMAND 'Invalid for Alive INS-PLUS/DE-GF/OPT-OUT Members'
+*            INTO #ERR-MSG
+*    ESCAPE ROUTINE
+*  END-IF                                                                           RE1 End
+
+*  IF ST-V.PROCESS-IND = 'O'  /* opted out member
+*    FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+*      FOR #I1 1 TO C*NOTE-TABLE                 /* DW13
+*        IF NOTE-TEXT (#I1) = MASK ('* OPTED-OUT OF SHARING DATA ON')
+*          COMPRESS OO-DATE-YYYY (#I1) OO-DATE-MM (#I1) OO-DATE-DD (#I1)
+*                 INTO #YYYYMMDD-A LEAVING NO
+*          MOVE #YYYYMMDD TO #OO-DATE
+*          ESCAPE BOTTOM
+*        END-IF
+*      END-FOR
+*    END-FIND
+*  END-IF
+*
+*  FOR #I2 9 TO 1 STEP -1  /* find latest policy
+*    IF   (ISSUE-DATE (#I2) NE 0)
+*     AND (STATUS (#I2) = 'D')
+*      ESCAPE BOTTOM
+*    END-IF
+*  END-FOR
+*
+*  IF #I2 = 0
+*    MOVE 1 TO #I2
+*  END-IF
+*
+*
+*  if   (Widow-flag ne 'Y')     /* Member is alive
+*   and (
+*  IF   (WIDOW-FLAG = 'Y')     /* member deceased
+*   OR ((#SCR-COMMAND = 'DI' OR = 'DA' OR = 'DD')
+*   AND (ST-V.ID-NUMBER LT 106030) /* removed 5/22/2002
+*    AND (NOT #IAS-USER)
+*    AND ((ST-V.ISSUE-DATE (1) = 0)    /* INACTIVE
+*     OR  (ST-V.STATUS (1) = 'E' OR = 'F' OR = 'G')      /* to be purged
+*     OR  (ST-V.PROCESS-IND = 'D' OR = 'O')   /* de-gf
+*    OR  (ST-V.ISSUE-DATE(1) GT #2-MON-AGO))) /* w/i 2 mons-remov 2003
+*     OR  (ST-V.ISSUE-DATE(#I2) GT #2-MON-AGO)))
+*    IGNORE
+*  ELSE
+*    IF   (ST-V.PROCESS-IND = 'O')  /* opted out member
+*     AND (#OO-DATE GT #2-MON-AGO)
+*      IGNORE
+*    ELSE
+*      IF #INS-MBR
+*      COMPRESS #SCR-COMMAND 'Invalid for INS-ONLY Members' INTO #ERR-MSG
+*        ESCAPE ROUTINE
+*      END-IF
+*    END-IF
+*  END-IF
+END-IF
+*
+* IF   (#COMMAND-SECURITY-CODE = 96)  /* Invalid for AFSC mbrs    /* DW16
+*  AND (#SVC-MBR)
+*   COMPRESS #SCR-COMMAND 'Invalid for AFSC Members' INTO #ERR-MSG
+*   ESCAPE ROUTINE
+* END-IF
+*
+* WRITE 'Command check COMMAND-SECURITY=' #COMMAND-SECURITY-CODE
+*     'user-security=' #USER-SECURITY-CODE
+RESET #VALID
+IF (#COMMAND-SECURITY-CODE = 99 OR = 95 OR = 96) /* VALID FOR ANYBODY
+*                                           /* 95 already validated
+    OR (#USER-SECURITY-CODE = 97 OR = 98)   /* SAS or IAS ALL POWERFUL
+    OR (#USER-SECURITY-CODE = 99)           /* EDS all powerful - No LONGER USED
+*
+    OR ((#USER-SECURITY-CODE = 1)   /* SVC NO-UPDATE USER
+    AND (#COMMAND-SECURITY-CODE = 1 OR = 3))
+*
+    OR ((#USER-SECURITY-CODE = 2 OR = 97)   /* SVC ACCT/SALES UPDATE USER
+    AND (#COMMAND-SECURITY-CODE = 1 OR = 3 OR = 5 OR = 9))
+*
+    OR ((#USER-SECURITY-CODE = 4)   /* INS ACCT UPDATE USER
+    AND (#COMMAND-SECURITY-CODE = 4 OR = 5 OR = 12 OR = 20))
+*
+    OR ((#USER-SECURITY-CODE = 6)   /* INS SALES UPDATE USER
+    AND (#COMMAND-SECURITY-CODE = 6 OR = 20 OR = 98))
+*
+    OR ((#USER-SECURITY-CODE = 8)   /* INS ADMIN UPDATE USER
+    AND (#COMMAND-SECURITY-CODE = 6 OR = 8 OR = 9 OR = 12 OR = 20))
+*
+    OR ((#USER-SECURITY-CODE = 12)   /* INS ACCT/ADMIN/SALES UPDATE USER
+    AND (#COMMAND-SECURITY-CODE = 4 OR = 5 OR = 6 OR = 8 OR = 9 OR = 12
+    OR = 20))
+*
+* OR ((#USER-SECURITY-CODE = 16)   /* INS MICRO-FILM UPDATE USER  (NO LONGER)
+* AND (#COMMAND-SECURITY-CODE = 16 OR = 20))
+*
+    OR ((#USER-SECURITY-CODE = 20)   /* INS GENERAL NO UPDATE USER
+    AND (#COMMAND-SECURITY-CODE = 20 OR = 98))
+*
+    OR (#USER-SECURITY-CODE = 99)   /* EDS all powerful
+*
+  MOVE TRUE TO #VALID
+END-IF
+*
+IF   (#USER-SECURITY-CODE = 1)     /* SAS General User     /* DW16
+    AND (#SCR-COMMAND = 'CI')  /* CI is 99 for IAS use but should not be for SAS
+  RESET #VALID               /* NOT Valid
+END-IF
+*
+* IF   (#SCR-COMMAND = 'NM' OR = 'AI') /* added 12/2003 bmg
+*  AND (#SCR-SUFFIX = 'LTR' OR = 'EZP')
+*   MOVE TRUE TO #VALID
+* END-IF
+*
+* IF (#COMMAND-SECURITY-CODE = 16)
+*  AND (#CLERK = 'KRM') /* a/o 7/29/2002 KRM only can do micro-filming
+*   MOVE TRUE TO #VALID
+*   ESCAPE ROUTINE
+* END-IF
+*
+IF #IAS-USER AND #SCR-COMMAND = 'RL'   /* RE2
+  MOVE TRUE TO #VALID                  /* RE2
+END-IF                                 /* RE2
+*
+IF   (NOT #VALID)
+    OR ((TYPE-OF-INPUT = 'N')
+    AND #SAS-USER
+    AND (NOT #COMMAND-SECURITY-CODE = 1 OR = 3 OR = 5 OR = 9 OR = 99
+    OR = 6       OR = 95 OR = 96))
+*
+    OR ((TYPE-OF-INPUT = 'N')   /* NO ID REQUIRED
+    AND #IAS-USER AND (#COMMAND-SECURITY-CODE = 1 OR = 3))
+*
+    OR ((TYPE-OF-INPUT = 'O' OR = 'P' OR = 'Q' OR = 'R') /* ID OPTIONAL
+    AND (#SCR-ID = 0)
+    AND #SAS-USER
+    AND (NOT #COMMAND-SECURITY-CODE = 1 OR = 3 OR = 5 OR = 9 OR = 99
+    OR = 95 OR = 96))
+*
+    OR ((TYPE-OF-INPUT = 'O' OR = 'P' OR = 'Q' OR = 'R') /* ID OPTIONAL
+    AND (#SCR-ID = 0)
+    AND #IAS-USER AND (#COMMAND-SECURITY-CODE = 1 OR = 3))
+*
+  COMPRESS #SCR-COMMAND 'Invalid for this USER' INTO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+END-SUBROUTINE
+*
+END

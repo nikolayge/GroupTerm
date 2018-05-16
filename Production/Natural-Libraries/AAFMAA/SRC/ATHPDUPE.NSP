@@ -1,0 +1,129 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: athpdupe - duplicate e-z pay acct #
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE     TAG  REASON                                            *
+* PAM  07072005 PM1  Do not include linked members on report           *
+* DRW  08312006 DW2  INCREASE SIZE OF #RECS-READ                       *
+* PAM  09202006 PM3  INCLUDE ROUTING NUMBER IN SORT                    *
+* DRW 01/25/2008 DW3 make report Tab delimited
+* RSE  09222009 RE1  Change PROCESS-IND logic for Unification
+************************************************************************
+*
+DEFINE DATA
+LOCAL
+*
+* * * *   S T A T U S   F I L E   * * * * * * * * * * * * * * *
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NBR       (A6)
+  2 INTRO-FLAG          (A1)                                      /* PM1
+  2 PROCESS-IND         (A1)                                      /* PM1
+  2 LINKED-CN           (N6/30)                                   /* PM1
+  2 REDEFINE LINKED-CN
+   3 LINKED-CN-OCC      (30)
+    4 LINKED-CN-A       (A6)
+  2 PAD-ACCT-NUM        (A17)
+  2 PAD-ABA-NBR         (A9)
+*
+1 LK-V VIEW OF A-STATUS                                           /* PM1
+ 2 PAD-ACCT-NUM         (A17)
+ 2 PAD-ABA-NBR          (A9)
+*
+1 #COUNTERS
+  2 #RECS-READ        (P7)
+  2 #RECS-SELECTED    (P5)
+  2 #CNT              (P5)
+  2 #CNT-2            (P5)
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #LAST-ACCT        (A17)
+  2 #LAST-ABA         (A9)                                        /* PM1
+  2 #LAST-CN          (N6)
+*
+1 #LINKED             (L)                                         /* PM1
+1 #TAB       (A1) INIT <H'09'>
+1 #extract        (a50)                 /* DW3
+*
+END-DEFINE
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+          'MBRS WITH MATCHING PAD ACCT NUMBERS'
+                      5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+compress 'PROGRAM: ATHPDUPE MBRS with Matching PAD Acct #"s  DATE:'
+    *DATN 'TIME:' *TIMN into #extract
+WRITE WORK FILE 1 #EXTRACT
+*
+compress 'CN'
+ #tab 'Matching ID Number'
+ #tab 'PAD Acct Nbr'
+ #tab 'PAD ABA Nbr'
+    into #extract leaving no
+WRITE WORK FILE 1 #EXTRACT
+
+READ ST-V BY MEMBER-KEY FROM '001900'
+  ADD 1 TO #RECS-READ
+*
+  IF   (ST-V.PAD-ACCT-NUM = ' ')
+*   OR  (ST-V.PROCESS-IND = 'S' OR = 'C')                          /* PM1    RE1
+   OR (ST-V.PROCESS-IND = 'C')                                    /* RE1
+   OR AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                          /* RE1
+    ESCAPE TOP    /* do not need to sort
+  END-IF
+*
+  IF ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'                      /* PM1
+    RESET #LINKED                                                 /* PM1
+    FIND LK-V WITH LK-V.MEMBER-KEY = ST-V.LINKED-CN-A (1)         /* PM1
+      IF LK-V.PAD-ACCT-NUM = ST-V.PAD-ACCT-NUM                    /* PM1
+       AND LK-V.PAD-ABA-NBR = ST-V.PAD-ABA-NBR                    /* PM1
+        MOVE TRUE TO #LINKED                                      /* PM1
+      END-IF                                                      /* PM1
+    END-FIND                                                      /* PM1
+*                                                                 /* PM1
+    IF #LINKED                                                    /* PM1
+      ESCAPE TOP                                                  /* PM1
+    END-IF                                                        /* PM1
+  END-IF                                                          /* PM1
+*
+  ADD 1 TO #RECS-SELECTED
+END-ALL
+*
+* * * * * * SORT INPUT RECORDS * * * * * *
+*
+SORT BY ST-V.PAD-ACCT-NUM ST-V.PAD-ABA-NBR                        /* PM3
+  USING ST-V.ID-NUMBER                                            /* PM1
+*
+  IF  ST-V.PAD-ACCT-NUM = #LAST-ACCT
+   AND ST-V.PAD-ABA-NBR = #LAST-ABA                               /* PM1
+*
+    compress  ST-V.ID-NUMBER                  /* DW3
+     #tab  #LAST-CN
+     #tab  ST-V.PAD-ACCT-NUM
+     #tab  ST-V.PAD-ABA-NBR
+        into #extract leaving no
+    WRITE WORK FILE 1 #EXTRACT
+*
+    ADD 1 TO #CNT-2
+    DISPLAY (2) #CNT-2
+                'ID Number' ST-V.ID-NUMBER
+                'Matching ID Number' #LAST-CN
+                'PAD Acct Nbr' ST-V.PAD-ACCT-NUM
+                'PAD ABA Nbr' ST-V.PAD-ABA-NBR                    /* PM1
+  END-IF
+*
+  MOVE ST-V.PAD-ACCT-NUM TO #LAST-ACCT
+  MOVE ST-V.PAD-ABA-NBR  TO #LAST-ABA                             /* PM1
+  MOVE ST-V.ID-NUMBER    TO #LAST-CN
+END-SORT
+*
+WRITE (2) 'TOT-RECS-READ        = ' #RECS-READ
+WRITE (2) 'TOT-RECS-SELECTED    = ' #RECS-SELECTED
+*
+END

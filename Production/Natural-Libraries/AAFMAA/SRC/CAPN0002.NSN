@@ -1,0 +1,168 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: CAPN0002                                                     *
+* FUNCTION : Create or update the Notes associated with CAP loans      *
+*                                                                      *
+*                       MODIFICATION LOG                               *
+************************************************************************
+* USER  DATE      TAG     REASON                                       *
+* vxt   01082018  vt1     /Ticket 6490/                                *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #ACTION-TYPE (I4)
+1 #CLERK-ID (A3)
+1 #CN (N6)
+1 #CAP-NUM (N2)
+1 #CAP-STATUS (A1)
+* 1 #LOAN-ISSUE-DATE(N8)
+LOCAL
+1 #GET       (I4) CONST <0>
+1 #ADD       (I4) CONST <1>
+1 #UPDATE    (I4) CONST <2>
+1 #DELETE    (I4) CONST <3>
+1 #CHECKFORUPDATES (I4) CONST <4>
+1 BLANK      (A1) CONST <' '>
+1 #UPDATED   (L)
+*
+1 #NOTES-TEXT   (A60/10)
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER (N6.0)
+  2 DTS-DATN (P9.0)
+  2 DTS-TIMN (P7.0)
+  2 C*NOTE-TABLE
+  2 NOTE-DATE (N8.0/100)
+*   2 REDEFINE NOTE-DATE /* REDEF. BEGIN : NOTE-DATE
+*     3 NOTE-DATE-OCC (40)
+*       4 NT-CC (A2)
+*       4 NT-YY (A2)
+*       4 NT-MM (A2)
+*       4 NT-DD (A2)
+  2 NOTE-CLERK-ID (A3/100)
+  2 NOTE-LINE-NUM (P1.0/100)
+  2 NOTE-TEXT (A60/100)
+*
+1 #DATE-FORMATTED (A10)
+*
+1 #DATE-YYYYMMDD (A8)
+1 REDEFINE #DATE-YYYYMMDD
+  2 #YYYY (A4)
+  2 #MM   (A2)
+  2 #DD   (A2)
+*
+1 #DATN (N8)
+1 #INT (I2)
+1 #CAP-VERSION (A5)
+1 I  (I4) /* index variable
+1 #POS (I4)
+END-DEFINE
+*
+* IF #LOAN-ISSUE-DATE = 0
+#DATE-FORMATTED := *DAT4U
+* ELSE
+*   #DATE-YYYYMMDD := #LOAN-ISSUE-DATE
+*   COMPRESS #MM '/' #DD '/' #YYYY INTO #DATE-FORMATTED LEAVING NO
+* END-IF
+
+#DATN           := *DATN
+*
+IF #CAP-NUM = 0
+  #CAP-NUM := 1
+END-IF
+*
+COMPRESS '*CAP' #CAP-NUM INTO #CAP-VERSION LEAVING NO
+*
+
+DECIDE ON FIRST VALUE OF #CAP-STATUS
+  VALUE 'P'
+    COMPRESS #CAP-VERSION 'Pending'
+      INTO #NOTES-TEXT(1)
+  VALUE 'D'
+    COMPRESS #CAP-VERSION 'Defaulted on' #DATE-FORMATTED
+      INTO #NOTES-TEXT(1)
+  VALUE 'C'
+    COMPRESS #CAP-VERSION 'Issued' #DATE-FORMATTED
+      INTO #NOTES-TEXT(1)
+  VALUE 'Q'
+    COMPRESS #CAP-VERSION 'Paid off' #DATE-FORMATTED
+      INTO #NOTES-TEXT(1)
+  VALUE 'L'                                                 /* vt1 \/
+    COMPRESS #CAP-VERSION 'Lapsed' #DATE-FORMATTED
+      INTO #NOTES-TEXT(1)
+  value 'R'
+    COMPRESS #CAP-VERSION 'Reinstated' #DATE-FORMATTED
+      INTO #NOTES-TEXT(1)                                   /* vt1 /\
+  NONE VALUE
+* No note to add without a status
+    ESCAPE ROUTINE
+END-DECIDE
+*
+DECIDE ON FIRST VALUE OF #ACTION-TYPE
+  VALUE #ADD
+    PERFORM ADD-NOTE
+  VALUE #UPDATE
+    PERFORM UPDATE-NOTE
+*   VALUE #DELETE                       /* vt1
+*     PERFORM DELETE-N0TE               /* vt1
+  NONE VALUE
+    IGNORE
+END-DECIDE
+
+**************************
+DEFINE SUBROUTINE ADD-NOTE
+**************************
+#INT := 1
+CALLNAT 'E4205SDM'
+  #CN
+  #INT
+  #CLERK-ID
+  #NOTES-TEXT (*)
+**************
+END-SUBROUTINE
+**************
+
+**************************
+DEFINE SUBROUTINE UPDATE-NOTE
+**************************
+FIND NT-V WITH NT-V.ID-NUMBER = #CN
+  FOR I NT-V.C*NOTE-TABLE TO 1 STEP -1
+    EXAMINE NOTE-TEXT(I) FOR #CAP-VERSION GIVING POSITION #POS
+    IF #POS = 0
+      ESCAPE TOP
+    END-IF
+    NOTE-TEXT(I)     := #NOTES-TEXT(1)
+    NOTE-DATE(I)     := *DATN
+    NOTE-CLERK-ID(I) := #CLERK-ID
+    UPDATE
+    ESCAPE BOTTOM
+  END-FOR
+END-FIND
+*
+IF #POS = 0
+  PERFORM ADD-NOTE
+END-IF
+**************
+END-SUBROUTINE
+**************
+
+* **************************                /* vt1 \/
+* DEFINE SUBROUTINE DELETE-N0TE
+* **************************
+* IGNORE
+* **************
+* END-SUBROUTINE
+**************                              /* vt1 /\
+
+* CALLNAT 'E4205SDM'
+*   #CN
+*   #ADD
+*   #CLERK-ID
+*   #NOTES-TEXT (*)
+
+
+END
+

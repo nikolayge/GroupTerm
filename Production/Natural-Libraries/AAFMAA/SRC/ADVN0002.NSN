@@ -1,0 +1,307 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Call to Address verification WebService
+* Called from CG process
+*
+*****************************************************************
+*        MODIFICATION LOG
+*****************************************************************
+* USER   DATE      TAG  REASON
+* YAK    01102010       Initial Creation
+* NGG    08252010       Clone ADVN0001 to match the new address
+*                       structure
+* YAK    04222010  YK3  Comment out writing log for contacts
+* YAK    12142011  YK4  Write log based on user response to
+*                       change/not change address
+* bz-ws  10/10/2017     Change from xmlRPC to direct request
+*****************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CONTACT-ID      (N8)
+1 #URBANIZATION    (A50)
+1 #STREET          (A50)
+1 #UNIT            (A25)
+1 #CITY            (A50)
+1 #STATE-CD        (A2)
+1 #ZIP             (A10)
+1 #CASS-FLAG       (A1)
+1 #CHG-FLAG        (A1)
+LOCAL USING ADVA00WS                             /* bz-ws
+LOCAL
+1 #CORR-STREET          (A50)
+1 #CORR-UNIT            (A25)
+1 #CORR-CITY            (A50)
+1 #CORR-STATE-CD        (A2)
+1 #CORR-ZIP             (A10)
+
+1 #NO-MATCH-FOUND-CODE   (A3)  CONST <'-99'>                                    /* YK1
+1 #ADDR-TITLE            (A19) INIT <'Address validation'>
+1 #ERROR-DESC-1          (A70)
+1 #ERROR-DESC-2          (A70)
+1 #ERROR-DESC-3          (A70)
+
+1 #TEXT                  (A78)
+1 #REJECTED              (L)
+1 #ACCEPTED              (L)
+1 #NO-MATCH-FOUND        (L)
+1 #EXCEEDED-LENGTH       (L)
+1 #NO-ZIP4-FOUND         (L)
+1 #ERROR-MSG             (A) DYNAMIC
+1 #NO-ZIP4-ACCEPTED-MSG  (A) DYNAMIC INIT <'No ZIP+4 returned - accepted '>
+1 #NO-ZIP4-REJECTED-MSG  (A) DYNAMIC INIT <'No ZIP+4 returned - rejected '>
+1 #REJECTED-MSG          (A) DYNAMIC INIT <'Address change rejected by user'>
+1 #NO-MATCH-FOUND-MSG    (A) DYNAMIC INIT <'No match found'>
+1 #PROCESS-TYPE          (A) DYNAMIC INIT <'AddressValidation'>
+1 #USER-ID               (A8)
+1 #SEARCHESLEFT          (A10)
+
+
+1 CONTACT VIEW OF A-CONTACTS
+  2 ID-NUMBER  (N6)
+  2 CONTACT-ID (N8)
+1 RELATED VIEW OF A-CONTACTS
+  2 ID-NUMBER  (N6)
+1 CONTACT-REL VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+
+1 #ADD-MESSAGE           (A) DYNAMIC
+1 #LOG-MESSAGE           (A) DYNAMIC
+1 #MILITARY              (A2)
+1 #K                     (I4)
+1 #L                     (I4)
+1 BLANK                  (A1) CONST <' '>
+1 #RESPONSE              (A1)                    /* YK4
+1 #SECURITY-CODE         (N2) CONST <77>         /* YK4
+
+END-DEFINE
+*
+* escape routine  /* temporary vt
+* do not send empty addresses for verification
+IF #STREET = ' ' AND #CITY = ' ' AND #STATE-CD = ' '
+    AND #ZIP = ' '
+  ESCAPE ROUTINE
+END-IF
+RESET #CASS-FLAG
+DELIVERY_LINE_1 := #STREET
+DELIVERY_LINE_2 := #UNIT
+URBANIZATION    := #URBANIZATION
+COMPRESS #CITY #STATE-CD #ZIP INTO CITY_STATE_ZIP
+
+  CALLNAT 'WSADDR00' WSREQUEST            /* bz-ws
+
+RESET #MILITARY
+#K := *LENGTH ( ERRORCODES )
+#L := 1
+REPEAT
+  UNTIL #L >= #K
+  IF SUBSTRING ( ERRORCODES,#L,2) = '13'
+    #MILITARY := '13'
+  END-IF
+  ADD 2 TO #L
+END-REPEAT
+
+DEFINE WINDOW ADDRESS-UPDATE
+  SIZE 18 * 80
+  BASE 4 / 4
+  TITLE #ADDR-TITLE
+  FRAMED ON
+*
+DEFINE WINDOW USER-MESSAGE
+  SIZE 5 * 50
+  BASE 8 / 15
+  TITLE #ADDR-TITLE
+  FRAMED ON
+
+IF RETURNCODES = '100'                             /* bz-ws -B
+     #ADDR-TITLE := 'Address Validation Error'
+     SET WINDOW 'USER-MESSAGE'         
+     INPUT WINDOW = 'USER-MESSAGE' (IP=OFF) WITH TEXT      
+     ErrorDesc                      
+     '* Plase notify MSS'(I)                     
+     SET WINDOW OFF
+  ESCAPE ROUTINE                                 
+END-IF                                             /* bz-ws -E
+     
+IF RETURNCODES = #NO-MATCH-FOUND-CODE
+* Returned address is the same as sent address
+  #NO-MATCH-FOUND := TRUE
+* yk4 start
+* Display information window
+  SET WINDOW 'USER-MESSAGE'
+  #RESPONSE := 'N'
+  INPUT WINDOW = 'USER-MESSAGE' WITH TEXT
+    '  ***           No Match Found            ***'
+    '  ***     Do you want to accept anyway?'  #RESPONSE (AD=YLMFHT'_')  '***'
+  #CHG-FLAG    := #RESPONSE    /* 'N'
+  #CASS-FLAG   := 'F'
+  IF #RESPONSE = 'Y'
+     #USER-ID := *USER
+     PERFORM WRITE-LOG
+  END-IF
+  SET WINDOW OFF
+  ESCAPE ROUTINE
+END-IF
+
+IF ZIPADDON = ' '
+  IF ADDON = ' ' THEN ADDON := '0000'
+  END-IF
+  COMPRESS ZIP ADDON INTO ZIPADDON WITH '-'
+  #NO-ZIP4-FOUND := TRUE
+END-IF
+
+ASSIGN #SEARCHESLEFT := SEARCHESLEFT
+
+IF RECORDTYPE = 'P' OR= 'R'
+    OR #MILITARY = '13'
+  #CORR-STREET := DELIVERYLINE1
+ELSE
+  COMPRESS
+    STREETNUMBER
+    PREDIRECTIONAL
+    STREETNAME
+    STREETSUFFIX
+    POSTDIRECTIONAL
+    INTO #CORR-STREET
+END-IF
+IF SECONDARYDESIGNATION EQ BLANK
+    AND SECONDARYNUMBER NE BLANK
+  COMPRESS
+    '#'
+    SECONDARYNUMBER
+    PMBDESIGNATOR
+    INTO #CORR-UNIT
+ELSE
+  COMPRESS
+    SECONDARYDESIGNATION
+    SECONDARYNUMBER
+    PMBDESIGNATOR
+    INTO #CORR-UNIT
+END-IF
+
+ #ERROR-DESC-1   := ERRORDESC
+ IF *LENGTH(ERRORDESC) > 70
+    #ERROR-DESC-2  := SUBSTR(ERRORDESC,71)
+ END-IF
+ IF *LENGTH(ERRORDESC) > 140
+    #ERROR-DESC-3  := SUBSTR(ERRORDESC,140)
+ END-IF
+ 
+ PERFORM sbr_Test
+ 
+IF #STREET NE #CORR-STREET
+    OR #UNIT NE #CORR-UNIT
+    OR #CITY NE CITY
+    OR #STATE-CD NE STATE
+    OR #ZIP NE ZIPADDON
+*
+  #CORR-CITY      := CITY
+  #CORR-STATE-CD  := STATE
+  #CORR-ZIP       := ZIPADDON
+
+  #CHG-FLAG    := 'Y'
+  #CASS-FLAG   := 'N'
+ELSE
+  #CHG-FLAG    := 'C'
+  #CASS-FLAG   := 'Y'
+*    Display confirmation window
+  SET WINDOW 'USER-MESSAGE'
+  INPUT WINDOW = 'USER-MESSAGE' WITH TEXT
+    '  ***      Address is CASS certified  ***'
+    '  ***             No changes          ***'
+  SET WINDOW OFF
+  ESCAPE ROUTINE
+END-IF
+
+SET WINDOW 'ADDRESS-UPDATE'
+INPUT WITH TEXT #TEXT USING MAP 'ADVM0002'
+DECIDE FOR FIRST CONDITION
+  WHEN #CHG-FLAG = 'N'                 /* Corrections were not accepted by user
+    #USER-ID := *USER
+    #REJECTED   := TRUE                                         /* YK4
+  WHEN #CHG-FLAG = 'Y'                 /* Corrections accepted by user
+    #ACCEPTED   := TRUE
+    #STREET     := #CORR-STREET
+    #UNIT       := #CORR-UNIT
+    #CITY       := #CORR-CITY
+    #STATE-CD   := #CORR-STATE-CD
+    #ZIP        := #CORR-ZIP
+    #CASS-FLAG   := 'Y'
+  WHEN ANY
+    PERFORM WRITE-LOG
+    SET WINDOW OFF
+    ESCAPE ROUTINE
+  WHEN NONE                                  /* There are corrections, user selection Y/N required
+    #TEXT := 'Please, select "Y" OR "N"'
+    REINPUT WITH #TEXT MARK *#CHG-FLAG
+END-DECIDE
+*
+***************************
+DEFINE SUBROUTINE WRITE-LOG    /* YK2
+***************************
+*
+IF #REJECTED                   /* YK4
+  #CHG-FLAG := 'Y'             /* YK4
+END-IF                         /* YK4
+*
+RESET #ERROR-MSG #ADD-MESSAGE
+FIND CONTACT WITH CONTACT-ID = #CONTACT-ID
+END-FIND
+IF CONTACT.ID-NUMBER = 0                                   /* NG1 add Linked CN
+  ESCAPE ROUTINE                                           /* YK3
+END-IF                                                     /* YK3
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #ACCEPTED AND #NO-ZIP4-FOUND
+    #ERROR-MSG := #NO-ZIP4-ACCEPTED-MSG
+  WHEN #REJECTED AND #NO-ZIP4-FOUND
+    #ERROR-MSG := #NO-ZIP4-REJECTED-MSG
+  WHEN #REJECTED
+    #ERROR-MSG := #REJECTED-MSG
+  WHEN #NO-MATCH-FOUND
+    #ERROR-MSG := #NO-MATCH-FOUND-MSG
+  WHEN NONE
+    IGNORE
+END-DECIDE
+IF #ERROR-MSG NE ' '
+  #USER-ID := *USER
+  IF CONTACT.ID-NUMBER = 0
+    COMPRESS *DATU FUNCTION-NAME(<#USER-ID>) '*' #STREET #UNIT #CITY #STATE-CD #ZIP
+      '-' #ERROR-MSG '-' #ADD-MESSAGE INTO #LOG-MESSAGE
+  ELSE
+    COMPRESS *DATU FUNCTION-NAME(<#USER-ID>) CONTACT.ID-NUMBER #STREET #UNIT #CITY
+      #STATE-CD #ZIP '-' #ERROR-MSG INTO #LOG-MESSAGE
+  END-IF
+  CALLNAT 'GPRN0005' #PROCESS-TYPE #LOG-MESSAGE
+END-IF
+*
+END-SUBROUTINE
+* -----------------------------------------------------------------------------
+DEFINE sbr_Test
+IF F-IS-DEV(<>)
+  INPUT (AD=O IP=OFF) 
+     1/2 '--' 10x '  Test output (Dev/Test environment only)  ' '---'
+     3/2 'Str :' #STREET     
+     4/2 '     ' #CORR-STREET(AD=I)
+     5/2 'Unit:' #UNIT      
+     6/2 '     ' #CORR-UNIT(AD=I)
+     7/2 'City:' #CITY
+     8/2 '     ' CITY(AL=50 AD=I)
+     9/2 'St  :' #STATE-CD
+    10/2 '     ' STATE(AL=2 AD=I)
+    11/2 'Zip :' #ZIP
+    12/2 '     ' ZIPADDON(AL=10 AD=I)
+    14/2 'Return cd' ReturnCodes(AL=20) 'Error cd:' ERRORCODES(AL=20) 
+    16/2 #ERROR-DESC-1
+    17/2 #ERROR-DESC-2
+    18/2 #ERROR-DESC-3
+END-IF
+END-SUBROUTINE
+
+END

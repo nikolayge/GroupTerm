@@ -1,0 +1,530 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* T-ANAME Maintaine Name Exceptions 
+* BZ 07/12/2017 
+* -----------------------------------------------------------------------
+* View Candidats        - Get 
+* View One CN           - Get_CN
+* View all exceptions   - View
+* Update group          - Upd  
+*   '*' wild card assigne Part of name and change position pf '*' capital
+*   '?' wild card assigne only Part of name
+*   Opt = 'Del' - Delete exceptions
+* Update CN             - Upd_CN
+*   Opt = 'Del' - Delete exceptions
+*    Assign exception to CN and all relations   
+* Update CI             - Upd_CN
+*   Opt = 'Del' - Delete exception
+* ------------------------------------------------------------------------
+* Bypass for Wildcard if alredy exist and is the same
+* Bypass for Mass Update Wildcard if alredy exist and is the same Not Yet
+* ^ before Exception eliminate updates
+* XXXX+ apliy edit mask XXXX for presentation (used by GPRS0CNT)
+* ! added to GPRS0CNT to show all capitals 
+DEFINE DATA PARAMETER
+ 1 p_TN
+   2 CN      (N8)  BY VALUE
+   2 Ex_Name (A)   DYNAMIC BY VALUE 
+   2 Mod     (A)   DYNAMIC BY VALUE
+   2 Opt     (A)   DYNAMIC BY VALUE
+   2 Text    (A/*) DYNAMIC
+LOCAL
+ 1 Name_Start  (A)  DYNAMIC
+ 1 Name_End    (A)  DYNAMIC
+ 1 v_Name      (A)  DYNAMIC
+ 1 Ex_Orig     (A25)
+ 1 #x          (N5) 
+ 1 A12         (A12)
+ 1 #i          (I4)
+ 1 #j          (I2)
+ 1 v_L#        (N6)
+ 1 v_F#        (N6)
+ 1 #e          (I2)
+ 1 #n          (I2)
+ 1 #b          (I2)
+ 1 #su         (I2)  /* bypass if too short
+ 1 #bu         (I2)  /* bypass if the same 
+ 1 #t          (I2)
+ 1 #l          (I2)
+ 1 A06_1       (A6)
+ 1 A06_2       (A6)
+ 1 A08         (A8)
+ 1 v_A         (A)  DYNAMIC
+ 1 v_W         (A)  DYNAMIC
+ 1 br          (A6) INIT <'<br />'>
+ 1 l_Upd       (L)  INIT <TRUE>
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2  ID-NUMBER
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER_A  (A6)
+  2  CONTACT-ID
+  2 REDEFINE CONTACT-ID
+    3 CONTACT-ID_A  (A8)
+  2  LAST-NAME
+  2  EX-LAST-NAME 
+  2 CONTACT-TYPE
+*
+1 CNT-H VIEW OF A-CONTACTS
+   2  EX-LAST-NAME
+   
+1 CR-V VIEW OF A-CONTACT-RELATIONSHIPS
+   2 CONTACT-1-ID    
+   2 CONTACT-2-ID    
+
+END-DEFINE
+ 
+* ON ERROR                                                            /* --db
+*   PRINT "Err:" *ERROR-NR "Err-ln:" *ERROR-LINE *PROGRAM  /          /* --db
+*    '='#i '='#j  '='Ex_Name '='v_Name '='Mod                        /* --db 
+*   ESCAPE ROUTINE                                                    /* --db 
+* END-ERROR                                                           /* --db
+
+ IF Ex_Name = MASK ('^') 
+    l_Upd := FALSE 
+    SEPARATE Ex_Name INTO Ex_Name Ex_Name WITH DELIMITER '^'
+ END-IF
+ 
+ DECIDE ON FIRST VALUE OF Mod
+    VALUE 'Get'    PERFORM sbr_Get
+    VALUE 'Get_CN' PERFORM sbr_Get_CN
+    VALUE 'Upd'    
+              IF Ex_Name = SCAN('*') 
+                PERFORM sbr_Upd_WildCard 
+              ELSE
+                PERFORM sbr_Upd
+              END-IF  
+    VALUE 'Upd_CN' PERFORM sbr_Upd_CN
+    VALUE 'Upd_CI' PERFORM sbr_Upd_CI
+    VALUE 'View'   PERFORM sbr_View      
+    NONE
+         COMPRESS 'Unknown request' Mod INTO v_A
+         PERFORM sbr_ADD
+         ESCAPE ROUTINE
+ END-DECIDE
+* ----------------------------------
+ DEFINE sbr_Get
+*       -------
+ Mod := ' '
+ IF Ex_Name = SCAN('+') 
+   SEPARATE Ex_Name INTO Mod Ex_Name WITH DELIMITER '+'
+ END-IF
+ Name_Start := *TRIM(Ex_Name)
+ Name_Start := *TRANSLATE(Name_Start, UPPER)
+ Name_End := Name_Start
+ IF Name_Start = MASK (*'*'/) OR = MASK (*'?'/)
+    EXAMINE Name_Start FOR '*' REPLACE 'A'
+    EXAMINE Name_Start FOR '?' REPLACE ' '
+    EXAMINE Name_End FOR '*' REPLACE 'ZZZ'
+    EXAMINE Name_End FOR '?' REPLACE 'ZZZ'
+ END-IF    
+ FLG.
+ FIND NUMBER CNT-V WITH  LAST-NAME >= Name_Start AND LAST-NAME <= Name_End
+ v_L# := *NUMBER(FLG.)
+ FLM.
+ FIND NUMBER CNT-V WITH ID-NUMBER > 0 AND ( LAST-NAME >= Name_Start AND LAST-NAME <= Name_End )
+ v_F# := *NUMBER(FLM.)
+ 
+ COMPRESS *DAT4U *TIMX 'Search for Last Names from' '<b>' Name_Start '</b>' 'to' '<b>' Name_End ':</b>'
+     '&nbsp;found:'  v_L# '&nbsp;&nbsp;&nbsp;&nbsp;Members :' v_F# '   [ DB:' GET_DBN(<>) ']' br  INTO  v_A
+ PERFORM sbr_ADD
+ IF v_L# > 1090
+      COMPRESS 'Only 1090 Last Names will be shown' br INTO v_A
+      PERFORM sbr_ADD
+ END-IF  
+ FIND(0121) CNT-V WITH  LAST-NAME >= Name_Start AND LAST-NAME <= Name_End SORTED LAST-NAME
+            WHERE CONTACT-TYPE <> 'O'
+         IF NO RECORD FOUND
+            v_A := 'No Last Name found'
+            PERFORM sbr_ADD
+            ESCAPE BOTTOM
+         END-NOREC   
+       v_A := Mod
+       CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+       IF EX-LAST-NAME <> ' '
+          COMPRESS '(<i>' EX-LAST-NAME '</i>)' INTO v_Name LEAVING NO SPACE
+       ELSE v_Name := ' '   
+       END-IF
+       IF ID-NUMBER <> 0
+          COMPRESS ID-NUMBER_A '&nbsp;' CONTACT-ID_A  v_A  v_Name  INTO v_A
+       ELSE
+          COMPRESS '&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;' '&nbsp;' CONTACT-ID_A  v_A  v_Name  INTO v_A
+       END-IF
+       PERFORM sbr_ADD
+ END-FIND
+END-SUBROUTINE 
+* ---------------------------------------------------------------------------------------------
+DEFINE sbr_Get_CN
+  FIND(1) CNT-V WITH ID-NUMBER = CN
+         IF NO RECORD FOUND
+            v_A := 'CN not found'
+            PERFORM sbr_ADD            
+            ESCAPE ROUTINE
+         END-NOREC   
+       COMPRESS *DAT4U *TIMX 'CN:' ID-NUMBER  'CI:' CONTACT-ID '     Exception: (' EX-LAST-NAME ')' INTO v_A
+       PERFORM sbr_ADD
+
+       COMPRESS '<p> - [FMLS]' INTO v_A
+       PERFORM sbr_ADD
+       CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+       PERFORM sbr_ADD 
+       
+       COMPRESS '- [FMLS] - Capital' INTO v_A
+       PERFORM sbr_ADD
+       v_A := '!' 
+       CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+       COMPRESS v_A '</p>' INTO v_A
+       PERFORM sbr_ADD
+*       
+       COMPRESS '<p> - [Letter]' INTO v_A
+       PERFORM sbr_ADD
+       v_A := 'L'  
+       CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+       PERFORM sbr_ADD
+
+       COMPRESS '- [Letter] - Capital' INTO v_A
+       PERFORM sbr_ADD
+       v_A := '!L'  
+       CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+       COMPRESS v_A '</p>' INTO v_A
+       PERFORM sbr_ADD       
+       
+       COMPRESS '<p> - [Salutation]' INTO v_A
+       PERFORM sbr_ADD
+       v_A := 'S'  
+       CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+       PERFORM sbr_ADD
+       
+       COMPRESS ' - [Salutation] - Capital' INTO v_A
+       PERFORM sbr_ADD
+       v_A := '!S'  
+       CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+       COMPRESS v_A '</p>' INTO v_A
+       PERFORM sbr_ADD
+
+      #n := 1
+      PERFORM sbr_Print
+      FIND CR-V WITH CONTACT-1-ID = CONTACT-ID SORTED BY CONTACT-2-ID
+        IF NO RECORD FOUND
+          COMPRESS br 'No relations found for CI:' CONTACT-ID 'CN:' CN  INTO  v_A
+          PERFORM sbr_ADD 
+          ESCAPE BOTTOM
+        END-NOREC   
+        FIND(1) CNT-V WITH CONTACT-ID = CONTACT-2-ID
+           #n := #n + 1
+          PERFORM sbr_Print
+       END-FIND 
+     END-FIND
+  END-FIND
+ 
+END-SUBROUTINE 
+* ---------------------------------------------------------------------------------------------
+ DEFINE sbr_Upd
+*       ---------- 
+ v_Name := *TRANSLATE(Ex_Name, UPPER)
+ IF Opt =  'Del'
+    Ex_Name := ' '
+    Mod := 'Remove exception from'
+ ELSE 
+    COMPRESS 'Assign exception' Ex_Name  'to' INTO Mod    
+ END-IF   
+ FL.
+ FIND NUMBER CNT-V WITH LAST-NAME = v_Name /* AND ID-NUMBER > 0
+   COMPRESS *DAT4U *TIMX 'Search for' v_Name  Mod *NUMBER(FL.) 'Contacts' br INTO  v_A
+   PERFORM sbr_ADD   
+ FIND CNT-V WITH LAST-NAME = v_Name /* AND ID-NUMBER > 0
+     IF EX-LAST-NAME = Ex_Name
+         END TRANSACTION
+         #bu := #bu + 1
+         ESCAPE TOP
+     END-IF
+     
+     IF ID-NUMBER > 0 #e := #e + 1 END-IF  
+     EX-LAST-NAME := Ex_Name
+     IF l_Upd UPDATE END-IF  
+     END TRANSACTION
+     #n :=#n + 1
+     PERFORM sbr_Print
+ END-FIND
+     COMPRESS br 'Done for' #n 'contacts, including' #e 'members.' 'Bypass if exist' #bu INTO v_A
+     PERFORM sbr_ADD
+END-SUBROUTINE 
+* ---------------------------------------------------------------------------------------------
+ DEFINE sbr_Upd_WildCard 
+*       ---------------- 
+ SEPARATE Ex_Name INTO Ex_Name IGNORE WITH DELIMITER '*'
+ Name_Start := *TRIM(Ex_Name)
+ v_Name := Name_Start
+ #i := *LENGTH(Name_Start) + 1
+ Name_Start := *TRANSLATE(Name_Start, UPPER)
+ COMPRESS Name_Start 'ZZZ' INTO Name_End LEAVING NO SPACE
+ COMPRESS Name_Start ' ' INTO Name_Start LEAVING NO SPACE
+ 
+*  COMPRESS 'Working with' Name_Start Name_End INTO v_A 
+*  PERFORM sbr_ADD
+ 
+ IF Opt = 'Del'                                      
+    FLG_BL_WC.
+    FIND NUMBER CNT-V WITH LAST-NAME >= Name_Start AND LAST-NAME < Name_End AND EX-LAST-NAME > 'A'
+    v_L# := *NUMBER(FLG_BL_WC.)
+    COMPRESS *DAT4U *TIMX 'Remove exceptions from Last Names from' '<b>'Name_Start'</b>' 'to' '<b>'Name_End'</b>' v_L# 
+    '   [ DB:' GET_DBN(<>) ']' br  INTO  v_A
+    PERFORM sbr_ADD 
+    FIND CNT-V WITH LAST-NAME >= Name_Start AND LAST-NAME < Name_End AND EX-LAST-NAME > 'A'
+       EX-LAST-NAME := ' '
+       IF l_Upd UPDATE END-IF 
+       PERFORM sbr_ET
+       IF ID-NUMBER > 0 #e := #e + 1 END-IF  
+       #n := #n + 1
+       IF *COUNTER < 100 OR *COUNTER > ( v_L# - 100)
+          PERFORM sbr_Print
+       END-IF    
+    END-FIND
+    PERFORM sbr_ET
+    COMPRESS br 'Exceptions removed for' #n 'contacts, including' #e 'members' INTO v_A
+    PERFORM sbr_ADD
+ ELSE 
+    FLG_WC.
+    FIND NUMBER CNT-V WITH LAST-NAME >= Name_Start AND LAST-NAME < Name_End
+    v_L# := *NUMBER(FLG_WC.)
+    COMPRESS *DAT4U *TIMX  'Assign exeception 'Ex_Name' to Last Names from' '<b>'Name_Start'</b>'
+        'to' '<b>'Name_end'</b>' v_L# '   [ DB:' GET_DBN(<>) ']' br  INTO  v_A
+    PERFORM sbr_ADD 
+    FIND CNT-V WITH LAST-NAME >= Name_Start AND LAST-NAME < Name_End
+        v_A := *TRIM(LAST-NAME)
+        #l := *LENGTH(v_A)
+        IF #l <= #i  #su := #su + 1  ESCAPE TOP END-IF    /* Bypass too short, might never happens
+        Ex_Orig := EX-LAST-NAME
+        EX-LAST-NAME := *TRANSLATE(LAST-NAME, LOWER)
+
+        #j := #i - 2                                     /* S Bypass ' ' and -
+          IF ( SUBSTRING(EX-LAST-NAME,#i,1) <> MASK(A) ) 
+          AND ( SUBSTRING(EX-LAST-NAME,2,#j) = SUBSTRING(v_Name,2,#j) )
+              PERFORM sbr_ET
+              #b := #b + 1
+              ESCAPE TOP 
+        END-IF                                           /* E Bypass ' ' and -  
+        
+        #j := #i - 1
+        MOVE v_Name TO SUBSTRING(EX-LAST-NAME,1,#j)  
+        MOVE SUBSTRING(LAST-NAME,#i,1) TO SUBSTRING(EX-LAST-NAME,#i,1) /* "*" is capital
+
+        
+        FOR #j = #i  TO ( #l - 1 )
+          IF SUBSTRING(EX-LAST-NAME,#j,1) <> MASK(A)
+             #j := #j + 1
+             MOVE SUBSTRING(LAST-NAME,#j,1) TO SUBSTRING(EX-LAST-NAME,#j,1) 
+          END-IF   
+        END-FOR
+        IF Ex_Orig = EX-LAST-NAME 
+            PERFORM sbr_ET
+            #bu := #bu + 1
+            ESCAPE TOP
+        ELSE
+           IF l_Upd UPDATE END-IF
+        END-IF
+        PERFORM sbr_ET
+        IF ID-NUMBER > 0 #e := #e + 1 END-IF   
+        #n := #n + 1
+        IF #n < 250 OR #n > ( v_L# - 250)
+           PERFORM sbr_Print
+        END-IF
+       
+
+    END-FIND
+    IF #t <> 0 END TRANSACTION END-IF
+    COMPRESS br 'Exceptions assigned for'  #n 'contacts, including' #e 'members' INTO v_A
+    PERFORM sbr_ADD
+    COMPRESS 'Bypass' #b 'N/A, ' #su 'too short,' #bu 'already exist' INTO v_A
+    PERFORM sbr_ADD
+
+ END-IF   
+END-SUBROUTINE 
+* ----------------------------------------------------------------------------------------------------------------------------
+DEFINE sbr_Upd_CN
+*      
+ IF Opt = 'Del'
+    Ex_Name := ' '
+    v_A := 'Remove exception from CN'
+ ELSE
+    v_Name := *TRANSLATE(Ex_Name, UPPER)  
+    v_A := 'Assign exception to CN'
+ END-IF
+    COMPRESS *DAT4U *TIMX v_A CN 'and relations with the same Last Name' br INTO v_A
+    PERFORM sbr_ADD          
+  FIND(1) CNT-V WITH ID-NUMBER = CN
+         IF NO RECORD FOUND
+            COMPRESS 'CN' CN 'not found' INTO v_A
+            PERFORM sbr_ADD   
+            ESCAPE BOTTOM
+         END-NOREC
+     
+     IF v_Name <> LAST-NAME AND Opt <> 'Conf' AND Opt <> 'Del'  /* > Conf Cn
+        COMPRESS '<b>Alert-Confirm</b> for' 'CN:' ID-NUMBER 'CI:' CONTACT-ID br br
+        'Last name:' LAST-NAME 'differs from' v_Name ' - Please correct or Confirm' INTO v_A
+        PERFORM sbr_ADD   
+        ESCAPE BOTTOM
+     END-IF                                                         /* < Conf Cn
+     v_A := ' '
+     CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+     COMPRESS 'Before:' v_A INTO v_A
+     PERFORM sbr_ADD
+     
+     IF EX-LAST-NAME = Ex_Name
+     THEN 
+       #su := #su + 1
+     ELSE
+       EX-LAST-NAME := Ex_Name
+       IF L_Upd UPDATE END-IF  
+       END TRANSACTION
+     END-IF   
+     v_A := ' '
+     CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+     COMPRESS 'After :' v_A INTO v_A
+     PERFORM sbr_ADD
+
+     #n := 1
+     PERFORM sbr_Print
+     IF CONTACT-ID = 0 
+        COMPRESS br 'CI=0 for CN:' CN 'bypass relations' INTO  v_A
+        PERFORM sbr_ADD          
+        ESCAPE ROUTINE
+      END-IF     
+     Name_Start := LAST-NAME
+     FIND CR-V WITH CONTACT-1-ID = CONTACT-ID
+        IF NO RECORD FOUND
+          COMPRESS br 'No relations found for CI:' CONTACT-ID 'CN:' CN  INTO  v_A
+          PERFORM sbr_ADD 
+          ESCAPE BOTTOM
+        END-NOREC   
+        FIND(1) CNT-V WITH CONTACT-ID = CONTACT-2-ID
+          IF LAST-NAME = Name_Start
+             IF EX-LAST-NAME = Ex_Name
+                #su := #su + 1
+*                EX-LAST-NAME := '--- Already set'
+             ELSE   
+               EX-LAST-NAME := Ex_Name
+               IF L_Upd UPDATE END-IF  
+               END TRANSACTION
+             END-IF  
+          ELSE    
+             EX-LAST-NAME := '--- Bypass'
+             #b := #b + 1
+          END-IF   
+          #n := #n + 1
+          PERFORM sbr_Print
+       END-FIND 
+     END-FIND
+  END-FIND
+    COMPRESS 'Already exist' #su 'Bypass' #b INTO v_A
+    PERFORM sbr_ADD
+  
+END-SUBROUTINE
+* ----------------------------------------------------------------------------------------------------------------------------
+DEFINE sbr_Upd_CI
+  IF Opt = 'Del'
+    Ex_Name := ' '
+    v_A := 'Remove exception from Contact'
+  ELSE
+    v_Name := *TRANSLATE(Ex_Name, UPPER)    
+    v_A := 'Assign exception to Contact'
+  END-IF    
+    COMPRESS *DAT4U *TIMX v_A 'CI:' CN  br INTO v_A
+    PERFORM sbr_ADD          
+  FIND(1) CNT-V WITH CONTACT-ID = CN
+         IF NO RECORD FOUND
+            COMPRESS 'CI' CN 'not found' INTO v_A
+            PERFORM sbr_ADD   
+            ESCAPE BOTTOM
+         END-NOREC
+     IF v_Name <> LAST-NAME AND Opt <> 'Conf' AND Opt <> 'Del'              /* > Conf Ci
+        COMPRESS '<b>Alert-Confirm</b> for' 'CN:' ID-NUMBER 'CI:' CONTACT-ID br br
+        'Last Name:' LAST-NAME 'differs from' v_Name ' - Please correct or Confirm' INTO v_A
+        PERFORM sbr_ADD   
+        ESCAPE BOTTOM
+     END-IF
+     v_A := ' '
+     CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+     COMPRESS 'Before:' v_A INTO v_A
+     PERFORM sbr_ADD                                                                     /* < Conf Ci           
+     IF EX-LAST-NAME = Ex_Name
+       #su := #su + 1
+     ELSE   
+       EX-LAST-NAME := Ex_Name
+       IF L_Upd UPDATE END-IF  
+       END TRANSACTION
+     END-IF  
+
+     v_A := ' '
+     CALLNAT 'GPRS0CNT' CONTACT-ID v_A
+     COMPRESS 'After :' v_A INTO v_A
+     PERFORM sbr_ADD                                                                     /* < Conf Ci           
+
+     #n := 1
+     PERFORM sbr_Print
+  END-FIND
+    COMPRESS 'Already exist' #su  INTO v_A
+    PERFORM sbr_ADD
+END-SUBROUTINE
+* ----------------------------------------------------------------------------------------------------------------------------
+ DEFINE sbr_View
+*       -------
+  COMPRESS *DAT4U *TIMX '  Exclusions'  br br INTO v_A
+  PERFORM sbr_ADD
+  COMPRESS '<b>   No  : Exceptions: Formatted names</b>' INTO v_A
+  PERFORM sbr_ADD
+  H.
+  HISTOGRAM CNT-H  EX-LAST-NAME >= ' '
+    #e := #e + *NUMBER
+    MOVE EDITED *COUNTER(EM=Z,ZZ9) TO A06_1
+    MOVE EDITED *NUMBER(EM=Z,ZZ9) TO A06_2
+    COMPRESS FULL A06_1 ':' A06_2 '   :' EX-LAST-NAME INTO v_A
+    PERFORM sbr_ADD
+  END-HISTOGRAM
+
+   MOVE EDITED #e(EM=ZZ,ZZ9) TO A06_1
+   MOVE EDITED *COUNTER(H.)(EM=ZZ,ZZ9) TO A06_2
+   COMPRESS FULL br 'Exceptions:' A06_2  'Formated contacts:' A06_1 INTO v_A
+   PERFORM sbr_ADD
+END-SUBROUTINE 
+* ----------------------------------------------------------------------------------------------------------------------------
+ DEFINE sbr_ET
+*       -------
+  #t := #t + 1
+  IF #t = 400 
+     #t := 0
+     END TRANSACTION
+  END-IF  
+END-SUBROUTINE
+* ----------------------------------------------------------------------------------------------------------------------------
+ DEFINE sbr_Print
+*       -------
+            IF #n = 1
+               v_A := '<br /> <b>    No :     CN :       CI : Exception                 Name</b>'
+               PERFORM sbr_ADD   
+           END-IF   
+           MOVE EDITED #n(EM=ZZ,ZZZ) TO A06_1
+           MOVE EDITED ID-NUMBER(EM=ZZZZZ9) TO A06_2
+           MOVE EDITED CONTACT-ID(EM=ZZZZZZZ9) TO A08
+           COMPRESS FULL A06_1 ':' A06_2 ':' A08 ':' INTO v_A
+*           COMPRESS v_A EX-LAST-NAME INTO v_A
+*           IF ID-NUMBER > 0 COMPRESS '<u>' v_A '</u>' INTO v_A LEAVING NO SPACE END-IF
+           v_W := ' '  
+           CALLNAT 'GPRS0CNT' CONTACT-ID v_W
+           COMPRESS FULL v_A EX-LAST-NAME v_W INTO v_A   
+           PERFORM sbr_ADD
+END-SUBROUTINE
+* ----------------------------------------------------------------------------------------------------------------------------
+ DEFINE sbr_ADD
+*       -------
+  #x:= #x + 1 
+  EXPAND ARRAY Text TO (1:#x) 
+  COMPRESS v_A INTO Text(#x)                        
+END-SUBROUTINE 
+*
+END
+* 212561 :   629560 : VanDen brink
+* 179622    Anne VanDenbosch-dowling (VanDenbosch-dowling           Ryan J VanDenheuvel (VanDenheuvel)

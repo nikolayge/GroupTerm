@@ -1,0 +1,299 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online - MC-II
+* MBCN0031 - Address/Address Relationship Business logic
+* Get Address
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09072010       Initial Creation
+* YAK    05172016  YK1  Add Undeliverable Indicator (for FIR)
+* YAK    03292017  YK2  EB&P III (Payor project)
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCA0003
+PARAMETER 1 #ErrorCode (A3)
+*
+LOCAL USING OBJAADDR
+LOCAL USING OBJAADRL
+LOCAL USING OBJACONT
+LOCAL USING OBJLCONT
+LOCAL USING OBJACTRL
+LOCAL USING OBJLCTRL
+LOCAL USING ERROR_L
+LOCAL USING GPRA006N           /* Parms to call GPRN006N
+*
+LOCAL
+1 #ID-NUMBER-ARRAY  (N6/50)
+1 REDEFINE #ID-NUMBER-ARRAY
+  2 #ID-NUMBER-ARRAY-A (A6/50)
+1 #CONTACT-CN-A   (A6)
+*
+1 #DEL                      (A1) CONST <'-'>
+1 #GET-CONT-POOL-TYPE       (A) DYNAMIC CONST <'GET-CONT-POOL-TYPE'>
+1 #GET-CONT-POOL            (A) DYNAMIC CONST <'GET-CONT-POOL'>
+1 #GET-BY-CN                (A) DYNAMIC CONST <'GET-BY-CN'>
+1 #GET                      (A) DYNAMIC CONST <'GET'>
+1 #YES                      (A) DYNAMIC CONST <'1'>
+1 #NO                       (A) DYNAMIC CONST <'0'>
+1 #I                        (I2)
+1 #I1                       (I2)
+1 #ContactID                (N8)
+1 #ZIP-CODE                 (A9)
+1 REDEFINE #ZIP-CODE
+  2 #ZIP-5                  (A5)
+  2 #ZIP-4                  (A4)
+1 #ADDRESS-DISPLAY-ROLE     (A1/7) CONST <'S','X','K','D','G','P','Q'>
+1 #ALREADY_ON_THE_LIST      (L)
+1 #DynamicName              (A) DYNAMIC
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 INTRO-FLAG
+  2 PROCESS-IND
+  2 STATUS-CODE-SP
+  2 FORMER-SPOUSE-STATUS
+*
+1 #Owner          (N2) CONST <2>       /* YK2  
+END-DEFINE
+*
+#ContactID := F-GET-CONTACT-ID(<AddressInfo.CN>)
+*
+IF AddressInfo.AddressPoolId NE 0
+  PERFORM POPULATE-ADDRESS-FIELDS
+END-IF
+PERFORM GET-AUTHORIZED-ACCESS-CN
+*
+FOR #I = 1 TO C@Contact
+  PERFORM GET-CONTACT-INFORMATION
+  IF AddressInfo.AddressPoolId NE 0
+    PERFORM GET-ADDRESS-RELATIONSHIP-INFORMATION
+  ELSE
+    AddressInfo.SharingAddress(#I) := #NO
+  END-IF
+END-FOR
+*
+*****************************************
+DEFINE SUBROUTINE POPULATE-ADDRESS-FIELDS
+*****************************************
+*
+* Get Address Pool Information
+*
+PARM-ADDRESS-POOL.#ACTION := #GET
+PARM-ADDRESS-POOL.ADDRESS-POOL-ID     := AddressInfo.AddressPoolId
+CALLNAT 'OBJNADDR' PARM-ADDRESS-POOL
+IF PARM-ADDRESS-POOL.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-ADDRESS-POOL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+*
+#DynamicName                          := PARM-ADDRESS-POOL.STREET
+AddressInfo.Street                    := EDIT_NAME_LOWCASE (< #DynamicName >)
+AddressInfo.Unit                      := PARM-ADDRESS-POOL.UNIT
+IF PARM-ADDRESS-POOL.CITY = 'APO' OR = 'FPO' OR = 'DPO'
+  AddressInfo.City                      := PARM-ADDRESS-POOL.CITY
+ELSE
+  #DynamicName                          := PARM-ADDRESS-POOL.CITY
+  AddressInfo.City                      := EDIT_NAME_LOWCASE (< #DynamicName >)
+END-IF
+AddressInfo.StateCode                 := PARM-ADDRESS-POOL.STATE-CODE
+IF PARM-ADDRESS-POOL.ZIP-CODE <> 0
+  #ZIP-CODE := PARM-ADDRESS-POOL.ZIP-CODE
+  IF #ZIP-4 <> ' ' AND #ZIP-4 <> '0000'
+    MOVE EDITED PARM-ADDRESS-POOL.ZIP-CODE (EM=99999-9999) TO AddressInfo.ZipCode
+  ELSE
+    AddressInfo.ZipCode := #ZIP-5
+  END-IF
+END-IF
+AddressInfo.CountryCode               := PARM-ADDRESS-POOL.COUNTRY-CODE
+AddressInfo.IntlRegion                := PARM-ADDRESS-POOL.INTL-REGION
+AddressInfo.PostalCode                := PARM-ADDRESS-POOL.POSTAL-CODE
+AddressInfo.Urbanization              := PARM-ADDRESS-POOL.URBANIZATION
+AddressInfo.AddressFormatTypeCode     := PARM-ADDRESS-POOL.ADDR-FORMAT-TYPE-CD
+AddressInfo.AddressValidIndicator     := PARM-ADDRESS-POOL.ADDR-VALID-IND
+*
+RESET PARM-ADDRESS-REL
+PARM-ADDRESS-REL.CONTACT-ID           := #ContactID
+PARM-ADDRESS-REL.ADDRESS-POOL-ID      := PARM-ADDRESS-POOL.ADDRESS-POOL-ID
+IF AddressInfo.AddressTypeCode <> ' '
+  PARM-ADDRESS-REL.ADDR-TYPE-CD         := AddressInfo.AddressTypeCode
+  PARM-ADDRESS-REL.#ACTION              := #GET-CONT-POOL-TYPE
+ELSE
+  PARM-ADDRESS-REL.#ACTION              := #GET-CONT-POOL
+END-IF
+CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+IF PARM-ADDRESS-REL.#RETURN-CODE = ' '
+  AddressInfo.AddressLocationCode     := PARM-ADDRESS-REL.ADDR-LOCATION
+  AddressInfo.AttentionLine           := PARM-ADDRESS-REL.ATTENTION-LINE
+  AddressInfo.AddressTypeCode         := PARM-ADDRESS-REL.ADDR-TYPE-CD
+* YK1 >  
+  IF PARM-ADDRESS-REL.RETURNED-MAIL-IND = 'Y'
+    AddressInfo.AddressUndeliverableInd := 'true'
+  ELSE
+    AddressInfo.AddressUndeliverableInd := 'false'
+  END-IF
+* < YK1  
+ELSE
+  #ErrorCode := PARM-ADDRESS-POOL.#RETURN-CODE
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE GET-AUTHORIZED-ACCESS-CN
+******************************************
+* Get CN and other personal/relationship information
+* for all the contacts that can be managed by requestor
+*
+* get CN's for policies own by requestor
+PARM-CN := AddressInfo.CN
+EXPAND ARRAY PARM-POLICIES TO (*:1)
+CALLNAT 'GPRN006N' PARM-CN PARM-MEMBER-CN PARM-POLICIES(*) #Owner        /* YK2
+*
+FOR #I = 1 TO *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+  IF PARM-POLICIES.ID-NUMBER(#I) = PARM-CN
+    ESCAPE TOP
+  END-IF
+  #CONTACT-CN-A := PARM-POLICIES.ID-NUMBER(#I)
+  EXAMINE #ID-NUMBER-ARRAY-A(*) FOR #CONTACT-CN-A INDEX #I1
+  IF #I1 = 0
+    C@Contact := C@Contact + 1
+    EXPAND ARRAY AddressInfo.Contact TO (*:C@Contact)
+    AddressInfo.ContactCN(C@Contact) := #ID-NUMBER-ARRAY-A(C@Contact)
+      := PARM-POLICIES.ID-NUMBER(#I)
+    AddressInfo.ContactID(C@Contact) := F-GET-CONTACT-ID(<AddressInfo.ContactCN(C@Contact)>)
+  END-IF
+END-FOR
+* Get other dependents from contact relationship file
+PERFORM GET-LINKED-CONTACTS
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE GET-LINKED-CONTACTS
+*************************************
+*
+FIND CR-V WITH CONTACT-1-ID = #ContactID
+  FIND(1) CT-V WITH CONTACT-ID = CR-V.CONTACT-2-ID
+    EXAMINE #ADDRESS-DISPLAY-ROLE(*) FOR CR-V.ROLE-2-CD INDEX #I
+  END-FIND
+*
+  IF #I <> 0 AND CT-V.DELETE-FLAG <> 'Y'
+    IF CT-V.ID-NUMBER <> 0
+      FIND(1) ST-V WITH ID-NUMBER = CT-V.ID-NUMBER
+      END-FIND
+      IF NOT (ST-V.INTRO-FLAG = 'A' AND PROCESS-IND = 'C')
+        ESCAPE TOP
+      END-IF
+    END-IF
+* Exclude Spouse/Former Spouse if deceased - get status from Status file
+    IF CR-V.ROLE-2-CD = 'S' OR = 'X'
+      FIND(1) ST-V WITH ID-NUMBER = AddressInfo.CN
+      END-FIND
+      DECIDE FOR FIRST CONDITION
+        WHEN CR-V.ROLE-2-CD = 'S' AND STATUS-CODE-SP = 'D'
+          ESCAPE TOP
+        WHEN CR-V.ROLE-2-CD = 'X' AND FORMER-SPOUSE-STATUS = 'D'
+          ESCAPE TOP
+        WHEN NONE
+          IGNORE
+      END-DECIDE
+    END-IF
+*
+    RESET #ALREADY_ON_THE_LIST
+    FOR #I = 1 TO C@Contact
+      IF AddressInfo.ContactID(#I) = CR-V.CONTACT-2-ID
+        #ALREADY_ON_THE_LIST := TRUE
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+    IF NOT #ALREADY_ON_THE_LIST
+      C@Contact := C@Contact + 1
+      EXPAND ARRAY AddressInfo.Contact TO (*:C@Contact)
+      AddressInfo.CurrentRelationshipCode(C@Contact) := CR-V.ROLE-2-CD
+      AddressInfo.ContactID(C@Contact)   := CT-V.CONTACT-ID
+      RESET AddressInfo.FormattedName(C@Contact)
+      CALLNAT 'GPRS0CNT' CT-V.CONTACT-ID AddressInfo.FormattedName(C@Contact)
+      AddressInfo.FormattedName(C@Contact) := EDIT_NAME_LOWCASE (< AddressInfo.FormattedName(C@Contact) >)
+*     AddressInfo.FirstName(C@Contact)   := CT-V.FIRST-NAME
+*     AddressInfo.LastName(C@Contact)    := CT-V.LAST-NAME
+*     AddressInfo.MiddleName(C@Contact)  := CT-V.MIDDLE-NAME
+      AddressInfo.DateOfBirth(C@Contact) := CT-V.DATE-OF-BIRTH
+    END-IF
+  END-IF
+END-FIND
+END-SUBROUTINE
+*
+******************************************************
+DEFINE SUBROUTINE GET-ADDRESS-RELATIONSHIP-INFORMATION
+******************************************************
+*
+RESET PARM-ADDRESS-REL
+PARM-ADDRESS-REL.CONTACT-ID  := AddressInfo.ContactID(#I)
+*
+* Get ContactID/AddressPoolID/Type combination
+PARM-ADDRESS-REL.ADDRESS-POOL-ID := PARM-ADDRESS-POOL.ADDRESS-POOL-ID
+PARM-ADDRESS-REL.ADDR-TYPE-CD    := AddressInfo.AddressTypeCode
+PARM-ADDRESS-REL.#ACTION         := #GET-CONT-POOL
+CALLNAT 'OBJNADRL' PARM-ADDRESS-REL
+IF PARM-ADDRESS-REL.#RETURN-CODE = ' '
+  AddressInfo.SharingAddress(#I) := #YES
+ELSE
+  IF PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-POOL-NOT-FOUND OR
+      PARM-ADDRESS-REL.#RETURN-CODE = #ADDR-REL-CONT-NOT-FOUND
+* Address Pool/Contact/Type combination Does not exist
+    AddressInfo.SharingAddress(#I) := #NO
+  ELSE
+    #ErrorCode := PARM-ADDRESS-POOL.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE GET-CONTACT-INFORMATION
+*****************************************
+* Populate Contact Info for Contacts added from Policy Owner logic
+* For contacts added as linked contacts all fields already populated
+*
+IF AddressInfo.ContactCN(#I) NE 0
+  RESET PARM-CONTACT
+  PARM-CONTACT.ID-NUMBER := AddressInfo.ContactCN(#I)
+  PARM-CONTACT.#ACTION := #GET-BY-CN
+  CALLNAT 'OBJNCONT' PARM-CONTACT
+  IF PARM-CONTACT.#RETURN-CODE NE ' '
+    #ErrorCode := PARM-CONTACT.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+*
+  AddressInfo.ContactID(#I)   := PARM-CONTACT.CONTACT-ID
+  RESET AddressInfo.FormattedName(#I)
+  CALLNAT 'GPRS0CNT' AddressInfo.ContactID(#I) AddressInfo.FormattedName(#I)
+  AddressInfo.FormattedName(#I)    := EDIT_NAME_LOWCASE (< AddressInfo.FormattedName(#I) >)
+  AddressInfo.DateOfBirth(#I) := PARM-CONTACT.DATE-OF-BIRTH
+*
+  RESET PARM-CONTACT-REL
+  IF AddressInfo.ContactCN(#I) = PARM-MEMBER-CN
+    PARM-CONTACT-REL.CONTACT-1-ID := PARM-CONTACT.CONTACT-ID
+    PARM-CONTACT-REL.CONTACT-2-ID := #ContactID
+  ELSE
+    PARM-CONTACT-REL.CONTACT-1-ID := #ContactID
+    PARM-CONTACT-REL.CONTACT-2-ID := PARM-CONTACT.CONTACT-ID
+  END-IF
+* get relationships between two contact Id's
+  PARM-CONTACT-REL.#ACTION := #GET
+  CALLNAT 'OBJNCTRL' PARM-CONTACT-REL
+  IF PARM-CONTACT-REL.#RETURN-CODE NE ' ' AND PARM-CONTACT-REL.#RETURN-CODE NE #CONTACT-REL-NOT-FOUND
+    #ErrorCode := PARM-CONTACT-REL.#RETURN-CODE
+    ESCAPE MODULE
+  END-IF
+  AddressInfo.CurrentRelationshipCode(#I) := PARM-CONTACT-REL.ROLE-2-CD
+END-IF
+END-SUBROUTINE
+*
+END

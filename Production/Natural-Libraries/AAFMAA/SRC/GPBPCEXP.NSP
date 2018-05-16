@@ -1,0 +1,273 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPBPCEXP - Load the file for creating letters in SSRS
+* Credit Cards Expiration letters
+* Sent to the owner of the policy 15, 30, 45 and 60 days before expiration
+* and uploaded to DAL for each CN (1 per impacted CN)
+******************************************************************
+* Created for Letters @ Emails project
+******************************************************************
+* MODIFICATION LOG
+******************************************************************
+* YAK  03182014       Initial Creation
+* YAK  09122016  YK1  Check only default credit cards (can have multiple)
+* YAK  02142018  YK2  Check only default credit cards on Payer account
+******************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLCC01      /* Credit card file structure
+LOCAL USING OBJLSTAT      /* Status file structure
+LOCAL USING GPBACOMM      /* PDA to call commom routine to write to letters file
+LOCAL USING SVCA0003
+LOCAL USING GPRL0EML      /* PDA to send notification email
+LOCAL
+*
+1 POS-V VIEW OF A-POLICY-CONTACTS
+  2 POLICY-NUMBER
+  2 RELATION
+  2 REFERENCE-NUMBER
+*
+1 #POLICY-ARRAY  (*)
+  2 POLICY-NUMBER      (A16)
+  2 PAYER-CN           (N6)
+  2 INSURED-CN         (N6)
+* Form fields
+1 #SORT-DATA
+  2 #PAYER-ID-NUMBER  (N6)
+  2 #POLICY-NUMBER    (A16)
+  2 #MODE             (A1)
+  2 #EXPIRATION-DATE  (A8)
+1 REDEFINE #SORT-DATA
+  2 #SORT-DATA-RECORD (A31)
+
+1 #CC-EXP-DATE      (A8)
+1 REDEFINE #CC-EXP-DATE
+  2 #CC-EXP-DATN    (N8)
+1 REDEFINE #CC-EXP-DATE
+  2 #CC-EXP-DAT6    (N6)
+  2 #CC-EXP-DD      (N2)
+
+1 #DATN           (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY    (N4)
+  2 #DATN-MM      (N2)
+  2 #DATN-DD      (N2)
+1 #TIMN           (N7)
+*
+1 #DATE           (A8)
+*
+1 #EXP-DATE       (A8)
+1 REDEFINE #EXP-DATE
+  2 #EXP-DATN     (N8)
+1 REDEFINE #EXP-DATE
+  2 #EXP-DAT6     (N6)
+  2 #EXP-DD       (N2)
+*
+1 #I1             (I2)
+1 #I2             (I2)
+1 #I_PO           (I2)
+1 #MSG            (A) DYNAMIC
+1 #OTHER          (A) DYNAMIC CONST <'and other'>
+1 #PAYER          (N2) CONSTANT    <8>
+1 #INSURED        (N2) CONSTANT    <1>
+*
+1 CONSTANTS
+  2 #TAB                      (A1)  CONST <H'09'>
+  2 #EMAIL-ADDRESS-ERROR      (A)   DYNAMIC CONST <'No email address available for the insured'>
+  2 #CONTACT-ID-ERROR         (A)   DYNAMIC CONST <'Contact ID for the insured is zero - no information can be retrieved'>
+  2 #CREDIT-CARD-MODE         (A1/4) CONST <'0','1','2','4'>
+  2 #Service                  (A)   DYNAMIC CONST <'Service'>
+  2 #CC-EXP                   (A10) CONST <'CC-EXP'>
+*
+* Work variables
+1 #COUNTERS
+  2 #REC-LET-CNT       (N7)
+  2 #REC-EML-CNT       (N7)
+  2 #BAD-CONTACT-ID    (N7)
+  2 #NO-EMAIL-ADDR     (N7)
+  2 #MONTH-END         (L)
+*
+* Variables for running program online (testing/debugging)
+1 #EXPIRATION-DATA  (A80) INIT <"/usr/SAG/tmp/EXPIRATION_DATA.txt">
+
+END-DEFINE
+*
+ON ERROR
+  RESET p_EMAIL
+  P_TO     := 'ykegeles@aafmaa.com'
+  P_SUBJ   := '"Statistics report on CC expiration letters/emails file load"'
+  COMPRESS "Error occurred when running this process" INTO P_MSG(1)
+  COMPRESS "CN that caused an error - " #PAYER-ID-NUMBER INTO P_MSG(2)
+END-ERROR
+*
+IF *DEVICE = 'BATCH'
+  IGNORE
+ELSE
+  DEFINE WORK FILE 1 #EXPIRATION-DATA
+END-IF
+*
+#TIMN := *TIMN
+#DATN := *DATN
+* Execute on the 1st and 15th day of the month
+IF NOT (#DATN-DD = 1 OR #DATN-DD = 15)
+  ESCAPE MODULE
+END-IF
+*
+IF #DATN-DD = 1
+  #MONTH-END := TRUE
+END-IF
+*
+#EXP-DATE := FUNCTION-CALENDAR(<#DATN,'5'>)
+#EXP-DD   := 31
+*
+WRITE 'Start Time:    '   *TIMN
+*
+R_CC.
+READ CC-INFO-V WITH ID-NUMBER = 1900
+  ACCEPT IF CC-DEFAULT-IND = 'Y'          /* YK1
+*
+  COMPRESS FULL CC-EXPIRATION-YEAR CC-EXPIRATION-MONTH INTO #CC-EXP-DATE LEAVING NO
+  #CC-EXP-DD := 31
+* Check if Credit Card expires soon
+  IF #CC-EXP-DAT6 <= #EXP-DAT6
+* Check if credit card is used for recurring payments and write information to the ouput file
+    RESET #SORT-DATA
+    #PAYER-ID-NUMBER := CC-INFO-V.ID-NUMBER
+    PERFORM CHECK-CREATE-EXPIRATION-DATA
+  END-IF
+END-READ
+*
+CLOSE WORK FILE 1
+READ WORK FILE 1 #SORT-DATA
+END-ALL
+SORT BY #PAYER-ID-NUMBER USING #POLICY-NUMBER #EXPIRATION-DATE #MODE
+  AT BREAK OF #PAYER-ID-NUMBER
+    RESET PARM-LETTERS
+    PARM-LETTERS.MONTH-END := #MONTH-END
+    PARM-LETTERS.PROCESS-TYPE := #CC-EXP
+    PARM-LETTERS.ID-NUMBER := OLD(#PAYER-ID-NUMBER)
+    PARM-LETTERS.POLICY-NUMBER := PARM-LETTERS.REFERENCE := OLD(#POLICY-NUMBER)
+    IF COUNT(#PAYER-ID-NUMBER) <> 1
+      COMPRESS PARM-LETTERS.REFERENCE #OTHER INTO PARM-LETTERS.REFERENCE
+    END-IF
+    #DATE := OLD(#EXPIRATION-DATE)
+    PARM-LETTERS.EVENT-DATE := VAL(#DATE)
+    PARM-LETTERS.ADD-INFO   := OLD(#MODE)
+    DECIDE ON FIRST VALUE PARM-LETTERS.ADD-INFO
+      VALUE '1' PARM-LETTERS.ADD-INFO := 'an annual'
+      VALUE '2' PARM-LETTERS.ADD-INFO := 'a semi-annual'
+      VALUE '4' PARM-LETTERS.ADD-INFO := 'a quarterly'
+      VALUE '0' PARM-LETTERS.ADD-INFO := 'a monthly'
+      NONE VALUE
+* Non CAP Loan only
+        PARM-LETTERS.ADD-INFO := 'an annual'
+    END-DECIDE
+    CALLNAT 'GPBNCOMM' PARM-LETTERS
+    END TRANSACTION
+    #REC-LET-CNT   := #REC-LET-CNT + PARM-LETTERS.LET-COUNTER
+    #REC-EML-CNT   := #REC-EML-CNT + PARM-LETTERS.EML-COUNTER
+    #NO-EMAIL-ADDR := #NO-EMAIL-ADDR + PARM-LETTERS.ERROR-COUNTER
+  END-BREAK
+END-SORT
+*
+WRITE 'End   Time:    '   *TIMN
+WRITE
+  'Letters created               :'      #REC-LET-CNT
+  'Emails created                :'      #REC-EML-CNT
+  'No Email address              :'      #NO-EMAIL-ADDR
+*
+RESET p_EMAIL
+P_TO     := 'ykegeles@aafmaa.com'
+* P_CC   := 'ykegeles@aafmaa.com'
+P_SUBJ   := '"Statistics report on CC expiration letters/emails file load"'
+COMPRESS FULL 'Letters created               :' #REC-LET-CNT INTO P_MSG(1)
+COMPRESS FULL 'Emails created                :' #REC-EML-CNT INTO P_MSG(2)
+COMPRESS FULL 'No Email address              :' #NO-EMAIL-ADDR INTO P_MSG(3)
+*
+CALLNAT 'GPRS0EML' p_EMAIL
+*
+**********************************************
+DEFINE SUBROUTINE CHECK-CREATE-EXPIRATION-DATA     /* YK2
+**********************************************
+* Get policies payed for by this Payer CN
+RESET #I_PO
+FIND POS-V WITH REFERENCE-NUMBER = #PAYER-ID-NUMBER
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  ACCEPT IF RELATION = #PAYER
+  #I_PO := #I_PO + 1
+  EXPAND ARRAY #POLICY-ARRAY TO (*:#I_PO)
+  #POLICY-ARRAY.POLICY-NUMBER(#I_PO) := POS-V.POLICY-NUMBER
+  #POLICY-ARRAY.PAYER-CN(#I_PO) := POS-V.REFERENCE-NUMBER
+END-FIND
+*
+FOR #I1 = 1 TO #I_PO
+  FIND POS-V WITH POLICY-NUMBER = #POLICY-ARRAY.POLICY-NUMBER(#I1)
+    ACCEPT IF RELATION = #INSURED
+    #POLICY-ARRAY.INSURED-CN(#I1) := POS-V.REFERENCE-NUMBER
+  END-FIND
+END-FOR
+* Check if this person pays for Services
+RESET PARM-SVC
+PARM-SVC.ACTION           := 'GET'
+PARM-SVC.SVC-MEMBER-ID    := #PAYER-ID-NUMBER
+PARM-SVC.TRANSACTION-DATN := #EXP-DATN
+CALLNAT 'SVCN0003' PARM-SVC #MSG
+IF PARM-SVC.SVC-PLAN <> ' ' AND PARM-SVC.SVC-MODE = #CREDIT-CARD-MODE(*) AND
+    PARM-SVC.SVC-TOTAL-DUE > 0 AND PARM-SVC.SVC-PAY-UP <> 'Y' AND PARM-SVC.SVC-STATUS = 'A'  /* YK2
+  #POLICY-NUMBER := #Service
+  IF PARM-SVC.SVC-MODE = '0'
+    #MODE := '4'
+  ELSE
+    #MODE := PARM-SVC.SVC-MODE
+  END-IF
+  #EXPIRATION-DATE := FUNCTION-CALENDAR(<#CC-EXP-DATN,'4'>)
+  WRITE WORK FILE 1 #SORT-DATA-RECORD
+END-IF
+*
+IF #I_PO = 0
+* Credit card belongs to non-insurance payer account
+  ESCAPE ROUTINE
+END-IF
+*
+* Check if this policy/loan is paid by Credit Card
+FOR #I1 = 1 TO #I_PO
+  FIND(1) ST-V WITH ID-NUMBER = #POLICY-ARRAY.INSURED-CN(#I1)
+    RESET #I2
+    EXAMINE FULL ST-V.POLICY-ID(*) FOR FULL #POLICY-ARRAY.POLICY-NUMBER(#I1) INDEX #I2
+    IF #I2 <> 0
+* Skip inactive records
+      IF ST-V.STATUS(#I2) <> 'D'
+        ESCAPE ROUTINE
+      END-IF
+* Check Insurance policies
+* if policy premium paid by Credit card
+      IF  (MODE(#I2) = #CREDIT-CARD-MODE(*) AND PAY-STATUS(#I2) LE '40')
+* Or loan is paid by monthly Credit card payment
+          OR  (X-ALT-LP-IND(#I2) = '8' AND X-LOAN-AMOUNT(#I2) NE 0)
+          OR  (X-ALT-LP-IND-2(#I2) = '8' AND X-LOAN-AMOUNT-2(#I2) NE 0)
+          OR  (X-ALT-LP-IND(#I2) = 'C' AND X-ALT-LP-AMT(#I2) NE 0)
+*
+        #MODE := ST-V.MODE(#I2)
+* Check if has CAP Loan
+        IF ST-V.MODE(#I2) = '0' OR (X-ALT-LP-IND(#I2) = '8' AND X-LOAN-AMOUNT(#I2) NE 0)
+          IF ST-V.CONV-DURATION (#I2) = 999 AND ST-V.X-LOAN-AMOUNT(#I2) GT 5.00
+            #MODE := '0'
+          ELSE
+            #MODE := '4'
+          END-IF
+        END-IF
+        #POLICY-NUMBER   := ST-V.POLICY-ID(#I2)
+        #EXPIRATION-DATE := FUNCTION-CALENDAR(<#CC-EXP-DATN,'4'>)
+        WRITE WORK FILE 1 #SORT-DATA-RECORD
+      END-IF
+    END-IF
+  END-FIND
+END-FOR
+END-SUBROUTINE
+*
+END

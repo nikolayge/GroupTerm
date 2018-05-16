@@ -1,0 +1,182 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+********************************************************************************
+* PROGRAM ATHPEXPD                                                             *
+*                                                                              *
+* FUNCTION : Create a list of expired policies                                 *
+*                                                                              *
+* 04/08/2013 VXT Initial creation                                              *
+* 06/20/2014 TT1 CONTACT NORMALIZATION - DOB AND GENDER                        *
+********************************************************************************
+DEFINE DATA LOCAL
+1 A-STATUS VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID (N8)
+  2 STATUS             (9)
+  2 ISSUE-DATE         (9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DATE-YYYYMM    (N6/9)
+    3 ISSUE-DATE-DD        (N2/9)
+  2 PAID-TO-DATE       (9)
+  2 REDEFINE PAID-TO-DATE
+    3 PAID-TO-DATE-YYYYMM  (N6/9)
+    3 PAID-TO-DATE-DD      (N2/9)
+  2 PAID-UP-DATE       (9)
+  2 ISSUE-AGE          (9)
+  2 PLAN               (9)
+  2 REDEFINE PLAN
+    3 PLAN-A1               (A1/9)
+    3 PLAN-A2               (A2/9)
+    3 REDEFINE PLAN-A2
+      4 PLAN-N2             (N2/9)
+  2 SMOKER-FLAG        (9)
+*   2 DATE-OF-BIRTH                                /* TT1
+*   2 redefine date-of-birth                       /* TT1
+*     3 date-of-birth-yyyymm  (n6)                 /* TT1
+*     3 date-of-birth-dd      (n2)                 /* TT1
+*
+1 #i                        (i2)
+1 #cnt                      (p7)
+1 #CNT-RT                   (P7)
+1 #CNT-LT                   (P7)
+1 #CNT-LT2                  (P7)
+1 #CNT-EZ                   (P7)
+1 #PAY-STATUS               (A4)
+1 #TAB                      (A1) INIT<H'09'>
+1 #OUT-FILE                 (A78)
+1 #plan                     (a3)
+1 #plan-orig                (a3)
+1 redefine #plan-orig
+  2 #plan-1                 (a1)
+  2 #plan-a2                (a2)
+  2 redefine #plan-a2
+    3 #PLAN-N2              (n2)
+1 #PAID-UP-DATE             (n8)
+1 REDEFINE #PAID-UP-DATE
+  2 #PAID-UP-DATE-YYYYMM    (N6)
+  2 #PAID-UP-DATE-DD        (N2)
+1 #paid-to-date             (n8)
+1 #issue-date               (n8)
+1 redefine #issue-date
+  2 #issue-date-yyyymm      (n6)
+  2 #issue-date-dd          (n2)
+1 #date-of-birth    (n8)
+1 redefine #date-of-birth
+  2 #date-of-birth-yyyymm   (n6)
+  2 #date-of-birth-dd       (n2)
+*
+1 #today-date               (n8)
+1 redefine #today-date
+  2 #today-date-yyyy          (n4)
+  2 #today-date-mm            (n2)
+  2 #today-date-dd            (n2)
+1 REDEFINE #TODAY-DATE
+  2 #TODAY-YYYYMM         (N6)
+  2 #TODAY-DD             (N2)
+
+END-DEFINE
+*
+compress    'CN'          #TAB
+  'Issue Date'            #TAB
+  'Plan'                  #TAB
+  'Pay Status'            #TAB
+  'Paid-to-date'          #TAB
+  'Paid-up-Date'          #TAB
+  into #out-file leaving no
+write work 1 #out-file
+*
+#today-date := *datn
+add 1 to #today-date-mm
+if #today-date-mm gt 12
+  subtract 12 from  #today-date-mm
+  add 1 to #today-date-yyyy
+end-if
+*
+write '=' #today-date
+*
+READ A-STATus BY ID-NUMBER STARTING FROM   19000
+  for #i 1 9
+    IF STATUS (#I) EQ 'D'
+      move plan(#i) to #plan
+      IF  F-LT2-TRUE(< #PLAN>)
+        move 'LT2' to #plan
+        move plan(#i) to #plan-orig
+      end-if
+      move paid-up-date (#i) to #paid-up-date
+      move paid-to-date (#i) to #paid-to-date
+      move issue-date   (#i) to #issue-date
+      #DATE-OF-BIRTH    := GET-DATE-OF-BIRTH(<A-STATUS.MEMBER-CONTACT-ID>)      /* TT1
+*      move date-of-birth     to #date-of-birth                                 /* TT1
+*
+      decide on FIRST value of #plan
+        value 'RT'
+          IF  (( #PAID-UP-DATE-YYYYMM  LT #TODAY-YYYYMM)
+              OR (( #PAID-UP-DATE-YYYYMM  = #TODAY-YYYYMM)
+              AND (#TODAY-DD GE  ISSUE-DATE-DD(#i))))
+              AND (ISSUE-AGE(#I) GT '65')
+            MOVE 'EXPD' TO #PAY-STATUS
+            ADD 1 TO #CNT-RT
+            PERFORM WRITE-EXTRACT
+          END-IF
+        VALUE 'EZ'
+          IF  (( #PAID-UP-DATE-YYYYMM  LT #TODAY-YYYYMM)
+              OR (( #PAID-UP-DATE-YYYYMM  = #TODAY-YYYYMM)
+              AND (#TODAY-DD GE #PAID-UP-DATE-DD )))
+              and ( issue-age(#I) gt '80')
+            MOVE 'EXPD' TO #PAY-STATUS
+            ADD 1 TO #CNT-EZ
+            PERFORM WRITE-EXTRACT
+          END-IF
+        VALUE 'LT'
+          IF (( SMOKER-FLAG(#I) = 'N')
+              AND ( #DATE-OF-BIRTH-YYYYMM LE #TODAY-YYYYMM - 6000))
+              OR (( SMOKER-FLAG(#I) = 'S')
+              AND ( #DATE-OF-BIRTH LE #TODAY-YYYYMM - 5000))
+            MOVE 'EXPD' TO #PAY-STATUS       /* LT EXPIRED
+            ADD 1 TO #CNT-LT
+            PERFORM WRITE-EXTRACT
+          END-IF
+        VALUE 'LT2'
+          if   #PLAN-N2   = MASK(NN)
+            if (( #ISSUE-DATE-YYYYMM + ( #PLAN-N2 * 100)) le #TODAY-YYYYMM ) /* for specific month
+              MOVE 'EXPD' TO #PAY-STATUS
+              ADD 1 TO #CNT-LT2
+              PERFORM WRITE-EXTRACT
+            END-IF
+          end-if
+        NONE VALUE
+          IGNORE
+      END-DECIDE
+    END-IF
+  end-for
+*
+*****************
+  DEFINE SUBROUTINE WRITE-EXTRACT
+*****************
+*
+  COMPRESS
+    ID-NUMBER          #TAB
+    ISSUE-DATE    (#I) #TAB
+    PLAN          (#I) #TAB
+    #PAY-STATUS        #TAB
+    PAID-TO-DATE  (#I) #TAB
+    PAID-UP-DATE  (#I) #TAB
+    INTO #OUT-FILE LEAVING NO
+  WRITE WORK 1 #OUT-FILE
+*
+  END-SUBROUTINE
+*
+  AT END OF DATA
+    compute #cnt := #cnt-rt + #cnt-lt + #cnt-ez + #cnt-lt2
+    WRITE ' NUMBER OF RT ' #CNT-RT /
+      ' NUMBER OF LT ' #CNT-LT /
+      ' NUMBER OF LT2' #CNT-LT2 /
+      ' NUMBER OF EZ ' #CNT-EZ  /
+      ' TOTAL        ' #CNT
+  END-ENDDATA
+end-READ
+*
+END

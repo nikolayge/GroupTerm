@@ -1,0 +1,1664 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: ATHP08P2 - Using the TR Accounting file accum Amounts
+*  loads totals from the accounting registers at month-end
+*  into nx rec 800105 for viewing in gm ar/la/lp etc from G4200PMS
+*  maps are LA=G4200MMS LP=G4202MMS AR=G4203MMS/G4201MMS/G4207MMS
+*  ATHPICTX ALSO ADDS TOT DFAS AMT RCVD INTO THIS RECORD
+*  ATHPALT4 ALSO ADDS DFAS MISMATCH TOTAL INTO THIS RECORD
+*
+*  on 10/13/2004 nx rec 800116 was added to store last mnths 800105 info
+*  800105 gets moved to 800116 when ATHPICTX runs then it clears
+*  rec 800105 and enters the DFAS AMT received
+*  SO: after Month-end 800105 has curr info & 800116 has last mon info
+*  so that the GM AR/LP/LA can choose current PN/PA/P4 info or last mons
+*  SO: between ATHPICTX and Month-end GM AR/LP/LA is incorrect
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    02/26/2009  None    Program Written                           *
+* DRW    12/31/2007  DW1     Include Mip (SALP 6) in EZ-pay totaling   *
+* DRW    02/12/2008  DW2     Loan Reconciliation Changes               *
+* DRW    02/12/2008  DW3     Fix AFSC Cn test & AP Trans Write         *
+* DRW    02/22/2008  DW4     Reallocate Loans Repaid to be             *
+*                            Fixed/Variable                            *
+* DRW    03/05 2008  DW5     Add EZ-PAY BADJ & overages Accumulations  *
+* DRW    03/06 2008  DW6     Add Cred Card Accumulations               *
+* DRW    03/21/2008  DW7     Breakout GM AR by 1Y & RN /chg Acct # and *
+*                            other screen changes                      *
+* DRW    08/30/2008  DW8     Add APFP (EIL loan Pmt) to CAP Loan       *
+*                            Deposits                                  *
+* PAM    02/26/2009  PM9     Added deferred revenue (DREV) for Credit  *
+*                            Cards                                     *
+* PAM    05/30/2009  PM10    Added FPFP/FPRP/ADCR to cc totals         *
+* RSE    09/18/2009  RE1     Change 600K logic for Unification         *
+* vxt    11/24/2010  vt1     Change the layout of TIN1 structure       *
+* NGG    03/02/2012  NG1     Premier service changes                   *
+* YK1    03/25/2013  YK1     Add logic to process discount transactions*
+*                            OI-1911                                   *  
+************************************************************************
+*
+DEFINE DATA
+*
+LOCAL
+*
+1 TR-V VIEW OF A-ACCOUNTING-REGISTER
+ 2 ID-NUMBER
+ 2 TRANSACTION-DATN       (P9)
+ 2 TRANSACTION-TIMN       (P7)
+ 2 TXN-CODE               (A4)
+ 2 CASH-CODE
+ 2 DESCRIPTION
+ 2 TXN-ACCT-NUMBER        (N3)
+ 2 SEQUENCE-NUM           (N1)
+ 2 DEBIT-AMOUNT           (P7.2)
+ 2 CREDIT-AMOUNT          (P7.2)
+ 2 CLERK-ID               (A3)
+ 2 TERMINAL-ID            (A8)
+ 2 PROCESS-IND            (A1)
+ 2 MONTH-END              (A1)
+ 2 SG-CATEGORY-1    (A2/15)     /* Used for 'CP' and 'UN'
+ 2 SG-AMOUNT          (15)
+*
+1 #TRLOG-START-DT    (N8)
+1 REDEFINE #TRLOG-START-DT
+ 2 #TRLOG-START-DT-A   (A8)
+*
+1 #TRLOG-END-DT      (N8)
+1 REDEFINE #TRLOG-END-DT
+ 2 #TRLOG-END-DT-A    (A8)
+*
+1 #YYYYMMDD      (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY   (N4)
+ 2 #MM     (N2)
+ 2 #DD     (N2)
+*
+1 #ALOT-PREMIUMS        (N11.2)
+1 #ALOT-DUES            (N11.2)
+1 #ALOT-DUES-SO         (N11.2)
+1 #ALOT-RIDER           (N11.2)
+1 #ALOT-CAP-LOANS       (N11.2)
+1 #ALOT-POLICY-LOANS    (N11.2)
+1 #ALOT-CAP-INTEREST    (N11.2)
+1 #ALOT-POLICY-INTEREST (N11.2)
+1 #ALOT-OVERAGES        (N11.2)
+1 #ALOT-UNDERAGES       (N11.2)
+1 #ALOT-PSM             (N11.2)     /* NG1
+1 #ALOT-TOTAL           (N11.2)
+*
+1 #EZPA-PREMIUMS        (N11.2)
+1 #EZPA-DUES            (N11.2)
+1 #EZPA-DUES-SO         (N11.2)
+1 #EZPA-RIDER           (N11.2)
+1 #EZPA-CAP-LOANS       (N11.2)
+1 #EZPA-POLICY-LOANS    (N11.2)
+1 #EZPA-CAP-INTEREST    (N11.2)
+1 #EZPA-POLICY-INTEREST (N11.2)
+1 #EZPA-ADCR            (N11.2)
+1 #EZPA-RDCR            (N11.2)
+1 #EZPA-BADJ            (N11.2)
+1 #EZPA-FPF             (N11.2)
+1 #EZPA-APFP            (N11.2)     /* DW8
+1 #EZPA-PSM             (N11.2)     /* NG1
+1 #EZPA-TOTAL           (N11.2)
+*
+1 #CC-PREMIUMS          (N11.2)
+1 #CC-DUEP              (N11.2)
+1 #CC-DUEP-SO           (N11.2)
+1 #CC-RIDER             (N11.2)
+1 #CC-CAP-LOANS         (N11.2)
+1 #CC-POLICY-LOANS      (N11.2)
+1 #CC-CAP-INTEREST      (N11.2)
+1 #CC-POLICY-INTEREST   (N11.2)
+1 #CC-BADJ              (N11.2)
+1 #CC-TOTAL             (N11.2)
+1 #CC-DREV              (N11.2)    /* PM9
+1 #CC-ADCR              (N11.2)    /* PM10
+1 #CC-PSM               (N11.2)    /* NG1
+*
+1 #TAB          (A1) INIT <H'09'>
+1 #DB-AMT-DISP    (A14)
+1 #CR-AMT-DISP    (A14)
+*
+1 #CC-ACCEPTED-TRANS-REPORT-REC      (A150)        /* DW6
+1 REDEFINE #CC-ACCEPTED-TRANS-REPORT-REC
+ 2 #CC-ACCEPTED-X    (A1/133)
+*
+1 #CC-TOT   (N11.2)
+1 REDEFINE #CC-TOT
+ 2 #CC-TOT-X (A1/13)                             /* END DW6
+*
+1 PARM           (A10)
+1 REDEFINE PARM
+  2 PARM-MM-A     (A2)
+  2 PARM-SL-1     (A1)
+  2 PARM-DD-A     (A2)
+  2 PARM-SL-2     (A1)
+  2 PARM-YYYY-A   (A4)
+*
+1 #PARM-YYYYMMDD (N8)
+1 REDEFINE #PARM-YYYYMMDD
+ 2 #PARM-YYYYMMDD-A  (A8)
+*
+1 #TOT-BYPASSED   (P7.2)
+1 #DEBITS-BYPASSED  (P7.2)
+1 #CREDITS-BYPASSED (P7.2)
+1 #MODE   (A1)
+1 #TOT-FIX-LOAN (P5.2)
+1 #TOT-VAR-LOAN (P6.2)
+1 #ELP    (N5.2)
+1 #AMT    (N7.2)
+* 1 #ALP-3  (P7)
+* 1 #ALP-4  (P7)
+* 1 #ALP-EZ-PRN   (P7)
+1 #ALP-EZ-INT   (P7)
+* 1 #TOT-EZ-CREDITS  (P9.2)
+*
+1 ST-V  VIEW OF A-STATUS
+ 2 INTRO-FLAG
+ 2 X-LOAN-DATE     (9)    /* DW2
+ 2 X-LOAN-AMOUNT   (9)
+ 2 X-LOAN-AMOUNT-2 (9)
+ 2 X-ALT-LP-AMT    (9)
+ 2 X-ALT-LP-AMT-2  (9)
+ 2 PAY-STATUS   (9)
+ 2 MODE    (9)
+*
+1 #PAD-FILE
+ 2 #PAD-ID        (A1)
+ 2 #PAD-FILL-1    (A19)
+ 2 #PAD-DEBIT-AMT (N10.2)
+ 2 #PAD-FILL-2    (A62)
+*
+1 #TIN1  (A294) /* loan register detail                                     /* vt1 was 205
+1 REDEFINE #TIN1
+ 2 #TIN1-SECT    (A1)
+ 2 #TIN1-LR-NAME (A70)                                                      /* vt1 was 25
+ 2 #TIN1-CN-LIT  (A2)
+ 2 #TIN1-LR-ID   (N6)
+ 2 #TIN1-CN-FILL (A1)
+ 2 #FILL1        (A10)
+*
+ 2 #FIXED-LOAN-INFO
+  3 #TIN1-LNDT      (A6)
+  3 #TIN1-PRINC     (N5.2)
+  3 #TIN1-ACCINT    (N5.2)
+  3 #TIN1-BILAMT    (N5.2)
+  3 #TIN1-INTREC    (N5.2)
+  3 #TIN1-LACTDT    (A6)
+  3 #TIN1-LOTHDT    (A6)
+  3 #TIN1-DAYRT     (N2.4)
+  3 #TIN1-LR-CERT   (A6)
+  3 #TIN1-RANK      (A25)                                                   /* vt1 was 3
+  3 #TIN1-RET       (A1)
+  3 #TIN1-APL       (N2)
+  3 #TIN1-ALT-LP-AMT(P5.2)
+  3 #TIN1-INTRT     (N2.3)
+  3 #TIN1-CAP-AMT   (N5.1)
+*
+ 2 #VARIABLE-LOAN-INFO
+  3 #TIN1-LNDT-2    (A6)
+  3 #TIN1-PR-2      (N5.2)
+  3 #TIN1-ACCINT-2  (N5.2)
+  3 #TIN1-BILAMT-2  (N5.2)
+  3 #TIN1-INTREC-2  (N5.2)
+  3 #TIN1-LACTDT-2  (A6)
+  3 #TIN1-LOTHDT-2  (A6)
+  3 #TIN1-DAYRT-2   (N2.4)
+  3 #TIN1-CERT-2    (A6)
+  3 #TIN1-RANK-2    (A25)                                                   /* vt1 was 3
+  3 #TIN1-RET-2     (A1)
+  3 #TIN1-APL-2     (N2)
+  3 #TIN1-ALT-LP-AMT-2 (P5.2)
+  3 #TIN1-INT-2       (N2.3)
+  3 #TIN1-CAP-AMT-2   (N5.1)
+1 REDEFINE #TIN1  /* loan reg total record fron athp05p0
+ 2 #FILL            (A51)                                                  /* vt1 was 51
+ 2 #TIN1-TOT-MAX-LNS-TODAY  (P13.2)
+ 2 #TIN1-TOT-MAX-LNS-NXT-YR (P13.2)
+ 2 #TIN1-TOT-MBRS-ELIG-LNS  (P7)
+1 REDEFINE #TIN1   /* accounting register trans detail
+ 2 #TIN1-FILL-1    (A4)
+ 2 #TIN1-AR-ID     (A9)
+ 2 REDEFINE #TIN1-AR-ID
+  3 #TIN1-AR-ID-CN-LBL  (A2)
+  3 #TIN1-AR-ID-CN  (A6)
+  3 #TIN1-AR-ID-FILL(A1)
+ 2 #TIN1-DATE      (A6)
+ 2 #TIN1-TRAN      (A4)
+ 2 #TIN1-COL       (A1)
+ 2 #TIN1-AR-NAME   (A25)
+ 2 #TIN1-FILL-2    (A1)
+ 2 #TIN1-AR-CERT   (A5)
+ 2 #TIN1-ACCTNO    (A3)
+ 2 #TIN1-LTRANDT   (A6)
+ 2 #TIN1-DEBIT     (N7.2)
+ 2 #TIN1-CREDIT    (N7.2)
+ 2 #TIN1-REF       (A10)
+ 2 #TIN1-DESC      (A20)
+ 2 #TIN1-MSG       (A1)
+ 2 #TIN1-PROCESS-DATE (A6)
+ 2 #TIN1-FILL-3    (A4)
+ 2 #TIN1-AALP-CD   (A1)
+ 2 #TIN1-CLERK     (A4)
+ 2 #TIN1-TRDATE    (A6)
+ 2 #TIN1-TRTIME    (A6)
+ 2 #TIN1-TERMINAL  (A4)
+*
+1 NT-V VIEW OF A-NOTES
+ 2 ID-NUMBER                  (N6)
+ 2 REDEFINE ID-NUMBER
+  3 ID-NUMBER-1ST    (N1)
+  3 ID-NUMBER-LAST-5 (N5)
+ 2 NOTE-DATE          (N8/40)
+ 2 NOTE-TEXT          (A60/40)
+ 2 REDEFINE NOTE-TEXT /*loan reg/acct reg tots-also G4200PMS/ATHPICTX
+  3 NT-LN-TOT-AVAIL-TODAY        (N13.2)             /* vt was (n9.2)
+  3 NT-LN-TOT-MBRS-ELIG-LNS      (N7)
+*
+  3 NT-LN-PRIN               (N9.2/2)
+  3 NT-LN-DISBURSED          (N9.2/2)
+  3 NT-LN-REPAID             (N9.2/2)
+  3 NT-LN-ACC-INT            (N9.2/2)
+  3 NT-LN-BILLED-AMT         (N9.2/2)
+  3 NT-LN-INT-RECV           (N9.2/2)
+  3 NT-LN-MBRS-W-LNS         (N7/2)
+  3 NT-LN-COMP-INT-RT        (N2.5/2)
+  3 NT-LN-CAP-INT-TO-DATE    (N9.2/2)
+  3 NT-LN-MBRS-W-CAP-INT     (N7/2)
+  3 NT-LN-LNS-BY-INT-RT-TBL  (13)
+   4 NT-LN-LNS-BY-INT-RT     (N9.2/2)
+  3 NT-LN-TOT-COMP-RT        (N2.5)
+*
+  3 NT-PR-PMT      (P9.2)
+  3 NT-PR-NEW-LN   (P9.2)
+  3 NT-PR-ADDL-LN  (P9.2)
+  3 NT-PR-CAP      (P9.2)
+  3 NT-PR-ADJ      (P9.2)
+  3 NT-PR-NET-CHG  (P9.2)
+  3 NT-IN-PMT      (P9.2)
+  3 NT-IN-ADDL-LN  (P9.2)
+  3 NT-IN-CAP      (P9.2)
+  3 NT-IN-ADJ      (P9.2)
+  3 NT-IN-NET-CHG  (P9.2)
+  3 NT-ACC-ADJ     (P9.2)
+  3 NT-PREM-PMT    (P9.2)
+  3 NT-PREM-REV    (P9.2)
+  3 NT-FPF-PMT     (P9.2)
+  3 NT-FPF-REV     (P9.2)
+  3 NT-DUES-PMT    (P9.2)
+  3 NT-DUES-REV    (P9.2)
+  3 NT-FPF-DU-PMT  (P9.2)
+  3 NT-FPF-DU-REV  (P9.2)
+  3 NT-ALOT-START  (P9.2)
+  3 NT-ALOT-STOP   (P9.2)
+  3 NT-EZ-START    (P9.2)
+  3 NT-EZ-ADJ      (P9.2)
+  3 NT-DR          (P9.2)
+  3 NT-CR          (P9.2)
+*
+  3 NT-RECEIPTS    (P9.2)
+  3 NT-INT-TRAN    (P9.2)
+  3 NT-DISBURSEMENTS (P9.2)
+  3 NT-ADJ-APL     (P9.2)
+  3 NT-ADJ-APL-CAP (P9.2)
+  3 NT-ADJ-ETI     (P9.2)
+  3 NT-ADJ-ALP     (P9.2)
+  3 NT-ADJ-AIP     (P9.2)
+  3 NT-ADJ-ELP     (P9.2)
+  3 NT-ADJ-EIP     (P9.2)
+  3 NT-EZ-PREMS    (P9.2)
+  3 NT-ADJ-APL-PREM (P9.2)
+  3 NT-ADJ-JI      (P9.2)
+  3 NT-ADJ-L       (P9.2)
+*
+  3 NT-PAD-AMT     (P9.2)
+*
+  3 NT-PR-PMT-CAP  (P9.2)
+  3 NT-PR-ADJ-CAP  (P9.2)
+  3 NT-IN-PMT-CAP  (P9.2)
+  3 NT-IN-ADJ-CAP  (P9.2)
+  3 NT-ACC-ADJ-CAP (P9.2)
+  3 NT-ADJ-ALP-CAP (P9.2)
+  3 NT-ADJ-AIP-CAP (P9.2)
+  3 NT-ADJ-ELP-CAP (P9.2)
+  3 NT-ADJ-EIP-CAP (P9.2)
+  3 NT-EZPAY-DUES  (P9.2)
+  3 NT-ALLOT-DUES  (P9.2)
+  3 NT-APL-DUES    (P9.2)
+  3 NT-EZPAY-DUES-SO (P9.2)
+  3 NT-ALLOT-DUES-SO (P9.2)
+  3 NT-FPF-DU-PMT-SO (P9.2)
+  3 NT-FPF-DU-REV-SO (P9.2)
+  3 NT-DUES-PMT-SO  (P9.2)
+  3 NT-DUES-REV-SO  (P9.2)
+  3 NT-FPF-RID-PMT  (P9.2)    /* BELOW 6 ADDED 11/6/1999
+  3 NT-FPF-RID-REV  (P9.2)
+  3 NT-RID-PMT      (P9.2)
+  3 NT-RID-REV      (P9.2)
+  3 NT-RID-ALLOT    (P9.2)
+  3 NT-RID-EZPAY    (P9.2)
+  3 NT-ALLOT-PREMS  (P9.2)    /* below 2  added 3/26/2002
+  3 NT-CTX-DFAS-TOT (P9.2)
+*                            /* below 3  added 7/12/2004
+ 3 NT-ALLOT-UNDER  (P9.2)       /* amt alot-amt less than amt needed
+ 3 NT-ALLOT-OVER   (P9.2)       /* amt alot-amt gtr than amt needed
+ 3 NT-DFAS-NON-MATCH (P9.2)     /* amt dfas ssn non-match to AAFMAA
+*                            /* below 3 added 3/5/2008     /* DW5
+ 3 NT-EZPAY-BADJ      (P9.2)
+ 3 NT-EZPAY-UNDERAGES (P9.2)
+ 3 NT-EZPAY-OVERAGES  (P9.2)
+*                            /* below 10 added 3/6/2008     /* DW6
+ 3 NT-CC-PREMIUMS        (P9.2)
+ 3 NT-CC-DUES            (P9.2)
+ 3 NT-CC-DUES-SO         (P9.2)
+ 3 NT-CC-RIDER           (P9.2)
+ 3 NT-CC-CAP-LOANS       (P9.2)
+ 3 NT-CC-POLICY-LOANS    (P9.2)
+ 3 NT-CC-CAP-INTEREST    (P9.2)
+ 3 NT-CC-POLICY-INTEREST (P9.2)
+ 3 NT-CC-BADJ            (P9.2)
+ 3 NT-CC-TOTAL           (P9.2)
+*
+*                            /* below 1 added 9/1/2008     /* DW8
+ 3 NT-EZPAY-APFP    (N9.2)
+*                            /* below 1 added 03/01/2009   /* PM9
+ 3 NT-CC-DREV            (P9.2)                            /* PM9
+ 3 NT-CC-OVERAGES        (P9.2)                            /* PM10
+*
+ 3 NT-EZPAY-PSM          (P9.2)                            /* NG1
+ 3 NT-ALLOT-PSM          (P9.2)                            /* NG1
+ 3 NT-CC-PSM             (P9.2)                            /* NG1
+*
+1 #ISN          (P8)
+1 #FOUND-REC    (L)
+1 #I1           (I2)
+1 #I2           (I2)
+1 #I3           (I2)
+1 #CNT-2  (I2)
+1 #CNT-3  (I2)
+1 #CNT-4  (I2)
+1 #CNT-5  (I2)
+1 #CNT-6  (I2)
+1 #INT-AMT      (P9.2)
+1 #TOT-INT-AMT  (P11.2/2)    /* WAS p9.2   DW4
+*
+* loan accumulators
+1 #LN-TOT-AVAIL-TODAY   (N13.2)                     /* vt was n9.2
+1 #LN-TOT-MBRS-ELIG-LNS (N7)
+1 #LN-PRIN              (N9.2/2)
+1 #LN-DISBURSED         (N9.2/2)
+1 #LN-REPAID            (N9.2/2)
+1 #LN-ACC-INT           (N9.2/2)
+1 #LN-BILLED-AMT        (N9.2/2)
+1 #LN-INT-RECV          (N9.2/2)
+1 #LN-MBRS-W-LNS        (N7/2)
+1 #LN-COMP-INT-RT       (N2.5/2)
+1 #LN-CAP-INT-TO-DATE   (N9.2/2)
+1 #LN-MBRS-W-CAP-INT    (N7/2)
+1 #LN-LNS-BY-INT-RT-TBL (13)
+ 2 #LN-LNS-BY-INT-RT    (N9.2/2)
+1 #LN-TOT-COMP-RT       (N2.5)
+*
+* accounting reg total accumulators
+1 #PR-PMT        (P9.2)
+1 #PR-NEW-LN     (P9.2)
+1 #PR-ADDL-LN    (P9.2)
+1 #PR-CAP        (P9.2)
+1 #PR-ADJ        (P9.2)
+1 #PR-NET-CHG    (P9.2)
+1 #IN-PMT        (P9.2)
+1 #IN-ADDL-LN    (P9.2)
+1 #IN-CAP        (P9.2)
+1 #IN-ADJ        (P9.2)
+1 #IN-NET-CHG    (P9.2)
+1 #ACC-ADJ       (P9.2)
+1 #PREM-PMT      (P9.2)
+1 #PREM-REV      (P9.2)
+1 #FPF-PMT       (P9.2)
+1 #FPF-REV       (P9.2)
+1 #DUES-PMT    (P9.2)
+1 #DUES-REV    (P9.2)
+1 #FPF-DU-PMT  (P9.2)
+1 #FPF-DU-REV  (P9.2)
+1 #ALOT-START    (P9.2)
+1 #ALOT-STOP     (P9.2)
+1 #EZ-START      (P9.2)
+1 #EZ-ADJ        (P9.2)
+1 #DR            (P9.2)
+1 #CR            (P9.2)
+*
+1 #PR-PMT-CAP  (P9.2)
+1 #PR-ADJ-CAP  (P9.2)
+1 #IN-PMT-CAP  (P9.2)
+1 #IN-ADJ-CAP  (P9.2)
+1 #ACC-ADJ-CAP (P9.2)
+1 #APL-DUES    (P9.2)
+1 #FPF-DU-PMT-SO (P9.2)
+1 #FPF-DU-REV-SO (P9.2)
+1 #DUES-PMT-SO  (P9.2)
+1 #DUES-REV-SO  (P9.2)
+1 #FPF-RID-PMT  (P9.2)   /* BELOW 6 ADDED 11/6/1999
+1 #FPF-RID-REV  (P9.2)
+1 #RID-PMT      (P9.2)
+1 #RID-REV      (P9.2)
+*
+1 #RECEIPTS      (P9.2)
+1 #INT-TRAN      (P9.2)
+1 #DISBURSEMENTS (P9.2)
+1 #ADJ-APL       (P9.2)
+1 #ADJ-APL-CAP   (P9.2)
+1 #ADJ-ETI       (P9.2)
+1 #ADJ-APL-PREM  (P9.2)
+1 #ADJ-JI        (P9.2)
+1 #ADJ-L         (P9.2)
+1 #CREDIT-AMT    (P9.2)
+1 #DEBIT-AMT     (P9.2)
+*
+1 #HOLD-AMT (P9.2)
+*
+END-DEFINE
+* * * * * * * * * * * * * * *
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+        'Accounting Trans info'
+        5X 'DATE:' *DAT4U 5X 'TIME: ' *TIMX
+*
+READ WORK 2 ONCE RECORD PARM   /* PARM date (09/01/1999)    /* DW2
+COMPRESS PARM-YYYY-A PARM-MM-A PARM-DD-A INTO #PARM-YYYYMMDD-A LEAVING NO
+WRITE 'Parm-date =' #PARM-YYYYMMDD
+*
+*
+* Retreive Next Month Day 1 (Nexr Month) Alot & EZPAY Transactions      /* DW6
+*                                    for Next Month's GM AR screen
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD /* On Feb 2008 Month-end this will be 3/1/2008
+MOVE 1 TO #DD
+MOVE #YYYYMMDD TO #TRLOG-START-DT
+*
+MOVE 1 TO #DD
+MOVE #YYYYMMDD TO #TRLOG-END-DT
+WRITE 'Trlog Start date/End date =' #TRLOG-START-DT #TRLOG-END-DT
+*
+READ TR-V BY TRANSACTION-DATN FROM #TRLOG-START-DT THRU #TRLOG-END-DT
+  IF   (TR-V.TXN-ACCT-NUMBER = 999)
+   AND (TR-V.CLERK-ID NE 'EDS')
+    WRITE TR-V.ID-NUMBER '999 but not EDS'
+  END-IF
+*
+  IF TR-V.TXN-ACCT-NUMBER NE 999
+   AND NOT (TR-V.TXN-CODE = 'DUEP' AND TR-V.SG-CATEGORY-1 (1) = 'PS')   /* NG1
+    ESCAPE TOP
+  END-IF
+*
+* ACCUM ALLOTMENT/EZPAY Transactions for next Month ************************
+*
+  IF (TR-V.CREDIT-AMOUNT NE 0) AND (TR-V.DEBIT-AMOUNT NE 0)
+    WRITE TR-V.ID-NUMBER 'Amts in both DB & CR' TR-V.CREDIT-AMOUNT TR-V.DEBIT-AMOUNT
+         TR-V.TXN-CODE
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'ADCR'  /* Allotment Overages/ EZPAY ADCR
+    IF TR-V.CASH-CODE = 'E'
+      ADD TR-V.CREDIT-AMOUNT TO #EZPA-ADCR
+*      write tr-v.id-number 'EZPAY Overage' tr-v.credit-amount tr-v.debit-amount
+*         #ezpa-adcr tr-v.cash-code
+    ELSE
+      IF TR-V.CASH-CODE = 'C'                /* PM10
+        ADD TR-V.CREDIT-AMOUNT TO #CC-ADCR   /* PM10
+      ELSE                                   /* PM10
+        ADD TR-V.CREDIT-AMOUNT TO #ALOT-OVERAGES
+      END-IF                                 /* PM10
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'RDCR'  /* Allotment Underages / EZPAY RDCR
+    IF TR-V.CASH-CODE = 'E'
+      ADD TR-V.DEBIT-AMOUNT TO #EZPA-RDCR
+*      write tr-v.id-number 'EZPAY Underage' tr-v.credit-amount tr-v.debit-amount
+*         #ezpa-rdcr tr-v.cash-code
+    ELSE
+      ADD TR-V.DEBIT-AMOUNT TO #ALOT-UNDERAGES
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'BADJ'  /* EZPAY-BADJ
+    IF TR-V.CASH-CODE = 'E'
+      ADD      TR-V.DEBIT-AMOUNT  TO   #EZPA-BADJ
+      SUBTRACT TR-V.CREDIT-AMOUNT FROM #EZPA-BADJ
+*      write tr-v.id-number 'EZPAY BADJ' tr-v.credit-amount tr-v.debit-amount
+*                  #ezpa-badj tr-v.cash-code
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'FPFP'  /* EZPAY-FPFP
+    IF TR-V.CASH-CODE = 'E'
+      ADD  TR-V.CREDIT-AMOUNT TO #EZPA-FPF
+*      write tr-v.id-number 'EZPAY FPFP' tr-v.credit-amount tr-v.debit-amount
+*                  #ezpa-fpf tr-v.cash-code
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'PREP'  /* Allotment PREP
+    IF TR-V.CASH-CODE = 'E'
+      ADD TR-V.CREDIT-AMOUNT TO #EZPA-PREMIUMS
+    ELSE
+      IF TR-V.CASH-CODE = 'C'                                 /* PM9
+        ADD TR-V.CREDIT-AMOUNT TO #CC-PREMIUMS                /* PM9
+        FOR #I2 1 TO 10                                       /* PM9
+          IF TR-V.SG-CATEGORY-1 (#I2) = 'UN'                  /* PM9
+            ADD TR-V.SG-AMOUNT (#I2) TO #CC-BADJ              /* PM9
+            SUBTRACT TR-V.SG-AMOUNT (#I2) FROM #CC-PREMIUMS   /* PM9
+          END-IF                                              /* PM9
+        END-FOR                                               /* PM9
+      ELSE                                                    /* PM9
+        ADD TR-V.CREDIT-AMOUNT TO #ALOT-PREMIUMS
+      END-IF                                                  /* PM9
+    END-IF
+  END-IF
+* YK1 start
+  IF TR-V.TXN-CODE = 'DISC'  /* Allotment/EZ-Pay DISC
+    DECIDE ON FIRST VALUE TR-V.CASH-CODE
+      VALUE 'E'
+        #EZPA-PREMIUMS := #EZPA-PREMIUMS - TR-V.DEBIT-AMOUNT
+      VALUE 'G'
+        #ALOT-PREMIUMS := #ALOT-PREMIUMS - TR-V.DEBIT-AMOUNT
+      NONE VALUE
+        IGNORE          
+    END-DECIDE
+  END-IF
+* YK1 end 
+*
+  IF TR-V.TXN-CODE = 'DUEP'  /* Allotment DUEP
+    IF TR-V.CASH-CODE = 'E'
+      IF TR-V.SG-CATEGORY-1 (1) = 'SO'
+        ADD TR-V.CREDIT-AMOUNT TO #EZPA-DUES-SO
+      ELSE
+        IF TR-V.SG-CATEGORY-1 (1) = 'PS'          /* NG1
+          ADD TR-V.CREDIT-AMOUNT TO #EZPA-PSM     /* NG1
+        ELSE                                      /* NG1
+          ADD TR-V.CREDIT-AMOUNT TO #EZPA-DUES
+        END-IF                                    /* NG1
+      END-IF
+    ELSE
+      IF TR-V.SG-CATEGORY-1 (1) = 'SO'
+        ADD TR-V.CREDIT-AMOUNT TO #ALOT-DUES-SO
+      ELSE
+        IF TR-V.SG-CATEGORY-1 (1) = 'PS'          /* NG1
+          ADD TR-V.CREDIT-AMOUNT TO #ALOT-PSM     /* NG1
+        ELSE                                      /* NG1
+          ADD TR-V.CREDIT-AMOUNT TO #ALOT-DUES
+        END-IF                                    /* NG1
+      END-IF
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'RIDP'  /* Allotment RIDP
+    IF TR-V.CASH-CODE = 'E'
+      ADD TR-V.CREDIT-AMOUNT TO #EZPA-RIDER
+      SUBTRACT TR-V.DEBIT-AMOUNT FROM #EZPA-RIDER
+    ELSE
+      ADD TR-V.CREDIT-AMOUNT TO #ALOT-RIDER
+    END-IF
+  END-IF
+*
+  IF   (TR-V.TXN-CODE = 'APFP') /* EZPAY EIL payments              /* DW8
+   AND (TR-V.CASH-CODE = 'E')
+    ADD TR-V.CREDIT-AMOUNT TO #EZPA-APFP
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'PRNF' OR = 'PRNV' /* Allotment ALP - (Do NOt INCLUDE PADF)
+*     or = 'APFP'    /* EIL loan payment     /* DW8
+    IF TR-V.SG-CATEGORY-1 (1) = 'CP'
+      IF TR-V.CASH-CODE = 'E'
+        ADD TR-V.CREDIT-AMOUNT TO #EZPA-CAP-LOANS
+      ELSE
+        IF TR-V.CASH-CODE = 'C'                                   /* PM9
+          ADD TR-V.CREDIT-AMOUNT TO #CC-CAP-LOANS                 /* PM9
+        ELSE                                                      /* PM9
+          ADD TR-V.CREDIT-AMOUNT TO #ALOT-CAP-LOANS
+        END-IF                                                    /* PM9
+      END-IF
+    ELSE
+      IF TR-V.CASH-CODE = 'E'
+        ADD TR-V.CREDIT-AMOUNT TO #EZPA-POLICY-LOANS
+      ELSE
+        IF TR-V.CASH-CODE = 'C'                                   /* PM9
+          ADD TR-V.CREDIT-AMOUNT TO #CC-POLICY-LOANS              /* PM9
+        ELSE                                                      /* PM9
+          ADD TR-V.CREDIT-AMOUNT TO #ALOT-POLICY-LOANS
+        END-IF                                                    /* PM9
+      END-IF
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'INTF' OR = 'INTV'  /* Allotment AIP
+    IF TR-V.SG-CATEGORY-1 (1) = 'CP'
+      IF TR-V.CASH-CODE = 'E'
+        ADD TR-V.CREDIT-AMOUNT TO #EZPA-CAP-INTEREST
+      ELSE
+        ADD TR-V.CREDIT-AMOUNT TO #ALOT-CAP-INTEREST
+      END-IF
+    ELSE
+      IF TR-V.CASH-CODE = 'E'
+        ADD TR-V.CREDIT-AMOUNT TO #EZPA-POLICY-INTEREST
+      ELSE
+        ADD TR-V.CREDIT-AMOUNT TO #ALOT-POLICY-INTEREST
+      END-IF
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'DREV'                                   /* PM9
+    IF TR-V.CREDIT-AMOUNT GT 0                                /* PM9
+      ADD TR-V.CREDIT-AMOUNT TO #CC-DREV                      /* PM9
+    END-IF                                                    /* PM9
+*
+    IF TR-V.DEBIT-AMOUNT GT 0                                 /* PM9
+      SUBTRACT TR-V.DEBIT-AMOUNT FROM #CC-DREV                /* PM9
+    END-IF                                                    /* PM9
+  END-IF                                                      /* PM9
+END-READ
+*
+MOVE TRUE TO #FOUND-REC
+FIND (1) NT-V WITH ID-NUMBER = 800105  /* Current Month's Info (Next Month)
+  IF NO RECORDS FOUND
+    WRITE 'no-nx 800105 rec found'
+    RESET #FOUND-REC
+  END-NOREC
+  MOVE *ISN TO #ISN
+END-FIND
+*
+IF #FOUND-REC
+  GET NT-V #ISN
+  WRITE 'found 800105 rec wuth date of' NT-V.NOTE-DATE (1)
+END-IF
+*
+COMPUTE #ALOT-TOTAL =
+  #ALOT-PREMIUMS
++ #ALOT-DUES
++ #ALOT-DUES-SO
++ #ALOT-PSM                /* NG1
++ #ALOT-RIDER
++ #ALOT-CAP-LOANS
++ #ALOT-POLICY-LOANS
++ #ALOT-CAP-INTEREST
++ #ALOT-POLICY-INTEREST
++ #ALOT-OVERAGES
+- #ALOT-UNDERAGES
+*
+COMPUTE #EZPA-TOTAL =
+  #EZPA-PREMIUMS
++ #EZPA-DUES
++ #EZPA-DUES-SO
++ #EZPA-PSM                /* NG1
++ #EZPA-RIDER
++ #EZPA-CAP-LOANS
++ #EZPA-POLICY-LOANS
++ #EZPA-CAP-INTEREST
++ #EZPA-POLICY-INTEREST
++ #EZPA-ADCR
+- #EZPA-RDCR
+- #EZPA-BADJ
++ #EZPA-FPF
++ #EZPA-APFP                /* DW8
+*
+WRITE #ALOT-POLICY-LOANS    '#alot-policy-loans'
+WRITE #ALOT-CAP-LOANS       '#alot-cap-loans'
+WRITE #ALOT-POLICY-INTEREST '#alot-policy-interest'
+WRITE #ALOT-CAP-INTEREST    '#alot-cap-interest'
+WRITE #ALOT-UNDERAGES       '#alot-underages'
+WRITE #ALOT-OVERAGES        '#alot-overages'
+WRITE #ALOT-DUES-SO         '#alot-dues-so'
+WRITE #ALOT-DUES            '#alot-dues'
+WRITE #ALOT-PSM             '#alot-psm'            /* NG1
+WRITE #ALOT-PREMIUMS        '#alot-premiums'
+WRITE #ALOT-RIDER           '#alot-rider'
+WRITE #ALOT-TOTAL           '#alot-total'
+*
+WRITE #EZPA-POLICY-LOANS    '#ezpa-policy-loans'
+WRITE #EZPA-CAP-LOANS       '#ezpa-cap-loans'
+WRITE #EZPA-POLICY-INTEREST '#ezpa-policy-interest'
+WRITE #EZPA-CAP-INTEREST    '#ezpa-cap-interest'
+WRITE #EZPA-ADCR            '#ezpa-adcr'
+WRITE #EZPA-RDCR            '#ezpa-rdcr'
+WRITE #EZPA-BADJ            '#ezpa-badj'
+WRITE #EZPA-DUES-SO         '#ezpa-dues-so'
+WRITE #EZPA-DUES            '#ezpa-dues'
+WRITE #EZPA-PSM             '#ezpa-psm'           /* NG1
+WRITE #EZPA-PREMIUMS        '#ezpa-premiums'
+WRITE #EZPA-RIDER           '#ezpa-rider'
+WRITE #EZPA-FPF             '#ezpa-fpr'
+WRITE #EZPA-APFP            '#ezpa-apfp'    /* DW8
+WRITE #EZPA-TOTAL           '#ezpa-total'
+*
+* Put Totals on Current Months (Next Month) NT Record
+*
+COMPUTE NT-ADJ-ALP = #ALOT-POLICY-LOANS + #ALOT-CAP-LOANS
+MOVE #ALOT-CAP-LOANS TO NT-ADJ-ALP-CAP
+COMPUTE NT-ADJ-AIP = #ALOT-POLICY-INTEREST + #ALOT-CAP-INTEREST
+MOVE #ALOT-CAP-INTEREST TO NT-ADJ-AIP-CAP
+COMPUTE NT-ADJ-ELP = #EZPA-POLICY-LOANS + #EZPA-CAP-LOANS
+MOVE #EZPA-CAP-LOANS TO NT-ADJ-ELP-CAP
+COMPUTE NT-ADJ-EIP = #EZPA-POLICY-INTEREST + #EZPA-CAP-INTEREST
+MOVE #EZPA-CAP-INTEREST TO NT-ADJ-EIP-CAP
+MOVE #EZPA-APFP         TO NT-EZPAY-APFP                      /* DW8
+*
+COMPUTE NT-EZ-PREMS = #EZPA-PREMIUMS + #EZPA-DUES-SO + #EZPA-DUES + #EZPA-RIDER
+                    + #EZPA-FPF
+MOVE #EZPA-DUES    TO NT-EZPAY-DUES
+MOVE #EZPA-DUES-SO TO NT-EZPAY-DUES-SO
+MOVE #EZPA-PSM     TO NT-EZPAY-PSM                            /* NG1
+*
+MOVE #ALOT-DUES TO NT-ALLOT-DUES
+MOVE #ALOT-DUES-SO TO NT-ALLOT-DUES-SO
+MOVE #ALOT-PSM     TO NT-ALLOT-PSM                            /* NG1
+MOVE #ALOT-RIDER   TO NT-RID-ALLOT
+MOVE #EZPA-RIDER   TO NT-RID-EZPAY
+MOVE #ALOT-PREMIUMS TO NT-ALLOT-PREMS
+MOVE #ALOT-OVERAGES  TO NT-ALLOT-OVER
+COMPUTE NT-ALLOT-UNDER = #ALOT-UNDERAGES * -1
+COMPUTE NT-EZPAY-BADJ = #EZPA-BADJ * -1                       /* DW5
+COMPUTE NT-EZPAY-UNDERAGES = #EZPA-RDCR * -1
+MOVE #EZPA-ADCR TO NT-EZPAY-OVERAGES
+*
+* Clear Current Months (Next Month) Cred Card Amounts                  /* DW6
+RESET NT-CC-PREMIUMS
+RESET NT-CC-DUES
+RESET NT-CC-DUES-SO
+RESET NT-CC-RIDER
+RESET NT-CC-CAP-LOANS
+RESET NT-CC-POLICY-LOANS
+RESET NT-CC-CAP-INTEREST
+RESET NT-CC-POLICY-INTEREST
+RESET NT-CC-BADJ
+RESET NT-CC-TOTAL
+RESET NT-CC-OVERAGES                               /* PM10
+RESET NT-CC-PSM                                    /* NG1
+*
+COMPUTE #CC-TOTAL =                                /* PM9
+  #CC-PREMIUMS                                     /* PM9
++ #CC-DUEP                                         /* PM9
++ #CC-DUEP-SO                                      /* PM9
++ #CC-RIDER                                        /* PM9
++ #CC-CAP-LOANS                                    /* PM9
++ #CC-POLICY-LOANS                                 /* PM9
++ #CC-CAP-INTEREST                                 /* PM9
++ #CC-POLICY-INTEREST                              /* PM9
++ #CC-BADJ                                         /* PM9
++ #CC-DREV                                         /* PM9
++ #CC-ADCR                                         /* PM10
++ #CC-PSM                                          /* NG1
+*
+WRITE #CC-PREMIUMS        '#cc-premiums'           /* PM9
+WRITE #CC-DUEP            '#cc-Dues'               /* PM9
+WRITE #CC-DUEP-SO         '#cc-Dues-so'            /* PM9
+WRITE #CC-PSM             '#cc-psm'                /* NG1
+WRITE #CC-RIDER           '#cc-rider'              /* PM9
+WRITE #CC-CAP-LOANS       '#cc-cap-loans'          /* PM9
+WRITE #CC-POLICY-LOANS    '#cc-policy-loans'       /* PM9
+WRITE #CC-CAP-INTEREST    '#cc-cap-interest'       /* PM9
+WRITE #CC-POLICY-INTEREST '#cc-policy-interet'     /* PM9
+WRITE #CC-BADJ            '#cc-badj'               /* PM9
+WRITE #CC-DREV            '#cc-drev'               /* PM9
+WRITE #CC-ADCR            '#cc-adcr'               /* PM10
+WRITE #CC-TOTAL           '#cc-total'              /* PM9
+*
+MOVE #CC-PREMIUMS        TO NT-CC-PREMIUMS         /* PM9
+MOVE #CC-DUEP            TO NT-CC-DUES             /* PM9
+MOVE #CC-DUEP-SO         TO NT-CC-DUES-SO          /* PM9
+MOVE #CC-PSM             TO NT-CC-PSM              /* NG1
+MOVE #CC-RIDER           TO NT-CC-RIDER            /* PM9
+MOVE #CC-CAP-LOANS       TO NT-CC-CAP-LOANS        /* PM9
+MOVE #CC-POLICY-LOANS    TO NT-CC-POLICY-LOANS     /* PM9
+MOVE #CC-CAP-INTEREST    TO NT-CC-CAP-INTEREST     /* PM9
+MOVE #CC-POLICY-INTEREST TO NT-CC-POLICY-INTEREST  /* PM9
+MOVE #CC-BADJ            TO NT-CC-BADJ             /* PM9
+MOVE #CC-DREV            TO NT-CC-DREV             /* PM9
+MOVE #CC-ADCR            TO NT-CC-OVERAGES         /* PM10
+RESET #CC-TOT NT-CC-TOTAL                          /* PM9
+
+* Get total PAD-FILE TOTAL
+*
+READ WORK 5 RECORD #PAD-FILE
+  IF #PAD-ID NE '8'
+    ESCAPE TOP
+  END-IF
+*
+  MOVE #PAD-DEBIT-AMT TO NT-PAD-AMT
+  WRITE 'tot AAFMAA Pad File=' #PAD-DEBIT-AMT
+  ESCAPE BOTTOM
+END-WORK
+*
+* Above is GM AR PAD FILE EZP total
+*
+IF #FOUND-REC
+  UPDATE (0677)
+  WRITE 'UPDATE NX 800105'
+ELSE
+  MOVE 800105 TO NT-V.ID-NUMBER
+  STORE NT-V
+  WRITE 'store NX 800105'
+END-IF
+*
+END TRANSACTION
+*
+* Retreive yesterdays (Last Month) Automated Credit Card Transactions      /* DW6
+*                                    for Last month's GM AR screen
+*
+MOVE #PARM-YYYYMMDD TO #YYYYMMDD /* On Feb 2008 Month-end this will be 3/1/2008
+MOVE 26 TO #DD  /* Usually the last day of the month
+SUBTRACT 1 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+*
+MOVE #YYYYMMDD TO #TRLOG-START-DT
+*
+MOVE 31 TO #DD
+MOVE #YYYYMMDD TO #TRLOG-END-DT
+WRITE 'CC CARD Trlog Start date/End date =' #TRLOG-START-DT #TRLOG-END-DT
+*
+RESET #CC-PREMIUMS #CC-DUEP #CC-DUEP-SO #CC-RIDER #CC-CAP-LOANS        /* PM9
+      #CC-POLICY-LOANS #CC-CAP-INTEREST #CC-POLICY-INTEREST #CC-BADJ   /* PM9
+      #CC-DREV #CC-TOTAL #CC-TOT #CC-PSM                               /* PM9 NG1
+*
+READ TR-V BY TRANSACTION-DATN FROM #TRLOG-START-DT THRU #TRLOG-END-DT  /* DW6
+  IF  (TR-V.CLERK-ID NE 'EDS')  /* Auto trans
+   OR (TR-V.CASH-CODE NE 'C')   /* Credit Card Trans
+    ESCAPE TOP
+  END-IF
+* ACCUM Credit Card Tansactions *******************************
+*
+  IF TR-V.TXN-CODE = 'DUEP' OR = 'RIDP'
+    WRITE TR-V.ID-NUMBER 'Auto Cred Card' TR-V.CREDIT-AMOUNT TR-V.DEBIT-AMOUNT
+         TR-V.CASH-CODE TR-V.TXN-CODE
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'PREP'  /* Auto CRED CARD PREP
+    ADD TR-V.CREDIT-AMOUNT TO #CC-PREMIUMS
+*
+    FOR #I2 1 TO 10
+      IF TR-V.SG-CATEGORY-1 (#I2) = 'UN'
+        ADD TR-V.SG-AMOUNT (#I2) TO #CC-BADJ
+        SUBTRACT TR-V.SG-AMOUNT (#I2) FROM #CC-PREMIUMS
+        FOR #I3 1 TO 10
+          IF TR-V.SG-CATEGORY-1 (#I3) NE ' '
+            WRITE TR-V.ID-NUMBER #I3 'CC BADJ' TR-V.TXN-CODE TR-V.SG-CATEGORY-1 (#I3)
+              TR-V.SG-AMOUNT (#I3)
+          END-IF
+        END-FOR
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'ADCR'                   /* PM10
+    ADD  TR-V.CREDIT-AMOUNT TO #CC-ADCR       /* PM10
+  END-IF                                      /* PM10
+*
+  IF TR-V.TXN-CODE = 'FPFP'                   /* PM10
+    ADD  TR-V.CREDIT-AMOUNT TO #CC-PREMIUMS   /* PM10
+  END-IF                                      /* PM10
+*
+  IF TR-V.TXN-CODE = 'DUEP'  /* Auto CRED CARD DUEP
+    IF TR-V.DESCRIPTION = MASK ('SO MBR')
+      ADD TR-V.CREDIT-AMOUNT TO #CC-DUEP-SO
+    ELSE
+      IF TR-V.SG-CATEGORY-1 (1) = 'PS'        /* NG1
+        ADD TR-V.CREDIT-AMOUNT TO #CC-PSM     /* NG1
+      ELSE                                    /* NG1
+        ADD TR-V.CREDIT-AMOUNT TO #CC-DUEP
+      END-IF                                  /* NG1
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'RIDP'  /* Auto CRED CARD Rider Pmt
+    ADD TR-V.CREDIT-AMOUNT TO #CC-RIDER
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'FPRP'                   /* PM10
+    ADD  TR-V.CREDIT-AMOUNT TO #CC-RIDER      /* PM10
+  END-IF                                      /* PM10
+*
+  IF TR-V.TXN-CODE = 'PRNF' OR = 'PRNV' /* Auto CRED CARD CLP
+    IF TR-V.SG-CATEGORY-1 (1) = 'CP'
+      ADD TR-V.CREDIT-AMOUNT TO #CC-CAP-LOANS
+    ELSE
+      ADD TR-V.CREDIT-AMOUNT TO #CC-POLICY-LOANS
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'INPF' OR = 'INPV' /* Auto CRED CARD CIP
+    IF TR-V.SG-CATEGORY-1 (1) = 'CP'
+      ADD TR-V.CREDIT-AMOUNT TO #CC-CAP-INTEREST
+    ELSE
+      ADD TR-V.CREDIT-AMOUNT TO #CC-POLICY-INTEREST
+    END-IF
+  END-IF
+*
+  IF TR-V.TXN-CODE = 'DREV'                                   /* PM9
+    IF TR-V.CREDIT-AMOUNT GT 0                                /* PM9
+      ADD TR-V.CREDIT-AMOUNT TO #CC-DREV                      /* PM9
+WRITE (13) 'Just found DREV - credit' 2X TR-V.ID-NUMBER TR-V.CREDIT-AMOUNT
+    END-IF                                                    /* PM9
+*
+    IF TR-V.DEBIT-AMOUNT GT 0                                 /* PM9
+      SUBTRACT TR-V.DEBIT-AMOUNT FROM #CC-DREV                /* PM9
+WRITE (13) 'Just found DREV - debit' 2X TR-V.ID-NUMBER TR-V.DEBIT-AMOUNT
+    END-IF                                                    /* PM9
+  END-IF                                                      /* PM9
+END-READ
+*
+MOVE TRUE TO #FOUND-REC
+FIND (1) NT-V WITH ID-NUMBER = 800116    /* Last Month Info
+  IF NO RECORDS FOUND
+    WRITE 'no-nx 800116 rec found'
+    RESET #FOUND-REC
+  END-NOREC
+  MOVE *ISN TO #ISN
+END-FIND
+*
+IF #FOUND-REC
+  GET NT-V #ISN
+  WRITE 'found 800116 rec wuth date of' NT-V.NOTE-DATE (1)
+END-IF
+*
+COMPUTE #CC-TOTAL =
+  #CC-PREMIUMS
++ #CC-DUEP
++ #CC-DUEP-SO
++ #CC-RIDER
++ #CC-CAP-LOANS
++ #CC-POLICY-LOANS
++ #CC-CAP-INTEREST
++ #CC-POLICY-INTEREST
++ #CC-BADJ
++ #CC-DREV                                                   /* PM9
++ #CC-ADCR                                                   /* PM10
++ #CC-PSM                                                    /* NG1
+
+WRITE #CC-PREMIUMS        '#cc-premiums'
+WRITE #CC-DUEP            '#cc-Dues'
+WRITE #CC-DUEP-SO         '#cc-Dues-so'
+WRITE #CC-PSM             '#cc-psm'                          /* NG1
+WRITE #CC-RIDER           '#cc-rider'
+WRITE #CC-CAP-LOANS       '#cc-cap-loans'
+WRITE #CC-POLICY-LOANS    '#cc-policy-loans'
+WRITE #CC-CAP-INTEREST    '#cc-cap-interest'
+WRITE #CC-POLICY-INTEREST '#cc-policy-interet'
+WRITE #CC-BADJ            '#cc-badj'
+WRITE #CC-DREV            '#cc-drev'                          /* PM9
+WRITE #CC-ADCR            '#cc-adcr'                          /* PM10
+WRITE #CC-TOTAL           '#cc-total'
+*
+MOVE #CC-PREMIUMS        TO NT-CC-PREMIUMS
+MOVE #CC-DUEP            TO NT-CC-DUES
+MOVE #CC-DUEP-SO         TO NT-CC-DUES-SO
+move #CC-PSM             TO NT-CC-PSM                         /* NG1
+MOVE #CC-RIDER           TO NT-CC-RIDER
+MOVE #CC-CAP-LOANS       TO NT-CC-CAP-LOANS
+MOVE #CC-POLICY-LOANS    TO NT-CC-POLICY-LOANS
+MOVE #CC-CAP-INTEREST    TO NT-CC-CAP-INTEREST
+MOVE #CC-POLICY-INTEREST TO NT-CC-POLICY-INTEREST
+MOVE #CC-BADJ            TO NT-CC-BADJ
+MOVE #CC-DREV            TO NT-CC-DREV                       /* PM9
+MOVE #CC-ADCR            TO NT-CC-OVERAGES                   /* PM10
+*
+* Get total CC-ACCEPTED TOTAL
+*
+RESET #CC-TOT NT-CC-TOTAL
+*
+READ WORK 6 RECORD #CC-ACCEPTED-TRANS-REPORT-REC
+  IF #CC-ACCEPTED-TRANS-REPORT-REC NE MASK ('Grand Total')
+    ESCAPE TOP
+  END-IF
+*
+  WRITE 'Found CC ACCEPTED TOTAL LINE'
+  MOVE 14 TO #I2
+  FOR #I1 35 TO 13 STEP -1
+    IF #CC-ACCEPTED-X (#I1) = MASK (N)
+      SUBTRACT 1 FROM #I2
+      MOVE #CC-ACCEPTED-X (#I1) TO #CC-TOT-X (#I2)
+    END-IF
+  END-FOR
+*
+  MOVE #CC-TOT TO NT-CC-TOTAL
+  WRITE 'tot AAFMAA CC Total=' #CC-TOT
+  ESCAPE BOTTOM
+END-WORK
+
+IF #FOUND-REC
+  UPDATE (0967)
+  WRITE 'UPDATE NX 800166'
+ELSE
+  MOVE 800166 TO NT-V.ID-NUMBER
+  STORE NT-V
+  WRITE 'store NX 800166'
+END-IF
+*
+END TRANSACTION
+*
+* stop                                   /* <<<<<<<<<<<<<<<<<<<<<<<<<<
+*
+READ WORK 1 RECORD #TIN1
+  IF #TIN1-SECT = 'J'
+    PERFORM ACCUM-LOAN-REG
+  END-IF
+*
+  IF #TIN1-SECT = 'B'
+    PERFORM ACCUM-ACCOUNTING-REG
+  END-IF
+END-WORK
+*
+COMPUTE ROUNDED #LN-COMP-INT-RT (1) = #TOT-INT-AMT (1) / #LN-PRIN (1)
+COMPUTE ROUNDED #LN-COMP-INT-RT (2) = #TOT-INT-AMT (2) / #LN-PRIN (2)
+COMPUTE #LN-TOT-COMP-RT = (#TOT-INT-AMT (1) + #TOT-INT-AMT (2))
+                        / (#LN-PRIN (1) + #LN-PRIN (2))
+*
+COMPUTE #PR-NET-CHG = #PR-NEW-LN + #PR-ADDL-LN + #PR-CAP + #PR-ADJ
+                    - #PR-PMT
+COMPUTE #IN-NET-CHG = #IN-PMT + #IN-ADDL-LN + #IN-CAP + #IN-ADJ
+*
+WRITE 'total AT Trns bypassed = ' #TOT-BYPASSED
+*
+WRITE 'total APL prems??      = ' #ADJ-APL-PREM
+WRITE 'total APL dues         = ' #APL-DUES
+*
+WRITE 'total principal debits = ' #DEBIT-AMT
+WRITE 'total principal credits= ' #CREDIT-AMT
+WRITE 'prin net chg           = ' #PR-NET-CHG
+WRITE 'interest net chg       = ' #IN-NET-CHG
+* added 1/8/2002
+WRITE 'loans-disbursed =' #LN-DISBURSED (*)
+WRITE 'Loans repaid    =' #LN-REPAID    (*)
+* WRITE 'total EZPAY credits    = ' #TOT-EZ-CREDITS  /* keep this last
+*
+MOVE TRUE TO #FOUND-REC
+FIND (1) NT-V WITH ID-NUMBER = 800105
+  IF NO RECORDS FOUND
+    WRITE 'no-nx 800105 rec found'
+    RESET #FOUND-REC
+  END-NOREC
+  MOVE *ISN TO #ISN
+END-FIND
+*
+IF #FOUND-REC
+  GET NT-V #ISN
+  WRITE 'found 800105 rec wuth date of' NT-V.NOTE-DATE (1)
+END-IF
+* RESET NOTE-TEXT (*) /* THIS SHOULD NOW BE DONE SINCE CTX TOTAL HAS
+*  ALREADY BEEN ENTERED
+MOVE #LN-TOT-AVAIL-TODAY   TO NT-LN-TOT-AVAIL-TODAY
+MOVE #LN-TOT-MBRS-ELIG-LNS TO NT-LN-TOT-MBRS-ELIG-LNS
+MOVE #LN-PRIN            (*) TO NT-LN-PRIN             (*)
+MOVE #LN-DISBURSED       (*) TO NT-LN-DISBURSED        (*)
+MOVE #LN-REPAID          (*) TO NT-LN-REPAID           (*)
+MOVE #LN-ACC-INT         (*) TO NT-LN-ACC-INT          (*)
+MOVE #LN-BILLED-AMT      (*) TO NT-LN-BILLED-AMT       (*)
+MOVE #LN-INT-RECV        (*) TO NT-LN-INT-RECV         (*)
+MOVE #LN-MBRS-W-LNS      (*) TO NT-LN-MBRS-W-LNS       (*)
+MOVE #LN-COMP-INT-RT     (*) TO NT-LN-COMP-INT-RT      (*)
+MOVE #LN-CAP-INT-TO-DATE (*) TO NT-LN-CAP-INT-TO-DATE  (*)
+MOVE #LN-MBRS-W-CAP-INT  (*) TO NT-LN-MBRS-W-CAP-INT   (*)
+MOVE #LN-LNS-BY-INT-RT   (*, *) TO NT-LN-LNS-BY-INT-RT (*, *)
+MOVE #LN-TOT-COMP-RT            TO NT-LN-TOT-COMP-RT
+*
+MOVE #PR-PMT     TO NT-PR-PMT
+MOVE #PR-NEW-LN  TO NT-PR-NEW-LN
+MOVE #PR-ADDL-LN TO NT-PR-ADDL-LN
+MOVE #PR-CAP     TO NT-PR-CAP
+MOVE #PR-ADJ     TO NT-PR-ADJ
+MOVE #PR-NET-CHG TO NT-PR-NET-CHG
+MOVE #IN-PMT     TO NT-IN-PMT
+MOVE #IN-ADDL-LN TO NT-IN-ADDL-LN
+MOVE #IN-CAP     TO NT-IN-CAP
+MOVE #IN-ADJ     TO NT-IN-ADJ
+MOVE #IN-NET-CHG TO NT-IN-NET-CHG
+MOVE #ACC-ADJ    TO NT-ACC-ADJ
+MOVE #PREM-PMT   TO NT-PREM-PMT
+MOVE #PREM-REV   TO NT-PREM-REV
+MOVE #FPF-PMT    TO NT-FPF-PMT
+MOVE #FPF-REV    TO NT-FPF-REV
+MOVE #DUES-PMT   TO NT-DUES-PMT
+MOVE #DUES-REV   TO NT-DUES-REV
+MOVE #FPF-DU-PMT TO NT-FPF-DU-PMT
+MOVE #FPF-DU-REV TO NT-FPF-DU-REV
+MOVE #ALOT-START TO NT-ALOT-START
+MOVE #ALOT-STOP  TO NT-ALOT-STOP
+MOVE #EZ-START   TO NT-EZ-START
+MOVE #EZ-ADJ     TO NT-EZ-ADJ
+MOVE #DR         TO NT-DR
+MOVE #CR         TO NT-CR
+*
+MOVE #RECEIPTS   TO NT-RECEIPTS
+MOVE #INT-TRAN   TO NT-INT-TRAN
+MOVE #DISBURSEMENTS TO NT-DISBURSEMENTS
+MOVE #ADJ-ETI     TO NT-ADJ-ETI
+MOVE #ADJ-APL     TO NT-ADJ-APL
+MOVE #ADJ-APL-CAP TO NT-ADJ-APL-CAP
+MOVE #ADJ-APL-PREM TO NT-ADJ-APL-PREM
+MOVE #ADJ-JI       TO NT-ADJ-JI
+MOVE #ADJ-L        TO NT-ADJ-L
+*
+MOVE #PR-PMT-CAP  TO NT-PR-PMT-CAP
+MOVE #PR-ADJ-CAP  TO NT-PR-ADJ-CAP
+MOVE #IN-PMT-CAP  TO NT-IN-PMT-CAP
+MOVE #IN-ADJ-CAP  TO NT-IN-ADJ-CAP
+MOVE #ACC-ADJ-CAP TO NT-ACC-ADJ-CAP
+MOVE #APL-DUES    TO NT-APL-DUES
+MOVE #DUES-PMT-SO   TO NT-DUES-PMT-SO
+MOVE #DUES-REV-SO   TO NT-DUES-REV-SO
+MOVE #FPF-DU-PMT-SO TO NT-FPF-DU-PMT-SO
+MOVE #FPF-DU-REV-SO TO NT-FPF-DU-REV-SO
+MOVE #FPF-RID-REV   TO NT-FPF-RID-REV
+MOVE #FPF-RID-PMT   TO NT-FPF-RID-PMT
+MOVE #RID-REV       TO NT-RID-REV
+MOVE #RID-PMT       TO NT-RID-PMT
+*
+IF #FOUND-REC
+  UPDATE (1091)
+  WRITE 'UPDATE NX 800105'
+ELSE
+  MOVE 800105 TO NT-V.ID-NUMBER
+  STORE NT-V
+  WRITE 'store NX 800105'
+END-IF
+*
+END TRANSACTION
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCUM-LOAN-REG
+* * * * * * * * * * * * * * * * *
+IF #TIN1-CN-LIT NE 'CN'
+  MOVE #TIN1-TOT-MAX-LNS-TODAY TO #LN-TOT-AVAIL-TODAY
+  MOVE #TIN1-TOT-MBRS-ELIG-LNS TO #LN-TOT-MBRS-ELIG-LNS
+  ESCAPE ROUTINE
+END-IF
+*   fixed loans
+ADD #TIN1-PRINC    TO #LN-PRIN       (1)
+ADD #TIN1-ACCINT   TO #LN-ACC-INT    (1)
+ADD #TIN1-BILAMT   TO #LN-BILLED-AMT (1)
+ADD #TIN1-INTREC   TO #LN-INT-RECV   (1)
+*
+IF #TIN1-PRINC NE 0
+  ADD 1 TO #LN-MBRS-W-LNS (1)
+END-IF
+*
+COMPUTE ROUNDED #INT-AMT = #TIN1-PRINC * #TIN1-INTRT
+ADD #INT-AMT TO #TOT-INT-AMT (1)
+ADD #TIN1-CAP-AMT TO #LN-CAP-INT-TO-DATE (1)
+*
+IF #TIN1-CAP-AMT NE 0
+  ADD 1 TO #LN-MBRS-W-CAP-INT (1)
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #TIN1-INTRT LT  2.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (1, 1)
+  WHEN #TIN1-INTRT LT  3.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (2, 1)
+  WHEN #TIN1-INTRT LT  4.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (3, 1)
+  WHEN #TIN1-INTRT LT  5.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (4, 1)
+  WHEN #TIN1-INTRT =   5.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (5, 1)
+  WHEN #TIN1-INTRT LT  6.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (6, 1)
+  WHEN #TIN1-INTRT LT  7.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (7, 1)
+  WHEN #TIN1-INTRT LT  8.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (8, 1)
+  WHEN #TIN1-INTRT LT  9.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (9, 1)
+  WHEN #TIN1-INTRT LT 10.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (10, 1)
+  WHEN #TIN1-INTRT LT 11.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (11, 1)
+  WHEN #TIN1-INTRT LT 12.00 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (12, 1)
+  WHEN NONE                 ADD #TIN1-PRINC TO #LN-LNS-BY-INT-RT (13, 1)
+END-DECIDE
+*
+*   variable loans
+ADD #TIN1-PR-2    TO #LN-PRIN       (2)
+ADD #TIN1-ACCINT-2   TO #LN-ACC-INT    (2)
+ADD #TIN1-BILAMT-2   TO #LN-BILLED-AMT (2)
+ADD #TIN1-INTREC-2   TO #LN-INT-RECV   (2)
+*
+IF #TIN1-PR-2 NE 0
+  ADD 1 TO #LN-MBRS-W-LNS (2)
+END-IF
+*
+COMPUTE ROUNDED #INT-AMT = #TIN1-PR-2 * #TIN1-INT-2
+ADD #INT-AMT TO #TOT-INT-AMT (2)
+ADD #TIN1-CAP-AMT-2 TO #LN-CAP-INT-TO-DATE (2)
+*
+IF #TIN1-CAP-AMT-2 NE 0
+  ADD 1 TO #LN-MBRS-W-CAP-INT (2)
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #TIN1-INT-2 LT  2.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (1, 2)
+  WHEN #TIN1-INT-2 LT  3.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (2, 2)
+  WHEN #TIN1-INT-2 LT  4.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (3, 2)
+  WHEN #TIN1-INT-2 LT  5.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (4, 2)
+  WHEN #TIN1-INT-2 =   5.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (5, 2)
+  WHEN #TIN1-INT-2 LT  6.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (6, 2)
+  WHEN #TIN1-INT-2 LT  7.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (7, 2)
+  WHEN #TIN1-INT-2 LT  8.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (8, 2)
+  WHEN #TIN1-INT-2 LT  9.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (9, 2)
+  WHEN #TIN1-INT-2 LT 10.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (10, 2)
+  WHEN #TIN1-INT-2 LT 11.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (11, 2)
+  WHEN #TIN1-INT-2 LT 12.00 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (12, 2)
+  WHEN NONE                 ADD #TIN1-PR-2 TO #LN-LNS-BY-INT-RT (13, 2)
+END-DECIDE
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCUM-ACCOUNTING-REG
+* * * * * * * * * * * * * * * * *
+*
+* Write 'just read' #TIN1-AR-ID-CN 'tran' #TIN1-TRAN 'msg' #TIN1-MSG
+*
+IF NOT #TIN1-ACCTNO = '110' OR = '410' OR = '801' OR = '420' OR = '115'
+      OR = '430' OR = '440' OR = '445' OR = '450' OR = '999' OR = '190'
+      OR = '422' OR = '432' OR = '434' OR = '436'
+  IF #TIN1-ACCTNO NE '500'    /* Bypass printing AP trans'    /* DW3
+    WRITE 'bypassed' #TIN1-ACCTNO #TIN1-MSG #TIN1-AR-ID #TIN1-TRAN
+                     #TIN1-CREDIT #TIN1-DEBIT
+  END-IF
+*
+  ADD #TIN1-CREDIT TO #TOT-BYPASSED
+  ESCAPE ROUTINE
+END-IF
+*
+IF #TIN1-ACCTNO = '801'
+  WRITE 'acct no = "801" on acct-req on ' #TIN1-AR-ID
+*
+  IF #TIN1-TRAN = 'PRER' OR = 'FPFR' OR = 'STOP' OR = 'RDCR'
+       OR = 'PADJ' OR = 'PADF' OR = 'PADV' OR = 'DUER' OR = 'FPDR'
+       OR = 'RIDR' OR = 'FPRR'
+    MOVE #TIN1-CREDIT TO #HOLD-AMT
+    MOVE #TIN1-DEBIT  TO #TIN1-CREDIT
+    MOVE #HOLD-AMT    TO #TIN1-DEBIT
+  END-IF
+END-IF
+*
+**IF   (#TIN1-AR-ID-CN GE '600000')      /* DW3                       RE1
+* AND (#TIN1-AR-ID-CN NE '999999')                                 /* RE1
+*  WRITE 'AFSC rec' #TIN1-ACCTNO #TIN1-MSG #TIN1-AR-ID #TIN1-TRAN  /* RE1
+*                   #TIN1-CREDIT #TIN1-DEBIT                       /* RE1
+**END-IF                                                           /* RE1
+*
+IF #TIN1-MSG = 'A'
+   IF #TIN1-TRAN = 'EZPR'
+     ESCAPE ROUTINE
+  END-IF
+*
+  IF #TIN1-TRAN = 'EZDU'
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #TIN1-TRAN = 'ALDU'
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #TIN1-TRAN = 'ALDC'    /* DB/CR adjust from ATHP05PA
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #TIN1-TRAN = 'ALRD'
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #TIN1-TRAN = 'APDU'
+    ADD #TIN1-DEBIT  TO #APL-DUES
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #TIN1-TRAN = 'PREP'                         /* From an APL in ATHP05PN
+    ADD #TIN1-CREDIT TO #ADJ-APL-PREM
+  END-IF
+*
+  IF #TIN1-AALP-CD = '1' OR = '2' OR = '3' OR = '4' OR = '6'    /* DW1
+    IGNORE         /* No Longer needed
+  ELSE
+    IF #TIN1-TRAN = 'NEWL'             /* From an APL in ATHP05PN
+      ADD #TIN1-DEBIT TO #ADJ-APL
+    END-IF
+*
+    IF #TIN1-TRAN = 'PRNP' OR = 'PRNF' OR = 'PRNV'    /* From an APL in ATHP05PN
+      ADD #TIN1-CREDIT TO #ADJ-ETI
+    END-IF
+*
+    IF #TIN1-TRAN = 'ADDL'           /* From an APL in ATHP05PN
+      IF #TIN1-COL = '1'
+        SUBTRACT #TIN1-CREDIT FROM #ADJ-APL
+      ELSE
+        IF #TIN1-COL = '3'
+          ADD #TIN1-DEBIT TO #ADJ-APL
+        ELSE
+          IF #TIN1-CREDIT = 0
+            ADD #TIN1-DEBIT TO #ADJ-APL
+            SUBTRACT #TIN1-DEBIT FROM #ADJ-APL-CAP
+          ELSE
+            SUBTRACT #TIN1-CREDIT FROM #ADJ-APL
+            ADD #TIN1-CREDIT TO #ADJ-APL-CAP
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*  Below CVIN & UPDI logic was moved from below on 2/21/2008
+  IF #TIN1-TRAN = 'CVIN'                /* From Capitalization in ATHP05PN
+    SUBTRACT #TIN1-DEBIT FROM #TIN1-CREDIT
+    ADD #TIN1-CREDIT TO #IN-CAP
+  END-IF
+*
+  IF #TIN1-TRAN = 'UPDI'                 /* From a Loan Capitalization in ATHP05PN
+*   PERFORM ACCUM-LNS-DISB-REPAID    /* removed 10/22/2004
+    SUBTRACT #TIN1-CREDIT FROM #TIN1-DEBIT
+    ADD #TIN1-DEBIT TO #PR-CAP
+  END-IF
+*
+  ESCAPE ROUTINE   /* Below No longer needed as of 2/1/2008      /* DW2
+                   /* if MSG = 'A' (from ATHP05PN)
+*                     Since these trans are for Next Month
+END-IF
+*
+IF #TIN1-TRAN = 'UPDI'     /* From a Loan Capitalization in ATHP05PN    DW4
+*  write #TIN1-AR-ID-CN 'Tr CVIN CAPITALIZATION' #TIN1-credit #tin1-debit
+  PERFORM ACCUM-LNS-DISB-REPAID    /* removed 10/22/2004
+END-IF
+*
+IF #TIN1-TRAN = 'PRER'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #PREM-REV
+END-IF
+*
+IF #TIN1-TRAN = 'PREP'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #PREM-PMT
+END-IF
+*
+IF #TIN1-TRAN = 'FPFR'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #FPF-REV
+END-IF
+*
+IF #TIN1-TRAN = 'FPFP'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #FPF-PMT
+END-IF
+*
+IF #TIN1-TRAN = 'DUER'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #DUES-REV
+*
+  IF #TIN1-DESC = 'SO MBR'
+    ADD #TIN1-DEBIT TO #DUES-REV-SO
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'DUEP'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #DUES-PMT
+*
+  IF #TIN1-DESC = 'SO MBR'
+    ADD #TIN1-CREDIT TO #DUES-PMT-SO
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'FPDR'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #FPF-DU-REV
+*
+  IF #TIN1-DESC = 'SO MBR'
+    ADD #TIN1-DEBIT TO #FPF-DU-REV-SO
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'FPDP'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #FPF-DU-PMT
+*
+  IF #TIN1-DESC = 'SO MBR'
+    ADD #TIN1-CREDIT TO #FPF-DU-PMT-SO
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'RIDR'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #RID-REV
+END-IF
+*
+IF #TIN1-TRAN = 'RIDP'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #RID-PMT
+END-IF
+*
+IF #TIN1-TRAN = 'FPRR'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #FPF-RID-REV
+END-IF
+*
+IF #TIN1-TRAN = 'FPRP'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #FPF-RID-PMT
+END-IF
+*
+IF #TIN1-TRAN = 'STOP'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #ALOT-STOP
+END-IF
+*
+IF #TIN1-TRAN = 'STRT'
+  IF #TIN1-ACCTNO = '440'
+    PERFORM ACC-CREDIT-ACCT
+    ADD #TIN1-CREDIT TO #ALOT-START
+  ELSE
+    IF #TIN1-ACCTNO = '445'
+      PERFORM ACC-CREDIT-ACCT
+      ADD #TIN1-CREDIT TO #EZ-START
+    END-IF
+  END-IF
+END-IF
+*
+IF   (#TIN1-TRAN = 'ADJ')
+ AND (#TIN1-ACCTNO = '445')
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #EZ-ADJ
+END-IF
+*
+IF #TIN1-TRAN = 'RDCR'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACC-DEBIT-ACCT
+  ADD #TIN1-DEBIT TO #CR
+END-IF
+*
+IF #TIN1-TRAN = 'ADCR'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #DR
+END-IF
+*
+IF #TIN1-TRAN = 'INTP' OR = 'INTF' OR = 'INTV'
+           OR = 'INPP' OR = 'INPF' OR = 'INPV'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #IN-PMT
+*
+  IF #TIN1-DESC = MASK ('CAP')
+    ADD #TIN1-CREDIT TO #IN-PMT-CAP
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'IADJ' OR = 'IADF' OR = 'IADV'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #IN-ADJ
+*
+  IF #TIN1-DESC = MASK ('CAP')
+    ADD #TIN1-CREDIT TO #IN-ADJ-CAP
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'AIAJ' OR = 'AIAF' OR = 'AIAV'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #ACC-ADJ
+*
+  IF #TIN1-DESC = MASK ('CAP')
+    ADD #TIN1-CREDIT TO #ACC-ADJ-CAP
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'NEWL'
+  IF #TIN1-COL = '2'
+    SUBTRACT #TIN1-CREDIT FROM #DISBURSEMENTS
+    PERFORM ACC-CREDIT-ACCT
+    ADD #TIN1-CREDIT TO #IN-ADDL-LN
+  ELSE
+    PERFORM ACCUM-LNS-DISB-REPAID
+    PERFORM ACC-DEBIT-ACCT
+    ADD #TIN1-DEBIT TO #PR-NEW-LN
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'PRNP' OR = 'PRNF' OR = 'PRNV'
+           OR = 'CAPI' OR = 'CAPF' OR = 'CAPV'
+  MOVE '1' TO #TIN1-COL
+  PERFORM ACCUM-LNS-DISB-REPAID
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #PR-PMT
+*
+  IF #TIN1-DESC = MASK ('CAP')
+    ADD #TIN1-CREDIT TO #PR-PMT-CAP
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'ADDL'
+  IF   (#TIN1-ACCTNO = '801')
+   AND (#TIN1-COL NE '3')
+    ADD #TIN1-CREDIT TO #DISBURSEMENTS
+  END-IF
+*
+  IF #TIN1-COL = '3'
+    PERFORM ACCUM-LNS-DISB-REPAID
+    PERFORM ACC-DEBIT-ACCT
+    ADD #TIN1-DEBIT TO #PR-ADDL-LN
+  END-IF
+*
+  IF #TIN1-COL = '2'
+    SUBTRACT #TIN1-CREDIT FROM #DISBURSEMENTS
+    PERFORM ACC-CREDIT-ACCT
+    ADD #TIN1-CREDIT TO #IN-ADDL-LN
+  END-IF
+*
+  IF #TIN1-COL = '1'
+    PERFORM ACCUM-LNS-DISB-REPAID
+    SUBTRACT #TIN1-CREDIT FROM #DISBURSEMENTS
+    SUBTRACT #TIN1-CREDIT FROM #PR-ADDL-LN
+    SUBTRACT #TIN1-CREDIT FROM #PR-ADDL-LN
+    PERFORM ACC-CREDIT-ACCT
+    ADD #TIN1-CREDIT TO #PR-ADDL-LN
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'PADJ' OR = 'PADF' OR = 'PADV'
+           OR = 'CADJ' OR = 'CADF' OR = 'CADV'
+  IF #TIN1-DESC = MASK ('CAP')
+    ADD #TIN1-DEBIT TO #PR-ADJ-CAP
+  END-IF
+*
+  IF #TIN1-MSG = 'J' OR = 'I'
+    WRITE 'adj from int-pmts to prin pmts' #TIN1-AR-ID
+    PERFORM ACCUM-LNS-DISB-REPAID
+    ADD      #TIN1-CREDIT TO #ADJ-JI
+    SUBTRACT #TIN1-DEBIT FROM #ADJ-JI
+    SUBTRACT #TIN1-CREDIT FROM #TIN1-DEBIT
+    SUBTRACT #TIN1-DEBIT  FROM #RECEIPTS
+    ADD #TIN1-DEBIT TO #PR-ADJ
+  ELSE
+    IF #TIN1-MSG = 'L'
+      WRITE 'adj from int-pmts to prin pmts' #TIN1-AR-ID
+      PERFORM ACCUM-LNS-DISB-REPAID
+      ADD      #TIN1-CREDIT TO   #ADJ-L
+      SUBTRACT #TIN1-DEBIT  FROM #ADJ-L
+      SUBTRACT #TIN1-CREDIT  FROM #TIN1-DEBIT
+      ADD #TIN1-DEBIT TO #PR-ADJ
+    ELSE
+      MOVE '1' TO #TIN1-COL
+      PERFORM ACCUM-LNS-DISB-REPAID
+      PERFORM ACC-DEBIT-ACCT
+      ADD #TIN1-DEBIT TO #PR-ADJ
+    END-IF
+  END-IF
+END-IF
+*
+IF #TIN1-TRAN = 'FLNP' OR = 'FLNF' OR = 'FLNV'
+  PERFORM ACC-CREDIT-ACCT
+  ADD #TIN1-CREDIT TO #IN-PMT
+*
+  IF #TIN1-DESC = MASK ('CAP')
+    ADD #TIN1-CREDIT TO #IN-PMT-CAP
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACC-DEBIT-ACCT
+* * * * * * * * * * * * * * * * * *
+*
+SUBTRACT #TIN1-CREDIT FROM #TIN1-DEBIT
+*
+IF #TIN1-COL = '1'
+  ADD #TIN1-DEBIT TO #RECEIPTS
+ELSE
+  IF #TIN1-COL = '2'
+    ADD #TIN1-DEBIT TO #INT-TRAN
+  ELSE
+    ADD #TIN1-DEBIT TO #DISBURSEMENTS
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACC-CREDIT-ACCT
+* * * * * * * * * * * * * * * * * * *
+SUBTRACT #TIN1-DEBIT FROM #TIN1-CREDIT
+*
+IF #TIN1-COL = '3'
+  ADD #TIN1-CREDIT TO #DISBURSEMENTS
+ELSE
+  IF #TIN1-COL = '2'
+    ADD #TIN1-CREDIT TO #INT-TRAN
+  ELSE
+    ADD #TIN1-CREDIT TO #RECEIPTS
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCUM-LNS-DISB-REPAID
+* * * * * * * * * * * * * * * * * * *
+ADD #TIN1-CREDIT TO #CREDIT-AMT
+ADD #TIN1-DEBIT  TO #DEBIT-AMT
+*
+IF  (#TIN1-TRAN = 'PRNF' OR = 'CAPF' OR = 'PADF')             /*DW4
+ OR ((#TIN1-TRAN = 'NEWL')
+       AND ((#TIN1-DESC = MASK ('IRT 01500'))   /* New CAP loan
+        OR  (#TIN1-DESC = MASK ('CAP'))))        /* New CAP LOAN    DW4
+
+  ADD #TIN1-CREDIT TO #LN-REPAID    (1)   /* Fixed
+  ADD #TIN1-DEBIT  TO #LN-DISBURSED (1)
+ELSE
+  ADD #TIN1-CREDIT TO #LN-REPAID    (2)   /* Variable       /* DW4
+  ADD #TIN1-DEBIT  TO #LN-DISBURSED (2)
+END-IF
+*
+END-SUBROUTINE
+*
+END
+

@@ -1,0 +1,267 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* MBCNNL01 - Member Loan Detail Information
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE        TAG  REASON
+* YAK    11/25/2014       Initial Creation
+* YAK    08/01/2015  YK1  Get policy number from Status file
+********************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCANL00
+PARAMETER
+1 #ErrorCode     (A3)
+*
+LOCAL USING OBJAPINF
+LOCAL USING MBCA0072
+LOCAL
+1 #GetLoan          (A) DYNAMIC CONST <'GetLoan'>
+1 #I  (I2)
+1 #I1 (I2)
+1 #AMOUNT           (N7.2)
+*
+1 #DynamicName                (A) DYNAMIC
+1 #LOAN-AUTO-PAY (A1/7) CONST <'8','C','3','4','6','1','2'>
+1 #LoanPayMethod (A1)
+1 #INT-RATE-KEY  (A7)   CONST <'RATE5AB'>
+1 #NONE     (A) DYNAMIC CONST <'N/A'>
+1 #true     (A) DYNAMIC CONST <'true'>
+1 #false    (A) DYNAMIC CONST <'false'>
+1 #FIXED    (A) DYNAMIC CONST <'Fixed'>
+1 #VARIABLE (A) DYNAMIC CONST <'Variable'>
+1 #CAP      (A) DYNAMIC CONST <'CAP'>
+1 #CAP-LOAN (A) DYNAMIC CONST <'CAP Loan'>
+1 #POLICY-LOAN (A) DYNAMIC CONST <'Policy Loan'>
+1 #VALUE-ADDED (A) DYNAMIC CONST <'Value-Added Whole Life'>
+1 #TERM        (A) DYNAMIC CONST <'Term'>
+*
+1 #PAST-DUE-DATE   (N8)
+1 REDEFINE #PAST-DUE-DATE
+  2 #PAST-DUE-YYYYMM     (N6)
+  2 #PAST-DUE-DD         (N2)
+1 #LOAN-ANN-DATE      (N8)
+1 REDEFINE #LOAN-ANN-DATE
+  2 #LOAN-ANN-YYYY    (N4)
+  2 #LOAN-ANN-MM      (N2)
+  2 #LOAN-ANN-DD      (N2)
+1 REDEFINE #LOAN-ANN-DATE
+  2 #LOAN-ANN-DATE-YM (N6)
+*
+1 #DATN           (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY (N4)
+  2 #DATN-MM   (N2)
+  2 #DATN-DD   (N2)
+*
+END-DEFINE
+*
+#DATN := *DATN
+*
+PERFORM GET-LOAN-INFO
+PERFORM GET-CALCULATED-VALUES
+*
+LoanDetails.LoanOverdue     := #false
+LoanDetails.LoanAutopayment := #false
+*
+DECIDE FOR FIRST CONDITION
+  WHEN (#ACC-INT(LoanAttachSegment) GT 0 OR PARM-POL-INFO.X-LOAN-AMOUNT(1) > 0) AND (LoanDetails.LoanType = #FIXED OR = #CAP)
+    LoanDetails.LoanIssueDate := FUNCTION-CALENDAR(<PARM-POL-INFO.X-LOAN-DATE(1),'V'>)
+    #AMOUNT := PARM-POL-INFO.X-INTEREST-RATE(1)
+    MOVE EDITED #AMOUNT (EM=ZZ9.99) TO LoanDetails.InterestRate
+    LoanDetails.InterestRate := *TRIM(LoanDetails.InterestRate)
+    COMPRESS LoanDetails.InterestRate '%' INTO LoanDetails.InterestRate LEAVING NO
+    #AMOUNT := #ACC-INT(LoanAttachSegment)
+    MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.AccruedInterest
+    LoanDetails.AccruedInterest := *TRIM(LoanDetails.AccruedInterest)
+    IF #AMOUNT < 0
+      COMPRESS '(' LoanDetails.AccruedInterest ')' INTO LoanDetails.AccruedInterest LEAVING NO
+    END-IF
+    COMPRESS '$' LoanDetails.AccruedInterest INTO LoanDetails.AccruedInterest LEAVING NO
+    #AMOUNT := #LOAN-BAL(LoanAttachSegment)
+    MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanPrincipal
+    LoanDetails.LoanPrincipal := *TRIM(LoanDetails.LoanPrincipal)
+    COMPRESS '$' LoanDetails.LoanPrincipal INTO LoanDetails.LoanPrincipal LEAVING NO
+    #AMOUNT := #LOAN-BAL(LoanAttachSegment) + #ACC-INT(LoanAttachSegment)
+    MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanBalance
+    LoanDetails.LoanBalance := *TRIM(LoanDetails.LoanBalance)
+    COMPRESS '$' LoanDetails.LoanBalance INTO LoanDetails.LoanBalance LEAVING NO
+    IF PARM-POL-INFO.CONV-DURATION (1) = 999
+      LoanName := #CAP-LOAN
+    ELSE
+      LoanName := #POLICY-LOAN
+    END-IF
+    DECIDE FOR FIRST CONDITION
+      WHEN PARM-POL-INFO.CONV-DURATION (1) = 999
+        IF PARM-POL-INFO.X-ALT-LP-IND(1) = #LOAN-AUTO-PAY(*)
+          LoanDetails.LoanAutopayment := #true
+          #LoanPayMethod := PARM-POL-INFO.X-ALT-LP-IND(1)
+        END-IF  
+        #AMOUNT := PARM-POL-INFO.X-ALT-LP-AMT(1)
+        MOVE EDITED #AMOUNT (EM=ZZZZZZ9.99) TO LoanDetails.LoanDueAmount
+        LoanDetails.LoanDueAmount := *TRIM(LoanDetails.LoanDueAmount)
+        COMPRESS '$' LoanDetails.LoanDueAmount INTO LoanDetails.LoanDueAmount LEAVING NO
+        LoanDetails.LoanDueDate := FUNCTION-CALENDAR(<PARM-POL-INFO.PAID-TO-DATE(1),'V'>)
+        IF PARM-POL-INFO.CAP-BILL-DATE NE 0
+          LoanDetails.LoanOverdue := true
+        END-IF
+      WHEN PARM-POL-INFO.X-BILL-INTEREST-AMT(1) > 0 AND PARM-POL-INFO.X-BILL-SW(1) NE '0'
+        #AMOUNT := PARM-POL-INFO.X-BILL-INTEREST-AMT(1)
+        MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanDueAmount
+        LoanDetails.LoanDueAmount := *TRIM(LoanDetails.LoanDueAmount)
+        COMPRESS '$' LoanDetails.LoanDueAmount INTO LoanDetails.LoanDueAmount LEAVING NO
+        #LOAN-ANN-DATE := PARM-POL-INFO.X-LOAN-DATE(1)
+        #LOAN-ANN-YYYY := #DATN-YYYY
+        LoanDetails.LoanDueDate := FUNCTION-CALENDAR(<#LOAN-ANN-DATE,'V'>)
+      WHEN PARM-POL-INFO.X-ALT-LP-IND(1) = #LOAN-AUTO-PAY(*)
+        LoanDetails.LoanAutopayment := #true
+        #LoanPayMethod := PARM-POL-INFO.X-ALT-LP-IND(1)
+        LoanDetails.LoanDueDate := FUNCTION-CALENDAR(<#DATN,'3'>)
+        #AMOUNT := PARM-POL-INFO.X-ALT-LP-AMT(1)
+        MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanDueAmount
+        LoanDetails.LoanDueAmount := *TRIM(LoanDetails.LoanDueAmount)
+        COMPRESS '$' LoanDetails.LoanDueAmount INTO LoanDetails.LoanDueAmount LEAVING NO
+      WHEN NONE
+* Calculate interest to be paid at the loan anniversary
+        PDA-CALCULATED-VALUES.#X-LOAN-AMOUNT     := PARM-POL-INFO.X-LOAN-AMOUNT(1)
+        PDA-CALCULATED-VALUES.#X-ACCUM-INTEREST  := PARM-POL-INFO.X-ACCUM-INTEREST(1)
+        PDA-CALCULATED-VALUES.#X-NXT-YR-ACCUM-INT:= PARM-POL-INFO.X-NXT-YR-ACCUM-INT(1)
+        PDA-CALCULATED-VALUES.#X-INTEREST-RATE   := PARM-POL-INFO.X-INTEREST-RATE(1)
+        PDA-CALCULATED-VALUES.#X-LOAN-DATE       := PARM-POL-INFO.X-LOAN-DATE(1)
+        PERFORM ESTIMATE-FUTURE-INTEREST
+        LoanDetails.LoanDueDate := FUNCTION-CALENDAR(<#LOAN-ANN-DATE,'V'>)
+        MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanDueAmount
+        LoanDetails.LoanDueAmount := *TRIM(LoanDetails.LoanDueAmount)
+        COMPRESS '$' LoanDetails.LoanDueAmount INTO LoanDetails.LoanDueAmount LEAVING NO
+    END-DECIDE
+  WHEN (#ACC-INT-2(LoanAttachSegment) > 0 OR PARM-POL-INFO.X-LOAN-AMOUNT-2(1) > 0) AND LoanDetails.LoanType = #VARIABLE
+* Process Variable Rate Loans
+    LoanName := #POLICY-LOAN
+    LoanDetails.LoanIssueDate := FUNCTION-CALENDAR(<PARM-POL-INFO.X-LOAN-DATE-2(1),'V'>)
+    #AMOUNT := FUNCTION-INT-RATE(<#INT-RATE-KEY>)
+    MOVE EDITED #AMOUNT (EM=ZZ9.99) TO LoanDetails.InterestRate
+    LoanDetails.InterestRate := *TRIM(LoanDetails.InterestRate)
+    COMPRESS LoanDetails.InterestRate '%' INTO LoanDetails.InterestRate LEAVING NO
+    #AMOUNT := #ACC-INT-2(LoanAttachSegment)
+    MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.AccruedInterest
+    LoanDetails.AccruedInterest := *TRIM(LoanDetails.AccruedInterest)
+    IF #AMOUNT < 0
+      COMPRESS '(' LoanDetails.AccruedInterest ')' INTO LoanDetails.AccruedInterest LEAVING NO
+    END-IF
+    COMPRESS '$' LoanDetails.AccruedInterest INTO LoanDetails.AccruedInterest LEAVING NO
+    #AMOUNT := #LOAN-BAL-2(LoanAttachSegment)
+    MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanPrincipal
+    LoanDetails.LoanPrincipal := *TRIM(LoanDetails.LoanPrincipal)
+    COMPRESS '$' LoanDetails.LoanPrincipal INTO LoanDetails.LoanPrincipal LEAVING NO
+    #AMOUNT := #LOAN-BAL-2(LoanAttachSegment) + #ACC-INT-2(LoanAttachSegment)
+    MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanBalance
+    LoanDetails.LoanBalance := *TRIM(LoanDetails.LoanBalance)
+    COMPRESS '$' LoanDetails.LoanBalance INTO LoanDetails.LoanBalance LEAVING NO
+    DECIDE FOR FIRST CONDITION
+      WHEN PARM-POL-INFO.X-BILL-INTEREST-AMT-2(1) > 0 AND PARM-POL-INFO.X-BILL-SW-2(1) NE '0'
+        #AMOUNT := PARM-POL-INFO.X-BILL-INTEREST-AMT-2(1)
+        MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanDueAmount
+        LoanDetails.LoanDueAmount := *TRIM(LoanDetails.LoanDueAmount)
+        #LOAN-ANN-DATE := PARM-POL-INFO.X-LOAN-DATE-2(1)
+        #LOAN-ANN-YYYY := #DATN-YYYY
+        LoanDetails.LoanDueDate  := FUNCTION-CALENDAR(<#LOAN-ANN-DATE,'V'>)
+      WHEN PARM-POL-INFO.X-ALT-LP-IND-2(1) = #LOAN-AUTO-PAY(*)
+        LoanDetails.LoanAutopayment  := #true
+        #LoanPayMethod := PARM-POL-INFO.X-ALT-LP-IND-2(1)
+        LoanDetails.LoanDueDate := FUNCTION-CALENDAR(<#DATN,'3'>)
+        #AMOUNT := PARM-POL-INFO.X-ALT-LP-AMT-2(1)
+        MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanDueAmount
+        LoanDetails.LoanDueAmount := *TRIM(LoanDetails.LoanDueAmount)
+        COMPRESS '$' LoanDetails.LoanDueAmount INTO LoanDetails.LoanDueAmount LEAVING NO
+      WHEN NONE
+* Calculate next interest payment to be paid at loan anniversary
+        PDA-CALCULATED-VALUES.#X-LOAN-DATE       := PARM-POL-INFO.X-LOAN-DATE-2(1)
+        PDA-CALCULATED-VALUES.#X-LOAN-AMOUNT     := PARM-POL-INFO.X-LOAN-AMOUNT-2(1)
+        PDA-CALCULATED-VALUES.#X-ACCUM-INTEREST  := PARM-POL-INFO.X-ACCUM-INTEREST-2(1)
+        PDA-CALCULATED-VALUES.#X-NXT-YR-ACCUM-INT:= PARM-POL-INFO.X-NXT-YR-ACCUM-INT-2(1)
+        PDA-CALCULATED-VALUES.#X-INTEREST-RATE   := FUNCTION-INT-RATE(<#INT-RATE-KEY>)
+        PERFORM ESTIMATE-FUTURE-INTEREST
+        LoanDetails.LoanDueDate := FUNCTION-CALENDAR(<#LOAN-ANN-DATE,'V'>)
+        MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO LoanDetails.LoanDueAmount
+        LoanDetails.LoanDueAmount := *TRIM(LoanDetails.LoanDueAmount)
+        COMPRESS '$' LoanDetails.LoanDueAmount INTO LoanDetails.LoanDueAmount LEAVING NO
+    END-DECIDE
+  WHEN ANY
+    IF #LoanPayMethod <> ' '
+      LoanDetails.LoanPaymentMethod := FUNCTION-LOAN-PAYMODE(<#LoanPayMethod>)(2)
+    ELSE
+      LoanDetails.LoanPaymentMethod := #NONE
+    END-IF
+  WHEN NONE
+    ESCAPE ROUTINE
+END-DECIDE
+IF LoanDetails.LoanName <> #CAP-LOAN
+  LoanDetails.LoanDescription := #VALUE-ADDED
+  IF FUNCTION-TERM-POLICY(<PARM-POL-INFO.PLAN(1)>)
+    LoanDetails.LoanDescription := #TERM
+  END-IF
+* #DynamicName := F-POL-NUMBER(<LoanDetails.LoanCN,LoanDetails.LoanAttachSegment>)  /* YK1
+  #DynamicName := PARM-POL-INFO.POLICY-ID(1)                                        /* YK1 
+  #DynamicName := *TRIM(#DynamicName)
+  COMPRESS '#' #DynamicName INTO #DynamicName LEAVING NO
+  COMPRESS LoanDetails.LoanDescription #DynamicName INTO LoanDetails.LoanDescription
+  IF PARM-POL-INFO.PAID-TO-DATE(1) < #PAST-DUE-DATE
+    LoanDetails.LoanOverdue  := #true
+  END-IF
+  IF LoanDetails.LoanDueAmount  = ' '
+    LoanDetails.LoanDueAmount  := LoanDetails.AccruedInterest
+  END-IF
+END-IF
+*
+*********************************
+DEFINE SUBROUTINE GET-LOAN-INFO
+*********************************
+*
+RESET PARM-POL-INFO
+PARM-POL-INFO.ID-NUMBER := LoanDetails.LoanCN
+PARM-POL-INFO.#ACTION   := #GetLoan
+C@POLICY_SEGMENT := LoanDetails.LoanAttachSegment
+RESIZE ARRAY POLICY-SEGMENT TO (*:1)
+CALLNAT 'OBJNPINF' PARM-POL-INFO
+IF PARM-POL-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-POL-INFO.#RETURN-CODE
+  BACKOUT TRANSACTION
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE GET-CALCULATED-VALUES
+***************************************
+*
+RESET PDA-CALCULATED-VALUES
+PDA-CALCULATED-VALUES.#ID-NUMBER := PARM-POL-INFO.ID-NUMBER
+CALLNAT 'MBCN0072' PDA-CALCULATED-VALUES
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE ESTIMATE-FUTURE-INTEREST
+******************************************
+* Calculate anniversary date
+#LOAN-ANN-DATE := PDA-CALCULATED-VALUES.#X-LOAN-DATE
+IF #LOAN-ANN-MM < #DATN-MM
+  #LOAN-ANN-YYYY := #DATN-YYYY + 1
+ELSE
+  #LOAN-ANN-YYYY := #DATN-YYYY
+END-IF
+*
+IF #LOAN-ANN-MM = 02 AND #LOAN-ANN-DD = 29
+  #LOAN-ANN-DD := 28
+END-IF
+*  
+PDA-CALCULATED-VALUES.#DATE-N := #LOAN-ANN-DATE
+CALLNAT 'MBCN0072' PDA-CALCULATED-VALUES
+#AMOUNT := PDA-CALCULATED-VALUES.#INTEREST
+END-SUBROUTINE
+END

@@ -1,0 +1,514 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: AOEP001A - FIRS INSURANCE UPDATE
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  06032005 DW1  Do not show INS only on Rpts to AFSX
+* DRW  06132005 DW2  ADD SERV-CONN-IND TO E9010SDX LINKAGE
+* SAG  11282005 RH1  SS - Modified the custom coded ON ERROR stmt &
+*                    replaced it with copycode GABNDCX1
+* TMT  07152014 TT1  Contact Normalization - DOB and Sex
+*******************************************
+*
+*   THE PARM FOR THIS PROGRAM SHOULD BE LOADED INTO THE NATURAL STACK
+*   THIS PROGRAM IS INTENDED FOR BATCH ONLY
+*
+*   THIS PROGRAM DOES UPDATES ON SELECTED FIRS POLICY TYPES
+*
+*    MODIFICATIONS:
+*
+*    0489 SGLI ISSUE DATE CHANGE  -  WALTON            JAK
+*    0489 AUSA AGE 70 CHANGE      -  WALTON            JAK
+*    1089 ADD MIL-DISAB TO PARM LIST FOR E9010SDX      DRW
+*    1189 GIVE SGLI TO ANY ACTIVE MEMBER WITHOUT IT    DRW
+*    0690 ADD NSLI ML65 AND ML70 PROCESSING            DRW
+*    0790 CHGED DATE RANGE PROCESSING                  DRW
+* bz  06/09/2013  Rebranding (Search for AAFMAA)
+*
+DEFINE DATA
+LOCAL USING GONERLXX                        /* SAG RH1 11282005 SS
+LOCAL
+*
+1 #JCL-PARM       (A10)
+1 REDEFINE #JCL-PARM
+  2 #JCL-MM        (N2)
+  2 #JCL-FIL1      (A1)
+  2 #JCL-DD        (N2)
+  2 #JCL-FIL2      (A1)
+  2 #JCL-YYYY      (N4)
+*
+1 #PARM-YYYYMMDD  (N8)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYY      (N4)
+  2 #PARM-MMDD      (N4)
+  2 REDEFINE #PARM-MMDD
+    3 #PARM-MM       (N2)
+    3 #PARM-DD       (N2)
+*
+1 #MON-DAY-TABLE (N24) INIT <312931303130313130313031>
+1 REDEFINE #MON-DAY-TABLE
+  2 #MON-DAY    (N2/12)
+*
+1 #BLD-MMDD     (N4)
+1 REDEFINE #BLD-MMDD
+  2 #BLD-MM      (N2)
+  2 #BLD-DD      (N2)
+*
+1 #MBR-FROM-MMDD          (N4)
+1 REDEFINE #MBR-FROM-MMDD
+  2 #MBR-FROM-MMDD-A       (A4)
+1 #MBR-THRU-MMDD          (N4)
+*
+1 #FIRS-ID         (N6)
+1 REDEFINE #FIRS-ID
+  2 #FIRS-ID-G     (A6)
+*
+1 #WORK-FIELDS
+  2 #NO-FIRS         (L)
+  2 #NO-SGLI         (L)
+  2 #RECORD-UPDATED  (L)
+  2 #POLICY-DELETED  (L)
+  2 #POL-X           (I2)
+  2 #I1              (I2)
+  2 #I2              (I2)
+  2 #ABEND-CODE      (I4)
+  2 #DATN            (N8)
+  2 REDEFINE #DATN
+    3 #YYYY          (N4)
+    3 REDEFINE #YYYY
+      4 #CENT        (A2)
+      4 #YY          (A2)
+    3 #MMDD          (N4)
+    3 REDEFINE #MMDD
+      4 #MM          (A2)
+      4 #DD          (A2)
+  2 #HOLD-POL-AMOUNT (P7)
+  2 #HOLD-POL-DATE   (N8)
+  2 #TITLE-START-DATE (A8)
+  2 #TITLE-END-DATE   (A8)
+  2 #END-MMDD-X       (A4)
+  2 #HOLD-TOTAL-AMOUNT   (N9)
+  2 #HOLD-STATUS         (A1)
+* * * *   T A L L I E S                     * * * * * * * * * *
+1 #TALLIES
+  2 #STATUS-CNT      (P5)
+  2 #FIRS-CNT        (P5)
+  2 #UPDATE-CNT      (P5)
+  2 #NEW-CNT         (P5)
+*
+* * * *   S U B P R O G R A M   P A R M S   * * * * * * * * * *
+1 #P-DX-PARMS
+  2 #P-DX-COMMAND         (A2) INIT <'**'>
+  2 #P-DX-AGE             (P3)
+  2 #P-DX-DATE-OF-BIRTH   (N8)
+  2 REDEFINE #P-DX-DATE-OF-BIRTH
+    3 #P-DX-DOB-YYYY      (N4)
+    3 #P-DX-DOB-MMDD      (N4)
+  2 #P-DX-DATE-RETIRED    (N8)
+  2 #P-DX-MIL-STATUS      (A1)
+  2 #P-DX-MIL-SERVICE     (A3)
+  2 #P-DX-RANK            (A3)
+  2 #P-DX-BASD            (N8)
+1 #P-DX-ERROR-FLAG        (L)
+1 #P-DX-CADET-FLAG        (A1)
+*
+* * * *   S T A T U S   F I L E   * * * * * * * * * * * * * * *
+1 XX-S01             VIEW OF A-STATUS
+  2 ID-NUMBER            (N6)
+  2 MEMBER-CONTACT-ID                          /* TT1
+  2 PROCESS-IND
+  2 CHIEF-OF-STAFF-IND   (A1)
+  2 NAME                 (A25)
+  2 RANK                 (A3)
+  2 MILITARY-SERVICE     (A3)
+  2 MILITARY-STATUS      (A1)
+  2 ACTIVE-DUTY-BASE-DATE (N8)
+  2 BASE-PAY-EF-DATE      (N8)
+  2 DEATH-SERVICE-CON
+  2 DATE-OF-DEATH        (N8)
+*   2 DATE-OF-BIRTH        (N8)
+*   2 REDEFINE DATE-OF-BIRTH
+*     3 DATE-OF-BIRTH-YYYY (N4)
+*     3 DATE-OF-BIRTH-MMDD (N4)
+  2 DATE-RETIRED         (N8)
+  2 TOTAL-INS-AMT        (P7)
+  2 DISABILITY-PCT       (P1.2)
+  2 NUMBER-MEMBERSHIPS
+1 U-STAT VIEW OF A-STATUS
+  2 ID-NUMBER             (N6)
+  2 TOTAL-INS-AMT         (P7)
+* * * *     C O N T A C T S   F I L E   * * * * * * * * * * * * TT1 BEGIN
+1 CONTACT VIEW OF A-CONTACTS
+  2 DATE-OF-BIRTH
+  2 REDEFINE DATE-OF-BIRTH
+    3 DOB-YYYY            (A4)
+    3 DOB-MMDD            (A4)
+*
+1 LNK-CONTACT VIEW OF A-CONTACTS
+  2 CONTACT-ID
+  2 DATE-OF-BIRTH
+
+* * * *     F I R S     F I L E   * * * * * * * * * * * * * * * TT1 END
+1 FIRS-VIEW          VIEW OF A-FIRS
+  2 ID-NUMBER            (N6)
+  2 MEMBER-FLAG          (A1)
+  2 DATE-TIME-STAMP
+    3 DTS-DATN           (P9)
+    3 DTS-TIMN           (P7)
+  2 POLICY-FIELDS
+    3 INS-LAST-FM-DATE   (N8)
+  2 C*POLICY-TABLE
+  2 POL-NAME           (A19/45)
+  2 POL-TYPE           (A4/45)
+  2 POL-NUMBER         (A14/45)
+  2 POL-REMARKS        (A21/45)
+  2 POL-AMOUNT         (P7.0/45)
+  2 POL-DATE           (N8/45)
+  2 POL-CODE           (A1/45)
+/* END OF VIEW A-FIRS-VIEW
+1 #CURRENT-DATE        (N8.0)
+END-DEFINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+*
+ON ERROR
+*     WRITE (2) '*E R R O R - N R    ' *ERROR-NR        /* SAG RH1 11282005 SS - BEGIN
+*             / '*E R R O R - L I N E' *ERROR-LINE
+*             / 'C U R R E N T  R C D' XX-S01.ID-NUMBER
+*     MOVE +4095 TO #ABEND-CODE  /* USER 4095
+*     CALL 'ABEND' USING #ABEND-CODE  /* USER 4095
+  #BATCH-LITERAL-1 := XX-S01.ID-NUMBER
+  INCLUDE GABNDCX1                                        /* SAG RH1 11282005 SS - END
+END-ERROR
+*
+FORMAT PS=72 LS=133
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+WRITE (2) TITLE LEFT 'PROGRAM:' *PROGRAM
+  5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+READ WORK 1 ONCE RECORD #JCL-PARM
+*
+MOVE #JCL-MM    TO #PARM-MM
+MOVE #JCL-DD    TO #PARM-DD
+MOVE #JCL-YYYY  TO #PARM-YYYY
+*
+MOVE #PARM-YYYY   TO #YYYY
+MOVE #PARM-MM   TO #I1
+MOVE #PARM-MMDD TO #MBR-FROM-MMDD
+MOVE #PARM-YYYYMMDD TO #DATN
+COMPRESS #MM '/' #DD '/' #YY INTO #TITLE-START-DATE LEAVING NO
+*
+MOVE #MON-DAY(#I1) TO #PARM-DD
+MOVE #PARM-MMDD TO #MBR-THRU-MMDD
+MOVE #PARM-YYYYMMDD TO #DATN
+COMPRESS #MM '/' #DD '/' #YY INTO #TITLE-END-DATE   LEAVING NO
+*
+* AT THIS POINT #DATN CONTAINS THRU DATE FOR AGE CALC
+*
+WRITE TITLE LEFT
+  1/28 'AAFMAA'
+  2/23 'FIRS AUTOMATIC INSURANCE UPDATE FOR'
+  2/59 #TITLE-START-DATE  1X '-'  1X #TITLE-END-DATE
+*
+  3/11 'CERT NUMBER'  3/31 'INSURANCE'
+  3/59 'OLD AMOUNT'   3/81 'NEW AMOUNT'  3/101 'MESSAGE'
+SKIP 2 LINES
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+* READ RECORDS XX-S01 LOGICAL BY BIRTHDAY-KEY
+*     STARTING FROM #MBR-FROM-MMDD-A
+*
+HISTOGRAM CONTACT FOR CONTACT.DATE-OF-BIRTH
+  ACCEPT IF DOB-MMDD = #MBR-FROM-MMDD-A
+*   IF DOB-MMDD GT #MBR-THRU-MMDD
+*     ESCAPE BOTTOM
+*   END-IF
+*
+  FIND LNK-CONTACT WITH LNK-CONTACT.DATE-OF-BIRTH = CONTACT.DATE-OF-BIRTH
+    FIND XX-S01 WITH MEMBER-CONTACT-ID = LNK-CONTACT.CONTACT-ID
+      IF ID-NUMBER LE 1900
+        ESCAPE TOP
+      END-IF
+*
+      ADD +1 TO #STATUS-CNT
+      MOVE ID-NUMBER TO #FIRS-ID
+*
+      IF (DATE-OF-DEATH NE 0)         /* DEAD
+          OR (NUMBER-MEMBERSHIPS = 0)    /* DW1
+        ESCAPE TOP
+      END-IF
+*
+      PERFORM PROCESS-FIRS
+*
+      IF #RECORD-UPDATED
+        IF #HOLD-TOTAL-AMOUNT = TOTAL-INS-AMT
+          IGNORE
+        ELSE
+          PERFORM UPDATE-STAT
+        END-IF
+      END-IF
+    END-FIND
+  END-FIND
+END-HISTOGRAM
+*
+WRITE (2) 'STATUS RECORDS READ    = ' #STATUS-CNT
+  / 'FIRS   RECORDS READ    = ' #FIRS-CNT
+  / 'FIRS   RECORDS UPDATED = ' #UPDATE-CNT
+  / 'FIRS   RECORDS ADDED   = ' #NEW-CNT
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PROCESS-FIRS
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+RESET #NO-FIRS
+RESET #NO-SGLI
+FIND (1) FIRS-VIEW WITH MEMBER-KEY = #FIRS-ID-G
+  IF NO RECORDS FOUND
+    MOVE TRUE TO #NO-FIRS
+    MOVE TRUE TO #NO-SGLI
+    RESET FIRS-VIEW
+  END-NOREC
+*
+  IF NOT #NO-FIRS
+    MOVE TRUE TO #NO-SGLI        /* DETERMINE IF SGLI EXISTS
+    FOR #I1 1 TO 45
+      IF POL-NAME (#I1) = 'SGLI' OR = 'VGLI' OR = 'S.G.L.I.'
+        MOVE FALSE TO #NO-SGLI
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+*
+  RESET #RECORD-UPDATED
+  RESET #POLICY-DELETED
+*
+*     BELOW REMOVED 11/92 AS PER JUD
+* IF   (XX-S01.MILITARY-STATUS = 'A')       /* ACTIVE
+*  AND (XX-S01.DATE-OF-DEATH = 0)           /* ALIVE
+*  AND (#NO-SGLI)                           /* NO EXISTING SGLI
+*  AND (POL-NAME (1) = ' ')             /* NO POLS (NEW POL)
+*   IF #NO-FIRS
+*     MOVE 1 TO C*POLICY-TABLE
+*     MOVE 1 TO #I1
+*   ELSE
+*     ADD 1 TO C*POLICY-TABLE
+*     MOVE C*POLICY-TABLE TO #I1
+*   END-IF
+*
+*   MOVE 'SGLI'                    TO POL-NAME    (#I1)
+*   MOVE 100000                    TO POL-AMOUNT  (#I1)
+*   MOVE 'GPTM'                    TO POL-TYPE    (#I1)
+*
+*   IF XX-S01.ACTIVE-DUTY-BASE-DATE = 0
+*     MOVE XX-S01.BASE-PAY-EF-DATE TO POL-DATE (#I1)
+*   ELSE
+*     MOVE XX-S01.ACTIVE-DUTY-BASE-DATE TO POL-DATE (#I1)
+*   END-IF
+*
+*   MOVE TRUE TO #RECORD-UPDATED
+*   WRITE 11T XX-S01.ID-NUMBER (EM=999999)
+*         31T POL-NAME   (#I1)
+*         84T POL-AMOUNT (#I1) (EM=ZZZ,Z99)
+*         101T 'ADDED SGLI'
+* ELSE
+  IF  #NO-FIRS                /* NO FIRS AT ALL
+      OR (C*POLICY-TABLE = 0)    /* NO POLICY RECORDS
+    ESCAPE ROUTINE
+  END-IF
+* END-IF
+*
+  ADD +1 TO #FIRS-CNT
+  MOVE LNK-CONTACT.DATE-OF-BIRTH    TO #P-DX-DATE-OF-BIRTH       /* TT1
+  MOVE XX-S01.MILITARY-STATUS  TO #P-DX-MIL-STATUS
+  MOVE XX-S01.MILITARY-SERVICE TO #P-DX-MIL-SERVICE
+  MOVE XX-S01.DATE-RETIRED     TO #P-DX-DATE-RETIRED
+  MOVE XX-S01.RANK             TO #P-DX-RANK
+  MOVE XX-S01.ACTIVE-DUTY-BASE-DATE TO #P-DX-BASD
+*
+  COMPUTE #P-DX-AGE = #YYYY - #P-DX-DOB-YYYY
+*
+  IF #P-DX-DOB-MMDD GT #MMDD
+    SUBTRACT +1 FROM #P-DX-AGE
+  END-IF
+*
+  IF #P-DX-RANK = 'CDT'
+    MOVE 'Y' TO #P-DX-CADET-FLAG
+  ELSE
+    MOVE 'N' TO #P-DX-CADET-FLAG
+  END-IF
+*
+  FOR #POL-X 1 TO C*POLICY-TABLE
+    MOVE POL-AMOUNT (#POL-X) TO #HOLD-POL-AMOUNT
+    MOVE POL-DATE (#POL-X) TO #HOLD-POL-DATE
+    IF POL-NAME (#POL-X) = 'AFRBA'  OR = 'AFBA' OR = 'VGLI' OR = 'SGLI'
+        OR = 'AFRABA' OR = 'MBA'
+      MOVE #P-DX-MIL-STATUS TO #HOLD-STATUS
+*
+      IF   (POL-NAME (#POL-X) = 'SGLI' OR = 'VGLI')
+          AND (XX-S01.CHIEF-OF-STAFF-IND = 'X')   /* RECALLED TO ACR DUTY
+        MOVE 'A' TO #P-DX-MIL-STATUS
+      END-IF
+*
+      CALLNAT 'E9010SDX' #P-DX-PARMS
+        POL-NAME    (#POL-X)  POL-TYPE (#POL-X)
+        POL-AMOUNT  (#POL-X)  POL-DATE (#POL-X)
+        POL-REMARKS (#POL-X)  #P-DX-ERROR-FLAG XX-S01.DISABILITY-PCT
+        DEATH-SERVICE-CON                      /* DW2
+      MOVE #HOLD-STATUS TO #P-DX-MIL-STATUS
+*
+*     DISPLAY  ID-NUMBER / POL-NAME    (#POL-X)/ POL-TYPE (#POL-X)
+*              POL-AMOUNT  (#POL-X)/ POL-DATE (#POL-X)
+*           POL-REMARKS (#POL-X)/ #P-DX-ERROR-FLAG XX-S01.DISABILITY-PCT
+*             #P-DX-MIL-STATUS
+    ELSE
+      IF POL-NAME (#POL-X) = 'OBA' OR = 'USBA'
+          OR = 'AUSA' OR = 'AFA'
+        CALLNAT 'E9020SDX' #P-DX-PARMS
+          POL-NAME    (#POL-X)  POL-TYPE (#POL-X)
+          POL-AMOUNT  (#POL-X)  POL-DATE (#POL-X)
+          POL-REMARKS (#POL-X)  #P-DX-ERROR-FLAG  #P-DX-CADET-FLAG
+      END-IF
+    END-IF
+*
+*   WRITE 'POLICY DATE' POL-DATE (#POL-X)
+*         'HOLD POL DT' #HOLD-POL-DATE
+*         'POLICY NAME' POL-NAME (#POL-X)
+*         'REC UPDATED' #RECORD-UPDATED
+*
+    IF (POL-DATE (#POL-X) NE #HOLD-POL-DATE)
+        AND (POL-NAME (#POL-X) = 'SGLI')
+      IF #RECORD-UPDATED
+        IF NOT PROCESS-IND = 'D' OR = 'I' OR = 'O'   /* DW1
+          WRITE 31T POL-NAME(#POL-X) 62T 'CHG ISSUE DATE'
+        END-IF
+      ELSE
+        MOVE TRUE TO #RECORD-UPDATED
+        IF NOT PROCESS-IND = 'D' OR = 'I' OR = 'O'   /* DW1
+          WRITE 11T ID-NUMBER (EM=999999)
+            31T POL-NAME(#POL-X) 62T 'CHG ISSUE DATE'
+        END-IF
+      END-IF
+    END-IF
+*
+    IF POL-AMOUNT (#POL-X) NE #HOLD-POL-AMOUNT
+      IF #RECORD-UPDATED
+        IF   (POL-NAME   (#POL-X) = 'VGLI' OR = 'SGLI' OR = 'AUSA')
+            AND (POL-AMOUNT (#POL-X) = 9999999)
+          IF NOT PROCESS-IND = 'D' OR = 'I' OR = 'O'   /* DW1
+            WRITE
+              31T POL-NAME (#POL-X)    62T #HOLD-POL-AMOUNT (EM=ZZZ,Z99)
+              101T POL-REMARKS (#POL-X)  123T '*DELETED*'
+          END-IF
+          MOVE TRUE TO #POLICY-DELETED
+        ELSE
+          IF NOT PROCESS-IND = 'D' OR = 'I' OR = 'O'   /* DW1
+            WRITE
+              31T POL-NAME (#POL-X)    62T #HOLD-POL-AMOUNT (EM=ZZZ,Z99)
+              84T POL-AMOUNT (#POL-X) (EM=ZZZ,Z99)
+              101T POL-REMARKS (#POL-X)
+          END-IF
+        END-IF
+      ELSE
+        MOVE TRUE TO #RECORD-UPDATED
+        IF   (POL-NAME   (#POL-X) = 'VGLI' OR = 'SGLI' OR = 'AUSA')
+            AND (POL-AMOUNT (#POL-X) = 9999999)
+          IF NOT PROCESS-IND = 'D' OR = 'I' OR = 'O'   /* DW1
+            WRITE                    11T ID-NUMBER (EM=999999)
+              31T POL-NAME (#POL-X)  62T #HOLD-POL-AMOUNT (EM=ZZZ,Z99)
+              101T POL-REMARKS (#POL-X)  123T '*DELETED*'
+          END-IF
+          MOVE TRUE TO #POLICY-DELETED
+        ELSE
+          IF NOT PROCESS-IND = 'D' OR = 'I' OR = 'O'   /* DW1
+            WRITE                       11T ID-NUMBER (EM=999999)
+              31T POL-NAME (#POL-X)    62T #HOLD-POL-AMOUNT (EM=ZZZ,Z99)
+              84T POL-AMOUNT (#POL-X) (EM=ZZZ,Z99)
+              101T POL-REMARKS (#POL-X)
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-FOR
+*
+  IF #POLICY-DELETED
+    MOVE C*POLICY-TABLE TO #I2
+*
+    FOR #POL-X 1 TO C*POLICY-TABLE
+      IF   (POL-NAME   (#POL-X) = 'VGLI' OR = 'SGLI' OR = 'AUSA')
+          AND (POL-AMOUNT (#POL-X) = 9999999)
+*
+        FOR #I1 #POL-X TO C*POLICY-TABLE
+          MOVE POL-NAME    (#I1 + 1) TO POL-NAME    (#I1)
+          MOVE POL-TYPE    (#I1 + 1) TO POL-TYPE    (#I1)
+          MOVE POL-NUMBER  (#I1 + 1) TO POL-NUMBER  (#I1)
+          MOVE POL-REMARKS (#I1 + 1) TO POL-REMARKS (#I1)
+          MOVE POL-AMOUNT  (#I1 + 1) TO POL-AMOUNT  (#I1)
+          MOVE POL-DATE    (#I1 + 1) TO POL-DATE    (#I1)
+          MOVE POL-CODE    (#I1 + 1) TO POL-CODE    (#I1)
+        END-FOR
+*
+        RESET POL-NAME    (#I2)
+        RESET POL-TYPE    (#I2)
+        RESET POL-NUMBER  (#I2)
+        RESET POL-REMARKS (#I2)
+        RESET POL-AMOUNT  (#I2)
+        RESET POL-DATE    (#I2)
+        RESET POL-CODE    (#I2)
+        SUBTRACT 1 FROM #I2
+        SUBTRACT 1 FROM #POL-X
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF #RECORD-UPDATED
+    PERFORM TOTAL-INSURANCE
+*   MOVE *DATN TO INS-LAST-FM-DATE /* REMOVED 6/91 AS PER JUD TO PREVENT
+*                                  /* LOSS OF UPDATE AUDIT TRAIL
+    MOVE *DATN TO DTS-DATN
+    MOVE *TIMN TO DTS-TIMN
+*
+    IF #NO-FIRS
+      MOVE XX-S01.ID-NUMBER TO FIRS-VIEW.ID-NUMBER
+      MOVE 'Y'              TO FIRS-VIEW.MEMBER-FLAG
+      ADD 1 TO #NEW-CNT
+      STORE FIRS-VIEW
+    ELSE
+      ADD +1 TO #UPDATE-CNT
+      UPDATE RECORD (0268)
+    END-IF
+*
+    END TRANSACTION
+  END-IF
+*
+END-FIND  /* (0268)
+*
+END-SUBROUTINE  /* (0264)
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE TOTAL-INSURANCE
+ASSIGN #HOLD-TOTAL-AMOUNT = 0
+FOR #POL-X 1 TO FIRS-VIEW.C*POLICY-TABLE
+  IF FIRS-VIEW.POL-CODE (#POL-X) = '*' OR = ' '
+    IF FIRS-VIEW.POL-TYPE (#POL-X) = 'TRAV' OR = 'ACCD' OR = 'TRVL'
+      IGNORE
+    ELSE
+      COMPUTE #HOLD-TOTAL-AMOUNT = #HOLD-TOTAL-AMOUNT +
+        FIRS-VIEW.POL-AMOUNT(#POL-X)
+    END-IF
+  END-IF
+END-FOR
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE UPDATE-STAT
+FIND (1) U-STAT WITH MEMBER-KEY = #FIRS-ID-G
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  ASSIGN TOTAL-INS-AMT = #HOLD-TOTAL-AMOUNT
+  UPDATE
+  END TRANSACTION
+END-FIND
+END-SUBROUTINE
+END

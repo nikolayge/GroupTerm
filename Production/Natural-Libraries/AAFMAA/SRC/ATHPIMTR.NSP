@@ -1,0 +1,180 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+***************************************************************************************
+* Program : ATHPIMTR                                                                  *
+*                                                                                     *
+* Function: Generate report for all inactive CNs with outstanding term refund amounts *
+*                                                                                     *
+* History :                                                                           *
+* 08/07/2011 vxt      Initial creation                                                *
+* 04/25/2012 VXT vt1  Add a column specifying if the address is deliverable('D')      *
+*                     or not('U')                                                     *
+* 05/07/2012 vxt vt2  Add a column with "deceased" (ticket 1193).
+* 10/09/2013 JT  JT1  ADDRESS NORMALIZATION                                           *
+* 02/15/2017 yf  yf1  Add a column with "Insured not Owner?" (ticket 2539)            *
+***************************************************************************************
+*
+* Records read         :   154004
+* Inactive records     :      100
+* Active records       :    5658
+* Undeliverable address:     4756
+* Records extracted    :     5758
+DEFINE DATA LOCAL
+*
+1 ST-v VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 number-memberships
+  2 C*OUT-TERM-REF-GROUP
+  2 out-term-ref-group (99)
+    3 out-term-ref-amount
+    3 OUT-TERM-REF-ENTRY-DATE                   /* find latest and print
+  2 MEMBER-CONTACT-ID                           /* JT1
+*  2 address-chg-code                           /* vt1   /* JT1
+  2 C*ACTIVE-SEGMENTS                           /* yf1
+  2 ACTIVE-SEGMENTS   (9)                       /* yf1
+    3 STATUS                                    /* yf1
+    3 POLICY-ID                                 /* yf1
+*
+1 cont view of a-contacts
+  2 id-number
+  2 contact-id
+  2 first-name
+  2 middle-name
+  2 last-name
+  2 date-of-death                              /* vt2
+*
+local
+1 #tot-read          (n7)
+1 #rec-extracted     (n7)
+1 #out-file          (a250)
+1 #tab               (a1) init<H'09'>
+1 #i                 (i2)
+1 #totl-refund       (n9.2)
+1 #totl-refund-a     (a15)
+1 #e-mail           (a70)
+1 #contact-id        (n8)
+1 #tot-inactive      (p9)
+1 #name              (a70)
+1 #status            (a8)
+1 #cnt-inactive      (p7)
+1 #cnt-active        (N6)
+1 #deliv             (a1)                                    /* vt1
+1 #cnt-undeliv       (p7)                                    /* vt1
+1 #deceased          (a8)                                    /* vt2
+1 #comment           (a1)                                    /* yf1
+1 #OWNER-CN          (N6)                                    /* yf1
+1 v_Entry_Date       (A10)
+1 v_Max              (N8)
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/CN_TERM_REF.TXT'  /* vt1
+*  TYPE 'ASCII-COMPRESSED'                                                        /* vt1
+*
+compress 'CN # ' #tab
+  'NAme'  #tab
+  'Amount ' #tab
+  'Latest entry date' #tab
+  'E-mail ' #tab
+  'Status' #tab
+  'Deliverable/Undeliverable Address'  #tab                  /* vt1
+  'Deceased or not?' #tab                                    /* vt2
+  'Insured not Owner?' #tab                                  /* yf1
+  into #out-file leaving no
+write work 1 #out-file
+*
+READ st-v by id-number
+  add 1 to #tot-read
+*
+  #deliv := 'D'                                            /* vt1 \/
+*    if st-v.address-chg-code = 'U' or = 'V'                 /* JT1
+  IF F-UNDEL-ADDRESS (< ST-V.MEMBER-CONTACT-ID >)          /* JT1
+    move 'U' to #deliv
+    add 1 to #cnt-undeliv
+  end-if                                                   /* vt1 /\
+*
+  for #i 1 to ST-v.C*out-term-ref-group
+    add st-v.out-term-ref-amount(#i) to #TOTL-refund
+  end-for
+  #TOTL-refund := #totl-Refund * -1
+  move edited #totl-refund (em=szzz,zzz,zz9.99) to #totl-refund-a
+*
+  if #totl-refund NE 0
+    reset #contact-id #e-mail #name
+    find cont with cont.id-number = st-v.id-number
+      if no
+        escape bottom
+      end-norec
+      compress cont.first-name cont.middle-name cont.last-name into #name
+      if cont.date-of-death ne 0                            /* vt2 \/
+        move 'deceased' to #deceased
+      else
+        reset #deceased
+      end-if                                                /* vt2 /\
+      move cont.contact-id to #contact-id
+      callnat 'emailn01' #contact-id #e-mail
+    end-find
+*
+    if st-v.number-memberships = 0
+      #status := 'Inactive'
+      add 1 to #cnt-inactive
+    ELSE
+      #status := ' '
+      #cnt-active := #cnt-active + 1
+    end-if
+    v_Max := 0
+    FOR #I = 1 TO C*OUT-TERM-REF-GROUP
+      IF OUT-TERM-REF-ENTRY-DATE(#I) > v_Max
+        v_Max := OUT-TERM-REF-ENTRY-DATE(#I)
+      END-IF
+    END-FOR
+    IF v_Max <> 0
+      MOVE EDITED v_Max (EM=9999-99-99) TO v_Entry_Date
+    ELSE
+      v_Entry_Date := ' '
+    END-IF
+
+    RESET #COMMENT                                    /* yf1 begin
+    FOR #i 1 TO C*ACTIVE-SEGMENTS
+      IF STATUS(#I) = 'D'
+        #OWNER-CN := GET-POLICY-OWNER(<POLICY-ID(#i)>)
+        IF #OWNER-CN NE id-number
+          #COMMENT := 'Y'
+          ESCAPE BOTTOM
+        END-IF
+      END-IF
+    END-FOR                                           /* yf1 end
+
+    compress st-v.id-number  #tab
+      #name                  #tab
+      #TOTL-refund-a         #TAB
+      v_Entry_Date           #TAB
+      #e-mail                #TAb
+      #status                #tab
+      #deliv                 #tab                     /* vt1
+      #deceased              #tab                     /* vt2
+      #comment               #tab                     /* yf1
+      into #out-file leaving no
+    write work 1 #out-file
+*
+    reset #totl-refund
+    add 1 to #rec-extracted
+
+  end-if
+*
+  at end of data
+    write
+      'Records read         :' #tot-read /
+      'Inactive records     :' #cnt-inactive /
+      'Active records       :' #cnt-active /
+      'Undeliverable address:' #cnt-undeliv /           /* vt1
+      'Records extracted    :' #rec-extracted
+  end-enddata
+*
+end-read
+*
+END
+
+

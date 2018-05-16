@@ -1,0 +1,372 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPDCBA - new report with DB/CR and
+*             Billing adjustment information
+******************************************************************************   
+*             MODIFICATION LOG                                               *
+* USER DATE      TAG  REASON                                                 *
+* YAK  07182007       Initial creation                                       *
+* PAM  10032008  PM1  Added address information                              *
+* PAM  11032008  PM2  Added pending accounts                                 *
+* DRW 11/26/2008 DW3  Add Loan extract file                                  *
+* RSE 09/21/2009 RE1  Change PROCESS-IND logic for Unif                      *
+* PAM 07/23/2010 PM4  Expanded loan amounts                                  *
+* vxt 02/25/2011 vt1  Add policy number to the ALL-LOAN report extract       *
+* YAK 11/04/2011 YK1  Move to run after midnight (OI 502)                    *
+* vxt 05/07/2012 vt2  Add deliv/undeliv flag + deceased columns to the       *
+*                     work file 1 and work file 2. (ticket# 1193)            *
+* YAK 07/23/2012 YK2  Fix logic for deliv/undeliv/deceased column            *
+*                     Use function F-UNDL-ADDR to determine if               *
+*                     address undeliverable (ticket# 1193 re-opened).        *
+* vxt 06/27/2013 vt3  Increase the size of debit/credit field                * 
+* JNT 09/17/2013 JT1  Address normalization                                  *
+*                     Program uses DATE-LAST-ADDR-UPDT which is              *
+*                     no longer in A-STATUS                                  *
+*                     Use of ADDRESS-CHG-CODE has been commented out as well *
+******************************************************************************
+*
+DEFINE DATA
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NBR       (A6)
+  2 MEMBER-FLAG         (A1)
+  2 MEMBER-CONTACT-ID                     /* YK2
+  2 INTRO-FLAG
+  2 PROCESS-IND
+  2 DEBIT-CREDIT-AMT
+  2 BILL-ADJUST
+  2 NAME         (A25)
+*   2 ADDRESS-1    (A25)                     /* JT1
+*   2 ADDRESS-CHG-CODE    (A1)     /* PM1    /* JT1
+* 2 DATE-LAST-ADDR-UPDT (N8)               /* PM1
+*   2 REDEFINE DATE-LAST-ADDR-UPDT           /* PM1
+*     3 #LAST-ADDR-YYYY (A4)                  /* PM1
+*     3 #LAST-ADDR-MM   (A2)                  /* PM1
+*     3 #LAST-ADDR-DD   (A2)                  /* PM1
+  2 X-LOAN-AMOUNT      (9)
+  2 X-LOAN-AMOUNT-2    (9)
+  2 LAST-FM-DATE
+  2 ISSUE-DATE          (N8/9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DATE-OCC    (9)
+      4 ID-YYYYMM   (N6)
+      4 REDEFINE ID-YYYYMM
+        5 ID-YYYY    (N4)
+        5 ID-MM      (N2)
+      4 ID-DD       (N2)
+  2 PAY-STATUS          (9)
+  2 X-BILL-ADJUST       (9)
+  2 PLAN                (9)
+  2 STATUS              (9)
+  2 MODE                (9)
+  2 CONV-DURATION       (9)
+  2 date-of-death                                  /* vt2
+*
+1 ACCT-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER
+  2 DEBIT-AMOUNT
+  2 CREDIT-AMOUNT
+  2 TRANSACTION-DATN
+  2 ACCT-DATE
+  2 TXN-CODE
+*
+1 #ID-NUMBER                (N6)
+1 #STATUS                   (A8)
+1 #MODE                     (A4)
+1 #LAST-DB-CR-DATE          (N8)
+1 #BILL-ADJUST              (N5.2)
+1 #DEBIT-CREDIT-AMT         (N7.2)               /* vt3 was n5.2
+1 #DISPLAY-AMOUNT           (A12)
+1 #DISPLAY-ADDRESS-DATE     (A10)          /* PM1
+1 #TOTAL-DB-CR              (N7.2)
+1 #TOTAL-BADJ               (N7.2)
+1 #RECS-READ                (N6)
+1 #RECS-DB-CR-WRITTEN       (N6)
+1 #RECS-BILL-ADJUST-WRITTEN (N6)
+1 #I                        (N2)
+1 #j                        (i2)                           /* vt1
+1 #REPORT-RECORD            (A125)
+1 #TAB                      (A1) INIT <H'09'>
+1 #CAP-IND                  (A3)           /* DW3
+1 #FIX-VAR                  (A5)
+1 #TODAY-DISP               (A) DYNAMIC                    /* YK1
+1 #LOAN-BAL                 (A12)          /* PM4
+1 #YYYYMMDD                 (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A                  (A4)
+  2 #MM-A                    (A2)
+  2 #DD-A                    (A2)           /* DW3
+1 #POLICY-NUMBER             (a16)                         /* vt1
+1 #DATN                      (N8)           /* YK1
+1 #deliv                     (a1)                          /* vt2
+1 #deceased                  (a8)                          /* vt2
+* * * * * * * * * * * * * * * * * * * * * * *
+END-DEFINE
+*
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/WORK/DEBTCRED.TXT'
+*   TYPE 'ASCII-COMPRESSED'
+* DEFINE WORK FILE 2 '/usr/SAG/AAFMAA/batch/workfiles/WORK/BILADJST.TXT'
+*   TYPE 'ASCII-COMPRESSED'
+* DEFINE WORK FILE 3 '/usr/SAG/AAFMAA/batch/workfiles/WORK/ALL_LOANS.TXT'
+*   TYPE 'ASCII-COMPRESSED'
+*
+*
+DEFINE WORK FILE 1 TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 3 TYPE 'ASCII-COMPRESSED'
+
+#DATN := *DATN                                                    /* YK1
+* #datn := 20120504                 /* for test vt1
+FORMAT LS=133 PS=76
+WRITE TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Program Messages' 5X 'DATE: ' #DATN 5X 'TIME: ' *TIMX
+*
+COMPRESS ' ' #TAB 'PROGRAM: ' *PROGRAM #TAB 'DATE: ' #DATN #TAB 'TIME: ' *TIMX #TAB
+  INTO #REPORT-RECORD
+WRITE WORK FILE 1 #REPORT-RECORD
+COMPRESS ' ' #TAB 'NON-ZERO DEBIT CREDIT RECORDS ' #TAB INTO #REPORT-RECORD
+WRITE WORK FILE 1 #REPORT-RECORD
+*
+COMPRESS 'CN' #TAB 'NAME' #TAB 'DEBIT/CREDIT' #TAB 'POLICY' #TAB 'PAYMENT' #TAB
+  'FIRST POLICY' #TAB 'LAST DEBIT-' #TAB 'ADDR CHG' #TAB 'LAST ADDR' /* PM1
+  #tab 'DELIV/UNDELIV'                                               /* vt2
+  #tab 'DECEASED ?'                                            /* vt2
+  INTO #REPORT-RECORD
+WRITE WORK FILE 1 #REPORT-RECORD
+COMPRESS ' ' #TAB ' ' #TAB 'AMOUNT' #TAB 'STATUS' #TAB 'MODE' #TAB
+  'PAYMENT MODE' #TAB 'CREDIT DATE' #TAB 'CODE' #TAB 'CHG DATE'      /* PM1
+  INTO #REPORT-RECORD
+WRITE WORK FILE 1 #REPORT-RECORD
+*
+COMPRESS ' ' #TAB 'PROGRAM: ' *PROGRAM #TAB 'DATE: ' #DATN #TAB 'TIME: ' *TIMX #TAB
+  INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+COMPRESS ' ' #TAB 'NON-ZERO BILLING ADJUSTMENT RECORDS' #TAB INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+COMPRESS 'CN' #TAB 'NAME' #TAB 'BILLING' #TAB 'POLICY' #TAB 'PAYMENT' #TAB 'LAST BILLING' #TAB
+  'ADDR CHG' #TAB 'LAST ADDR'
+  #tab 'DELIV/UNDELIV'                                                /* vt2
+  #tab 'DECEASED OR NOT?'                                             /* vt2
+  INTO #REPORT-RECORD                   /* PM1
+WRITE WORK FILE 2 #REPORT-RECORD
+COMPRESS ' ' #TAB ' ' #TAB 'ADJUSTMENT' #TAB 'STATUS' #TAB 'MODE' #TAB 'ADJUST DATE' #TAB
+  'CODE' #TAB 'CHG DATE' INTO #REPORT-RECORD                        /* PM1
+WRITE WORK FILE 2 #REPORT-RECORD
+*
+* MOVE *DATN TO #YYYYMMDD                                 /* DW3  YK1
+* COMPRESS #MM-A #DD-A #YYYY-A INTO #TODAY-DISP WITH '/'       /* YK1
+#TODAY-DISP := FUNCTION-CALENDAR(<#DATN,'L'>)                  /* YK1
+COMPRESS 'Members with Loans AS OF COB'  #TODAY-DISP  '  Time'  *TIMX    /* DW3
+  INTO #REPORT-RECORD
+WRITE WORK 3 #REPORT-RECORD
+*
+COMPRESS 'CN'
+  #TAB 'Name'
+  #TAB 'CAP-Indicator'
+  #TAB 'Fixed/Variable'
+  #TAB 'PRIN BAL'
+  #TAB 'Policy Number'                           /* vt1
+  INTO #REPORT-RECORD LEAVING NO
+WRITE WORK 3 #REPORT-RECORD                            /* END DW3
+*
+* READ ST-V BY MEMBER-KEY FROM '001900'
+READ ST-V WITH NAME-KEY FROM 'A'           /* To include deceased members
+*  IF PROCESS-IND = 'S'   /* OR = 'C'       /* To include pending appl                       /* PM3 RE1
+*   OR ST-V.ID-NUMBER GE 600000
+*   OR ST-V.ID-NUMBER LT 1900
+*    ESCAPE TOP
+*  END-IF
+*
+  IF ST-V.ID-NUMBER LT 1900 ESCAPE TOP END-IF                            /*  bz1
+*
+  IF ( PROCESS-IND <> "S" ) OR ( STATUS(*) <> " " )                      /*  bz1
+    IGNORE                                                               /*  bz1
+  ELSE                                                                   /*  bz1
+    IF INTRO-FLAG <> "A"   ESCAPE TOP  END-IF    /* Got AFFL Client           bz1
+  END-IF                                                                 /*  bz1
+*
+  RESET #DEBIT-CREDIT-AMT #MODE #STATUS #BILL-ADJUST
+    #LAST-DB-CR-DATE #REPORT-RECORD #DISPLAY-ADDRESS-DATE                 /* PM1
+    #DECEASED #DELIV                                                      /* YK2
+*
+  ADD 1 TO #RECS-READ
+  #ID-NUMBER := ID-NUMBER
+*   IF DATE-LAST-ADDR-UPDT NE 0                                             /* PM1
+*     COMPRESS #LAST-ADDR-MM #LAST-ADDR-DD #LAST-ADDR-YYYY INTO             /* PM1
+*       #DISPLAY-ADDRESS-DATE WITH '/'                                      /* PM1
+*   END-IF                                                                  /* PM1
+*
+  IF ST-V.DATE-OF-DEATH > 0                                               /* YK2
+    #DECEASED := 'deceased'                                               /* YK2
+  END-IF                                                                  /* YK2
+*
+  IF DEBIT-CREDIT-AMT NE 0
+    #RECS-DB-CR-WRITTEN := #RECS-DB-CR-WRITTEN + 1
+    #DEBIT-CREDIT-AMT := DEBIT-CREDIT-AMT
+    #TOTAL-DB-CR := #TOTAL-DB-CR + #DEBIT-CREDIT-AMT
+    FOR #I = 1 TO 9
+      IF STATUS(#I) = 'D'
+        #STATUS := 'Active'
+        IF MODE(#I) = 'A' OR ='S' OR = 'Q' OR = 'M'
+          #MODE := 'BILL'
+          ESCAPE BOTTOM
+        END-IF
+      END-IF
+    END-FOR
+*
+    IF #STATUS = ' '
+      IF ST-V.PROCESS-IND = 'C' AND ST-V.INTRO-FLAG = 'A'                 /* PM2
+        #STATUS := 'Pend App'                                             /* PM2
+      ELSE                                                                /* PM2
+        #STATUS := 'Inactive'
+      END-IF                                                              /* PM2
+    END-IF
+*
+*     if st-v.address-chg-code = 'U' or = 'V'                            /* vt2 \/
+*       move 'U' to #deliv
+*     else
+*       move 'D' to #deliv
+*     end-if
+* *
+*     if st-v.date-of-death ne 0
+*       move 'deceased' to #deceased
+*     else
+*       reset #deceased
+*     end-if                                                              /* vt2 /\    
+*
+    PERFORM FIND-LAST-DB-CR-DATE
+*
+    IF F-UNDEL-ADDRESS(<ST-V.MEMBER-CONTACT-ID>)                         /* YK2
+      #DELIV := 'U'                                                      /* YK2
+    ELSE                                                                 /* YK2
+      #DELIV := 'D'                                                      /* YK2
+    END-IF                                                               /* YK2
+*
+    MOVE EDITED #DEBIT-CREDIT-AMT (EM=+ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+    COMPRESS ID-NUMBER #TAB NAME #TAB #DISPLAY-AMOUNT #TAB #STATUS #TAB #MODE
+      #TAB MODE(1) #TAB #LAST-DB-CR-DATE #TAB
+      #DISPLAY-ADDRESS-DATE                                              /* JT1
+*      ADDRESS-CHG-CODE #TAB #DISPLAY-ADDRESS-DATE                        /* JT1
+      #tab #deliv                                                     /* vt2
+      #tab #deceased                                                  /* vt2
+      INTO #REPORT-RECORD /* PM1
+    WRITE WORK FILE 1 #REPORT-RECORD
+  END-IF
+*
+  FOR #I = 1 TO 9
+    IF X-LOAN-AMOUNT (#I) NE 0    /* Extract all member with loans        /* DW3
+      RESET #CAP-IND #POLICY-NUMBER
+      IF CONV-DURATION (#I) = 999
+        MOVE 'CAP' TO #CAP-IND
+      END-IF
+*
+      move #i to #j                                           /* vt1
+      callnat 'gplnmsxx' #policy-number id-number #j          /* vt1
+*
+      MOVE 'FIXED' TO #FIX-VAR
+      MOVE EDITED X-LOAN-AMOUNT (#I) (EM=ZZZ,ZZZ.99) TO #LOAN-BAL         /* PM4
+      COMPRESS ST-V.ID-NUMBER
+        #TAB ST-V.NAME
+        #TAB #CAP-IND
+        #TAB #FIX-VAR
+        #TAB #LOAN-BAL
+        #TAB #POLICY-NUMBER                            /* vt1
+        INTO #REPORT-RECORD LEAVING NO
+      WRITE WORK 3 #REPORT-RECORD
+    END-IF
+*
+    IF X-LOAN-AMOUNT-2 (#I) NE 0
+      RESET #CAP-IND #POLICY-NUMBER
+      move #i to #j                                           /* vt1
+      callnat 'gplnmsxx' #policy-number id-number #j          /* vt1
+      MOVE 'VAR' TO #FIX-VAR
+      MOVE EDITED X-LOAN-AMOUNT-2 (#I) (EM=ZZZ,ZZZ.99) TO #LOAN-BAL        /* PM4
+      COMPRESS ST-V.ID-NUMBER
+        #TAB ST-V.NAME
+        #TAB #CAP-IND
+        #TAB #FIX-VAR
+        #TAB #LOAN-BAL
+        #TAB #POLICY-NUMBER                            /* vt1
+        INTO #REPORT-RECORD LEAVING NO
+      WRITE WORK 3 #REPORT-RECORD
+    END-IF
+*                                                            /* END DW3
+    IF X-BILL-ADJUST (#I) NE 0
+      #BILL-ADJUST := X-BILL-ADJUST(#I)
+      #RECS-BILL-ADJUST-WRITTEN := #RECS-BILL-ADJUST-WRITTEN + 1
+      #TOTAL-BADJ := #TOTAL-BADJ + #BILL-ADJUST
+      IF STATUS(#I) = 'D'
+        #STATUS := 'Active'
+      ELSE
+        #STATUS := 'Inactive'
+      END-IF
+*
+      PERFORM FIND-LAST-BILLING-ADJ-DATE
+*
+      IF F-UNDEL-ADDRESS(<ST-V.MEMBER-CONTACT-ID>)                         /* YK2
+        #DELIV := 'U'                                                      /* YK2
+      ELSE                                                                 /* YK2
+        #DELIV := 'D'                                                      /* YK2
+      END-IF                                                               /* YK2
+*
+      MOVE EDITED #BILL-ADJUST (EM=+ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+      COMPRESS ID-NUMBER #TAB NAME #TAB #DISPLAY-AMOUNT #TAB #STATUS #TAB MODE(#I)
+        #TAB #LAST-DB-CR-DATE #TAB                                         /* JT1
+*       #TAB #LAST-DB-CR-DATE #TAB ADDRESS-CHG-CODE #TAB                   /* JT1
+        #DISPLAY-ADDRESS-DATE
+        #tab #deliv                                                     /* vt2
+        #tab #deceased                                                  /* vt2
+        INTO #REPORT-RECORD                           /* PM1
+      WRITE WORK FILE 2 #REPORT-RECORD
+    END-IF
+  END-FOR
+*
+END-READ
+*
+RESET #REPORT-RECORD
+WRITE WORK FILE 1 #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+COMPRESS ' ' #TAB 'RECORDS WITH NON-ZERO DEBIT-CREDIT' #TAB #RECS-DB-CR-WRITTEN #TAB INTO #REPORT-RECORD
+WRITE WORK FILE 1 #REPORT-RECORD
+MOVE EDITED #TOTAL-DB-CR (EM=+ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+COMPRESS ' ' #TAB 'NET DEBIT/CREDIT' #TAB #DISPLAY-AMOUNT #TAB INTO #REPORT-RECORD
+WRITE WORK FILE 1 #REPORT-RECORD
+COMPRESS ' ' #TAB 'RECORDS WITH NON-ZERO BILLING ADJUSTMENT' #TAB #RECS-BILL-ADJUST-WRITTEN #TAB
+  INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+MOVE EDITED #TOTAL-BADJ (EM=+ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+COMPRESS ' ' #TAB 'NET BILLING ADJUSTMENTS' #TAB #DISPLAY-AMOUNT #TAB INTO #REPORT-RECORD
+WRITE WORK FILE 2 #REPORT-RECORD
+*
+**************************************
+DEFINE SUBROUTINE FIND-LAST-DB-CR-DATE
+**************************************
+*
+FIND ACCT-V WITH ID-NUMBER = #ID-NUMBER SORTED BY TRANSACTION-DATN
+  IF TXN-CODE = 'ADCR' OR TXN-CODE = 'RDCR'
+    #LAST-DB-CR-DATE := ACCT-DATE
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+********************************************
+DEFINE SUBROUTINE FIND-LAST-BILLING-ADJ-DATE
+********************************************
+*
+FIND ACCT-V WITH ID-NUMBER = #ID-NUMBER SORTED BY TRANSACTION-DATN
+  IF TXN-CODE = 'BADJ'
+    #LAST-DB-CR-DATE := ACCT-DATE
+    ESCAPE BOTTOM
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+END

@@ -1,0 +1,491 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPNEWM - Daily New Member FTP
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    08172004  PM1     Changed new member process to use ALOT-SW   *
+*                          as a driver (like ATHPWACC) so new member   *
+*                          download also picks up SSN/Address/etc      *
+*                          changes as per Keith C.                     *
+* PAM    01272005  None    Program replaced by ATHPWACC.  This program *
+*                          adapted to create email files for newly     *
+*                          approved applications.                      *
+* PAM    03232005  PM2     Removed spouse/gens that are the insured and*
+*                          owner.                                      *
+* PAM    05242005  PM3     Added additional insurance to email file.   *
+* PAM    05242005  PM4     Bypass sample records.                      *
+* PAM    09062005  PM5     Added policy check for CAP logic.           *
+* SAG  12012005 RH1  SS - Replaced the HEX constant '05' (Tab position)*
+*                    EBCDIC to HEX code '09' ASCII                     *
+* PAM  10/23/2008  PM6     Include all spouse and generational insured *
+*                          removing PM2                                *
+* RSE  09/30/2009  RE1     Change PROCESS-IND logic for Unification    *
+* JNT  09/20/2013  JT1     Address normalization                       *
+* TMT  05/13/2014  TT1     CONTACT NORMALIZATION  -  EMAILS            *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING G3500AAD
+LOCAL USING ADDA0001                                        /* JT1
+LOCAL
+*
+1 NEWM-FILE                  (A200)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 NAME
+  2 LINKED-CN                 (40)
+  2 REDEFINE LINKED-CN
+    3 LINKED-CN-OCC            (40)
+      4 LINKED-CN-A             (A6)
+*  2 ADDRESS-1                                             /* JT1 start
+*  2 ADDRESS-2
+*  2 ADDRESS-3
+*  2 ZIP-CODE
+*  2 REDEFINE ZIP-CODE
+*   3 ZIP-5                    (A5)
+*   3 ZIP-4                    (A4)
+  2 MEMBER-CONTACT-ID                                       /* JT1 end
+*  2 INTERNET-ADDR                                          /* TT1
+  2 ISSUE-DATE                (9)                 /* PM4
+  2 STATUS                    (9)                 /* PM4
+  2 CONV-DURATION             (9)                 /* PM5
+*
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A              (A6)
+  2 ENTRY-DATE
+  2 REDEFINE ENTRY-DATE
+    3 ENTRY-DATE-YYYY          (N4)
+    3 ENTRY-DATE-MM            (N2)
+    3 ENTRY-DATE-DD            (N2)
+  2 CODE
+  2 USER
+  2 REC-ISN
+  2 ISSUE-DATE
+*
+1 #TODAY                     (N8)
+1 #YYYYMMDD                  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A                  (A4)
+  2 #MM-A                    (A2)
+  2 #DD-A                    (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY                    (N4)
+  2 #MM                      (N2)
+  2 #DD                      (N2)
+*
+* 1 #TAB     (A1) INIT <H'05'>     /* SAG RH1 12012005 SS
+1 #TAB       (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+1 #INVERSE-DATE              (N8)
+*
+1 #RECS                      (P7)
+1 #ST-NOT-FOUND              (L)
+1 #INVALID                   (L)
+1 #ERR-MSG                   (A60)
+1 #TIMN                      (N7)
+1 REDEFINE #TIMN
+  2 #TIMN-HH                  (A2)
+  2 REDEFINE #TIMN-HH
+    3 #TIMN-HH-N               (N2)
+  2 #TIMN-MM                  (A2)
+  2 #TIMN-SS                  (A2)
+  2 #TIMN-T                   (A1)
+*
+1 #UPDATE                    (L)
+1 #CNT                       (P5)
+1 #I1                        (I2)
+1 #I2                        (I2)
+1 #NOT-FND                   (L)
+*
+1 #MULTIPLE-OWNER            (L)
+1 #NON-INS-OWNER             (L)
+1 #OWNER-OCC-9               (9)
+  2 #OWNER-FLAG               (A1)
+  2 #OWNER-CN                 (N6/10)
+*
+  2 #OWNER-CN-BY-POL          (N6)
+  2 #OWNER-CN-SEG             (I2/9)
+  2 #ISS-DATE                 (N8/9)
+  2 #ISS-DATE-DISP            (A10/9)
+*
+  2 #BENE-TYPE                (A1/2)
+  2 #BENE-TEXT                (A60/10)
+*
+1 #SPLIT                     (A1)
+1 #STREET                    (A25)
+1 #STREET-2                  (A25)
+1 #CITY                      (A22)
+1 #STATE                     (A2)
+1 #LAST                      (A25)
+1 #FIRST-20                  (A20)
+1 #MI                        (A1)
+1 #MI-2                      (A2)
+1 #INSURED-NAME              (A30)
+1 #CERT-NUM                  (A16)
+1 #POLICY                    (I2)
+1 #CAP-LOAN-AMT              (A6) INIT <'$4,000'>     /* vt 02/26/2016 was 5,000
+1 #CAP                       (L)
+1 #FOUND-COMMA               (L)
+1 #CAP-1RST-LETTER-OF-SUFFIX(L)
+1 #CNT-1                     (P5)
+1 #CNT-2                     (P5)
+*
+1 #LETTER-TABLE
+  2 #1T                      (A26) INIT <'AaBbCcDdEeFfGgHhIiJjKkLlMm'>
+  2 #2T                      (A26) INIT <'NnOoPpQqRrSsTtUuVvWwXxYyZz'>
+1 REDEFINE #LETTER-TABLE
+  2 #LETTER-OCC              (26)
+    3 #UPPER                 (A1)
+    3 #LOWER                 (A1)
+*
+1 #HOLD-NAME                 (A25)
+1 REDEFINE #HOLD-NAME
+  2 #HOLD-NAME-A              (A1/25)
+1 EMAIL-ADDRESS              (A60)   /* TT1
+*
+END-DEFINE
+************************************************************************
+*
+FORMAT (1) LS=133 PS=66
+WRITE  (1) TITLE LEFT 'PROGRAM:' *PROGRAM
+  8X  'Daily New Member Emails - NON CAP'
+  5X  'DATE:' *DAT4U 2X 'TIME:' *TIMX
+  2X  'PAGE:' *PAGE-NUMBER (1)
+*
+FORMAT (2)  LS=133 PS=66
+WRITE  (2) TITLE LEFT 'PROGRAM:' *PROGRAM
+  8X  'Daily New Member Emails - CAP'
+  5X  'DATE:' *DAT4U 2X 'TIME:' *TIMX
+  2X  'PAGE:' *PAGE-NUMBER (2)
+*
+IF *TIMN LT 1200000       /* midnite till 12 noon (normal job time)
+  MOVE *DATN TO #YYYYMMDD     /* *DATN - 1 IS CONSIDERED TODAY
+  SUBTRACT 1 FROM #DD
+*
+  IF #DD LT 1
+    SUBTRACT 1 FROM #MM
+    IF #MM LT 1
+      ADD 12 TO #MM
+      SUBTRACT 1 FROM #YYYY
+    END-IF
+*
+    IF #MM = 02
+      MOVE 28 TO #DD
+    ELSE
+      IF #MM = 04 OR = 06 OR = 09 OR = 11
+        MOVE 30 TO #DD
+      ELSE
+        MOVE 31 TO #DD
+      END-IF
+    END-IF
+  END-IF
+*
+  MOVE #YYYYMMDD TO #TODAY
+ELSE                  /* noon till midnite (if job is run early)
+  MOVE *DATN TO #TODAY
+END-IF
+* MOVE 20061231 TO #TODAY    /* <<<<<<<<<<<<<<<<<<<<<<<<<<
+*
+COMPRESS 'Rank'
+  #TAB  'First Name'
+  #TAB  'MI'
+  #TAB  'Last Name'
+  #TAB  'Insured Name'
+  #TAB  'Cert Num'
+  #TAB  'Add1'
+  #TAB  'Add2'
+  #TAB  'CSZ'
+  #TAB  'Email'
+  INTO NEWM-FILE LEAVING NO
+WRITE WORK FILE 1 NEWM-FILE
+RESET NEWM-FILE
+*
+COMPRESS 'Rank'
+  #TAB  'First Name'
+  #TAB  'MI'
+  #TAB  'Last Name'
+  #TAB  'Insured Name'
+  #TAB  'Cert Num'
+  #TAB  'Loan'
+  #TAB  'Add1'
+  #TAB  'Add2'
+  #TAB  'CSZ'
+  #TAB  'Email'
+  INTO NEWM-FILE LEAVING NO
+WRITE WORK FILE 2 NEWM-FILE
+RESET NEWM-FILE
+*
+COMPUTE #INVERSE-DATE = 99999999 - #TODAY /* #today is really yest
+READ MD-V BY ENTRY-DATE FROM #INVERSE-DATE
+*
+  IF ENTRY-DATE  GT #INVERSE-DATE   /* ONLY YESTERDAY
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF CODE = 'N' OR = 'A'                                          /* PM3
+      AND MD-V.ISSUE-DATE NE 0
+    RESET #NOT-FND
+    FIND ST-V WITH MEMBER-KEY = MD-V.ID-NUMBER-A
+      IF NO RECORDS FOUND
+        MOVE TRUE TO #NOT-FND
+        WRITE 'ST NOT FOUND USING MD ID-NUMBER'  MD-V.ID-NUMBER
+        WRITE   'MD CODE=' MD-V.CODE
+        WRITE   'MD USER=' MD-V.USER
+        WRITE   'MD ENTRY DATE=' MD-V.ENTRY-DATE
+        WRITE   'MD REC-ISN=' MD-V.REC-ISN
+      END-NOREC
+    END-FIND
+*
+    IF #NOT-FND
+      ESCAPE TOP
+    END-IF
+*
+*    IF (PROCESS-IND = 'S')    /* Bypass AFSC                        RE1
+    IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                         /* RE1
+        OR (PROCESS-IND = 'C')   /* Bypass Contact/Pending Records
+        OR (ST-V.ID-NUMBER LT 1900) /* Bypass Samples                /* PM4
+      ESCAPE TOP
+    END-IF
+*
+    RESET #POLICY                                                 /* PM4
+    FOR #I1 9 TO 1 STEP -1                                        /* PM4
+      IF ST-V.ISSUE-DATE (#I1) = MD-V.ISSUE-DATE                  /* PM4
+          AND ST-V.STATUS (#I1) = 'D'                                /* PM4
+        MOVE #I1 TO #POLICY                                       /* PM4
+        ESCAPE BOTTOM                                             /* PM4
+      END-IF                                                      /* PM4
+    END-FOR                                                       /* PM4
+*
+    IF #POLICY = 0                                                /* PM4
+      ESCAPE TOP                                                  /* PM4
+    END-IF                                                        /* PM4
+*
+    CALLNAT 'GOWNRSXX' MD-V.ID-NUMBER
+      #NON-INS-OWNER
+      #MULTIPLE-OWNER
+      #OWNER-OCC-9 (1:9)
+*
+    IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+*     IF #NON-INS-OWNER
+*      AND #OWNER-CN-BY-POL (#POLICY) EQ LINKED-CN (1)            /* PM2 PM6
+      IGNORE                                                      /* PM2 PM6
+*     ELSE                                                        /* PM2 PM6
+*       ESCAPE TOP                                                /* PM2 PM6
+*     END-IF
+    ELSE
+      IF #NON-INS-OWNER    /* Do not include non-member owners
+        ESCAPE TOP
+      END-IF
+    END-IF
+*
+    RESET #CAP
+    IF ST-V.INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q'
+        AND ST-V.CONV-DURATION (#POLICY) = 999                       /* PM5
+      MOVE TRUE TO #CAP
+    END-IF
+*
+    MOVE NAME TO #NAME                   /* insured name
+    RESET #LAST #MI #FIRST-20
+    CALLNAT 'GFMLNSXX'
+      #NAME
+      #FIRST-20
+      #MI
+      #LAST
+      #ERR-MSG
+*
+    RESET #INSURED-NAME
+    IF #MI NE ' '
+      COMPRESS #MI '.' INTO #INSURED-NAME LEAVING NO
+    END-IF
+*
+    PERFORM CONVERT-NAME-TO-LOWER-CASE
+*
+    COMPRESS #FIRST-20 #INSURED-NAME INTO #INSURED-NAME
+    COMPRESS #INSURED-NAME #LAST INTO #INSURED-NAME
+*
+    RESET #CERT-NUM                      /* insured certificate number
+    CALLNAT 'GPLNMSXX' #CERT-NUM ST-V.ID-NUMBER #POLICY
+*
+    IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+        AND #NON-INS-OWNER
+      RESET #NOT-FND
+      FIND ST-V WITH MEMBER-KEY = LINKED-CN-A (1)
+        IF NO RECORDS FOUND
+          MOVE TRUE TO #NOT-FND
+          WRITE 'ST NOT FOUND USING LINKED ID-NUMBER'  LINKED-CN-A (1)
+          WRITE   'MD CODE=' MD-V.CODE
+          WRITE   'MD USER=' MD-V.USER
+          WRITE   'MD ENTRY DATE=' MD-V.ENTRY-DATE
+          WRITE   'MD REC-ISN=' MD-V.REC-ISN
+        END-NOREC
+      END-FIND
+*
+      IF #NOT-FND
+        ESCAPE TOP
+      END-IF
+    END-IF
+*
+    RESET EMAIL-ADDRESS                                               /* TT1
+    EMAIL-ADDRESS := F-PREF-EMAIL(<ST-V.MEMBER-CONTACT-ID>)           /* TT1
+    IF EMAIL-ADDRESS = ' '  /* bypass if member doesn't have          /* TT1
+      ESCAPE TOP            /* email address
+    END-IF
+*
+    RESET #PDA-ADDRESS                                        /* JT1 start
+    MOVE 'P' TO #ADD-TYPE
+    #ADD-CONTACT-ID := ST-V.MEMBER-CONTACT-ID
+    CALLNAT 'ADDN0001' #PDA-ADDRESS
+*
+    MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID
+    RESET #CONTACT-SEG
+    CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+*
+    MOVE NAME TO #NAME                   /* Owner's name
+    RESET #LAST #MI #FIRST-20 #MI-2
+    CALLNAT 'GFMLNSXX'
+      #NAME
+      #FIRST-20
+      #MI
+      #LAST
+      #ERR-MSG
+*
+    IF #MI NE ' '
+      COMPRESS #MI '.' INTO #MI-2 LEAVING NO
+    END-IF
+*
+    PERFORM CONVERT-NAME-TO-LOWER-CASE
+*
+    IF #CAP
+      ADD +1 TO #CNT-2
+      DISPLAY (2) 'Cnt-2' #CNT-2
+        'Date' #TODAY
+        'ID Num' ST-V.ID-NUMBER
+        'Dear Name' #FORMATED-NAME
+        'Insured' #INSURED-NAME
+        'Loan' #CAP-LOAN-AMT
+*
+      COMPRESS #FULL-RANK #TAB
+        #FIRST-20 #TAB
+        #MI-2 #TAB
+        #LAST #TAB
+        #INSURED-NAME #TAB
+        #CERT-NUM #TAB
+        #CAP-LOAN-AMT #TAB
+        INTO NEWM-FILE LEAVING NO
+      IF #ADD-LINE-3 NE ' '
+        COMPRESS NEWM-FILE
+          #TAB #ADD-LINE-1
+          #TAB #ADD-LINE-2
+          #TAB #ADD-LINE-3
+          INTO NEWM-FILE LEAVING NO
+      ELSE
+        COMPRESS NEWM-FILE
+          #TAB #ADD-LINE-1
+          #TAB
+          #TAB #ADD-LINE-2
+          INTO NEWM-FILE LEAVING NO
+      END-IF
+      COMPRESS NEWM-FILE #TAB INTO NEWM-FILE LEAVING NO
+      COMPRESS NEWM-FILE EMAIL-ADDRESS INTO NEWM-FILE LEAVING NO       /* TT1
+*
+      WRITE WORK 2 NEWM-FILE
+      RESET NEWM-FILE
+    ELSE
+      ADD +1 TO #CNT-1
+      DISPLAY (1) 'Cnt-1' #CNT-1
+        'Date' #TODAY
+        'ID Num' ST-V.ID-NUMBER
+        'Dear Name' #FORMATED-NAME
+        'Insured' #INSURED-NAME
+*
+      COMPRESS #FULL-RANK #TAB
+        #FIRST-20 #TAB
+        #MI-2 #TAB
+        #LAST #TAB
+        #INSURED-NAME #TAB
+        #CERT-NUM #TAB
+        INTO NEWM-FILE LEAVING NO
+      IF #ADD-LINE-3 NE ' '
+        COMPRESS NEWM-FILE
+          #TAB #ADD-LINE-1
+          #TAB #ADD-LINE-2
+          #TAB #ADD-LINE-3
+          INTO NEWM-FILE LEAVING NO
+      ELSE
+        COMPRESS NEWM-FILE
+          #TAB #ADD-LINE-1
+          #TAB
+          #TAB #ADD-LINE-2
+          INTO NEWM-FILE LEAVING NO
+      END-IF
+      COMPRESS NEWM-FILE #TAB INTO NEWM-FILE LEAVING NO
+      COMPRESS NEWM-FILE EMAIL-ADDRESS INTO NEWM-FILE LEAVING NO       /* TT1
+*
+      WRITE WORK 1 NEWM-FILE
+      RESET NEWM-FILE
+    END-IF
+  END-IF
+END-READ
+*
+************************************************************************
+DEFINE SUBROUTINE CONVERT-NAME-TO-LOWER-CASE
+************************************************************************
+*
+RESET #HOLD-NAME
+MOVE #FIRST-20 TO #HOLD-NAME
+PERFORM UPPER-LOWER
+RESET #FIRST-20
+MOVE #HOLD-NAME TO #FIRST-20
+*
+RESET #HOLD-NAME
+MOVE #LAST TO #HOLD-NAME
+PERFORM UPPER-LOWER
+RESET #LAST
+MOVE #HOLD-NAME TO #LAST
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE UPPER-LOWER
+************************************************************************
+*
+RESET #FOUND-COMMA
+FOR #I1 2 TO 25
+  IF #HOLD-NAME-A (#I1) = ','
+    MOVE TRUE TO #FOUND-COMMA
+    MOVE TRUE TO #CAP-1RST-LETTER-OF-SUFFIX
+    ESCAPE TOP
+  END-IF
+*
+  IF #CAP-1RST-LETTER-OF-SUFFIX
+    RESET #CAP-1RST-LETTER-OF-SUFFIX
+    ESCAPE TOP
+  END-IF
+*
+  IF #FOUND-COMMA
+      AND #HOLD-NAME-A (#I1) = 'I' OR = 'V' OR = 'X'
+      AND #HOLD-NAME-A (#I1 + 1) = 'I' OR = 'V' OR = 'X' OR = ' '
+    ESCAPE TOP
+  END-IF
+*
+  FOR #I2 1 TO 26
+    IF #HOLD-NAME-A (#I1) = #UPPER (#I2)
+      MOVE #LOWER (#I2) TO #HOLD-NAME-A (#I1)
+    END-IF
+  END-FOR
+END-FOR
+*
+END-SUBROUTINE
+*
+END

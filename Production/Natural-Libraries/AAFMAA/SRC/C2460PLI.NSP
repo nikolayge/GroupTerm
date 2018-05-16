@@ -1,0 +1,974 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* ***********************************************
+* PROGRAM-C2460PLI (NEW LI SCREEN AS OF 03/2002)
+* PURPOSE- TO PROCESS THE 'LI' COMMAND OR LOAN INFORMATION LETTERS
+* ***********************************************
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    07142004  PM1     Never use TPP for RPU policies as per Rick  *
+* PAM    07142004  PM1     Never use TPP for RPU policies as per Rick  *
+*                          Browett.                                    *
+* DRW    02242005  DW2     Fix DATE edit (MM.DD.YYY)                   *
+* DRW    05152005  DW3     Add face Amt & TPP linkage to CVALUSXX      *
+* DRW    03062006  DW4     show formated-name on PDF                   *
+* DRW    09192007  DW5     Reset Invalid Characters for PDF to '*'     *
+* YAK    12052007  YK1     Remove hardcording for interest rates       *
+*                          (Read GEN-TABLE through OBJNGENT)           *
+* YAK    02052008  YK2     Change code to use FUNCTION-INT-RATE        *
+*                          to get rate from GEN-TABLE                  *
+* RSE    10022009  RE1     Change PROCESS-IND logic for Unification    *
+* YAK    10152012  YK3     Use function to identify Level Term II plans*
+* TMT    06112014  TT1     Contact Normalization - DOB and Sex         *
+* TMT    09152015  TT2     Policy Ownership Project                    *
+* vxt    04/15/2016 vt1    /Ticket 4401/                               *
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital 
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX     /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+LOCAL USING G3500AAD
+LOCAL USING C2460LLI
+LOCAL USING ADDA0001 /* TT2
+LOCAL
+* 1 #CURR-VAR-INT-RATE (P2.3) INIT <8.10>         /* YK1
+1 #CURR-VAR-INT-RATE (P2.3)                       /* YK1
+1 #CURR-VAR-INT-RATE-A (A6)                       /* YK1
+1 #ACV    (P9.2)
+*
+1 #PDF-CHARS-100    (A100)                      /* DW5
+*
+1 #SUFFIX     (A3)
+1 #AS-OF-DT   (N8)
+1 #LOAN-BAL   (N7.2/9)
+1 #LOAN-BAL-2 (N7.2/9)
+1 #ACC-INT    (N7.2/9)
+1 #ACC-INT-2  (N7.2/9)
+1 #CSV        (N7.2/9)
+1 #CVALUE     (N7.2/9)
+1 #LVALUE     (N7.2/9)
+1 #MCSV       (N7.2/9)
+1 #DB         (N7.2/9)
+1 #ANN-PREMIUM (N7.2/9)
+1 #FACE-AMT    (N7.2/9)  /* DW3
+1 #TPP         (N7.2/9)  /* DW3
+*
+1 #NEW-FLDS   (L)
+1 #FILL-BLNKS (A78/24)
+1 #USER     (A14)
+1 #TEST-100 (A100)
+1 REDEFINE #TEST-100
+  2 #TEST-75  (A75)
+  2 #TEST-25  (A25)
+1 #POL-NUMBER (A16)
+1 #POL-NUM-MEC (A20)
+1 #DUPL    (L)
+1 #IFL    (I2/9)
+1 #BOTH-LOANS  (N7.2)
+1 #PDF-LINT    (N7.2/9)
+*
+1 VA-V VIEW OF A-VA-HISTORY
+  2 YEAR-MONTH-M      (P7/13)
+  2 PREMIUM-M         (13)
+  2 INTEREST-M        (13)
+  2 COST-OF-INSURANCE-M (13)
+  2 ACCUM-CASH-VALUE-M (13)
+  2 PRORAT-LOAN-BAL-M   (13)
+  2 PRORAT-LN-ACC-INT-M (13)
+*
+1 #HIST-KEY        (N15)
+1 REDEFINE #HIST-KEY
+  2 #HIST-KEY-ID     (N6)
+  2 #HIST-KEY-ISS    (N8)
+  2 #HIST-KEY-SPL    (N1)
+*
+1 #HOME-PHONE-11 (N11)
+1 REDEFINE #HOME-PHONE-11
+  2 #HOME-PHONE-FILL  (A1)
+  2 #HOME-PHONE  (N10)
+1 #HOME-PHONE-DISP  (A12)
+1 #I1    (I2)
+1 #I2    (I2)
+1 #I3    (I2)
+1 #XXX            (A3) INIT <'XXX'>
+1 #CSV-4-CAP-CALC (P7.2)
+1 #WORK-CAP-CONV-ACV (P9.2)
+1 #CAP-LOAN-MONS   (N3)
+1 #CAP-CSV-MONS    (N3)
+1 #CAP-REMAIN-MONS (N3)
+1 #CAP-LOAN-END-DATE (N8)
+1 #CAP-CONV-ACV (P7.2)
+1 #CAP-CSV    (P7.2)
+1 #PREV-ACV     (P7.2)
+1 #NEW-ACV      (P7.2)
+1 #ACV-DIFF     (P7.2)
+1 #REAL-PREM    (N6.2)
+1 #SCR-MEC-POL    (A27)
+1 #SCR-19-BLK     (A19)
+1 #SCR-65-BLK     (A65)
+*
+1 #SCR-TEXT-78    (A78/60)
+1 REDEFINE  #SCR-TEXT-78
+  2 #SCR-TEXT-OCC  (60)
+    3 #SCR-VAR-DATE  (A10)
+    3 REDEFINE #SCR-VAR-DATE
+      4 #SCR-VAR-DATE-MM (A2)
+      4 #SCR-VAR-DATE-F1 (A1)
+      4 #SCR-VAR-DATE-DD (A2)
+      4 #SCR-VAR-DATE-F2 (A1)
+      4 #SCR-VAR-DATE-YYYY (A4)
+    3 #SCR-FILL-1    (A2)
+    3 #SCR-DOLL-1    (A2)
+    3 #SCR-VAR-LAMT  (A08)
+    3 #SCR-FILL-2    (A3)
+    3 #SCR-VAR-TYPE  (A1)
+    3 #SCR-FILL-3    (A08)
+    3 #SCR-DOLL-3    (A2)
+    3 #SCR-VAR-LINT  (A08)
+    3 #SCR-FILL-4    (A1)
+    3 #SCR-VAR-RATE  (A6)
+    3 #SCR-VAR-PERC  (A1)
+    3 #SCR-FILL-5    (A3)
+    3 #SCR-DOLL-5    (A2)
+    3 #SCR-VAR-AVAIL (A08)
+    3 #SCR-FILL-6    (A3)
+    3 #SCR-VAR-REQST (A10)
+*
+1 #SCR-ADDL-TEXT (A10) INIT <' '>
+1 #SCR-CLERK-NAME (A20)
+1 #SCN-CLERK-NAME (A20)
+1 #CLERK-ABB-NAME-PASS  (A20)
+1 #INVALID  (L)
+1 #CLERK-ABB-PASS  (A3)
+1 #FIRST-MID    (A25)
+1 #SUFFIX-NAME  (A25)
+1 #DEL          (A1)
+1 #RETIRED      (A9)
+1 #HOLD-NAME    (A50)
+1 #EDIT-INVALID (L)
+1 #MEC-FOUND    (L)
+1 #MEC-COUNT    (N2)
+1 #RANK-LITERAL (A23)
+1 #RANK-DISPLAY (A5)
+1 #DISPL        (P2)
+1 #PASS-COMMAND (A2)
+1 #HOLD-EDIT-AMOUNT (A9)
+1 #HOLD-DAILY-INT (P3.7)
+1 #HOLD-ACC-INT (P5.2)
+1 #CASH-VALUE   (P7.2)
+1 #LOAN-VALUE   (P7.2)
+1 #LOAN-LBL     (A8)
+1 #LOAN-LBL-2   (A8)
+1 #TODAY    (N8)
+1 REDEFINE #TODAY
+  2 #TODAY-YYYY (N4)
+  2 #TODAY-MM   (N2)
+  2 #TODAY-DD   (N2)
+1 REDEFINE #TODAY
+  2 #TODAY-YYYY-A (A4)
+  2 #TODAY-MM-A   (A2)
+  2 #TODAY-DD-A   (A2)
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY   (N4)
+    3 #MM     (N2)
+  2 #DD     (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A (A4)
+  2 #MM-A   (A2)
+  2 #DD-A   (A2)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 BEG-CASH-VALUE  (N7.2/9)
+  2 ACC-CASH-VALUE  (N7.2/9)
+  2 MONTH-ALLOC-AMT (N7.2/9)        /*tt1
+  2 DURATION        (9)
+*
+1 #REFORMAT-DATE (A10)
+1 REDEFINE #REFORMAT-DATE
+  2 #REFORM-MM   (A2)
+  2 #FILL-1      (A1)
+  2 #REFORM-DD   (A2)
+  2 #FILL-2      (A1)
+  2 #REFORM-YYYY (A4)
+*
+1 #REQ-LINE  (A10) INIT <'__________'>
+1 #PLAN    (A3)
+1 REDEFINE #PLAN
+  2 #PLAN-A1  (A1)
+  2 #PLAN-N2  (N2)
+*
+* BELOW for CALC-PREMS-PAID
+1 #PP-DATE-OF-BIRTH  (N8)
+1 #PP-ANNUAL-PREM    (N5.2)
+1 #PP-PAY-STATUS     (A2)
+1 #PP-TOT-PREMIUMS-PAID (N7.2)
+1 #PP-PAID-TO-DATE   (N8)
+1 #PP-ISSUE-DATE     (N8)
+1 #PP-MODE           (A1)
+1 #PP-PLAN           (A3)
+1 #PP-COST-BASIS      (N7.2)
+1 #PP-MONTH-ALLOC-AMT (N7.2)       /*tt1
+1 #PP-INTRO-FLAG     (A1)
+1 #PP-FIRST-PLACE-FEE (N7.2)
+1 #PREMS-PAID         (P7.2)
+1 #SUB-PREMS-PAID     (P7.2)
+1 #PP-BADJ            (P5.2)
+1 #HLD-MEC-IDX        (I2)
+* ABOVE for CALC-PREMS-PAID
+1 DATE-OF-BIRTH       (N8.0)          /* TT1
+1 #OWNER-CN           (N6)             /* TT2
+1 #OWNER-CI           (N8)             /* TT2
+1 #SALUTATION         (A) DYNAMIC INIT<'!SCREEN'>    /* bz-Name-C
+*
+1 #replay       (a1)            /* vt1
+1 #mec          (l)             /* vt1
+1 #i            (i2)            /* vt1
+*
+END-DEFINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+INCLUDE GONERCXX      /* NATURAL ERROR ROUTINE
+*
+DEFINE WINDOW Replay                             /* vt1  \/
+  SIZE 9 * 42
+  BASE 5/14
+  FRAMED ON POSITION SYMBOL AUTO                 /* vt1  /\
+
+*
+MOVE *DATN TO #TODAY
+GET STATUS-VIEW #CGA-ISN
+*
+MOVE *DATN TO #AS-OF-DT
+MOVE 'NTP' TO #SUFFIX /* do not replace w tpp
+MOVE FACE-AMOUNT (*) TO #FACE-AMT (*)   /* DW3
+*
+#CURR-VAR-INT-RATE := FUNCTION-INT-RATE(<'RATE5AB'>)  /* YK2
+*
+CALLNAT 'CVALUSXX'
+  STATUS-VIEW.ID-NUMBER
+  #SUFFIX
+  #AS-OF-DT
+  #LOAN-BAL   (1:9)
+  #LOAN-BAL-2 (1:9)
+  #ACC-INT    (1:9)
+  #ACC-INT-2  (1:9)
+  #CSV        (1:9)
+  #CVALUE     (1:9)
+  #LVALUE     (1:9)
+  #MCSV       (1:9)
+  #DB         (1:9)
+  #ANN-PREMIUM  (1:9)
+  #FACE-AMT   (1:9)   /* DW3
+  #TPP        (1:9)   /* DW3
+*
+MOVE 1 TO #CONTACT-SEG   /* for now get owner info for pol 1
+CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+*
+ASSIGN #PASS-COMMAND = 'LI'
+* ASSIGN #ZIP-HYPH = '-'
+MOVE '/' TO #FILL-1
+MOVE '/' TO #FILL-2
+MOVE '  ' TO #CGA-SCR-COMMAND
+RESET #CGA-SCR-SUFFIX
+MOVE 0 TO #CGA-SCR-ID
+MOVE ID-NUMBER TO #HOLD-CN
+COMPRESS 'CN' #HOLD-CN INTO #SCN-CN LEAVING NO SPACE
+MOVE *DATG TO #HOLD-SCN-DATE
+COMPRESS #HSD-DD #HSD-MM #HSD-YY INTO #SCN-DATE
+*
+MOVE FALSE TO #MEC-FOUND
+MOVE FALSE TO #EDIT-INVALID
+*
+COMPRESS #FULL-RANK #LAST-NAME INTO #SCN-SALUT
+COMPRESS #SCN-SALUT ':' INTO #SCN-SALUT LEAVING NO
+*
+MOVE *DATN TO #HOLD-TODAY-DATE
+MOVE 0 TO #TOTAL-LOAN-VALUE
+MOVE FALSE TO #MEC-FOUND
+*
+FOR #I1 1 TO 9
+  MOVE PLAN (#I1) TO #PLAN
+  IF   (STATUS (#I1) = 'D')
+*  AND (NOT #PLAN = 'RT' OR = 'LT')                    /* YK3
+*  AND ((#PLAN-A1 LT 'U') OR (#PLAN-A1 GT 'Z'))        /* YK3
+      AND ( NOT FUNCTION-TERM-POLICY(<PLAN(#I1)>))        /* YK3
+    IGNORE
+  ELSE
+    ESCAPE TOP
+  END-IF
+*
+  IF (ISS-DATE-DD (#I1) = 01) OR (#TODAY-DD GE ISS-DATE-DD (#I1))
+    MOVE CASH-VALUE (#I1) TO #CASH-VALUE
+  ELSE
+    MOVE NXT-MON-CASH-VALUE(#I1) TO #CASH-VALUE
+*
+    MOVE ID-NUMBER TO #HIST-KEY-ID
+    MOVE ISSUE-DATE (#I1) TO #HIST-KEY-ISS
+    MOVE SPLIT-IND (#I1) TO #HIST-KEY-SPL
+    MOVE *DATN TO #YYYYMMDD
+    SUBTRACT 1 FROM #MM
+    IF #MM LT 1
+      MOVE 12 TO #MM
+      SUBTRACT 1 FROM #YYYY
+    END-IF
+*
+    FIND VA-V WITH RECORD-KEY = #HIST-KEY
+      IF   (YEAR-MONTH-M (13) = #YYYYMM)
+        MOVE ACCUM-CASH-VALUE-M (12) TO #PREV-ACV
+        COMPUTE #NEW-ACV = #PREV-ACV + PREMIUM-M  (13)
+          + INTEREST-M       (13)
+          - COST-OF-INSURANCE-M (13)
+*
+        IF   (#I1 LE 9)
+            AND (ISSUE-DATE (#I1) GE 19970101) /* 1997 pol
+            AND (MONTH-ALLOC-AMT (#I1) NE 999.99) /* not FORCED 96 PREMS
+          SUBTRACT PRORAT-LOAN-BAL-M   (13) FROM #NEW-ACV
+          SUBTRACT PRORAT-LN-ACC-INT-M (13) FROM #NEW-ACV
+        END-IF
+*
+        IF #NEW-ACV GT ACCUM-CASH-VALUE-M (13)
+          COMPUTE #ACV-DIFF = #NEW-ACV - ACCUM-CASH-VALUE-M(13)
+        ELSE
+          COMPUTE #ACV-DIFF = ACCUM-CASH-VALUE-M(13) - #NEW-ACV
+        END-IF
+*
+        MOVE PREMIUM-M (13) TO #REAL-PREM
+*
+        IF #ACV-DIFF NE 0
+          PERFORM CALC-REAL-PREM
+        END-IF
+        ADD #REAL-PREM TO #CASH-VALUE
+      END-IF
+    END-FIND
+  END-IF
+*
+*   ADD #AVL-TDIV TO #CASH-VALUE          /* ADDED 10/98 LCC & REMOVED
+  GET ST-V #CGA-ISN
+  MOVE ACC-CASH-VALUE (#I1) TO #ACV
+  IF MTD-ACV-PREM-ADJ (#I1) NE 9999999.99
+    ADD MTD-ACV-PREM-ADJ (#I1) TO #CASH-VALUE
+    ADD MTD-ACV-PREM-ADJ (#I1) TO #ACV
+  END-IF
+*
+  IF MTD-ACV-INT-ADJ (#I1) NE 99999.99
+    ADD MTD-ACV-INT-ADJ (#I1) TO #CASH-VALUE
+    ADD MTD-ACV-INT-ADJ (#I1) TO #ACV
+  END-IF
+*
+  IF MTD-ACV-COI-ADJ (#I1) NE 99999.99
+    SUBTRACT MTD-ACV-COI-ADJ (#I1) FROM #CASH-VALUE
+    SUBTRACT MTD-ACV-COI-ADJ (#I1) FROM #ACV
+  END-IF
+*
+  PERFORM CALC-PREMS-PAID-SETUP
+*
+  IF   (ISSUE-DATE (#I1) GE 19970101)   /* nxt policy
+      AND (MONTH-ALLOC-AMT  (#I1) NE 999.99)
+      AND (#PREMS-PAID GT #CASH-VALUE)  /* reset csv if nxy pol
+      AND ((CONV-DURATION (#I1) NE 999) /* CAPS AFTER 1/1/1999 DO NOT USE
+      OR  (ISSUE-DATE (#I1) LT 19990101))   /* TOT PREMS PAID
+      AND (X-FIRST-PLACE-FEE (#I1) = 0)
+      AND (PAY-STATUS (#I1) NE '45')         /* RPU                  /* PM1
+*   AND (PROCESS-IND NE 'S')                 /* AFSC MEMBER     RE1
+      AND NOT AFFL-ONLY-CLIENT(<ID-NUMBER>)                     /* RE1
+    MOVE #PREMS-PAID TO #CASH-VALUE
+  END-IF
+*
+  IF PLAN (#I1) = 'SO' OR = 'FSO'     /* SCV-ONLY has no CSV
+    RESET #CASH-VALUE
+  END-IF
+*
+  IF CONV-DURATION (#I1) = 999    /* CAP MBR POLICY
+    MOVE #CASH-VALUE TO #CSV-4-CAP-CALC
+    MOVE CAP-CONV-ACV TO #CAP-CONV-ACV
+    PERFORM CALC-CAP-CSV
+    MOVE #CAP-CSV TO #CASH-VALUE
+  END-IF
+*
+* * * * * * * * * * * * * * * * * *
+*
+  IF ISSUE-DATE(#I1) > 0
+    MOVE ISS-DATE-YYYY-A (#I1) TO #REFORM-YYYY
+    MOVE ISS-DATE-MM-A (#I1)   TO #REFORM-MM
+    MOVE ISS-DATE-DD-A (#I1)   TO #REFORM-DD
+*
+    IF X-LOAN-AMOUNT(#I1) > 0 OR X-LOAN-AMOUNT-2(#I1) > 0
+      MOVE 'Additional' TO #SCR-ADDL-TEXT
+    END-IF
+*
+    MOVE #LVALUE (#I1) TO #LOAN-VALUE
+  ELSE
+    ESCAPE TOP
+  END-IF
+*
+  IF X-LOAN-AMOUNT (#I1) GT 0
+    ADD 1 TO #I3
+    MOVE #I1 TO #IFL (#I3)
+    MOVE #REFORMAT-DATE  TO #SCR-VAR-DATE(#I3)
+    MOVE #REQ-LINE TO #SCR-VAR-REQST(#I3)
+    MOVE EDITED #LOAN-VALUE (EM=ZZZ,ZZ9) TO #SCR-VAR-LAMT(#I3)
+    MOVE '$ ' TO #SCR-DOLL-1 (#I3)
+*
+    COMPUTE ROUNDED #HOLD-DAILY-INT =
+      X-LOAN-AMOUNT (#I1) * (X-INTEREST-RATE (#I1) / 365) / 100
+    IF   (X-LOAN-MM (#I1) = #HOLD-TODAY-MM)
+        AND (X-LOAN-YYYY (#I1) = #HOLD-TODAY-YYYY)
+      COMPUTE ROUNDED #HOLD-ACC-INT =
+        ((#HOLD-TODAY-DD - X-LOAN-DD (#I1)) * #HOLD-DAILY-INT)
+        + X-ACCUM-INTEREST (#I1) + X-NXT-YR-ACCUM-INT (#I1)
+    ELSE
+      COMPUTE ROUNDED #HOLD-ACC-INT =
+        ((#HOLD-TODAY-DD - 1) * #HOLD-DAILY-INT)
+        + X-ACCUM-INTEREST (#I1) + X-NXT-YR-ACCUM-INT (#I1)
+    END-IF
+*
+    COMPUTE ROUNDED #HOLD-PREV-LOAN-D = #HOLD-PREV-LOAN-D
+      + (X-LOAN-AMOUNT (#I1) + #HOLD-ACC-INT)
+    MOVE EDITED #HOLD-PREV-LOAN-D(EM=ZZZ,ZZ9) TO #SCR-VAR-LINT(#I3)
+    MOVE #HOLD-PREV-LOAN-D TO #PDF-LINT (#I3)
+*
+    MOVE EDITED X-INTEREST-RATE (#I1) (EM=Z9.999) TO #SCR-VAR-RATE(#I3)
+    MOVE '%' TO #SCR-VAR-PERC (#I3)
+    MOVE '$ ' TO #SCR-DOLL-3 (#I3)
+    MOVE 'F' TO #SCR-VAR-TYPE(#I3)
+*
+    IF X-LOAN-AMOUNT-2(#I1) EQ 0
+      COMPUTE #HOLD-LOAN-AVAIL = (#LOAN-VALUE - #HOLD-PREV-LOAN-D-2)
+*
+      IF CONV-DURATION (#I1) NE 999    /* CAP MBR POLICY
+        SUBTRACT #HOLD-PREV-LOAN-D FROM #HOLD-LOAN-AVAIL
+      END-IF
+*
+*     WRITE   #HOLD-LOAN-AVAIL #LOAN-VALUE #HOLD-PREV-LOAN-D
+      IF #HOLD-LOAN-AVAIL > 0
+        MOVE EDITED #HOLD-LOAN-AVAIL (EM=ZZZ,ZZ9) TO #SCR-VAR-AVAIL(#I3)
+      ELSE
+        MOVE 0 TO #HOLD-LOAN-AVAIL
+        MOVE EDITED #HOLD-LOAN-AVAIL (EM=ZZZ,ZZ9) TO #SCR-VAR-AVAIL(#I3)
+      END-IF
+      MOVE '$ ' TO #SCR-DOLL-5 (#I3)
+      RESET #HOLD-PREV-LOAN-D
+      RESET #HOLD-PREV-LOAN-D-2
+    ELSE
+      MOVE ' ' TO #SCR-VAR-AVAIL(#I3)
+      MOVE ' ' TO #SCR-DOLL-5 (#I3)
+      MOVE ' ' TO #SCR-VAR-LAMT(#I3)
+      MOVE ' ' TO #SCR-VAR-REQST(#I3)
+    END-IF
+  END-IF
+*
+  IF X-LOAN-AMOUNT-2 (#I1) GT 0
+    ADD 1 TO #I3
+    MOVE #I1 TO #IFL (#I3)
+    MOVE #REFORMAT-DATE  TO #SCR-VAR-DATE(#I3)
+    MOVE #REQ-LINE TO #SCR-VAR-REQST(#I3)
+    MOVE EDITED #LOAN-VALUE (EM=ZZZ,ZZ9) TO #SCR-VAR-LAMT(#I3)
+    MOVE '$ ' TO #SCR-DOLL-1 (#I3)
+*
+    COMPUTE ROUNDED #HOLD-DAILY-INT =
+      X-LOAN-AMOUNT-2 (#I1) * (#CURR-VAR-INT-RATE / 365) / 100
+    IF   (X-LOAN-MM-2 (#I1) = #HOLD-TODAY-MM)
+        AND (X-LOAN-YYYY-2 (#I1) = #HOLD-TODAY-YYYY)
+      COMPUTE ROUNDED #HOLD-ACC-INT =
+        ((#HOLD-TODAY-DD - X-LOAN-DD-2 (#I1) ) * #HOLD-DAILY-INT)
+        + X-ACCUM-INTEREST-2 (#I1) + X-NXT-YR-ACCUM-INT-2 (#I1)
+    ELSE
+      COMPUTE ROUNDED #HOLD-ACC-INT =
+        ((#HOLD-TODAY-DD - 1) * #HOLD-DAILY-INT)
+        + X-ACCUM-INTEREST-2 (#I1) + X-NXT-YR-ACCUM-INT-2 (#I1)
+    END-IF
+*
+    COMPUTE ROUNDED #HOLD-PREV-LOAN-D-2 = #HOLD-PREV-LOAN-D-2
+      + (X-LOAN-AMOUNT-2 (#I1) + #HOLD-ACC-INT)
+    MOVE EDITED #HOLD-PREV-LOAN-D-2(EM=ZZZ,ZZ9) TO #SCR-VAR-LINT(#I3)
+    MOVE #HOLD-PREV-LOAN-D-2 TO #PDF-LINT (#I3)
+    MOVE EDITED #CURR-VAR-INT-RATE (EM=Z9.999) TO #SCR-VAR-RATE(#I3)
+    MOVE '%' TO #SCR-VAR-PERC(#I3)
+    MOVE '$ ' TO #SCR-DOLL-3 (#I3)
+    MOVE 'V' TO #SCR-VAR-TYPE(#I3)
+    COMPUTE #HOLD-LOAN-AVAIL = (#LOAN-VALUE - #HOLD-PREV-LOAN-D-2)
+*
+    IF CONV-DURATION (#I1) NE 999    /* CAP MBR POLICY
+      SUBTRACT #HOLD-PREV-LOAN-D FROM #HOLD-LOAN-AVAIL
+    END-IF
+*
+*   WRITE   #HOLD-LOAN-AVAIL #LOAN-VALUE #HOLD-PREV-LOAN-D
+    IF #HOLD-LOAN-AVAIL GE 0
+      MOVE EDITED #HOLD-LOAN-AVAIL (EM=ZZZ,ZZ9) TO #SCR-VAR-AVAIL(#I3)
+    ELSE
+      MOVE 0 TO #HOLD-LOAN-AVAIL
+      MOVE EDITED #HOLD-LOAN-AVAIL (EM=-ZZ,ZZ9) TO #SCR-VAR-AVAIL(#I3)
+    END-IF
+    MOVE '$ ' TO #SCR-DOLL-5 (#I3)
+    RESET #HOLD-PREV-LOAN-D
+    RESET #HOLD-PREV-LOAN-D-2
+  END-IF
+*
+  IF X-LOAN-AMOUNT-2 (#I1) = 0 AND X-LOAN-AMOUNT (#I1) = 0
+    IF ISSUE-DATE (#I1) > 0
+      ADD 1 TO #I3
+      MOVE #I1 TO #IFL (#I3)
+      MOVE #REFORMAT-DATE  TO #SCR-VAR-DATE(#I3)
+      MOVE #REQ-LINE TO #SCR-VAR-REQST(#I3)
+      MOVE EDITED #LOAN-VALUE (EM=ZZZ,ZZ9) TO #SCR-VAR-LAMT(#I3)
+      MOVE EDITED #LOAN-VALUE (EM=ZZZ,ZZ9) TO #SCR-VAR-AVAIL(#I3)
+      MOVE '$ ' TO #SCR-DOLL-1 (#I3)
+      MOVE '$ ' TO #SCR-DOLL-5 (#I3)
+    END-IF
+  END-IF
+*
+  IF (MEC-IND (#I1) = 'Y')
+* IF (PAY-STATUS (#I1) = '47')    /* PUSP
+*  OR ((PAY-STATUS (#I1) = '48')         /* PUAP WITHIN 7 YEARS
+*      AND (PAID-UP-DATE (#I1) - ISSUE-DATE (#I1) LT 70000))
+*  AND (ISSUE-DATE (#I1) GT 19880620)
+*   MOVE '*** MEC POLICY INVOLVED ***' TO #SCR-MEC-POL
+    MOVE '* ' TO #SCR-FILL-1(#I3)
+    ADD 1 TO #MEC-COUNT
+    MOVE TRUE TO #MEC-FOUND
+  END-IF
+END-FOR
+*
+MOVE #CGA-CLERK TO #CLERK-ABB-PASS
+MOVE ' ' TO #CLERK-ABB-NAME-PASS
+CALLNAT 'GCKNMSXX' #CLERK-ABB-PASS
+  #INVALID
+  #CLERK-ABB-NAME-PASS
+MOVE #CLERK-ABB-NAME-PASS TO #SCN-CLERK-NAME
+*
+FOR #I1 1 TO 9
+  IF #SCR-TEXT-78(#I1) > ' '
+    IGNORE
+  ELSE
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+MOVE ' ' TO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+COMPRESS '                                                    Total'
+  'Requested ___________' INTO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+MOVE ' ' TO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+MOVE EDITED #CURR-VAR-INT-RATE (EM=Z9.99) TO #CURR-VAR-INT-RATE-A
+COMPRESS 'Loans are currently issued at a variable interest rate of '
+* '8.10%. If you would' INTO #SCR-TEXT-78(#I1)                 /* YK1
+  #CURR-VAR-INT-RATE-A '%. If you would'
+  INTO #SCR-TEXT-78(#I1) LEAVING NO                             /* YK1
+ADD 1 TO #I1
+*
+COMPRESS 'like an (additional) loan, please note the amount(s) where'
+  'indicated, sign,' INTO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+IF X-LOAN-AMOUNT (*) > 0 OR X-LOAN-AMOUNT-2 (*) > 0
+  COMPRESS 'date and return to us. Your loan request will be'
+    'processed promptly. Since' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'interest accrues daily on your current loan(s), the'
+    'amount available for a' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'new loan is decreasing daily.' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+ELSE
+  COMPRESS 'date and return to us. Your loan request will be'
+    'processed promptly.'       INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+END-IF
+*
+IF #MEC-FOUND  /* below text is also in C2060PNC and C2009SNM
+  ADD 1 TO #I1
+  MOVE '* ' TO #SCR-FILL-1(#I1)
+*  IF #MEC-COUNT > 1
+*    COMPRESS 'If your policy is identified as a Modified'
+*    'Endowment Contract (MEC) it comes' INTO #SCR-TEXT-78(#I1)
+*  ELSE
+  COMPRESS 'Any policy identified with an "*" is a Modified'
+    'Endowment Contract (MEC)' INTO #SCR-TEXT-78(#I1)
+*  END-IF
+  ADD 1 TO #I1
+*
+  COMPRESS 'and comes under the provisions of the Technical and'
+    'Miscellaneous Revenue ACT' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS '(TAMRA) of 1988. Unless you are disabled, TAMRA may impose'
+    'ordinary income tax' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'implications on MEC policy distributions, i.e. loans,'
+    'withdrawals or cash' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'surrenders, regardless of your age. Also, if you are'
+    'under age 59 1/2 a' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS '10% penalty tax may apply to distributions. The tax'
+    'and penalty apply only' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'to distribution of interest earnings. The IRS sequence'
+    'for distributions is' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'interest earnings first and then principal. No income'
+    'tax or penalty is' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'applicable to principal. Principal is the cost basis'
+    'of the policy. Cost' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'Basis is premiums paid plus any taxable distributions'
+    'made from the policy.' INTO #SCR-TEXT-78(#I1)
+*
+  ADD 1 TO #I1
+  COMPRESS 'For the purpose of determining any gain includable'
+    'in gross income upon cash' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'surrender, all MEC"s issued by the same company to the'
+    'same policyholder' INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+  COMPRESS 'within any calendar year are treated as one MEC contract.'
+    TO #SCR-TEXT-78(#I1)
+*
+  ADD 1 TO #I1
+*
+  MOVE 'You may want to seek professional advice.' TO #SCR-TEXT-78(#I1)
+*
+END-IF
+*
+ADD 2 TO #I1
+MOVE #CLERK-ABB-NAME-PASS TO #SCR-CLERK-NAME
+COMPRESS 'This correspondence has been prepared for you by: '
+  #SCR-CLERK-NAME INTO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+MOVE ' ' TO #SCR-TEXT-78(#I1)
+ADD 2 TO #I1
+*
+IF #I1 GT 26
+  ADD 4 TO #I1
+END-IF
+*
+MOVE '( ) I wish the loan check to be mailed to my address.'
+  TO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+COMPRESS '( ) I wish the loan check to be mailed priority mail by'
+  'USPS ($5.00 fee)' INTO #SCR-TEXT-78 (#I1)
+ADD 1 TO #I1
+COMPRESS '( ) I wish the loan sent via FedEx ($5.00 fee - cannot go'
+  'to PO boxes)' INTO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+COMPRESS '( ) I wish the loan wired to my account, ($10.00 fee)'
+  'Acct # ___________' INTO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+COMPRESS 'Bank Name _______________ City, State _______________'
+  'Routing # ______________' INTO #SCR-TEXT-78(#I1)
+ADD 2 TO #I1
+*
+COMPRESS 'Please process my loan request as indicated.' INTO
+  #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+IF #MEC-FOUND
+  COMPRESS #SCR-TEXT-78(#I1 - 1) 'I have read and understand the'
+    INTO #SCR-TEXT-78(#I1 - 1)
+  COMPRESS 'consequences of taking a loan against a MEC policy.'
+    INTO #SCR-TEXT-78(#I1)
+  ADD 1 TO #I1
+*
+END-IF
+*
+MOVE ' ' TO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+COMPRESS '__________________________________________  Date __________'
+  INTO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+COMPRESS '(Signature)' #FORMATED-NAME
+  INTO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+MOVE ' ' TO #SCR-TEXT-78(#I1)
+ADD 1 TO #I1
+*
+COMPRESS 'CN' ID-NUMBER INTO #SCR-TEXT-78(#I1) LEAVING NO SPACE
+*
+IF #CGA-ORIG-SUFFIX = 'PDF'
+  FOR #I1 1 TO 9
+    IF  (#SCR-VAR-DATE (#I1) NE MASK (MM.DD.YYYY))     /* DW2
+*  IF  (#SCR-VAR-DATE-MM (#I1) NE MASK (MM))
+*   OR (#SCR-VAR-DATE-DD (#I1) NE MASK (DD))
+*   OR (#SCR-VAR-DATE-YYYY (#I1) NE MASK (YYYY))
+      ESCAPE TOP
+    END-IF
+*
+    MOVE #IFL (#I1) TO #I2
+*
+    IF   (#I1 LT 9)
+        AND (#IFL (#I1) = #IFL (#I1 + 1))
+      ADD #PDF-LINT (#I1) TO #PDF-LINT (#I1 + 1)
+      MOVE TRUE TO #DUPL
+      ESCAPE TOP
+    END-IF
+*
+    IF #DUPL
+      MOVE EDITED #PDF-LINT (#I1)(EM=ZZZ,ZZ9) TO #SCR-VAR-LINT(#I1)
+    END-IF
+    RESET #DUPL
+*
+    #POL-NUMBER := POLICY-ID(#I2)
+    #OWNER-CN   := GET-POLICY-OWNER(<#POL-NUMBER>)
+    #OWNER-CI   := F-GET-CONTACT-ID(<#OWNER-CN>)
+    RESET #PDA-ADDRESS
+    #ADD-CONTACT-ID := #OWNER-CI
+    #ADD-TYPE       := 'P'
+    CALLNAT 'ADDN0001' #PDA-ADDRESS
+    #FIRST-ADDRESS   := SUBSTR(#ADD-LINE-1,1,70)
+    #SECOND-ADDRESS  := SUBSTR(#ADD-LINE-2,1,70)
+    #THIRD-ADDRESS   := SUBSTR(#ADD-LINE-3,1,70)
+    RESET INITIAL #SALUTATION
+    CALLNAT 'GPRS0CNT' #OWNER-CI #SALUTATION
+    #FORMATED-NAME := #SALUTATION
+*
+    MOVE #POL-NUMBER TO #POL-NUM-MEC
+    IF MEC-IND (#I2) = 'Y'
+      COMPRESS #POL-NUMBER 'is a MEC' INTO #POL-NUM-MEC
+    END-IF
+*                                                                     /* vt1 \/
+    reset #mec
+    if   mec-ind(#i2) = 'Y'
+        and  status(#i2) = 'D'
+      move true to #mec
+    end-if
+    if #mec
+      SET WINDOW 'Replay'
+      REPEAT
+        move '?' to #replay
+        INPUT WINDOW ='Replay' USING MAP 'C2398MCI'
+        if #replay = ' '
+          reinput  'Must Enter (Y)es or (N)o'
+            mark *#replay
+        end-if
+        if #replay = 'Y'
+          escape bottom
+        end-if
+        if #replay = 'N'
+          fetch 'G1000PXX'
+        end-if
+      end-repeat
+      set window off
+    end-if
+*                                                                    /* vt1 /\
+*     MOVE TELE-NUMBER TO #HOME-PHONE-11   NG1
+*     MOVE EDITED #HOME-PHONE (EM=(999-999-9999) TO #HOME-PHONE-DISP
+    MOVE LEFT #SCR-VAR-AVAIL (#I1) TO #SCR-VAR-AVAIL (#I1)
+    MOVE LEFT #SCR-VAR-LINT  (#I1) TO #SCR-VAR-LINT  (#I1)
+    MOVE *DATN TO #YYYYMMDD
+    COMPRESS #MM-A #DD-A #YYYY-A INTO #USER WITH '/'
+    COMPRESS #CGA-CLERK #USER INTO #USER
+*
+    MOVE '%FDF-1.2' TO #FILL-BLNKS (1)
+    MOVE '1 0 obj << /FDF << /Fields [' TO #FILL-BLNKS (2)
+    COMPRESS #FILL-BLNKS (2) ' <</T(ID)/V(' #USER ')>>'
+      INTO #FILL-BLNKS (2) LEAVING NO
+    COMPRESS '<</T(PolNumber)/V(' #POL-NUM-MEC ')>>'
+      INTO #FILL-BLNKS (3) LEAVING NO
+    COMPRESS '<</T(EffDate)/V(' #SCR-VAR-DATE (#I1) ')>>'
+      INTO #FILL-BLNKS (4) LEAVING NO
+*   COMPRESS '<</T(OwnerName)/V(' #FIRST-NAME    /* DW4
+*       INTO #FILL-BLNKS (5) LEAVING NO
+*   COMPRESS #FILL-BLNKS (5) #LAST-NAME INTO #FILL-BLNKS (5)
+*   COMPRESS #FILL-BLNKS (5) ')>>' INTO #FILL-BLNKS (5) LEAVING NO
+    COMPRESS '<</T(OwnerName)/V(' #FORMATED-NAME                    /* DW4
+      INTO #FILL-BLNKS (5) LEAVING NO
+    COMPRESS #FILL-BLNKS (5) ')>>' INTO #FILL-BLNKS (5) LEAVING NO
+    MOVE '<</T(OwnerAddress)/V' TO #FILL-BLNKS (6)
+*
+    MOVE #FIRST-ADDRESS TO #PDF-CHARS-100                             /* DW5
+    CALLNAT 'GPDFRSXX' #PDF-CHARS-100
+    MOVE #PDF-CHARS-100 TO #FILL-BLNKS (7)                           /* DW5
+    COMPRESS '(' #PDF-CHARS-100 ',' INTO #FILL-BLNKS (7) LEAVING NO   /* DW5
+*
+    MOVE #SECOND-ADDRESS TO #PDF-CHARS-100         /* DW5
+    CALLNAT 'GPDFRSXX' #PDF-CHARS-100
+    COMPRESS #FILL-BLNKS (7) #PDF-CHARS-100 INTO #FILL-BLNKS (7)      /* DW5
+*
+    IF #THIRD-ADDRESS NE ' '
+      COMPRESS #FILL-BLNKS (7) ',' INTO #FILL-BLNKS (7) LEAVING NO
+*         BELOW TO PREVENT OVERFLOW / NEED 3 CHARS OR ')>>'
+      MOVE #THIRD-ADDRESS TO #PDF-CHARS-100                          /* DW5
+      CALLNAT 'GPDFRSXX' #PDF-CHARS-100
+      COMPRESS #FILL-BLNKS (7) #PDF-CHARS-100 INTO #TEST-100 LEAVING NO  /* DW5
+      MOVE #TEST-75 TO #FILL-BLNKS (7)
+    END-IF
+*
+    COMPRESS #FILL-BLNKS (7) ')>>' INTO #FILL-BLNKS (7) LEAVING NO   /* NG1
+    #FILL-BLNKS (8) := F-PREF-PHONE(<#OWNER-CI>)              /* TT2
+    COMPRESS '<</T(OwnerPhone)/V(' #HOME-PHONE-DISP #FILL-BLNKS (8)
+      ')>>' INTO #FILL-BLNKS (8) LEAVING NO
+    MOVE '<</T(LoanQuote)/V'                  TO #FILL-BLNKS (9)
+    COMPRESS '(($' #SCR-VAR-AVAIL (#I1) ' as of'
+      INTO #FILL-BLNKS  (10) LEAVING  NO
+    COMPRESS #FILL-BLNKS (10) #TODAY-MM-A INTO #FILL-BLNKS (10)
+    COMPRESS #FILL-BLNKS (10) '/' #TODAY-DD-A '/' #TODAY-YYYY-A
+      INTO #FILL-BLNKS  (10) LEAVING  NO
+    IF #SCR-VAR-LINT (#I1) NE ' '
+      COMPRESS #FILL-BLNKS (10)
+        ' above current loan of $' #SCR-VAR-LINT (#I1)
+        INTO #FILL-BLNKS  (10) LEAVING  NO
+    END-IF
+    COMPRESS #FILL-BLNKS (10) '))>>' INTO #FILL-BLNKS (10) LEAVING NO
+*
+    MOVE '] /F (F:\LOAN REQUEST.PDF)>> >>'      TO #FILL-BLNKS (11)
+    MOVE 'endobj'                             TO #FILL-BLNKS (12)
+    MOVE'trailer <</Root 1 0 R >> %%EOF'     TO #FILL-BLNKS  (13)
+*
+    COMPRESS 'Press ENTER to Go on to next process' TO #FILL-BLNKS (18)
+*
+    INPUT USING MAP 'C246XMLI'
+  END-FOR
+*
+  RESET #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+ELSE
+*
+  INPUT MARK*#CGA-SCR-COMMAND  USING MAP 'C2463MLI'
+  INPUT MARK*#CGA-SCR-COMMAND  USING MAP 'C2464MLI'
+*
+  IF #I1 > 30
+    INPUT MARK*#CGA-SCR-COMMAND  USING MAP 'C2465MLI'
+  END-IF
+*
+  IF #CGA-SCR-COMMAND = ' '
+    MOVE #CGA-ORIG-ID TO #CGA-SCR-ID
+    MOVE 'ST' TO #CGA-SCR-COMMAND
+  END-IF
+END-IF
+*
+FETCH 'G1000PXX'
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-CAP-CSV
+* * * * * * * * * * * * * * * *
+*
+IF PAY-STATUS (#I1) GE '40'
+  MOVE #CSV-4-CAP-CALC TO #CAP-CSV
+  ESCAPE ROUTINE
+END-IF
+*
+IF FACE-AMOUNT (#I1) GT 10000.00
+  COMPUTE ROUNDED #WORK-CAP-CONV-ACV =
+    ((#CSV-4-CAP-CALC - #CAP-CONV-ACV) * (FACE-AMOUNT (#I1) - 10000))
+    / FACE-AMOUNT (#I1)
+  ADD #WORK-CAP-CONV-ACV TO #CAP-CONV-ACV
+END-IF
+*
+IF X-LOAN-AMOUNT (#I1) = 0
+  MOVE X-LOAN-DATE (#I1) TO #CAP-LOAN-END-DATE
+ELSE
+  RESET #CAP-LOAN-END-DATE
+END-IF
+*
+* DISPLAY
+*  'ISS/DATE' STATUS-VIEW.ISSUE-DATE (#I1)
+* 'loan/end' #CAP-LOAN-END-DATE
+* 'face' STATUS-VIEW.FACE-AMOUNT (#I1)
+* #CSV
+* #CAP-CONV-ACV
+* 'work/acv' #WORK-CAP-CONV-ACV
+*
+CALLNAT 'CCAPCSVP'
+  ID-NUMBER
+  ISSUE-DATE (#I1)
+  #CAP-LOAN-END-DATE
+  #TODAY
+  #CAP-CONV-ACV
+  #CSV-4-CAP-CALC
+  #CAP-CSV
+  #CAP-LOAN-MONS
+  #CAP-CSV-MONS
+  #CAP-REMAIN-MONS
+*
+END-SUBROUTINE  /* (0873)
+*
+* * * * * * * * * * * * * * *
+DEFINE CALC-PREMS-PAID-SETUP
+* * * * * * * * * * * * * * *
+*
+RESET #PREMS-PAID DATE-OF-BIRTH
+DATE-OF-BIRTH       := GET-DATE-OF-BIRTH(<MEMBER-CONTACT-ID>)
+MOVE DATE-OF-BIRTH           TO #PP-DATE-OF-BIRTH
+MOVE ANNUAL-PREM (#I1)       TO #PP-ANNUAL-PREM
+MOVE PAY-STATUS (#I1)        TO #PP-PAY-STATUS
+MOVE TOT-PREMIUMS-PAID (#I1) TO #PP-TOT-PREMIUMS-PAID
+MOVE PAID-TO-DATE (#I1)      TO #PP-PAID-TO-DATE
+MOVE ISSUE-DATE (#I1)        TO #PP-ISSUE-DATE
+MOVE MODE (#I1)              TO #PP-MODE
+MOVE PLAN (#I1)              TO #PP-PLAN
+MOVE COST-BASIS (#I1)        TO #PP-COST-BASIS
+MOVE MONTH-ALLOC-AMT (#I1)   TO #PP-MONTH-ALLOC-AMT
+MOVE INTRO-FLAG              TO #PP-INTRO-FLAG
+MOVE X-FIRST-PLACE-FEE (#I1) TO #PP-FIRST-PLACE-FEE
+MOVE X-BILL-ADJUST     (#I1) TO #PP-BADJ
+*
+CALLNAT 'GPRPDSCO'
+  #PP-DATE-OF-BIRTH
+  #PP-ANNUAL-PREM
+  #PP-PAY-STATUS
+  #PP-TOT-PREMIUMS-PAID
+  #PP-PAID-TO-DATE
+  #PP-ISSUE-DATE
+  #PP-MODE
+  #PP-PLAN
+  #PP-COST-BASIS
+  #PP-MONTH-ALLOC-AMT
+  #PP-INTRO-FLAG
+  #PP-FIRST-PLACE-FEE
+  #PREMS-PAID
+  #SUB-PREMS-PAID
+  #PP-BADJ
+*
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE CALC-REAL-PREM
+**********************************
+*
+FOR #I2 1 TO 800
+  IF   (#ACV-DIFF GT ((#I2 * 1000) - 10))
+      AND (#ACV-DIFF LT ((#I2 * 1000) + 10))
+    IF #NEW-ACV LT VA-V.ACCUM-CASH-VALUE-M (13)
+      ADD (#I2 * 1000) TO #REAL-PREM
+    ELSE
+      SUBTRACT (#I2 * 1000) FROM #REAL-PREM
+    END-IF
+*
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+END

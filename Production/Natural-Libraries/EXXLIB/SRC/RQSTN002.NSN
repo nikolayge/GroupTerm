@@ -1,0 +1,135 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Request from SSRS - Update 'Sent' date and flag
+* Object name - RQSTN002
+***********************************************************************
+*        MODIFICATION LOG
+***********************************************************************
+* USER   DATE      TAG  REASON
+* YAK    08032010       Initial Creation
+***********************************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL
+1 LT-V VIEW OF A-LETTERS
+  2 LAST-LOAD-DATE
+  2 INSURED-CN                  
+  2 POLICY-NUMBER                     
+  2 TEMPLATE-NAME
+  2 IS-SENT 
+  2 DATE-SENT
+*
+1 LT-V-UPD VIEW OF A-LETTERS
+  2 IS-SENT 
+  2 DATE-SENT  
+*
+1 LETTER-INFO
+  2 DATE-SENT         (N8)
+  2 ID-NUMBER         (N6)
+  2 POLICY-NUMBER     (A16)                     
+  2 TEMPLATE-NAME     (A20)
+
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value            (A) DYNAMIC  
+1 #YES              (A1) CONST <'Y'> 
+1 #NOT-FOUND        (L)
+1 #ERR-NOT-FOUND    (A3) CONST <'015'>
+1 #ISN              (P9) 
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic for Get
+FIND.
+FIND LT-V WITH LT-V.POLICY-NUMBER = LETTER-INFO.POLICY-NUMBER
+  WHERE LT-V.TEMPLATE-NAME = LETTER-INFO.TEMPLATE-NAME AND LT-V.IS-SENT <> #YES
+  IF NO RECORDS FOUND
+    #NOT-FOUND := TRUE
+    ESCAPE BOTTOM
+  END-NOREC  
+  #ISN := *ISN (FIND.)
+  GET.
+  GET LT-V-UPD #ISN
+  LT-V-UPD.IS-SENT   := #YES
+  LT-V-UPD.DATE-SENT := LETTER-INFO.DATE-SENT
+  UPDATE (GET.)
+  END TRANSACTION
+END-FIND
+DECIDE FOR FIRST CONDITION
+  WHEN #ErrorCode = '0'  
+    PERFORM COMPOSE-XML
+  WHEN #NOT-FOUND 
+    #ErrorCode := #ERR-NOT-FOUND
+    PERFORM COMPOSE-ERROR-XML
+  WHEN NONE  
+    IGNORE    
+END-DECIDE  
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'LetterInfo/DateSent/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      LETTER-INFO.DATE-SENT := VAL(#value)
+    END-IF
+  VALUE 'LetterInfo/PolicyNumber/$'
+      LETTER-INFO.POLICY-NUMBER := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'LetterInfo/TemplateName/$'
+      LETTER-INFO.TEMPLATE-NAME := *TRIM(XML_PARSER_CONTENT)      
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+COMPRESS '<LetterInfo>' -
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '</LetterInfo>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+END

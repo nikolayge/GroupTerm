@@ -1,0 +1,922 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: ATHPTRUN - Apply Undeliverable Refunds as requested
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER     DATE      TAG     REASON                                    *
+*                                                                      *
+* PAM    10/30/2009  None    Program written                           *
+* PAM    01/20/2010  PM1     Added CAP loan process                    *
+* vxt    10/04/2011  vt1     Added term refund process                 *
+* vxt    01/02/2015  vt2     /Ticket 3205/                             *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLSTAT
+LOCAL USING C2500AAM                     /* PM1
+LOCAL USING GDATEAXX                     /* PM1
+LOCAL
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 TXN-CODE
+  2 SEQUENCE-NUM
+  2 NAME
+  2 TXN-ACCT-NUMBER
+  2 ACCT-DATE
+  2 DATE-LAST-ACCT-UPDATE
+  2 DEBIT-AMOUNT
+  2 CREDIT-AMOUNT
+  2 DESCRIPTION
+  2 MESSAGE-CODE
+  2 AALP-FLAG
+  2 CLERK-ID
+  2 TERMINAL-ID
+  2 CASH-CODE
+  2 POLICY-NUMBER
+  2 SG-CATEGORY-1              (15)
+  2 SG-CATEGORY-2              (15)
+  2 SG-AMOUNT                  (15)
+*
+1 NT-V VIEW OF A-NOTES                               /* vt1 \/
+  2 C*NOTE-TABLE
+  2 NOTE-CLERK-ID         (500)
+  2 NOTE-LINE-NUM         (500)
+  2 NOTE-DATE             (500)
+  2 NOTE-TEXT             (500)
+*                                                    /* vt1 /\
+1 #MM (N2)
+1 #DD (N2)
+1 #YYYY (N2)
+*
+1 #JCL-PARM                   (A3)
+1 #POLICY-FOUND               (L)
+1 #INPUT-RECORD               (A250)
+1 REDEFINE #INPUT-RECORD
+  2 #DISPLAY                   (A65)
+  2 #REST                      (A185)
+1 #RECS-READ                  (P7)
+1 #RECS-APPLIED               (P5)
+1 #INDEX                      (I4)
+1 #POL-INDEX                  (I2)
+1 #I2                         (I2)
+1 #MEMBER-ID                  (A6)
+1 #POL-NUM                    (A16)
+1 #ISSUE-DATE                 (A10)
+1 REDEFINE #ISSUE-DATE
+  2 #ISSUE-DATE-MM             (A2)
+  2 REDEFINE #ISSUE-DATE-MM
+    3 #ISSUE-DATE-MM-1          (A1)
+    3 #ISSUE-DATE-MM-2          (A1)
+  2 #ISSUE-DATE-S              (A1)
+  2 #ISSUE-DATE-DD             (A2)
+  2 #ISSUE-DATE-S2             (A1)
+  2 #ISSUE-DATE-YYYY           (A4)
+1 #WORK-ISSUE-DATE            (A8)
+1 REDEFINE #WORK-ISSUE-DATE
+  2 #WORK-ISSUE-DATE-YYYY      (A4)
+  2 #WORK-ISSUE-DATE-MM        (A2)
+  2 #WORK-ISSUE-DATE-DD        (A2)
+1 REDEFINE #WORK-ISSUE-DATE
+  2 #WORK-ISSUE-DATE-N         (N8)
+1 #DISPLAY-AMOUNT             (A20)
+1 #AMOUNT                     (P7.2)
+1 #AMOUNT-SUBMITTED           (P11.2)
+1 #AMOUNT-APPLIED             (P11.2)
+1 #NOTE-TEXT                  (A60/10)
+1 #INT                        (I2)
+1 #CGA-CLERK                  (A3) INIT <'EDS'>
+1 #TAB                        (A1) INIT <H'09'>
+1 #TIME                       (N7)
+1 #DATN                       (N8)
+1 #DATE4E                     (N8)       /* PM1
+*
+1 #INPUT-TABLE                (1:*)
+  2 #INPUT-CN                  (A6)
+  2 #INPUT-NAME                (A100)
+  2 #INPUT-AMOUNT              (A25)
+  2 #INPUT-MODE                (A1)
+  2 #INPUT-TMRF-YEAR           (A12)
+  2 #INPUT-ISSUE-DATE          (A10)
+  2 #INPUT-EXTRA               (A100)
+*
+1 #MAX-REC                    (N5)   INIT <500>
+*
+1 #WORK-AMOUNT                (P7.2)     /* PM1
+1 #ORIG-AMOUNT                (P7.2)     /* PM1
+1 #INTEREST                   (P5.2)     /* PM1
+1 #LOAN                       (P7.2)     /* PM1
+1 #TYPE                       (A4)       /* PM1
+1 #CURR-VAR-INT-RATE          (P2.3)     /* PM1
+1 #ILN1                       (I2)       /* PM1
+1 #ILN2                       (I2)       /* PM1
+1 #I1                         (I2)       /* PM1
+1 #UPDATE-MODE                (L)        /* PM1
+1 #SG-TBL                     (15)       /* PM1
+  2 #SG-CAT1                  (A2)       /* PM1
+  2 #SG-CAT2                  (A2)       /* PM1
+  2 #SG-AMT                   (N6.2)     /* PM1
+*
+1 #TOTAL-OUTS            (N11.2)        /* vt1
+1 #TOT-MISMATCH          (N11.2)
+1 #TOT-REFUND            (N11.2)
+1 #YEAR-TEXT             (A25)
+1 #NOTE-YEAR-TEXT        (A25)
+1 #MISMATCH-CNT          (N5)
+1 #BYPASSED-CNT          (N5)
+1 #NUM-REFUNDS           (N5)
+1 #DO-NOT-REF            (L)
+1 #TOT-BYPASSED          (N11.2)
+1 #HOLD-CUR-ACCT-UPDT    (N8)
+1 #NAME-ACCTG            (A50)
+1 #CONTACT-ID            (N8)
+1 #LAST-NAME             (A25)
+1 #FIRST-NAME            (A25)
+1 #MIDDLE-NAME           (A25)
+1 #SUFFIX                (A10)
+1 #DISP-REFUND           (A11)              /* vt2 was A25
+1 #PEACHTREE             (A500)
+1 #PEACHTREE-AMOUNT      (A25)
+1 #NAME-PEACHTREE        (A)   DYNAMIC
+1 #COMMA                 (A1) INIT <','>
+1 #CURR-DATE             (N8)
+1 REDEFINE #CURR-DATE
+  2 #CURR-DATE-YYYY      (A4)
+  2 #CURR-DATE-MM        (A2)
+  2 #CURR-DATE-DD        (A2)
+1 #CURR-DATE-A           (A8)
+1 #CNT                   (P5)
+*                                                     /* vt1 /\
+END-DEFINE
+************************************************************************
+*
+FORMAT (1) LS=133 PS=0
+WRITE  (1) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Undeliverable Term Refund Report'
+  5X 'DATE: ' *DAT4U
+*
+#TIME := *TIMN
+#DATN := *DATN
+*
+EXPAND ARRAY #INPUT-TABLE TO (*:#MAX-REC)
+*
+INPUT #JCL-PARM
+*
+READ WORK FILE 1 #INPUT-RECORD
+  ADD +1 TO #RECS-READ
+*
+  IF #RECS-READ > #MAX-REC
+    #MAX-REC := #MAX-REC + 100
+    RESIZE ARRAY #INPUT-TABLE TO (*:#MAX-REC)
+  END-IF
+*
+  SEPARATE #INPUT-RECORD INTO #INPUT-TABLE (#RECS-READ) WITH DELIMITER #TAB
+  MOVE RIGHT #INPUT-CN (#RECS-READ) TO #INPUT-CN (#RECS-READ)
+  EXAMINE #INPUT-CN (#RECS-READ) FOR ' ' REPLACE WITH '0'
+  WRITE '=' #INPUT-AMOUNT (#RECS-READ)
+  #AMOUNT := VAL(#INPUT-AMOUNT(#RECS-READ))
+*
+END-WORK
+*
+DECIDE ON FIRST VALUE OF #JCL-PARM
+  VALUE 'DIR'
+    PERFORM DIRECT-BILL-PROCESS
+  VALUE 'EZP'
+    PERFORM EZPAY-PROCESS
+  VALUE 'CCR'
+    PERFORM CREDIT-CARD-PROCESS
+  VALUE 'CAP'                        /* PM1
+    PERFORM CAP-LOAN-PROCESS         /* PM1
+  VALUE 'TRM'                                /* vt1
+    PERFORM TERM-REF-PROCESS                 /* vt1
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+WRITE (1) NOTITLE '------------------------------------------------------------------------------'
+*
+MOVE EDITED #AMOUNT-SUBMITTED (EM=ZZ,ZZZ,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+WRITE (1) NOTITLE 'Total Submitted = ' #DISPLAY-AMOUNT
+*
+MOVE EDITED #AMOUNT-APPLIED (EM=ZZ,ZZZ,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+MOVE LEFT #DISPLAY-AMOUNT TO #DISPLAY-AMOUNT
+COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+WRITE (1) NOTITLE 'Total Applied   = ' #DISPLAY-AMOUNT
+*
+************************************************************************
+DEFINE SUBROUTINE EZPAY-PROCESS
+************************************************************************
+*
+FOR #INDEX 1 TO #RECS-READ
+  #MEMBER-ID            := #INPUT-CN (#INDEX)
+  #AMOUNT               := VAL(#INPUT-AMOUNT(#INDEX))
+  #ISSUE-DATE           := #INPUT-ISSUE-DATE (#INDEX)
+  PERFORM FORMAT-DATE
+*
+  IF #AMOUNT = 0
+    WRITE (1) NOTITLE #MEMBER-ID 1X 'AMOUNT = 0 - No funds applied'
+    ESCAPE TOP
+  END-IF
+*
+  ADD #AMOUNT TO #AMOUNT-SUBMITTED
+*
+  FIND (1) ST-V WITH MEMBER-KEY = #MEMBER-ID
+    IF NO RECORDS FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    IF NOT ST-V.PAD-CODE = 'E' OR = 'P' OR = 'D' OR = 'V' OR = 'X'
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'PAD CODE not ACTIVE - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    PERFORM FIND-POLICY
+*
+    IF NOT #POLICY-FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'POLICY NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF ST-V.MODE (#POL-INDEX) NE 'E'
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'MODE NOT "E" - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    COMPUTE ST-V.X-BILL-ADJUST (#POL-INDEX) = ST-V.X-BILL-ADJUST (#POL-INDEX) - #AMOUNT
+    ST-V.EZPAY-START (#POL-INDEX) := 'Y'
+    ADD #AMOUNT TO #AMOUNT-APPLIED
+    ADD +1 TO #RECS-APPLIED
+    PERFORM CREATE-BADJ-REPORT
+    #TYPE := 'BADJ'
+    #WORK-AMOUNT := #AMOUNT
+    PERFORM ACCT-REG
+    PERFORM CREATE-NOTE
+    UPDATE (0232)
+  END-FIND
+*
+  END TRANSACTION
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREDIT-CARD-PROCESS
+************************************************************************
+*
+FOR #INDEX 1 TO #RECS-READ
+  #MEMBER-ID            := #INPUT-CN (#INDEX)
+  #AMOUNT               := VAL(#INPUT-AMOUNT(#INDEX))
+  #ISSUE-DATE           := #INPUT-ISSUE-DATE (#INDEX)
+  PERFORM FORMAT-DATE
+*
+  IF #AMOUNT = 0
+    WRITE (1) NOTITLE #MEMBER-ID 1X 'AMOUNT = 0 - No funds applied'
+    ESCAPE TOP
+  END-IF
+*
+  ADD #AMOUNT TO #AMOUNT-SUBMITTED
+*
+  FIND (1) ST-V WITH MEMBER-KEY = #MEMBER-ID
+    IF NO RECORDS FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    PERFORM FIND-POLICY
+*
+    IF NOT #POLICY-FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'POLICY NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF NOT ST-V.MODE (#POL-INDEX) = '0' OR = '1' OR = '2' OR = '4'
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'MODE NOT CREDIT CARD - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    COMPUTE ST-V.X-BILL-ADJUST (#POL-INDEX) = ST-V.X-BILL-ADJUST (#POL-INDEX) - #AMOUNT
+    ADD #AMOUNT TO #AMOUNT-APPLIED
+    ADD +1 TO #RECS-APPLIED
+    PERFORM CREATE-BADJ-REPORT
+    #TYPE := 'BADJ'
+    #WORK-AMOUNT := #AMOUNT
+    PERFORM ACCT-REG
+    PERFORM CREATE-NOTE
+    UPDATE (0289)
+  END-FIND
+*
+  END TRANSACTION
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE DIRECT-BILL-PROCESS
+************************************************************************
+*
+FOR #INDEX 1 TO #RECS-READ
+  #MEMBER-ID            := #INPUT-CN (#INDEX)
+  #AMOUNT               := VAL(#INPUT-AMOUNT(#INDEX))
+  #ISSUE-DATE           := #INPUT-ISSUE-DATE (#INDEX)
+  PERFORM FORMAT-DATE
+*
+  IF #AMOUNT = 0
+    WRITE (1) NOTITLE #MEMBER-ID 1X 'AMOUNT = 0 - No funds applied'
+    ESCAPE TOP
+  END-IF
+*
+  ADD #AMOUNT TO #AMOUNT-SUBMITTED
+*
+  FIND (1) ST-V WITH MEMBER-KEY = #MEMBER-ID
+    IF NO RECORDS FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    PERFORM FIND-POLICY
+*
+    IF NOT #POLICY-FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'POLICY NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF NOT ST-V.MODE (#POL-INDEX) = 'A' OR = 'S' OR = 'Q' OR = 'M'
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'MODE NOT DIRECT BILL - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    COMPUTE ST-V.X-BILL-ADJUST (#POL-INDEX) = ST-V.X-BILL-ADJUST (#POL-INDEX) - #AMOUNT
+    ADD #AMOUNT TO #AMOUNT-APPLIED
+    ADD +1 TO #RECS-APPLIED
+    PERFORM CREATE-BADJ-REPORT
+    #TYPE := 'BADJ'
+    #WORK-AMOUNT := #AMOUNT
+    PERFORM ACCT-REG
+    PERFORM CREATE-NOTE
+    UPDATE (0340)
+  END-FIND
+*
+  END TRANSACTION
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CAP-LOAN-PROCESS                                /* PM1
+************************************************************************
+*
+#UPDATE-MODE            := TRUE
+#CURR-VAR-INT-RATE      := FUNCTION-INT-RATE(<'RATE5AB'>)
+#ISSUE-DATE             := *DAT4E
+PERFORM FORMAT-DATE
+#DATE4E                 := #WORK-ISSUE-DATE-N
+#REQUEST                := 'C'
+*
+FOR #INDEX 1 TO #RECS-READ
+  #MEMBER-ID            := #INPUT-CN (#INDEX)
+  #AMOUNT               := VAL(#INPUT-AMOUNT(#INDEX))
+*
+  IF #AMOUNT = 0
+    WRITE (1) NOTITLE #MEMBER-ID 1X 'AMOUNT = 0 - No funds applied'
+    ESCAPE TOP
+  END-IF
+*
+  ADD #AMOUNT TO #AMOUNT-SUBMITTED
+  #ORIG-AMOUNT := #AMOUNT
+*
+  FIND (1) ST-V WITH MEMBER-KEY = #MEMBER-ID
+    IF NO RECORDS FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    PERFORM FIND-POLICY
+*
+    IF NOT #POLICY-FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'POLICY NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    #LOAN       := ST-V.X-LOAN-AMOUNT (#POL-INDEX)
+    #INTEREST   := FUNCTION-CALCULATE-INTEREST(<X-INTEREST-RATE(#POL-INDEX),#LOAN,#DATN,X-LOAN-DATE(#POL-INDEX),
+      X-ACCUM-INTEREST(#POL-INDEX),X-NXT-YR-ACCUM-INT(#POL-INDEX)>)
+    IF #INTEREST LT 0
+      #INTEREST := 0
+    END-IF
+*
+    IF #AMOUNT GT #LOAN + #INTEREST
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'AMOUNT GREATER THAN LOAN - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    #TO-DATE         := ST-V.ISSUE-DATE (#POL-INDEX)
+    CALLNAT 'GDATESXX'
+      #PDA-GDATESXX
+    #WORK-ISSUE-DATE := #RETURN-CALC
+*
+    IF #AMOUNT LT #INTEREST
+      #WORK-AMOUNT := #ORIG-AMOUNT
+      RESET #ORIG-AMOUNT
+    ELSE
+      #WORK-AMOUNT := #INTEREST
+      SUBTRACT #INTEREST FROM #ORIG-AMOUNT
+    END-IF
+*
+    IF #WORK-AMOUNT GT 0
+      RESET #SG-TBL (*)
+      #TYPE := 'INPF'
+      PERFORM APPLY-LOAN-TRAN
+      ADD #WORK-AMOUNT TO #AMOUNT-APPLIED
+      PERFORM ACCT-REG
+    END-IF
+*
+    IF #ORIG-AMOUNT GT 0
+      RESET #SG-TBL (*)
+      #WORK-AMOUNT := #ORIG-AMOUNT
+      #TYPE := 'PRNF'
+      PERFORM APPLY-LOAN-TRAN
+      ADD #WORK-AMOUNT TO #AMOUNT-APPLIED
+      PERFORM ACCT-REG
+    END-IF
+*
+    ADD +1 TO #RECS-APPLIED
+    PERFORM CREATE-BADJ-REPORT
+    PERFORM CREATE-NOTE
+    UPDATE (0397)
+  END-FIND
+*
+  END TRANSACTION
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-BADJ-REPORT
+************************************************************************
+*
+MOVE EDITED #AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #DISPLAY-AMOUNT
+COMPRESS '$' #DISPLAY-AMOUNT INTO #DISPLAY-AMOUNT LEAVING NO
+*
+DISPLAY (1) 'CNT'    #RECS-APPLIED
+  'MEMBER' ST-V.ID-NUMBER
+  'POLICY' ST-V.ISSUE-DATE (#POL-INDEX)
+  'PLAN'   ST-V.PLAN (#POL-INDEX)
+  'AMOUNT' #DISPLAY-AMOUNT
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE ACCT-REG
+************************************************************************
+*
+RESET ACCT-REG-V
+MOVE ST-V.ID-NUMBER        TO ACCT-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND      TO ACCT-REG-V.PROCESS-IND
+MOVE #DATN                 TO ACCT-REG-V.TRANSACTION-DATN
+MOVE #TIME                 TO ACCT-REG-V.TRANSACTION-TIMN
+MOVE *INIT-ID              TO ACCT-REG-V.TERMINAL-ID
+MOVE 'EDS'                 TO ACCT-REG-V.CLERK-ID
+MOVE ST-V.NAME             TO ACCT-REG-V.NAME
+IF #JCL-PARM = 'TRM'                                          /* vt1 \/
+  MOVE 'A'                   TO ACCT-REG-V.CASH-CODE
+ELSE
+  MOVE '$'                   TO ACCT-REG-V.CASH-CODE
+END-IF                                                        /* vt1 /\
+*
+RESET                         ACCT-REG-V.AALP-FLAG
+MOVE #DATN                 TO ACCT-REG-V.ACCT-DATE
+*
+CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #POL-INDEX
+MOVE #POL-NUM              TO ACCT-REG-V.POLICY-NUMBER
+*
+MOVE #DATN                 TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+MOVE #WORK-AMOUNT          TO ACCT-REG-V.CREDIT-AMOUNT
+MOVE #TYPE                 TO ACCT-REG-V.TXN-CODE
+*
+DECIDE ON FIRST VALUE OF #TYPE
+  VALUE 'BADJ'
+    MOVE 420               TO ACCT-REG-V.TXN-ACCT-NUMBER
+  VALUE 'PRNF'                                             /* PM1
+    MOVE 110               TO ACCT-REG-V.TXN-ACCT-NUMBER   /* PM1
+  VALUE 'INPF'                                             /* PM1
+    MOVE 410               TO ACCT-REG-V.TXN-ACCT-NUMBER   /* PM1
+  NONE VALUE
+    MOVE 667               TO ACCT-REG-V.TXN-ACCT-NUMBER
+END-DECIDE
+*
+IF #INPUT-TMRF-YEAR (#INDEX) = MASK (NNNN)
+  COMPRESS #INPUT-TMRF-YEAR (#INDEX) 'Outs Term Rfnd' INTO ACCT-REG-V.DESCRIPTION
+ELSE
+  COMPRESS #INPUT-TMRF-YEAR (#INDEX) 'Outs Rfnd' INTO ACCT-REG-V.DESCRIPTION
+END-IF
+*
+FOR #I1 1 TO 15
+  IF #SG-CAT1 (#I1) NE ' '
+    MOVE #SG-CAT1 (#I1) TO SG-CATEGORY-1 (#I1)
+    MOVE #SG-CAT2 (#I1) TO SG-CATEGORY-2 (#I1)
+    MOVE #SG-AMT  (#I1) TO SG-AMOUNT     (#I1)
+  END-IF
+END-FOR
+*
+STORE ACCT-REG-V
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-NOTE
+************************************************************************
+*
+RESET #NOTE-TEXT (1)
+IF #INPUT-TMRF-YEAR (#INDEX) = MASK (NNNN)
+  COMPRESS 'Outstanding' #INPUT-TMRF-YEAR (#INDEX) 'Term Refund Check applied to' INTO #NOTE-TEXT(1)
+ELSE
+  COMPRESS 'Outstanding' #INPUT-TMRF-YEAR (#INDEX) 'Check applied to' INTO #NOTE-TEXT(1)
+END-IF
+*
+DECIDE ON FIRST VALUE OF #JCL-PARM
+  VALUE 'DIR'
+    COMPRESS #NOTE-TEXT (1) 'BADJ' INTO #NOTE-TEXT (1)
+  VALUE 'EZP'
+    COMPRESS #NOTE-TEXT (1) 'BADJ' INTO #NOTE-TEXT (1)
+  VALUE 'CCR'
+    COMPRESS #NOTE-TEXT (1) 'BADJ' INTO #NOTE-TEXT (1)
+  VALUE 'CAP'                                                /* PM1
+    COMPRESS #NOTE-TEXT (1) 'CAP LOAN' INTO #NOTE-TEXT (1)   /* PM1
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+MOVE 1 TO #INT
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE FORMAT-DATE
+************************************************************************
+*
+SEPARATE #ISSUE-DATE INTO #WORK-ISSUE-DATE-MM #WORK-ISSUE-DATE-DD #WORK-ISSUE-DATE-YYYY WITH DELIMITER '/'
+MOVE RIGHT #WORK-ISSUE-DATE-MM   TO #WORK-ISSUE-DATE-MM
+MOVE RIGHT #WORK-ISSUE-DATE-DD   TO #WORK-ISSUE-DATE-DD
+MOVE RIGHT #WORK-ISSUE-DATE-YYYY TO #WORK-ISSUE-DATE-YYYY
+EXAMINE #WORK-ISSUE-DATE FOR ' ' REPLACE WITH '0'
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE FIND-POLICY
+************************************************************************
+*
+RESET #POLICY-FOUND
+FOR #POL-INDEX 1 TO C*ACTIVE-SEGMENTS
+  IF #JCL-PARM = 'CAP' OR = 'TRM'                   /* PM1   vt1
+    IF ST-V.STATUS (#POL-INDEX) = 'D'          /* PM1
+        AND ST-V.CONV-DURATION (#POL-INDEX) = 999 /* PM1
+      #POLICY-FOUND := TRUE                    /* PM1
+      ESCAPE BOTTOM                            /* PM1
+    END-IF                                     /* PM1
+  ELSE                                         /* PM1
+    IF ST-V.STATUS (#POL-INDEX) = 'D'
+        AND ST-V.ISSUE-DATE (#POL-INDEX) = #WORK-ISSUE-DATE-N
+      #POLICY-FOUND := TRUE
+*
+      IF #POL-INDEX LT C*ACTIVE-SEGMENTS
+        #I2 := #POL-INDEX + 1
+        FOR #I2 #I2 TO C*ACTIVE-SEGMENTS
+          IF ST-V.STATUS (#I2) = 'D'
+              AND ST-V.ISSUE-DATE (#I2) = #WORK-ISSUE-DATE-N
+            RESET #POLICY-FOUND
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+      END-IF
+*
+      ESCAPE BOTTOM
+    END-IF
+  END-IF                                       /* PM1
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE APPLY-LOAN-TRAN                                /* PM1
+************************************************************************
+*
+#ILN1 := 1
+#SCR-ID-SSN (#ILN1)    := ST-V.ID-NUMBER
+#SCR-EFF-DT (#ILN1)    := #DATE4E
+#SCR-ISS-DT (#ILN1)    := #WORK-ISSUE-DATE-N
+#SCR-TRAN-CODE (#ILN1) := #TYPE
+#SCR-TRAN-AMT (#ILN1)  := #WORK-AMOUNT
+*
+IF #TYPE = 'INPF'
+  PERFORM APPLY-INT-PAYMENT
+ELSE
+  PERFORM APPLY-PRIN-PAYMENT
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE APPLY-INT-PAYMENT                               /* PM1
+************************************************************************
+
+CALLNAT 'CINTPSAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE (#POL-INDEX)
+  ST-V.X-LOAN-DATE (#POL-INDEX)
+  ST-V.X-LOAN-AMOUNT (#POL-INDEX)
+  ST-V.X-ACCUM-INTEREST (#POL-INDEX)
+  ST-V.X-CAP-AMT (#POL-INDEX)
+  ST-V.X-NXT-YR-ACCUM-INT (#POL-INDEX)
+  ST-V.X-INTEREST-RECEIVED (#POL-INDEX)
+  ST-V.X-LOAN-DATE-2 (#POL-INDEX)
+  ST-V.X-LOAN-AMOUNT-2 (#POL-INDEX)
+  ST-V.X-ACCUM-INTEREST-2 (#POL-INDEX)
+  ST-V.X-CAP-AMT-2 (#POL-INDEX)
+  ST-V.X-NXT-YR-ACCUM-INT-2 (#POL-INDEX)
+  ST-V.X-INTEREST-RECEIVED-2 (#POL-INDEX)
+  ST-V.INTRO-FLAG
+  ST-V.X-LPO-PMT-RCVD (#POL-INDEX)
+  ST-V.X-LPO-PMT-RCVD-2 (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-ACC-INT (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-ACC-INT-2 (#POL-INDEX)
+  ST-V.X-BILL-SW (#POL-INDEX)
+  ST-V.X-BILL-SW-2 (#POL-INDEX)
+  ST-V.X-BILL-INTEREST-AMT (#POL-INDEX)
+  ST-V.X-BILL-INTEREST-AMT-2 (#POL-INDEX)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  #DATN
+  #TIME
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE APPLY-PRIN-PAYMENT                              /* PM1
+************************************************************************
+*
+CALLNAT 'CPRNPSAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE (#POL-INDEX)
+  ST-V.X-LOAN-DATE (#POL-INDEX)
+  ST-V.X-LOAN-AMOUNT (#POL-INDEX)
+  ST-V.X-ACCUM-INTEREST (#POL-INDEX)
+  ST-V.X-NXT-YR-ACCUM-INT (#POL-INDEX)
+  ST-V.X-OLD-LOAN-AMT (#POL-INDEX)
+  ST-V.X-CAP-AMT (#POL-INDEX)
+  ST-V.MODE    (#POL-INDEX)
+  ST-V.X-BILL-INTEREST-AMT (#POL-INDEX)
+  ST-V.X-INTEREST-RECEIVED (#POL-INDEX)
+  ST-V.X-PRINCIPAL-CHG-CODE (#POL-INDEX)
+  ST-V.X-BILL-DOLLAR (#POL-INDEX)
+  ST-V.APL-CNT
+  ST-V.X-LOAN-DATE-2 (#POL-INDEX)
+  ST-V.X-LOAN-AMOUNT-2 (#POL-INDEX)
+  ST-V.X-ACCUM-INTEREST-2 (#POL-INDEX)
+  ST-V.X-NXT-YR-ACCUM-INT-2 (#POL-INDEX)
+  ST-V.X-OLD-LOAN-AMT-2 (#POL-INDEX)
+  ST-V.X-CAP-AMT-2 (#POL-INDEX)
+  ST-V.X-BILL-INTEREST-AMT-2 (#POL-INDEX)
+  ST-V.X-INTEREST-RECEIVED-2 (#POL-INDEX)
+  ST-V.INTRO-FLAG
+  ST-V.X-LPO-PMT-RCVD (#POL-INDEX)
+  ST-V.X-LPO-PMT-RCVD-2 (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-ACC-INT (#POL-INDEX)
+  ST-V.X-LPO-PRIOR-ACC-INT-2 (#POL-INDEX)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  #DATN
+  #TIME
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  ST-V.CAP-BILL-DATE
+  ST-V.PROCESS-IND
+  ST-V.NAME
+  #CGA-CLERK
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE TERM-REF-PROCESS                                /* vt1 \/
+*****************
+*
+#UPDATE-MODE            := TRUE
+#CURR-VAR-INT-RATE      := FUNCTION-INT-RATE(<'RATE5AB'>)
+#ISSUE-DATE             := *DAT4E
+PERFORM FORMAT-DATE
+#DATE4E                 := #WORK-ISSUE-DATE-N
+#REQUEST                := 'C'
+*
+FOR #INDEX 1 TO #RECS-READ
+  #MEMBER-ID            := #INPUT-CN (#INDEX)
+  #AMOUNT               := VAL(#INPUT-AMOUNT(#INDEX))
+*
+  IF #AMOUNT = 0
+    WRITE (1) NOTITLE #MEMBER-ID 1X 'AMOUNT = 0 - No funds applied'
+    ESCAPE TOP
+  END-IF
+*
+  ADD #AMOUNT TO #AMOUNT-SUBMITTED
+  #ORIG-AMOUNT := #AMOUNT
+*
+  FIND (1) ST-V WITH MEMBER-KEY = #MEMBER-ID
+    IF NO RECORDS FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    MOVE ST-V.MEMBER-CONTACT-ID TO #CONTACT-ID
+    RESET #TOTAL-OUTS #YEAR-TEXT #NOTE-YEAR-TEXT
+    FOR #I1 1 TO 100
+      IF ST-V.OUT-TERM-REF-AMOUNT (#I1) = 0
+        ESCAPE BOTTOM
+      ELSE
+        ADD ST-V.OUT-TERM-REF-AMOUNT (#I1) TO #TOTAL-OUTS
+        IF #YEAR-TEXT = ' '
+          #YEAR-TEXT := ST-V.OUT-TERM-REF-YEAR (#I1)
+        ELSE
+          COMPRESS #YEAR-TEXT ',' ST-V.OUT-TERM-REF-YEAR (#I1) INTO #YEAR-TEXT LEAVING NO
+        END-IF
+*
+        IF #NOTE-YEAR-TEXT = ' '
+          #NOTE-YEAR-TEXT := ST-V.OUT-TERM-REF-YEAR (#I1)
+        ELSE
+          COMPRESS #NOTE-YEAR-TEXT ',' ST-V.OUT-TERM-REF-YEAR (#I1) INTO #NOTE-YEAR-TEXT LEAVING NO
+        END-IF
+      END-IF
+    END-FOR
+*
+    COMPRESS #YEAR-TEXT '.' INTO #YEAR-TEXT LEAVING NO
+*
+    IF #AMOUNT NE #TOTAL-OUTS
+      WRITE (1) #MEMBER-ID 'Bypassed - Term refund Mismatch - File Term refund ='
+        #AMOUNT 'IAS Term refund =' #TOTAL-OUTS
+      ADD +1 TO #MISMATCH-CNT
+      ADD #AMOUNT TO #TOT-MISMATCH
+      ESCAPE TOP
+    END-IF
+*
+    RESET #DO-NOT-REF
+    FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+      FOR #I1 1 TO C*NOTE-TABLE
+        IF  NOTE-TEXT (#I1) = MASK ('DO NOT REFUND')
+            OR NOTE-TEXT (#I1) = MASK ('*DO NOT REFUND')
+            OR NOTE-TEXT (#I1) = MASK ('* DO NOT REFUND')
+            OR NOTE-TEXT (#I1) = MASK ('**DO NOT REFUND')
+          MOVE TRUE TO #DO-NOT-REF
+        END-IF
+      END-FOR
+    END-FIND
+*
+    IF #DO-NOT-REF
+      WRITE (1) #MEMBER-ID 'Bypassed - Do not refund note'
+      ADD +1 TO #BYPASSED-CNT
+      ADD #AMOUNT TO #TOT-BYPASSED
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+*
+    IF ST-V.DATE-OF-DEATH NE 0
+      WRITE (1) #MEMBER-ID 'Bypassed - Member Deceased'
+      ADD +1 TO #BYPASSED-CNT
+      ADD #AMOUNT TO #TOT-BYPASSED
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+*
+    PERFORM FIND-POLICY
+*
+    IF NOT #POLICY-FOUND
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'POLICY NOT FOUND - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    #LOAN       := ST-V.X-LOAN-AMOUNT (#POL-INDEX)
+    #INTEREST   := FUNCTION-CALCULATE-INTEREST(<X-INTEREST-RATE(#POL-INDEX),#LOAN,#DATN,X-LOAN-DATE(#POL-INDEX),
+      X-ACCUM-INTEREST(#POL-INDEX),X-NXT-YR-ACCUM-INT(#POL-INDEX)>)
+    IF #INTEREST LT 0
+      #INTEREST := 0
+    END-IF
+*
+    IF #AMOUNT GT #LOAN + #INTEREST
+      WRITE (1) NOTITLE 2X #MEMBER-ID 1X 'AMOUNT GREATER THAN LOAN - No funds applied'
+      ESCAPE BOTTOM
+    END-IF
+*
+    #TO-DATE         := ST-V.ISSUE-DATE (#POL-INDEX)
+    CALLNAT 'GDATESXX'
+      #PDA-GDATESXX
+    #WORK-ISSUE-DATE := #RETURN-CALC
+*
+    IF #AMOUNT LT #INTEREST
+      #WORK-AMOUNT := #ORIG-AMOUNT
+      RESET #ORIG-AMOUNT
+    ELSE
+      #WORK-AMOUNT := #INTEREST
+      SUBTRACT #INTEREST FROM #ORIG-AMOUNT
+    END-IF
+*
+    IF #WORK-AMOUNT GT 0
+      RESET #SG-TBL (*)
+      #TYPE := 'INPF'
+      PERFORM APPLY-LOAN-TRAN
+      ADD #WORK-AMOUNT TO #AMOUNT-APPLIED
+      PERFORM ACCT-REG
+    END-IF
+*
+    IF #ORIG-AMOUNT GT 0
+      RESET #SG-TBL (*)
+      #WORK-AMOUNT := #ORIG-AMOUNT
+      #TYPE := 'PRNF'
+      PERFORM APPLY-LOAN-TRAN
+      ADD #WORK-AMOUNT TO #AMOUNT-APPLIED
+      PERFORM ACCT-REG
+    END-IF
+*
+    ADD #AMOUNT TO #TOT-REFUND
+    ADD +1 TO #NUM-REFUNDS
+*
+    MOVE EDITED #AMOUNT (EM=ZZZ,ZZ9.99) TO #DISP-REFUND
+    move left #disp-refund to #disp-refund                     /* vt2
+    COMPRESS '$' #DISP-REFUND INTO #DISP-REFUND LEAVING NO
+    #NAME-ACCTG := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME,#MIDDLE-NAME,#LAST-NAME,#SUFFIX>)
+    PERFORM ACCT-REG-AND-NOTE
+*
+    ADD 1 TO #CNT
+    DISPLAY (1) #CNT
+      ST-V.ID-NUMBER
+      NAME
+      #AMOUNT (EM=Z,ZZZ,ZZ9.99)
+*
+    #HOLD-CUR-ACCT-UPDT   := ST-V.DATE-ACCT-UPDATE
+    ST-V.DATE-ACCT-UPDATE := #DATN
+    ST-V.DTS-DATN         := #DATN
+    ST-V.DTS-TIMN         := #TIME
+    RESET ST-V.OUT-TERM-REF-AMOUNT (*)
+      ST-V.OUT-TERM-REF-YEAR (*)
+      ST-V.OUT-TERM-REF-ENTRY-DATE (*)
+    UPDATE (0743)
+*
+  END-FIND
+*
+  END TRANSACTION
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE ACCT-REG-AND-NOTE
+*****************
+*
+RESET ACCT-REG-V
+ACCT-REG-V.ID-NUMBER                 := ST-V.ID-NUMBER
+ACCT-REG-V.PROCESS-IND               := ST-V.PROCESS-IND
+ACCT-REG-V.TRANSACTION-DATN          := #DATN
+ACCT-REG-V.ACCT-DATE                 := #DATN
+ACCT-REG-V.TRANSACTION-TIMN          := #TIME
+ACCT-REG-V.TERMINAL-ID               := *INIT-ID
+ACCT-REG-V.CLERK-ID                  := 'EDS'
+ACCT-REG-V.NAME                      := #NAME-ACCTG
+ACCT-REG-V.CASH-CODE                 := 'A'                 /* was 'P'
+ACCT-REG-V.TXN-CODE                  := 'RTRC'
+ACCT-REG-V.TXN-ACCT-NUMBER           := 111
+ACCT-REG-V.DEBIT-AMOUNT              := #AMOUNT
+ACCT-REG-V.DESCRIPTION               := 'Outs Term Ref Amt'
+*
+IF #HOLD-CUR-ACCT-UPDT = 0
+  ACCT-REG-V.DATE-LAST-ACCT-UPDATE   := #DATN
+ELSE
+  ACCT-REG-V.DATE-LAST-ACCT-UPDATE   := #HOLD-CUR-ACCT-UPDT
+END-IF
+*
+STORE ACCT-REG-V
+*
+COMPRESS 'Term ref ck for' #NOTE-YEAR-TEXT 'appl''d to CAP' #DISP-REFUND INTO #NOTE-TEXT(1)            /* PM1
+MOVE 1 TO #INT
+MOVE 'EDS' TO #CGA-CLERK
+CALLNAT 'E4205SDM' ST-V.ID-NUMBER #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+END-SUBROUTINE                                                       /* vt1 /\
+*
+END

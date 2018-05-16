@@ -1,0 +1,171 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Member Address Information
+* XML Request Parser
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    09072010       Initial Creation
+* YAK    06282012  YK1  Sync with CRM using ContactID
+********************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING MBCAN030
+LOCAL USING ERROR_L
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #ErrorCode    (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #TAB          (A1) CONST <H'09'>
+1 #Get          (A) DYNAMIC CONST <'0'>
+1 #Add          (A) DYNAMIC CONST <'1'>
+1 #Update       (A) DYNAMIC CONST <'2'>
+1 #Delete       (A) DYNAMIC CONST <'3'>
+1 #I            (I2)
+1 #II           (I2)
+1 #value        (A) DYNAMIC
+1 FUNCTION_CODE (A) DYNAMIC CONST <'ADDRESS'>
+1 #FIR-REQUEST  (A50)
+1 #ContactID    (N8)
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+#ContactID := F-GET-CONTACT-ID(<AddressRelInfo.CN>)
+DECIDE ON FIRST VALUE AddressRelInfo.ActionType
+  VALUE #Add, #Update, #Delete
+    PERFORM UPDATE-ADDRESS-TYPE
+  NONE VALUE
+    #ErrorCode := #ACTION-INVALID
+END-DECIDE
+PERFORM COMPOSE-XML
+*
+*************************************
+DEFINE SUBROUTINE UPDATE-ADDRESS-TYPE
+*************************************
+*
+AddressRelInfo.ActionType := #UPDATE
+CALLNAT 'MBCNN031' AddressRelInfo #ErrorCode
+IF #ErrorCode = '0'
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+END-SUBROUTINE
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberAddresses/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      AddressRelInfo.CN := VAL(#value)
+    END-IF
+  VALUE 'MemberAddresses/UserID/$'
+    AddressRelInfo.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/ActionType/$'
+    AddressRelInfo.ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberAddresses/SystemSource/$'
+    AddressRelInfo.SystemSource := *TRIM(XML_PARSER_CONTENT)
+* Below for Address Add/Update/Delete only
+  VALUE 'MemberAddresses/Addresses/AddressInfo'
+    #I := #I + 1
+    EXPAND ARRAY AddressRelArray TO (*:#I)
+    C@AddressRel := #I
+    RESET #II
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AddressPoolID/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8) THEN
+      AddressRelInfo.AddressPoolID(#I) := VAL(#value)
+    END-IF
+  VALUE 'MemberAddresses/Addresses/AddressInfo/AddressTypeCode/$'
+    AddressRelInfo.AddressTypeCode(#I) := *TRIM(XML_PARSER_CONTENT)
+*   VALUE 'MemberAddresses/Addresses/AddressInfo/Contacts/Contact'    
+*         #II := #II + 1
+*     EXPAND ARRAY Contact TO (*:*,*:#II)
+*     C@Contact(#I) := #II
+*   VALUE 'MemberAddresses/Addresses/AddressInfo/Contacts/Contact/ContactID/$'
+*     #value := *TRIM(XML_PARSER_CONTENT)
+*     IF #value IS (N8) THEN
+*       AddressRelInfo.AddrContactID(#I,#II) := VAL(#value)
+*     END-IF
+*   VALUE 'MemberAddresses/Addresses/AddressInfo/Contacts/Contact/SharingAddress/$'
+*     AddressRelInfo.SharingAddress(#I,#II) := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #ErrorCode <> '0'
+    #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  WHEN AddressRelInfo.ActionType <> #GET
+    PERFORM LOG-REQUESTS
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+COMPRESS
+  '<MemberAddresses>'
+  '<CN>' AddressRelInfo.CN '</CN>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '<Addresses>'
+  XML
+  '</Addresses>'
+  '</MemberAddresses>'
+  INTO RESPONSE-DATA LEAVING NO
+*
+END-SUBROUTINE
+******************************
+DEFINE SUBROUTINE LOG-REQUESTS
+******************************
+* save FIR request
+WRITE WORK FILE 2 AddressRelInfo.CN
+CLOSE WORK FILE 2
+* Update "Profile Update Date" on Web User File
+F-PROFILE-UPDATE-DATE(<AddressRelInfo.CN>)
+* Log CRM request
+CALLNAT 'MBRCRC' #ContactID FUNCTION_CODE                 /* YK1
+END-SUBROUTINE
+*
+END

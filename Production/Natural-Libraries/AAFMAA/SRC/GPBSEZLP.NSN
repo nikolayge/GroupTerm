@@ -1,0 +1,266 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : GPBPEZLP                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Issue EIL (EZPay) CAP loans or Reverse Payments       *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* PAM    07282008  None    Program Written                             *
+* bz1    05152013  Add #ERROR-MESSAGE to process  (OI-1998) 
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+*
+1 #MEMBER-CN              (N6)
+1 REDEFINE #MEMBER-CN
+ 2 #MEMBER-CN-A           (A6)
+1 #CAP-X                  (I2)
+1 #CLERK                  (A3)
+*
+LOCAL USING GONERLXX
+LOCAL USING C2500AAM
+LOCAL USING GPBAEZRV
+*
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER              (N6)
+ 2 REDEFINE ID-NUMBER
+   3 ID-NUMBER-A          (A6)
+ 2 DTS-DATN
+ 2 DTS-TIMN
+ 2 DATE-ACCT-UPDATE
+ 2 PROCESS-IND
+ 2 PAD-CODE
+ 2 NAME
+ 2 CAP-BILL-DATE
+ 2 INTRO-FLAG
+ 2 DEBIT-CREDIT-AMT
+ 2 APL-CNT
+ 2 EZPAY-CAP-LOAN-AMOUNT
+ 2 X-FIRST-PLACE-FEE      (9)
+ 2 X-INTEREST-RATE        (9)
+ 2 X-PRINCIPAL-CHG-CODE   (9)
+ 2 X-LOAN-DATE            (9)
+ 2 X-LOAN-DATE-2          (9)
+ 2 X-LOAN-AMOUNT          (9)
+ 2 X-LOAN-AMOUNT-2        (9)
+ 2 X-OLD-LOAN-AMT         (9)
+ 2 X-OLD-LOAN-AMT-2       (9)
+ 2 X-ACCUM-INTEREST       (9)
+ 2 X-ACCUM-INTEREST-2     (9)
+ 2 X-CAP-AMT              (9)
+ 2 X-CAP-AMT-2            (9)
+ 2 X-NXT-YR-ACCUM-INT     (9)
+ 2 X-NXT-YR-ACCUM-INT-2   (9)
+ 2 X-INTEREST-RECEIVED    (9)
+ 2 X-INTEREST-RECEIVED-2  (9)
+ 2 X-LPO-PMT-RCVD         (9)
+ 2 X-LPO-PMT-RCVD-2       (9)
+ 2 X-LPO-PRIOR-LOAN-BAL   (9)
+ 2 X-LPO-PRIOR-LOAN-BAL-2 (9)
+ 2 X-LPO-PRIOR-ACC-INT    (9)
+ 2 X-LPO-PRIOR-ACC-INT-2  (9)
+ 2 X-BILL-SW              (9)
+ 2 X-BILL-SW-2            (9)
+ 2 X-BILL-INTEREST-AMT    (9)
+ 2 X-BILL-INTEREST-AMT-2  (9)
+ 2 ISSUE-DATE             (9)
+ 2 PLAN                   (9)
+ 2 MODE                   (9)
+ 2 X-BILL-DOLLAR          (9)
+*
+1 TR-REG-V VIEW OF A-TRANSACTION-REGISTER
+ 2 ID-NUMBER
+ 2 PROCESS-IND
+ 2 NAME
+ 2 DATE-LAST-UPDATE
+ 2 TERMINAL-ID
+ 2 CLERK-ID
+ 2 TRANSACTION-DATN
+ 2 TRANSACTION-TIMN
+ 2 OLD-DATA               (1)
+ 2 NEW-DATA               (1)
+*
+1 #CURR-VAR-INT-RATE      (N7.4)
+1 #CURR-VAR-INT-RATE-PAR  (P2.3)
+1 #WORK-EZPAY-AMOUNT      (P5.2)
+1 #SG-TBL                 (15)
+ 2 #SG-CAT1               (A2)
+ 2 #SG-CAT2               (A2)
+ 2 #SG-AMT                (N6.2)
+1 #ILN1                   (I2)
+1 #ILN2                   (I2)
+1 #UPDATE-MODE            (L)
+1 #EXTRA-STOP             (L)
+1 #TIME-OF-UPDATE         (N7)
+1 #DATE-OF-UPDATE         (N8)
+1 #HOLD-CUR-ACCT-UPDT     (N8)
+1 #CMBX                   (A4)
+*
+1 #YYYYMMDD               (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-A                (A4)
+ 2 REDEFINE #YYYY-A
+  3 #CENT-A               (A2)
+  3 #YY-A                 (A2)
+ 2 #MM-A                  (A2)
+ 2 #DD-A                  (A2)
+*
+1 #MMDDYYYY               (A8)
+1 REDEFINE #MMDDYYYY
+ 2 #MM                    (A2)
+ 2 #DD                    (A2)
+ 2 #YYYY                  (A4)
+1 REDEFINE #MMDDYYYY
+ 2 #MMDDYYYY-N            (N8)
+*
+1 #ERROR-MESSAGE         (A75)         /* used only for  /* bz1
+END-DEFINE
+************************************************************************
+*
+#YYYYMMDD             := *DATN
+#MM                   := #MM-A
+#DD                   := #DD-A
+#YYYY                 := #YYYY-A
+*
+#TIME-OF-UPDATE       := *TIMN
+#DATE-OF-UPDATE       := *DATN
+#CURR-VAR-INT-RATE    := FUNCTION-INT-RATE(<'RATE5AB'>)
+#CURR-VAR-INT-RATE-PAR:= #CURR-VAR-INT-RATE
+#ILN1                 := 1
+#SCR-EFF-DT (1)       := #MMDDYYYY
+#SCR-CASH-CODE (1)    := 'A'
+#SCR-TRAN-CODE (1)    := 'PRNF'
+#UPDATE-MODE          := TRUE
+
+*
+FIND (1) ST-V WITH MEMBER-KEY = #MEMBER-CN-A
+  IF NO RECORDS FOUND
+    WRITE 'Did not apply loan - member not found for ' #MEMBER-CN-A
+  END-NOREC
+*
+  #SCR-ID-SSN (1)     := ST-V.ID-NUMBER
+  #HOLD-CUR-ACCT-UPDT := ST-V.DATE-ACCT-UPDATE
+  #YYYYMMDD           := ST-V.ISSUE-DATE (#CAP-X)
+  #WORK-EZPAY-AMOUNT  := ST-V.EZPAY-CAP-LOAN-AMOUNT
+  #SCR-TRAN-AMT (1)   := #WORK-EZPAY-AMOUNT
+  RESET ST-V.EZPAY-CAP-LOAN-AMOUNT
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-ISS-DT (1) LEAVING NO
+*
+  RESET #SG-TBL (*)
+  #ERROR-MESSAGE := ' '                                               /* bz1   
+  PERFORM APPLY-PRNP
+  IF #ERROR-MESSAGE <> ' '                                            /* bz1
+      WRITE 'Did not apply loan - ' #ERROR-MESSAGE  #MEMBER-CN-A      /* bz1
+      ESCAPE BOTTOM                                                   /* bz1
+  END-IF                                                              /* bz1
+  PERFORM ACCT-REG
+  PERFORM REVERSE-EZPAY-AMOUNT
+  UPDATE (0146)
+  END TRANSACTION
+END-FIND
+*
+************************************************************************
+DEFINE SUBROUTINE APPLY-PRNP
+************************************************************************
+*
+CALLNAT 'CPRNPSAM' #SCR-LINES
+                   #CURR-VAR-INT-RATE-PAR
+                   ST-V.X-INTEREST-RATE        (#CAP-X)
+                   ST-V.X-LOAN-DATE            (#CAP-X)
+                   ST-V.X-LOAN-AMOUNT          (#CAP-X)
+                   ST-V.X-ACCUM-INTEREST       (#CAP-X)
+                   ST-V.X-NXT-YR-ACCUM-INT     (#CAP-X)
+                   ST-V.X-OLD-LOAN-AMT         (#CAP-X)
+                   ST-V.X-CAP-AMT              (#CAP-X)
+                   ST-V.MODE                   (#CAP-X)
+                   ST-V.X-BILL-INTEREST-AMT    (#CAP-X)
+                   ST-V.X-INTEREST-RECEIVED    (#CAP-X)
+                   ST-V.X-PRINCIPAL-CHG-CODE   (#CAP-X)
+                   ST-V.X-BILL-DOLLAR          (#CAP-X)
+                   ST-V.APL-CNT
+                   ST-V.X-LOAN-DATE-2          (#CAP-X)
+                   ST-V.X-LOAN-AMOUNT-2        (#CAP-X)
+                   ST-V.X-ACCUM-INTEREST-2     (#CAP-X)
+                   ST-V.X-NXT-YR-ACCUM-INT-2   (#CAP-X)
+                   ST-V.X-OLD-LOAN-AMT-2       (#CAP-X)
+                   ST-V.X-CAP-AMT-2            (#CAP-X)
+                   ST-V.X-BILL-INTEREST-AMT-2  (#CAP-X)
+                   ST-V.X-INTEREST-RECEIVED-2  (#CAP-X)
+                   ST-V.INTRO-FLAG
+                   ST-V.X-LPO-PMT-RCVD         (#CAP-X)
+                   ST-V.X-LPO-PMT-RCVD-2       (#CAP-X)
+                   ST-V.X-LPO-PRIOR-LOAN-BAL   (#CAP-X)
+                   ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#CAP-X)
+                   ST-V.X-LPO-PRIOR-ACC-INT    (#CAP-X)
+                   ST-V.X-LPO-PRIOR-ACC-INT-2  (#CAP-X)
+                   ST-V.DATE-ACCT-UPDATE
+                   ST-V.DTS-TIMN
+                   #DATE-OF-UPDATE
+                   #TIME-OF-UPDATE
+                   #ILN1
+                   #ILN2
+                   #UPDATE-MODE
+                   #SG-TBL (1:15)
+                   ST-V.CAP-BILL-DATE
+                   ST-V.PROCESS-IND
+                   ST-V.NAME
+                   #CLERK
+                   #ERROR-MESSAGE                                        /* bz1 
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE ACCT-REG
+************************************************************************
+*
+CALLNAT 'C2520SAM'
+  #SCR-LINES
+  ST-V.ID-NUMBER
+  ST-V.PROCESS-IND
+  ST-V.INTRO-FLAG
+  ST-V.NAME
+  ST-V.PLAN        (1:9)
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.DATE-ACCT-UPDATE
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #ILN1
+  #HOLD-CUR-ACCT-UPDT
+  #CLERK
+  #EXTRA-STOP
+  #SG-TBL          (1:15)
+  #CMBX
+RESET #EXTRA-STOP
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE REVERSE-EZPAY-AMOUNT
+************************************************************************
+*
+#GPBAEZRV-MEM-CN         := ST-V.ID-NUMBER
+#GPBAEZRV-EZPAY-AMOUNT   := #WORK-EZPAY-AMOUNT
+#GPBAEZRV-ISSUE-DATE     := ST-V.ISSUE-DATE (#CAP-X)
+#GPBAEZRV-NAME           := ST-V.NAME
+#GPBAEZRV-DATE-OF-UPDATE := #DATE-OF-UPDATE
+#GPBAEZRV-TIME-OF-UPDATE := #TIME-OF-UPDATE
+#GPBAEZRV-CLERK          := #CLERK
+#GPBAEZRV-CASH-CODE      := 'A'
+#GPBAEZRV-CAP-X          := #CAP-X
+*
+CALLNAT 'GPBSEZRV'
+  #PDA-GPBAEZRV
+*
+END-SUBROUTINE
+*
+END

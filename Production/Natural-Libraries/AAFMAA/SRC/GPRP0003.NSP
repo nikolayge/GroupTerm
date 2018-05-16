@@ -1,0 +1,413 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPRP0003 (re-written ATHPNEWM) - Daily New Member E-Mail
+* Program writes information to the e-mail information file that is
+* being processed by Automated E-mail driver
+* (ATHPNEWM created a text file to FTP to AAFMAA server for manual
+* E-mail/merge process)
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+************************************************************************
+* YAK    09102009          Initial creation                            *
+* YAK    09102009    YK1   Add logic to create file for E-mail driver  *
+* YAK    09302009    YK2   Add new template for EzPay CAP policies     *
+* YAK    03022010    YK3   Fix logic to determine new CAP policy       *
+* YAK    06172010    YK4   Add logic to restrict emails                *
+* VXT    05182011    vxt1  Take the name, addr, rank from the new      *
+*                          location.                                   *
+* VXT    07122011    vt2   Fix the problem with not extracting the     *
+*                          addresses.                                  *
+* YAK    07152011    YK5   Reset #email field                          *
+* vxt    09272011    vt3   exclude the new CAP policy from the e-mail file.
+* YAK    06282012    YK6   Skip records with ContactID = 0 and notify  *
+*                          Production support                          *
+* TMT 06/16/2014     TT1  Contact Normalization - DOB and Sex          *
+* bz-Name 07/07/2017     Fine Names
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRA0005                  /* Fields to be passed to EmailCreator
+LOCAL USING GPRL0001                  /* Init properties
+LOCAL USING OBJLSTAT                  /* STATUS file data structure
+local using ADDA0001                  /* pda for the address            /* vt1
+LOCAL USING GPRL0EML                  /* PDA for email notification     /* YK6
+LOCAL
+*
+1 NEWM-FILE                  (A200)
+*
+1 MD-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A              (A6)
+  2 ENTRY-DATE
+  2 REDEFINE ENTRY-DATE
+    3 ENTRY-DATE-YYYY          (N4)
+    3 ENTRY-DATE-MM            (N2)
+    3 ENTRY-DATE-DD            (N2)
+  2 CODE
+  2 USER
+  2 REC-ISN
+  2 ISSUE-DATE
+*
+1 #TODAY                     (N8)
+1 #YYYYMMDD                  (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY                    (N4)
+  2 #MM                      (N2)
+  2 #DD                      (N2)
+*
+1 #INVERSE-DATE              (N8)
+*
+1 #ERR-MSG                   (A60)
+1 #I1                        (I2)
+*
+1 #MULTIPLE-OWNER            (L)
+1 #NON-INS-OWNER             (L)
+1 #OWNER-OCC-9               (9)
+  2 #OWNER-FLAG               (A1)
+  2 #OWNER-CN                 (N6/10)
+*
+  2 #OWNER-CN-BY-POL          (N6)
+  2 #OWNER-CN-SEG             (I2/9)
+  2 #ISS-DATE                 (N8/9)
+  2 #ISS-DATE-DISP            (A10/9)
+*
+  2 #BENE-TYPE                (A1/2)
+  2 #BENE-TEXT                (A60/10)
+*
+1 #DATN-A                    (A20)
+1 #OWNER-NOT-FOUND           (L)
+1 #EMAIL-INFORMATION
+  2 #INSURED-NAME              (A) DYNAMIC
+  2 #OWNER-NAME                (A) DYNAMIC
+  2 #OWNER-EMAIL               (A) DYNAMIC
+  2 #OWNER-RANK                (A3)
+  2 #SEX                       (A1)
+  2 #MILITARY-SERVICE          (A3)
+  2 #CN-NUMBER                 (N6)
+  2 #CERT-NUM                  (A16)
+  2 #POLICY                    (I2)
+  2 #CAP                       (L)
+**  2 #EZPAY-CAP                 (L)                             /* vt1
+  2 #ADDRESS-1                 (A70)                             /* vt1 was 25
+  2 #ADDRESS-2                 (A70)                             /* vt1 was 25
+  2 #ADDRESS-3                 (A70)                             /* vt1 was 25
+  2 #ZIP                       (N9)
+  2 REDEFINE #ZIP
+    3 #ZIP-5                   (A5)
+    3 #ZIP-4                   (A4)
+  2 #INS-MAIL-CODE             (A1)                   /* YK4
+* For Owner Name Formatting
+  2 #EDIT           (L)
+**  2 #FULL-RANK      (A23)                                      /* vt1 \/
+**  2 #PARM-1         (A2)
+**  2 #PARM-2         (P2)
+**  2 #RANK-DISPLAY   (A5)                                       /* vt1 /\
+  2 #MEMBER-KEY                (A7)
+  2 REDEFINE #MEMBER-KEY
+    3 #ID-NUMBER               (N6)
+*
+1 #CNT-1                     (P5)
+1 #CNT-2                     (P5)
+** 1 #CAP-LOAN-AMT              (A6) INIT <'$5,000'>                        /* vt1
+** 1 #NEW-CAP-MEMBER-TEMPLATE   (A3) INIT <'NMC'>                           /* vt1
+1 #NEW-MEMBER-TEMPLATE       (A3) INIT <'NM'>
+1 #RESTRICTED-EMAIL           (A3) CONST <'XXX'>     /* YK4
+1 #RESTRICTED-MAIL-CODE       (A1) CONST <'E'>       /* YK4
+*
+1 #contact-id                    (n8)                                       /* vt1 \/
+1 #cn                            (a6)
+1 #SALUTATION-WITH-NAME          (A) DYNAMIC
+1 #rank                          (A) Dynamic
+1 #e-mail                        (a70)
+1 #first-name                    (a25)
+1 #middle-name                   (a25)
+1 #last-name                     (a25)
+1 #suffix                        (a10)                                     /* vt1 /\
+*
+END-DEFINE
+DEFINE WORK FILE 1 #EMAIL-DAILY-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+************************************************************************
+*
+IF *TIMN LT 1200000       /* midnite till 12 noon (normal job time)
+  MOVE *DATN TO #YYYYMMDD     /* *DATN - 1 IS CONSIDERED TODAY
+  SUBTRACT 1 FROM #DD
+  IF #DD < 1
+    #DATN-A := FUNCTION-CALENDAR(<#YYYYMMDD,'Q'>)
+    #TODAY := VAL(#DATN-A)
+  ELSE
+    #TODAY := #YYYYMMDD
+  END-IF
+ELSE                  /* noon till midnite (if job is run early)
+  MOVE *DATN TO #TODAY
+END-IF
+*
+* move 20110922 to #today      /* vt3
+
+COMPUTE #INVERSE-DATE = 99999999 - #TODAY /* #today is really yest
+READ MD-V BY ENTRY-DATE FROM #INVERSE-DATE
+*
+  IF ENTRY-DATE  GT #INVERSE-DATE   /* ONLY YESTERDAY
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF CODE = 'N' OR = 'A'                                          /* PM3
+      AND MD-V.ISSUE-DATE NE 0
+    RESET EMAIL-INFORMATION #EMAIL-INFORMATION           /* YK1
+    FIND(1) ST-V WITH MEMBER-KEY = MD-V.ID-NUMBER-A
+      IF NO RECORDS FOUND
+        WRITE 'ST NOT FOUND USING MD ID-NUMBER'  MD-V.ID-NUMBER
+      END-NOREC
+*
+      IF (PROCESS-IND = 'S')    /* Bypass AFSC
+          OR (PROCESS-IND = 'C')   /* Bypass Contact/Pending Records
+          OR (ST-V.ID-NUMBER LT 1900) /* Bypass Samples                /* PM4
+        ESCAPE TOP
+      END-IF
+*
+* Check ContactID - send notification if not assigned  ***********     /* YK6 start
+      IF ST-V.MEMBER-CONTACT-ID = 0
+        RESET p_EMAIL
+        P_TO     := 'vtokmakova@aafmaa.com'
+        P_CC     := 'bzaslavskiy@aafmaa.com,ykegeles@aafmaa.com'
+        P_SUBJ   := '"Zero ContactID on Status"'
+        Compress 'ContactID = 0 found for CN' ST-V.ID-NUMBER
+          into P_MSG(1)
+        P_MSG(2) := 'when creating policy approval email'
+        P_MSG(3) := 'Skipping the record'
+        CALLNAT 'GPRS0EML' p_EMAIL
+      END-IF
+********************************************************************   /* YK6 end
+*
+      RESET #POLICY #CAP                                            /* PM4
+      FOR #I1 9 TO 1 STEP -1                                        /* PM4
+        IF ST-V.ISSUE-DATE (#I1) = MD-V.ISSUE-DATE                  /* PM4
+            AND ST-V.STATUS (#I1) = 'D'                             /* PM4
+          #POLICY       := #I1                                      /* PM4
+*
+          reset #pda-address                      /* vt2
+*
+          move st-v.member-contact-id to #add-contact-id #contact-id           /* vt1 \/
+*
+          #SALUTATION-WITH-NAME := 'S1'
+          CALLNAT 'GPRS0CNT' #CONTACT-ID #SALUTATION-WITH-NAME
+*          #SALUTATION-WITH-NAME := EDIT_NAME_LOWCASE (< #SALUTATION-WITH-NAME >) /* bz-Name
+          #owner-name := #SALUTATION-WITH-NAME
+*
+          move 'P' to #add-type
+          callnat 'ADDN0001' #pda-address
+          #address-1 :=  #add-line-1
+          #address-2 :=  #add-line-2
+          #address-3 :=  #add-line-3
+          #zip       :=  #add-zip-code
+*
+*          #ADDRESS-1    := ST-V.ADDRESS-1                           /* YK1
+*          #ADDRESS-2    := ST-V.ADDRESS-2                           /* YK1
+*          #ADDRESS-3    := ST-V.ADDRESS-3                           /* YK1
+*          #OWNER-EMAIL  := ST-V.INTERNET-ADDR                       /* YK1
+*
+          reset #e-mail                                              /* YK5
+          callnat 'emailn01' #contact-id #e-mail
+          #owner-email := #e-mail                                                  /* vt1 /\
+*
+*          #INSURED-NAME := ST-V.NAME                                /* YK1        /* vt1 \/
+          #insured-name := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME,#MIDDLE-NAME,#LAST-NAME,#SUFFIX>)
+*
+          #rank := '!I'
+          CALLNAT 'GPRS0CNT' #CONTACT-ID #rank
+          #owner-rank := #rank
+*          #OWNER-RANK   := ST-V.RANK                                /* YK1         /* vt1 /\
+*
+          RESET #SEX                                                /* TT1
+          #SEX := GET-GENDER(<ST-V.MEMBER-CONTACT-ID>)              /* TT1
+*          #ZIP          := ST-V.ZIP-CODE                                     /* vt1
+          #MILITARY-SERVICE := ST-V.MILITARY-SERVICE                /* YK1
+*          #OWNER-NAME   := ST-V.NAME                                /* YK1   /* vt1
+          #CN-NUMBER    := ST-V.ID-NUMBER                           /* YK1
+          #INS-MAIL-CODE:= ST-V.INS-MAIL-CODE                       /* YK4
+**          RESET #CAP                                                        /* vt1
+          IF ST-V.INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q'
+              AND ST-V.CONV-DURATION(#I1) = 999                     /* PM5
+            move true to #cap                                              /* vt3 \/
+*            IF ST-V.X-LOAN-AMOUNT(#I1) = 0 AND                    /* YK2
+*                ST-V.X-LOAN-DATE(#I1)   = 0 AND                    /* YK2
+*                ST-V.X-ALT-LP-IND(#I1) = 'E' AND                   /* YK2
+*                ST-V.X-ALT-LP-AMT(#I1)  NE 0                       /* YK2
+*              #policy := 0          /* temp fix
+*              write 'ezpay CAP ' #CN-NUMBER
+*              escape bottom        /* ignore ez-pay                        /* vt3 /\
+*              #EZPAY-CAP := TRUE
+*              CAP-LOAN-AMOUNT := #CAP-LOAN-AMT
+*            ELSE                                /* YK2                        /* vt1 \/
+*              IF ST-V.X-LOAN-DATE(#I1) >= ST-V.ISSUE-DATE(#I1)    /* YK3
+*                MOVE TRUE TO #CAP
+**                CAP-LOAN-AMOUNT := #CAP-LOAN-AMT                  /* YK1
+*              END-IF                                              /* YK3      /* vt1 /\
+*            END-IF                                    /* vt3
+          END-IF
+          ESCAPE BOTTOM                                             /* PM4
+        END-IF                                                      /* PM4
+      END-FOR                                                       /* PM4
+    END-FIND
+    IF #POLICY = 0                                                /* PM4
+      ESCAPE TOP                                                  /* PM4
+    END-IF                                                        /* PM4
+*
+    if #cap                            /* vt3 \/
+      escape top
+    end-if                             /* vt3 /\
+*
+    RESET #CERT-NUM                /* insured certificate number
+    CALLNAT 'GPLNMSXX' #CERT-NUM #CN-NUMBER #POLICY
+*
+    CALLNAT 'GOWNRSXX' MD-V.ID-NUMBER
+      #NON-INS-OWNER
+      #MULTIPLE-OWNER
+      #OWNER-OCC-9 (1:9)
+* If owner is not the same person as insured - get owner information
+* if exists, populate owner name, rank, override address
+* and email fields with owner address
+    RESET #OWNER-NOT-FOUND
+    IF #NON-INS-OWNER
+      IF #OWNER-CN(#POLICY,1) <> 0
+        #ID-NUMBER := #OWNER-CN(#POLICY,1)
+        PERFORM GET-OWNER-INFORMATION
+      ELSE
+        #OWNER-NOT-FOUND := TRUE
+      END-IF
+    END-IF
+* If owner information is not available use member name, rank,
+* address and e-mail
+    IF #OWNER-NOT-FOUND
+      IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+        #ID-NUMBER := LINKED-CN(1)
+        PERFORM GET-OWNER-INFORMATION
+      END-IF
+    END-IF
+*
+    IF #OWNER-EMAIL = ' ' OR = '?' OR = '999'
+      ESCAPE TOP           /* bypass if member doesn't have email address
+    END-IF
+*
+* Format rank
+**    CALLNAT 'GRANKSXX' #PARM-1 #OWNER-RANK #MILITARY-SERVICE        /* vt1 \/
+**      #EDIT #PARM-2 #FULL-RANK #RANK-DISPLAY
+* from G3500SAD
+**    IF #FULL-RANK = ' '
+**      DECIDE ON FIRST VALUE #SEX
+**        VALUE 'M'
+**          #FULL-RANK := 'Mr.'
+**        VALUE 'F'
+**          #FULL-RANK := 'Ms.'
+**        NONE VALUE
+**          IGNORE
+**      END-DECIDE
+**    END-IF
+*
+**    IF #CAP
+**      #CNT-2 := #CNT-2 + 1
+**      TEMPLATE-TYPE := #NEW-CAP-MEMBER-TEMPLATE
+**    ELSE                                                           /* vt1 /\
+    #CNT-1 := #CNT-1 + 1
+    TEMPLATE-TYPE := #NEW-MEMBER-TEMPLATE
+**    END-IF                                                         /* vt1
+    PERFORM CREATE-EMAIL-INFO
+  END-IF
+END-READ
+*
+WRITE ' Daily New Member Emails - NON CAP ' #CNT-1
+** WRITE ' Daily New Member Emails - CAP     ' #CNT-2                /* vt1
+*
+***************************************
+DEFINE SUBROUTINE GET-OWNER-INFORMATION                      /* YK1
+***************************************
+*
+FIND(1) ST-V WITH MEMBER-KEY = #MEMBER-KEY
+  IF NO RECORDS FOUND
+    #OWNER-NOT-FOUND := TRUE
+  END-NOREC
+*
+  reset #pda-address                      /* vt2
+*
+  move st-v.member-contact-id to #add-contact-id #contact-id           /* vt1 \/
+*
+/* get the salutation with name
+  #SALUTATION-WITH-NAME := 'S1'
+  CALLNAT 'GPRS0CNT' #CONTACT-ID #SALUTATION-WITH-NAME
+*  #SALUTATION-WITH-NAME := EDIT_NAME_LOWCASE (< #SALUTATION-WITH-NAME >) /* bz-Name
+  #owner-name := #SALUTATION-WITH-NAME
+*  #OWNER-NAME       := ST-V.NAME                                     /* vt1 /\
+*
+/* get the rank
+  #rank := 'I'
+  CALLNAT 'GPRS0CNT' #CONTACT-ID #rank
+  #owner-rank := #rank
+*  #OWNER-RANK       := ST-V.RANK
+  RESET #SEX                                                /* TT1
+  #SEX := GET-GENDER(<ST-V.MEMBER-CONTACT-ID>)              /* TT1
+
+*
+/* get the address
+  move 'P' to #add-type                                               /* vt1 \/
+  callnat 'ADDN0001' #pda-address
+  #address-1 :=  #add-line-1
+  #address-2 :=  #add-line-2
+  #address-3 :=  #add-line-3
+  #zip       :=  #add-zip-code
+*  #ADDRESS-1        := ST-V.ADDRESS-1
+*  #ADDRESS-2        := ST-V.ADDRESS-2
+*  #ADDRESS-3        := ST-V.ADDRESS-3
+*  #ZIP              := ST-V.ZIP-CODE
+*
+*/ Get the e-mail
+  reset #e-mail                                              /* YK5
+  callnat 'emailn01' #contact-id #e-mail
+  #owner-email := #e-mail
+*  #OWNER-EMAIL      := ST-V.INTERNET-ADDR                           /* vt1 /\
+*
+  #INS-MAIL-CODE    := ST-V.INS-MAIL-CODE                    /* YK4
+END-FIND
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CREATE-EMAIL-INFO                          /* YK1
+***********************************
+*
+* TEMPLATE-TYPE
+* PENDING-CN
+* POLICY-NUMBER
+* INSURED-NAME
+* OWNER-NAME
+* OWNER-EMAIL
+* ADDRESS-LINE-1
+* ADDRESS-LINE-2
+* ADDRESS-LINE-3
+* CAP-LOAN-AMOUNT for CAP policies
+*
+EMAIL-INFORMATION.ZIP-CODE := #ZIP-5
+IF #ZIP-4 NOT = ' ' AND #ZIP-4 NOT = '0000'
+  COMPRESS EMAIL-INFORMATION.ZIP-CODE #ZIP-4 INTO EMAIL-INFORMATION.ZIP-CODE
+    WITH DELIMITER '-'
+END-IF
+ADDRESS-LINE-1    := #ADDRESS-1
+ADDRESS-LINE-2    := #ADDRESS-2
+ADDRESS-LINE-3    := #ADDRESS-3
+OWNER-NAME        := #OWNER-NAME
+** OWNER-RANK        := #FULL-RANK                                   /* vt1  ???? not sure for this change
+owner-rank        := #owner-rank                                     /* vt1
+INSURED-NAME      := #INSURED-NAME
+IF #INS-MAIL-CODE = #RESTRICTED-MAIL-CODE               /* YK4
+  OWNER-EMAIL     := #RESTRICTED-EMAIL                  /* YK4
+ELSE                                                    /* YK4
+  OWNER-EMAIL     := #OWNER-EMAIL
+END-IF                                                  /* YK4
+POLICY-NUMBER     := #CERT-NUM
+PENDING-CN    := DAL-CN := #CN-NUMBER
+WRITE WORK FILE 1 EMAIL-INFORMATION
+*
+END-SUBROUTINE
+END

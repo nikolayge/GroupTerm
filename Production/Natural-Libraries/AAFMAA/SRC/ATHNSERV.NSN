@@ -1,0 +1,474 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*********************************************************
+* Program : ATHNSERV                                    *
+*                                                       *
+* Function : calculate service, admin  and sas fees     * 
+*                                                       * 
+* vxt 12/03/2017 Initial creation                       *
+*********************************************************
+
+
+
+define data
+parameter
+1 #id-number    (n6)
+1 #segment      (n2)
+1 #start-year   (n6)
+1 #end-year     (n6)
+1 #issue-date   (n8)
+1 #split-ind    (n1)
+1 #wh-count     (n2)
+1 #tot-admin     (n7.2)
+1 #TOT-ACQ-COST  (n7.2)
+1 #tot-liv-svc   (n7.2)
+1 #tot-sas       (n7.2)
+1 #tot-oo-cred   (n7.2)
+1 #tot-coi       (n7.2)
+1 #tot-svc-fee   (n7.2)
+1 #found-oldest  (l)                  
+1 #mon-tbl       (a6/100)             
+1 #k             (i2)                 
+1 #nbr-of-active-months (n6)                  
+1 #nbr-of-total-months  (n6)                  
+*
+LOCAL USING SVCA0001
+local
+1 STAT view of a-status
+  2 id-number
+  2 process-ind
+  2 intro-flag
+  2 military-service
+  2 number-memberships
+  2 status          (9)
+  2 pay-status      (9)
+  2 issue-date      (9)
+  2 MONTH-ALLOC-AMT (9)
+  2 face-amount     (9)
+  2 num-mbrships    (9)
+  2 EXPIRY-DAY      (9)
+*
+1 a-stat view of a-status                              
+  2 id-number
+  2 issue-date(9)
+  2 status    (9)                         
+1 #out-file
+  2 #issue-date-out    (n8)
+  2 #segment-out       (n1)
+  2 #status            (a1)
+1 #sorted-policy
+  2 #iss-date   (a8/9)
+  2 #segm       (n1/9)
+  2 #oldest     (l/9)
+  2 #stat       (a1/9)                    
+1 #idx (i2)
+1 #idx1 (i2)                              
+
+1 #found-segm    (n1)                             
+1 #issue-date-a  (a8)                                   
+
+*
+1 VA-V VIEW OF A-VA-HISTORY
+  2 RECORD-KEY      (N15)
+  2 REDEFINE RECORD-KEY
+    3 ID-NO      (N6)
+    3 ISS-DT     (N8)
+    3 SPL-IND    (N1)
+  2 YEAR-MONTH-M          (100)
+  2 ACCUM-CASH-VALUE-M    (100)
+  2 CASH-VALUE-M          (100)
+  2 DEATH-BENEFIT-M       (100)
+  2 PREMIUM-M             (200)
+  2 COST-OF-INSURANCE-M   (100)
+  2 INTEREST-M            (100)
+  2 PRORAT-LOAN-BAL-M     (100)
+  2 PRORAT-LN-ACC-INT-M   (100)
+  2 MONTH-IND-M           (100)
+  2 ISSUE-PLAN
+*
+1 NT-V VIEW OF A-NOTES
+  2 NOTE-TEXT   (A60/60)
+  2 REDEFINE NOTE-TEXT   /* Opt-Out Message
+    3 OO-NOTE-TEXT-OCC (60)
+      4 OO-TEXT-FST  (A34) /*'*#OPTED-OUT OF LIVING SERVICES ON 05/23/2005'
+      4 OO-DATE-MM   (A2)
+      4 OO-DATE-F1   (A1)
+      4 OO-DATE-DD   (A2)
+      4 OO-DATE-F2   (A1)
+      4 OO-DATE-YYYY (A4)
+      4 OO-TEXT-LST  (A16)
+  2 REDEFINE NOTE-TEXT        /* DE/GF Message
+    3 DEGF-NOTE-TEXT-OCC (60)
+      4 DEGF-TEXT-FST    (A11)  /* '*#DE-GF ON 03/18/2004'
+      4 DEGF-DATE-MM   (A2)
+      4 DEGF-DATE-F1   (A1)
+      4 DEGF-DATE-DD   (A2)
+      4 DEGF-DATE-F2   (A1)
+      4 DEGF-DATE-YYYY (A4)
+      4 DEGF-TEXT-LST  (A39)
+*
+1 #SVC-ISSUE-DATE              (N8)
+1 REDEFINE #SVC-ISSUE-DATE
+  2 #SVC-ISSUE-DATE-YYYYMM     (N6)
+  2 #SVC-ISSUE-DATE-DD         (N2)
+1 #SVC-TERMINATION-DATE        (N8)
+1 REDEFINE #SVC-TERMINATION-DATE
+  2 #SVC-TERMINATION-YYYYMM    (N6)
+  2 #SVC-TERMINATION-DD        (N2)
+*
+1 #SVC-FEE-TBL-ENTRIES  (N2) INIT <13>  /* must match below
+1 #SVC-FEE-TBL     /* m/e date implemented
+  2 #SVC-FEE-TBL-1  (A14) INIT <'200307-320-274'>
+  2 #SVC-FEE-TBL-2  (A14) INIT <'200407-325-274'> /* Missed on 7/1/2004
+  2 #SVC-FEE-TBL-4  (A14) INIT <'200507-334-288'>
+  2 #SVC-FEE-TBL-5  (A14) INIT <'200607-348-300'>
+  2 #SVC-FEE-TBL-6  (A14) INIT <'200707-360-310'>
+  2 #SVC-FEE-TBL-7  (A14) INIT <'200807-368-317'>
+  2 #SVC-FEE-TBL-8  (A14) INIT <'200907-389-335'>
+  2 #svc-fee-tbl-9  (a14) INIT <'201201-403-347'>
+  2 #svc-fee-tbl-10 (a14) INIT <'201301-410-353'>
+  2 #svc-fee-tbl-11 (a14) INIT <'201401-416-358'>
+  2 #svc-fee-tbl-12 (a14) INIT <'201501-423-364'>
+  2 #svc-fee-tbl-13 (a14) INIT <'201601-423-364'>   
+  2 #svc-fee-tbl-14 (a14) INIT <'201701-426-366'>   
+* There is really 1 less occurrance than the above number
+1 REDEFINE #SVC-FEE-TBL
+  2 #SVC-FEE-OCC   (13)
+    3 #SVC-FE-DATE      (N6)
+    3 #SVC-FE-FIL1      (A1)
+    3 #SVC-FE           (N1.2)
+    3 #SVC-FE-FIL2      (A1)
+    3 #SVC-LIV-SVC      (N1.2)
+*
+1 #MORT-PCT  (N0.2)
+1 #MORT-PCT-ENTRIES  (N2) INIT <2>  /* must match below
+1 #MORT-PCT-TBL     /* m/e date implemented
+  2 #M-P-TBL-1  (A9) INIT <'200307-73'>
+  2 #M-P-TBL-2  (A9) INIT <'200601-75'>
+1 REDEFINE #MORT-PCT-TBL
+  2 #MORT-PCT-OCC   (2)
+    3 #MORT-PCT-DATE (N6)
+    3 #MORT-PCT-FIL1 (A1)
+    3 #MORT-PERCENT  (N0.2)
+*
+1 #start-key  (n15)
+1 redefine #start-key
+  2 #id-nbr-start   (n6)
+  2 #iss-date-start (n8)
+  2 #spl-ind-start  (n1)
+*
+1 #end-key  (n15)
+1 redefine #end-key
+  2 #id-nbr-end  (n6)
+  2 #iss-date-end (n8)
+  2 #spl-ind-end  (n1)
+*
+1 #m    (i2)                     
+1 #l    (i2)
+*
+1 #start-year-mm   (n6)
+1 #end-year-mm     (n6)
+1 #nxt             (l)
+1 #i               (i2)
+1 #i1              (i2)
+1 #svc-fee         (n7.2)
+1 #liv-svc         (n7.2)
+1 #sas             (n7.2)
+1 #oo-cred         (n7.2)
+1 #coi             (n7.2)
+1 #admin           (n7.2)
+1 #acq-cost        (n7.2)
+1 #process-date    (n6)                             
+1 #COI-ADJ         (n3.2/9)                         
+1 #NXT-PRM-ADJ     (p1.2)                           
+1 #oo-eff-date     (n8)
+1 redefine #oo-eff-date
+  2 #OO-EFF-DATE-YYYYMM (n6)
+1 #DEGF-EFF-DATE   (n8)
+1 redefine #degf-eff-date
+  2 #DEGF-EFF-DATE-YYYYMM (n6)
+1 #YYYYMMDD        (n8)
+1 redefine #yyyymmdd
+  2 #yyyy    (n4)
+  2 #mm      (n2)
+  2 #dd      (n2)
+1 redefine #yyyymmdd
+  2 #yyyymmdd-a (a8)
+1 #curr-year (n6)
+1 redefine #curr-year
+  2 #curr-year-yyyy  (n4)
+  2 #curr-year-mm    (n2)
+*
+1 #year-month-m    (n6)
+1 redefine #year-month-m
+  2 #year-m     (n4)
+  2 #month-m    (n2)
+*
+1 #year-month   (a6)                                          
+1 #found                  (l)                              
+end-define
+*
+move #start-year to #curr-year
+reset #tot-admin
+  #TOT-ACQ-COST
+  #tot-liv-svc
+  #tot-sas
+  #tot-oo-cred
+  #tot-coi
+  #tot-svc-fee
+*
+find(1) stat with stat.id-number = #id-number
+  iF  (STAT.ISSUE-DATE (#segment) GE 19970101)
+      AND (MONTH-ALLOC-AMT (#segment) NE 999.99)
+    MOVE TRUE TO #NXT
+  END-IF
+  move stat.issue-date(#segment) to #issue-date
+  move #issue-date to  #issue-date-a
+end-find
+*
+reset #found-oldest                                              
+perform determine-oldest-policy                                  
+*
+#SERVICES-CN        := #id-number
+#SERVICES-PARM-DATE := *DATN
+CALLNAT 'SVCN0001'
+  #PDA-AAFMAA-SERVICES
+#SVC-TERMINATION-DATE := #SERVICES-TERMINATION-DATE
+#SVC-ISSUE-DATE       := #SERVICES-ISSUE-DATE
+IF #SVC-TERMINATION-DATE = 0
+  #SVC-TERMINATION-DATE := 99999999
+END-IF
+*
+reset #start-key #end-key
+#id-nbr-start    := #id-nbr-end := #id-number
+#iss-date-start  := #issue-date
+#iss-date-end    := #issue-date
+#spl-ind-start   := #split-ind
+#spl-ind-end     := #split-ind
+*
+compute #nbr-of-total-months = #end-year - #start-year  + 1                       
+RESET #ADMIN #ACQ-COST
+READ VA-V LOGICAL WITH RECORD-KEY FROM #START-KEY THRU #END-KEY
+*
+  FOR1. for #i 1  100 /* 13
+    if year-month-m(#i) lt #start-year
+      escape top
+    end-if
+    if year-month-m(#i) gt #end-year
+      escape bottom (for1.)
+    end-if
+*
+    move va-v.year-month-m(#i) to #year-month-m
+    move va-v.year-month-m(#i) to #year-month                               
+    examine #mon-tbl(*) for #year-month giving index #idx                  
+    if #idx gt 0
+      move TRUE to #found
+    end-if                                                                 
+*
+    IF (va-v.year-month-m(#i) LT #SVC-FE-DATE (1))
+        OR ( #NXT and va-v.year-month-m(#i) ge 200601 AND (stat.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+        OR (MILITARY-SERVICE = 'EMP'))
+        or #found                                       
+      RESET #SVC-FEE #LIV-SVC #SAS #OO-CRED
+    ELSE
+      for2. FOR #I1 1 TO #SVC-FEE-TBL-ENTRIES
+        IF  (#I1 = #SVC-FEE-TBL-ENTRIES)
+            OR (va-v.year-month-m(#i) LT #SVC-FE-DATE (#I1 + 1))
+          MOVE #SVC-FE (#I1)      TO #SVC-FEE
+          MOVE #SVC-LIV-SVC (#I1) TO #LIV-SVC
+          COMPUTE #SAS            = #SVC-FEE - #LIV-SVC
+          ESCAPE BOTTOM (for2.)
+        END-IF
+      END-FOR  /* for2
+    END-IF
+*
+    if not #found-oldest                                              
+      reset #SVC-FEE #LIV-SVC #sas
+    end-if                                                            
+*
+    IF PROCESS-IND = 'O' OR = 'D'  /* OPTED-OUT or DE-GF
+        AND (NUMBER-MEMBERSHIPS NE 0)
+      MOVE VA-v.YEAR-MONTH-M (#i) TO #PROCESS-DATE
+*         write '=' #id-number
+      CALLNAT 'GOPTOSXX'
+        #id-number
+        #PROCESS-DATE      /* DW18
+        stat.STATUS          (1:9)
+        PAY-STATUS      (1:9)
+        stat.ISSUE-DATE      (1:9)
+        MONTH-ALLOC-AMT (1:9)
+        FACE-AMOUNT     (1:9)
+        NUM-MBRSHIPS    (1:9)
+        EXPIRY-DAY      (1:9)
+        #COI-ADJ        (1:9)
+        #l
+        #NXT-PRM-ADJ
+        #OO-EFF-DATE
+        #DEGF-EFF-DATE
+*
+      IF PROCESS-IND = 'O' /* OPTED-OUT of sharing services
+        MOVE #OO-EFF-DATE TO #DEGF-EFF-DATE /* when to apply 3.34
+        MOVE #OO-EFF-DATE TO #YYYYMMDD /* Create real O/O EFF DATE
+        ADD 1 TO #MM
+        IF #MM GT 12
+          SUBTRACT 12 FROM #MM
+          ADD 1 TO #YYYY
+        END-IF
+        MOVE #YYYYMMDD TO #OO-EFF-DATE
+        IF #PROCESS-DATE GE 200512  /*changed de-gf process
+          MOVE #YYYYMMDD TO #DEGF-EFF-DATE
+        END-IF
+      END-IF
+*
+      IF stat.PROCESS-IND = 'D' /* DE-GF
+        MOVE #DEGF-EFF-DATE TO #YYYYMMDD  /* to start $3.34 add to COI
+        IF #PROCESS-DATE = 200512  /* chged de-gf process
+          ADD 1 TO #MM               /* Only for 12/1/2005
+          IF #MM GT 12
+            SUBTRACT 12 FROM #MM
+            ADD 1 TO #YYYY
+          END-IF
+        END-IF
+        MOVE #YYYYMMDD TO #DEGF-EFF-DATE
+      END-IF
+    END-IF
+*
+    RESET #OO-CRED
+    IF (PROCESS-IND = 'O') AND (va-v.year-month-m(#i)= 200512)
+      CALLNAT 'COOCRSXX' #ID-NUMBER
+        #ISSUE-DATE #OO-CRED
+      ADD #OO-CRED TO #SVC-FEE
+    END-IF
+*
+*
+    IF (stat.PROCESS-IND = 'O') AND (va-v.year-month-m(#i) GE 200601)
+        AND (va-v.year-month-m(#i) GE #DEGF-EFF-DATE-YYYYMM)
+      IF (#NXT AND (va-v.year-month-m(#i) GE 200601))
+        IGNORE
+      ELSE
+        COMPUTE #OO-CRED = #LIV-SVC * -1
+        SUBTRACT #LIV-SVC FROM #SVC-FEE
+      END-IF
+    END-IF
+*
+    IF   (#OO-EFF-DATE NE 0)
+        AND (va-v.year-month-m(#i) GE #OO-EFF-DATE-YYYYMM)
+        and (VA-v.COST-OF-INSURANCE-M  (#i) gt 0)                              
+      SUBTRACT #COI-ADJ (#segment) FROM #SVC-FEE
+    END-IF
+*
+
+    IF  NOT #NXT
+      for3. FOR #I1 1 TO #MORT-PCT-ENTRIES
+        IF  (#I1 = #MORT-PCT-ENTRIES)
+            OR (va-v.year-month-m(#i) LT #MORT-PCT-DATE (#I1 + 1))
+          MOVE #MORT-PERCENT (#I1) TO #MORT-PCT
+          ESCAPE BOTTOM (for3.)
+        END-IF
+      END-FOR
+*
+      if  #found-oldest                                                       
+        ignore
+      end-if                                                                  
+*
+      compute rounded #coi = (VA-v.COST-OF-INSURANCE-M  (#i) - #svc-fee) * #mort-pct                        
+      compute rounded #admin = VA-v.COST-OF-INSURANCE-M  (#i) - #coi - #svc-fee                             
+    else
+      RESET #ADMIN #ACQ-COST
+      MOVE VA-v.PRORAT-LN-ACC-INT-M (#i) TO #ADMIN
+      MOVE VA-v.PRORAT-LOAN-BAL-M(#i) TO #ACQ-COST
+      IF  NOT ((#SERVICES AND #OL-IND)
+          AND (va-v.year-month-m(#i) GE #SVC-ISSUE-DATE-YYYYMM)
+          AND (va-v.year-month-m(#i) LT #SVC-TERMINATION-YYYYMM))
+        move VA-v.COST-OF-INSURANCE-M  (#i) to #coi                                                       
+        COMPUTE #SAS = #SVC-FEE - #LIV-SVC
+*
+        IF  #ADMIN LE #SAS
+          RESET #SAS
+        ELSE
+          if (#wh-count gt 0) or sec-cn(<stat.id-number>)                         
+            reset #sas
+          end-if
+          COMPUTE #ADMIN = #ADMIN - #SAS
+        END-IF
+*
+        MOVE #SAS TO #SVC-FEE
+        RESET #LIV-SVC #OO-CRED
+      ELSE
+        compute #coi = VA-v.COST-OF-INSURANCE-M  (#i) - #svc-fee                                      
+      END-IF
+    END-IF
+*
+    if #coi le 0
+      reset #svc-fee #liv-svc #sas #oo-cred
+    end-if
+*
+    if #admin lt 0
+      reset #admin
+    end-if
+*
+    iF #YEAR-M = #CURR-year-YYYY
+      add 1 to #nbr-of-active-months                                       /* vt 08/21/2017
+      move  va-v.year-month-m(#i) to #year-month                /* vt 08/22/2017  \/
+      if not #found                                      /* vt 08/25/2017
+        if #found-oldest                                                                               /* vt 09/13/2017
+          add 1 to #k
+          move #year-month to #mon-tbl(#k)                          /* vt 08/22/2017  /\
+        end-if                                                                                       /* vt 09/13/2017
+      end-if                                             /* vt 08/25/2017
+
+      ADD #SVC-FEE  TO #TOT-SVC-FEE
+      ADD #LIV-SVC  TO #TOT-LIV-SVC
+      ADD #SAS      TO #TOT-SAS
+      ADD #OO-CRED  TO #TOT-OO-CRED
+      ADD #COI      TO #TOT-COI
+      ADD #ACQ-COST TO #TOT-ACQ-COST
+      ADD #ADMIN    TO #TOT-ADMIN
+    end-if
+  end-for
+*
+  add 1 to #wh-count
+end-read
+*
+*****************
+define subroutine determine-oldest-policy
+*****************
+*
+reset #found-oldest
+find  a-stat with  id-number eq #id-number
+*
+  for  #i 1 9
+    if a-stat.issue-date(#i) ne 0
+      move a-stat.issue-date(#i)  to #issue-date-out
+      move #i                   to #segment-out
+      move a-stat.status(#i)  to #status
+      write work 11 #out-file
+    end-if
+  end-for
+*  
+  read work 11 #out-file
+end-all
+*
+sort by #issue-date-out   using #segment-out #status
+  add 1 to #m
+  move #issue-date-out to #sorted-policy.#iss-date(#m)
+  move #segment-out    to #sorted-policy.#segm     (#m)
+  move #status         to #sorted-policy.#stat (#m)
+end-sort
+reset #oldest(*)
+examine  #stat(*) for 'D' giving index #idx1
+if #idx1 gt 0
+  move TRUE to #oldest(#idx1)
+end-if
+*
+examine #sorted-policy.#iss-date(*) for #issue-date-a giving index #idx
+if #idx gt 0
+  move #oldest(#idx) to #found-oldest
+  move #segm(#idx)   to #found-segm
+end-if
+*
+end-subroutine
+end

@@ -1,0 +1,204 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PMBN00WS
+* Submit EMSI Request 
+* Try PMD without Password in TMPL - if works change to one TMPL  (!)
+*
+* bz 6/26/2015  bz OI-3583
+DEFINE DATA 
+PARAMETER 
+1 p_AT-NUMBER      (N6)  
+1 p_Vendor         (A10)
+1 p_RESPONSE-MSG   (A)  DYNAMIC
+1 p_RC             (N4)
+
+* -------------------------------------------------------------------------------------- 
+LOCAL 
+1 XML              (A)  DYNAMIC 
+1 f_XML_EMSI_TMPL  (A)  DYNAMIC  INIT <'/usr/SAG/APPS/AT/EMSI_TMPL.XML'> 
+1 f_XML_EMSI_REQ   (A)  DYNAMIC  INIT <'/usr/SAG/APPS/AT/EMSI_REQ_@CN_@DATE.XML'>
+1 f_XML_EMSI_RES   (A)  DYNAMIC  INIT <'/usr/SAG/APPS/AT/EMSI_RES_@CN_@DATE.XML'>  
+*
+1 f_XML_PMD_TMPL   (A)  DYNAMIC  INIT <'/usr/SAG/APPS/AT/PMD_TMPL.XML'>     
+1 f_XML_PMD_REQ    (A)  DYNAMIC  INIT <'/usr/SAG/APPS/AT/PMD_REQ_@CN_@DATE.XML'>
+1 f_XML_PMD_RES    (A)  DYNAMIC  INIT <'/usr/SAG/APPS/AT/PMD_RES_@CN_@DATE.XML'>  
+*
+1 f_XML_TMPL       (A)  DYNAMIC 
+1 f_XML_REQ        (A)  DYNAMIC
+1 f_XML_RES        (A)  DYNAMIC
+*
+1 v_A              (A)  DYNAMIC 
+1 #b               (I4)
+1 #e               (I4)
+1 #l               (I4)
+* --------------------------------------------------------------------------------------
+1 v_Env            (A) DYNAMIC 
+1 v_Res            (A) DYNAMIC 
+1 v_RC             (I4)
+1 v_NAT_RC         (I4)
+1 URL_Test         (A)  DYNAMIC  INIT <'http://192.168.50.71:55055/wsIAS.asmx/Test'>   /* bz OI-3583
+1 URL_EMSI         (A)  DYNAMIC  INIT <'http://192.168.50.71:55055/wsIAS.asmx/wsEMSI'> /* bz OI-3583
+1 URL_PMD          (A)  DYNAMIC  INIT <'http://192.168.50.71:55055/wsIAS.asmx/wsPMD'>  /* bz OI-3583
+1 URL_wsIAS        (A)  DYNAMIC 
+* ---------------------------------------------------------------------------------------
+END-DEFINE 
+* 
+* ON ERROR
+*   PRINT  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+* END-ERROR
+*
+* INPUT 
+*       5x 'Warning'(I)                  //
+*       5x '-'(30)                       /
+*       5x 'You are running new version' //
+*       5x 'Hit Enter to continue'       /
+*       5x  '-'(30) 
+*       
+
+RESET  p_RESPONSE-MSG  p_RC  
+  IF p_Vendor = '?wsIAS'
+     PERFORM sbr_Test_wsIAS
+     p_RC := v_RC
+     p_RESPONSE-MSG := v_Res
+     ESCAPE ROUTINE
+  END-IF
+       
+  MOVE EDITED f-IS-DEV(<>) (EM=Prod/Test) TO v_Env
+*  -------------------------------
+*  v_Env := 'Test'                                     /* --db Force Test
+*  PRINT NOTITLE 5x 'Env:' v_Env 'Force Test mode'(I) // 5x 'Hit Enter to continue ...'(I)   /* --db Force Test
+*  -------------------------------  
+  DECIDE ON FIRST VALUE p_Vendor
+  VALUE 'EMSI'
+    URL_wsIAS   :=  URL_EMSI
+    f_XML_REQ   :=  f_XML_EMSI_REQ
+    f_XML_RES   :=  f_XML_EMSI_RES 
+    f_XML_TMPL  :=  f_XML_EMSI_TMPL
+  VALUE 'Portamedic'
+    URL_wsIAS   :=  URL_PMD
+    f_XML_REQ   :=  f_XML_PMD_REQ
+    f_XML_RES   :=  f_XML_PMD_RES 
+    f_XML_TMPL  :=  f_XML_PMD_TMPL
+  NONE 
+      COMPRESS 'Incorrect vendor' p_Vendor INTO p_RESPONSE-MSG
+      p_RC := 1
+      ESCAPE ROUTINE
+  END-DECIDE    
+
+* PRINT NOTITLE 'begin process for' p_AT-NUMBER 'in' v_Env  '...' /  /* --db
+* 'Service:' URL_wsIAS '...'                                         /* --db  
+* p_RESPONSE-MSG := 'Success'                                        /* --db
+* p_RC := 0                                                          /* --db
+* ESCAPE ROUTINE                                                     /* --db Hard exit
+* 
+ DEFINE WORK FILE 1 f_XML_TMPL TYPE 'UNFORMATTED'
+ READ WORK 1 ONCE XML
+ CLOSE WORK FILE 1
+
+ CALLNAT 'PMBN01WS'  p_AT-NUMBER  XML p_RESPONSE-MSG 
+ IF p_RESPONSE-MSG = ' '                  /* xml request created 
+    MOVE p_AT-NUMBER TO v_A  
+    EXAMINE f_XML_REQ FOR '@CN' REPLACE v_A
+    v_A := *DAT4I
+    EXAMINE f_XML_REQ FOR '@DATE' REPLACE v_A
+    DEFINE WORK FILE 2 f_XML_REQ TYPE 'UNFORMATTED'
+    EXAMINE XML FOR "&" REPLACE WITH "and" 
+    WRITE WORK FILE 2 VARIABLE XML
+    CLOSE WORK FILE 2 
+*   PRINT 'XML process ended. OK'                      /*  --db
+*   PRINT 'tmpl:' f_XML_TMPL / 'url:' URL_wsIAS        /*  --db
+*   ESCAPE ROUTINE                                     /*  --db Hard exit
+    PERFORM sbr_wsIAS           
+ ELSE                                     /* xml request error in 'PMBN01WS'
+    P_RC := 10
+    COMPRESS 'Error xml:' p_RESPONSE-MSG INTO p_RESPONSE-MSG 
+ END-IF
+* --------------------------------------------------------------------------
+ DEFINE sbr_wsIAS
+   MOVE p_AT-NUMBER TO v_A
+   EXAMINE f_XML_RES FOR '@CN' REPLACE v_A
+   v_A := *DAT4I
+   EXAMINE f_XML_RES FOR '@DATE' REPLACE v_A
+   DEFINE WORK FILE 3 f_XML_RES TYPE 'UNFORMATTED'
+
+   REQUEST DOCUMENT FROM URL_wsIAS
+     WITH DATA NAME 'pEnv'       VALUE v_Env
+        NAME 'pRequest'   VALUE XML
+     RETURN
+        PAGE v_Res
+        RESPONSE v_RC
+   EXAMINE v_Res FOR '&gt;' REPLACE '>'
+   EXAMINE v_Res FOR '&lt;' REPLACE '<'
+   WRITE WORK FILE 3 VARIABLE v_Res
+   CLOSE WORK 3
+
+IF v_RC <> 200
+    COMPRESS 'Error wsIAS Service response is "' v_RC INTO p_RESPONSE-MSG
+    p_RC := v_RC
+    ESCAPE ROUTINE 
+END-IF    
+
+ DECIDE FOR FIRST CONDITION
+*    WHEN v_Res = SCAN 'PMD-Response:Success' /* PMD Only     /* bz OI-3583
+*        v_Res := 'Success'                                   /* bz OI-3583
+*        p_RC  := 0                                           /* bz OI-3583
+   WHEN v_Res = SCAN 'Success'                /* EMSI and PMD /* bz OI-3583
+       v_Res := 'Success'
+       p_RC  := 0
+   WHEN  v_Res = SCAN 'SOAP Exception'
+       v_Res := 'Error SOAP Exception. Verify Request xml'
+       p_RC  := 2
+   WHEN  v_Res = SCAN '[EMSI]' OR v_Res = SCAN '[PMD]'   /* error from in wsIAS
+       p_RC  := 1
+   WHEN NONE
+      IF p_Vendor = 'EMSI'                    /* EMSI only  
+         v_A := '<ResultInfoDesc>'                        
+         #l := *LENGTH(v_A)
+         EXAMINE v_Res FOR '<ResultInfoDesc>'   POSITION #b
+         EXAMINE v_Res FOR '</ResultInfoDesc>'  POSITION #e
+         IF #b <> 0 
+           #b := #b + #l
+           #e := #e - #b
+           v_Res := SUBSTR(v_Res, #b, #e)
+         ELSE 
+           v_Res := 'Unknown Error'
+         END-IF
+         p_RC  := 3
+      END-IF  
+      IF p_Vendor = 'Portamedic'            /* PMD pnly     /* bz OI-3583 
+         v_Res := 'For details contact MSS' /* See response /* bz OI-3583
+         p_RC  := 3                                         /* bz OI-3583
+      END-IF                                                /* bz OI-3583  
+END-DECIDE
+    IF v_Res = SCAN 'has been submitted before' 
+       p_RESPONSE-MSG := 'EMSI Duplicate request'
+       p_RC  := 4
+    ELSE   
+       p_RESPONSE-MSG := v_Res
+    END-IF
+*  PRINT  'Return code:' v_RC / 'Response:' / v_Res 
+END-SUBROUTINE
+* ----------------------------------------------------------------------------------
+DEFINE sbr_Test_wsIAS
+  REQUEST DOCUMENT FROM URL_Test
+    RETURN
+      PAGE v_Res
+      RESPONSE v_RC
+     EXAMINE v_Res FOR '[B]' POSITION #b
+     EXAMINE v_Res FOR '[E]' POSITION #e
+     IF #b <> 0 AND #e > #b 
+       #b := #b + 3
+       #e := #e - #b
+       v_Res := SUBSTR(v_Res, #b, #e)
+     END-IF
+     IF v_RC = 200  
+        v_RC := 0 
+     ELSE 
+        p_RC := v_RC 
+     END-IF      
+END-SUBROUTINE
+* ----------------------------------------------------------------------------------
+END 

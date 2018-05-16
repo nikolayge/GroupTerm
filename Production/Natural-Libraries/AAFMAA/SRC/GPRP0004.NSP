@@ -1,0 +1,681 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*************************************************************************
+* NAME         : GPRP0004                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Create daily reports for financial management         *
+*                1. Nightly peachtree file with credit card AR records *
+*                   sorted by Account number                           *
+*                2. Nightly peachtree file with credit card AR records *
+*                   sorted by CN number                                *
+*                3. Nightly reconcilliation report sorted by           *
+*                   Account number / grouped by Clerk id               *
+*                4. Create an input file for e-mail driver/automated   *
+*                   e-mail processing                                  *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE        TAG     REASON                                    *
+* YAK    11/03/2009  None    Program Written                           *
+* YAK    12/11/2010  YK1     Add report of transactions sorted by clerk*
+*                            Add e-mail file                           *
+* YAK    02/11/2010  YK2     Change logic to extract transactions      *
+*                            with and without "Sungard" break          *
+* YAK    03/08/2010  YK3     Delete output files before processing     *
+*                            Do not create e-mails for credit amounts  *
+* YAK    06/24/2010  YK4     Use member (if available), then insured   *
+*                            email address                             *
+* YAK    08/05/2010  YK5     Correct logic for applying reverse        *
+*                            transactions                              *
+* PAM    12/16/2010  PM6     Adjusted BADJ error                       *
+* vxt    01/25/2011  vt1     Add logic to send e-mail by policy(not by *
+*                            CN) in order to use owner email, combine  *
+*                            by CN/email to avoid multiple emails to   *
+*                            the same person.                          *
+* PAM    01/26/2011  PM7     Fixed account number error                *
+* YAK    02/01/2011  YK6     Do not include Member Center transactions *
+*                            (temporary create separate reports for    *
+*                            Member Center                             *
+* YAK    03/02/2011  YK7     Combine all transactions (remove YK6)     *
+* vxt    03/14/2011  vt2     Add logic to handle the refund e-mail     *
+* YAK    04/17/2011  YK8     Delete old DailyEmailbyPolicy file        *
+*                            (to avoid sending same e-mails)           *
+* YAK    11/04/2011  YK9     Create daily Credit Card report for the   *
+*                            previous day (OI 502)                     *
+* vxt    08/06/2013  vt3     Increase the size of                      *
+*                            #appr-email-info.cc-change-amount and     *
+*                            #user-total fields (production abend)     *
+* vxt    12/18/2013  vt4     add new GL accounts /ticket 2447/         *
+* YAK    03/30/2014  YK10    Add service only SAS account (2351)       *
+* YAK    07/25/2014  YK11    Changes in Email PDA (add clerk fields,   *
+*                            rename CC-CHARGE to E-CHARGE )            *
+* VXT    01/05/2014  VT5     Ticket 3270 - change the layout of the    *
+*                            account file                              *
+* vxt    02/25/2016  vt6     /Ticket 4263 - separate daily CC email    *
+*                            from daily e-mail/                        *
+* vxt    03/24/2016  vt7     /Ticket 4252 - NEw GL code for SAS service*
+* YAK    11/08/2017  YK12    Send email to Owner/Payer                 *
+* YF     12/13/2017  YF1     /Ticket 6743 - Update to Owner/Payer email*
+* YF     03/19/2018  YF2     /Ticket 6979 - Add WCS Email to SSRS      *
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRL0001       /* Property file
+LOCAL USING OBJLACRG       /* Accounting Register
+LOCAL USING GPRA0005       /* E-mail Information
+LOCAL USING GPBACOMM       /* Letters Info           /* YF2
+LOCAL USING WCCA0011       /* Payment Info           /* YF2
+LOCAL USING OBJLMB01       /* Service Info           /* YF2
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS                     /* VT4 \/
+  2 ID-NUMBER
+  2 C*ACTIVE-SEGMENTS
+  2 POLICY-ID (9)
+  2 MODE (9)                                /* YF2 \/
+  2 BILL-CYCLE (9)
+  2 ANNUAL-PREM (9)
+  2 MONTH-ALLOC-AMT (9)
+  2 ISSUE-DATE (9)
+  2 PAID-TO-DATE (9)                        /* YF2 /\
+  2 PLAN (9)                                /* VT4 /\
+*
+1 #OUTPUT-RECORD
+  2 #ACCOUNT-NUMBER         (A4)
+  2 #ACCOUNT-DESCRIPTION    (A25)
+  2 #AMOUNT                 (N7.2)
+  2 #AMOUNT-DISPLAY         (A11)
+  2 ID-NUMBER               (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A           (A6)
+  2 #NAME                   (A25)
+  2 TXN-CODE                (A4)
+  2 CLERK-ID                (A3)       /* YK1
+  2 #SG-CATEGORY-1          (A2)
+  2 #sg-category-2          (a2)                   /* vt1 11/28/2014
+  2 CASH-CODE               (A1)
+  2 MONTH-END               (A1)
+  2 POLICY-NUMBER           (A16)
+  2 #REFUND                 (A1)                              /* vt2
+*
+1 #PEACHTREE-DYNAMIC-FIELDS
+  2 #PEACHTREE              (A150)
+  2 #PEACH-ACCOUNT-NUMBER   (A9)
+  2 #DESCRIPTION-1          (A25)
+  2 #DESCRIPTION-2          (A25)
+  2 #PEACHTREE-AMOUNT       (A20)
+  2 #peach-acc-nbr          (a9)                /* vt5
+*
+1 #PEACHTREE-STATIC-FIELDS
+  2 #PEACHTREE-DATE         (A10)
+  2 #PEACHTREE-REC-CNT      (N8)
+  2 #PEACH-REC-CNT-NEW      (n8)                /* vt5
+*
+1 #POL-SEG                  (N1)                          /* vt1 \/
+1 #POLICY-SEGMENT           (A1)
+1 #APPR-EMAIL-INFO
+  2 SORT-KEY                (A66)
+  2 REDEFINE SORT-KEY
+    3 DAL-CN                (A6)
+    3 REDEFINE DAL-CN                                   /* YF2
+      4 DAL-CN-N            (N6)                        /* YF2
+    3 OWNER-EMAIL           (A60)
+  2 POLICY-NUMBER           (A16)
+  2 CC-CHARGE-AMOUNT        (N9.2)                       /* vt1 /\   vt3 was n5.2
+  2 #REFUND                 (a1)                                        /* vt2
+*
+1 #DATN                     (N8)
+1 REDEFINE #DATN
+  2 #DATN-YYYY              (N4)
+  2 #DATN-MM                (A2)
+  2 #DATN-DD                (A2)
+1 REDEFINE #DATN                                         /* YF2
+  2 #YYYYMM         (N6)                                 /* YF2
+1 #I                        (I2)
+1 #CNT                      (N7)
+1 #CNT-1                    (N7)
+1 #CNT-2                    (N7)
+1 #TXN-CODE                 (A6)
+1 #IGNORE-TRAN              (A4) INIT <'5655'>
+1 #WRITE-OFF-TRAN           (A4) INIT <'5476'>
+1 #NAME-D                   (A)  DYNAMIC
+1 #COMMA                    (A1) INIT <','>
+1 #TAB                      (A1) INIT <H'09'>
+1 #TOTAL-AMOUNT             (N9.2)
+1 #GRAND-TOTAL-AMOUNT       (N9.2)
+1 #USER-TOTAL               (N9.2/*)                                         /* YK1  vt3 was n5.2
+1 #TRAN-USER-TOTAL          (A/*) DYNAMIC                                    /* YK1
+1 #WORK-AMOUNT              (A) DYNAMIC                                      /* YK1
+1 #REPORT-OUTPUT            (A150)                                           /* YK1
+1 #CLERK-ID                 (A3)                                             /* YK1
+1 #CLERK-SEQ                (N2)                                             /* YK1
+1 #WORK-FIELD               (A) DYNAMIC                                      /* YK1
+1 #EMPTY-FILE-CMD           (A) DYNAMIC INIT <'>'>                           /* YK3
+1 #WEB-CHARGE-SUCCESSFUL-TEMPLATE  (A3) INIT <'WCS'>                         /* YK1
+1 #WEB-CHARGE-SUCCESSFUL-TEMPLATE1 (A3) INIT <'WCC'>                                   /* vt2
+1 #DEFAULT-USER             (A3) CONST <'DFT'>                               /* YK7
+1 #DAILY-CREDIT-CARD-TRAN  (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/DailyCreditCardTran.txt'>
+1 #PEACHTREE-DAILY-CC-TRAN-BY-ACCOUNT (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/CCTranByAccount.txt'>
+1 #PEACHTREE-DAILY-CC-TRAN-BY-TRANSACTION (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/CCTranByTrans.txt'>
+1 #REC-DAILY-CC-TRAN-BY-CLERK (A) DYNAMIC INIT
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/CCRecTranByClerk.txt'>        /* YK1
+1 #TRAN-USER-ARRAY           (A3/*)                                          /* YK1
+1 #DAILY-EMAIL-BY-POLICY (A) DYNAMIC INIT                                              /* vt1
+  <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/DailyCCEmailByPolicy.txt'>              /* vt1
+*
+1 #PLAN         (A3)                /* vt4
+1 #K            (I2)                /* vt4
+* YK12 >
+1 #OWNER-CI     (N8)
+1 #PAYER-CI     (N8)
+1 #OWNER-EMAIL  (A) DYNAMIC
+1 #EMAIL-DEL    (A1) CONST <','>
+* < YK12
+* YF2 >
+1 #WCS    (A10) CONST <'WCS'>
+1 #J      (I2)
+1 #X      (I2)
+1 #XX     (I2)
+1 #POLICY-VARIABLES
+  2 #MODE   (A1)
+  2 #CHARGE (A15)
+  2 #MONTHLY-PREM (N5.2)
+  2 #TOTAL (N5.2)
+  2 #BILL-CYCLE       (A1)
+1 #MonthOverdue  (N2)
+1 #AmountOverdue (N5.2)
+1 #N             (N1)
+1 #NEXT-PAY-DATE (A) DYNAMIC
+1 #NEXT-BC-DATE (N8/3)
+1 #PAID-TO-DATE (N8)
+1 REDEFINE #PAID-TO-DATE
+  2 #PTD-YYYY       (N4)
+  2 #PTD-MM         (N2)
+  2 #PTD-DD         (N2)
+1 REDEFINE #PAID-TO-DATE
+  2 #PTD-YYYYMM     (N6)
+1 #PROCESS          (A) DYNAMIC CONST <'CC'>
+1 #CC-MODE          (A1/4) CONST <'0','1','2','4'>
+1 #Service          (A)   DYNAMIC CONST <'Service'>
+1 #GL-ACCOUNT       (A/2) DYNAMIC
+1 ERROR-MESSAGE     (A100)
+* < YF2
+END-DEFINE
+*
+WRITE 'process started'
+DEFINE WORK FILE 1 #DAILY-CREDIT-CARD-TRAN TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 #PEACHTREE-DAILY-CC-TRAN-BY-ACCOUNT TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 3 #PEACHTREE-DAILY-CC-TRAN-BY-TRANSACTION TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 4 #REC-DAILY-CC-TRAN-BY-CLERK TYPE 'ASCII-COMPRESSED'           /* YK1
+DEFINE WORK FILE 5 #EMAIL-CC-DAILY-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND' /* YK1  /* vt6 was #email-daily-file
+DEFINE WORK FILE 9 #DAILY-EMAIL-BY-POLICY TYPE 'ASCII-COMPRESSED'                /* vt1
+*
+* Delete old transaction file
+CALLNAT 'GPRN0002' #EMPTY-FILE-CMD #DAILY-CREDIT-CARD-TRAN                   /* YK3
+* Delete old email file                                                      /* YK8
+CALLNAT 'GPRN0002' #EMPTY-FILE-CMD #DAILY-EMAIL-BY-POLICY                    /* YK8
+* Write Header to report files
+* #PEACHTREE := '1,2,3,4,5,6'                                                  /* YK3  /* vt5
+#peachtree := '1,2,3,4,5,6,7,8'                          /* vt5
+WRITE WORK FILE 2 #PEACHTREE                                                 /* YK3
+#PEACHTREE := '1,2,3,4,5,6'                              /* vt5
+WRITE WORK FILE 3 #PEACHTREE                                                 /* YK3
+*
+#DATN := *DATN
+* #DATN := 20180416                                                   /* for testing only
+IF *TIMN < 1200000                                                           /* YK9
+  #WORK-FIELD := FUNCTION-CALENDAR(<#DATN,'H'>)                              /* YK9
+  #DATN   := VAL(#WORK-FIELD)                                                /* YK9
+END-IF                                                                       /* YK9
+*
+RESET #PEACHTREE                                                             /* YK3
+#WORK-FIELD := FUNCTION-CALENDAR(<#DATN,'D'>)                                /* YK3
+COMPRESS 'Daily R/C  -  CC' #WORK-FIELD INTO #REPORT-OUTPUT                  /* YK3
+WRITE WORK FILE 4 #REPORT-OUTPUT                                             /* YK3
+RESET #PEACHTREE #REPORT-OUTPUT
+*
+EXPAND ARRAY #TRAN-USER-ARRAY TO (*:50)
+FIND ACCT-REG-V WITH TRANSACTION-DATN = #DATN
+  IF NO RECORDS FOUND
+    WRITE 'There are no accounting transaction records for ' #DATN
+  END-NOREC
+* Clerk ID "MBR" - Member Center User                                         /* YK6
+*  ACCEPT IF ACCT-REG-V.CLERK-ID <> 'MBR'                                     /* YK7
+  IF ACCT-REG-V.CLERK-ID = ' '                                                /* YK7
+    ACCT-REG-V.CLERK-ID := #DEFAULT-USER                                      /* YK7
+  END-IF                                                                      /* YK7
+  IF ACCT-REG-V.CASH-CODE = 'C' AND ACCT-REG-V.MONTH-END NE 'Y'
+    #CNT := #CNT + 1
+    RESET #OUTPUT-RECORD
+    #NAME-D := ACCT-REG-V.NAME
+    #NAME := FUNCTION-FORM-NAME(<#NAME-D,'U'>)
+    MOVE BY NAME ACCT-REG-V TO #OUTPUT-RECORD
+    EXAMINE #TRAN-USER-ARRAY(*) FOR #OUTPUT-RECORD.CLERK-ID INDEX #I
+    IF #I = 0
+      #CLERK-SEQ := #CLERK-SEQ + 1
+      #TRAN-USER-ARRAY(#CLERK-SEQ) := #OUTPUT-RECORD.CLERK-ID
+    END-IF
+    IF C*SUNGARD-INFO = 0                             /* YK2
+      IF ACCT-REG-V.CREDIT-AMOUNT NE 0
+        #AMOUNT := ACCT-REG-V.CREDIT-AMOUNT * -1
+      ELSE
+        #AMOUNT := ACCT-REG-V.DEBIT-AMOUNT
+      END-IF
+      PERFORM WRITE-OUTPUT-RECORD
+    ELSE                                              /* YK2
+      FOR #I = 1 TO C*SUNGARD-INFO                    /* YK2
+        #SG-CATEGORY-1 := SG-CATEGORY-1(#I)           /* YK2
+        #SG-CATEGORY-2 := SG-CATEGORY-2(#I)                    /* vt 11/28/2014
+        IF #SG-CATEGORY-1 = '**'
+          RESET #SG-CATEGORY-1
+        END-IF
+*       IF #SG-CATEGORY-1 NE 'UN' AND ACCT-REG-V.CREDIT-AMOUNT NE 0  /* YK5 PM6
+        IF ACCT-REG-V.CREDIT-AMOUNT NE 0                             /* PM6
+          #AMOUNT := ACCT-REG-V.SG-AMOUNT(#I) * -1    /* YK2
+        ELSE
+          #AMOUNT := ACCT-REG-V.SG-AMOUNT(#I)         /* YK5
+        END-IF
+        PERFORM WRITE-OUTPUT-RECORD                   /* YK2
+      END-FOR
+    END-IF
+* common code in subroutine
+    DEFINE SUBROUTINE WRITE-OUTPUT-RECORD             /* YK2
+    COMPRESS ACCT-REG-V.TXN-CODE #SG-CATEGORY-1 INTO #TXN-CODE LEAVING NO
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<#TXN-CODE>)(1)
+    #ACCOUNT-DESCRIPTION := FUNCTION-ACCT-NUMBER(<#TXN-CODE>)(2)
+*
+    IF #DATN GE 20140101                                              /* vt4 \/
+      IF ACCT-REG-V.TXN-CODE = 'PREP' OR = 'PRER' OR = 'FPFP' OR = 'FPFR' OR = 'FPRP' OR = 'RIDP' OR = 'RIDR' OR = 'DUEP' OR = 'DUER' OR = 'DISC'
+        IF #SG-CATEGORY-1 <> 'SS'                                     /* YK10
+          PERFORM GET-NEW-ACCT-NUM                                    /* YK10
+        else                                                          /* vt6 \/
+          if #datn ge 20160301
+            #ACCOUNT-NUMBER := 4115
+            #ACCOUNT-DESCRIPTION := 'SAS Service'
+          end-if                                                      /* vt6 /\
+        END-IF                                                        /* YK10
+      END-IF
+    END-IF                                                            /* vt4 /\
+*
+    IF #ACCOUNT-NUMBER = #IGNORE-TRAN
+      ESCAPE ROUTINE
+    END-IF
+    MOVE EDITED #AMOUNT (EM=-ZZZZZZ9.99) TO #AMOUNT-DISPLAY
+*
+    IF #ACCOUNT-NUMBER = '4118'                                   /* YF2
+      #OUTPUT-RECORD.POLICY-NUMBER := #Service
+    END-IF
+*
+    WRITE WORK FILE 1 VARIABLE #OUTPUT-RECORD
+    END-SUBROUTINE
+  END-IF
+END-FIND
+IF #CLERK-SEQ > 0
+  RESIZE ARRAY #TRAN-USER-ARRAY TO (*:#CLERK-SEQ)
+END-IF
+*
+IF #CNT = 0
+  WRITE 'There are no credit card transaction records for ' #DATN
+  ESCAPE ROUTINE
+END-IF
+*
+CLOSE WORK FILE 1
+PERFORM CREATE-CC-PEACHTREE-FILE-BY-ACCOUNT
+PERFORM CREATE-CC-PEACHTREE-FILE-BY-TRANSACTION
+PERFORM CREATE-TRANSACTIONS-EMAIL                             /* vt1
+PERFORM CREATE-CC-FILE-BY-CLERK
+WRITE 'process ended'
+*
+*****************************************************
+DEFINE SUBROUTINE CREATE-CC-PEACHTREE-FILE-BY-ACCOUNT
+*****************************************************
+*
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+* Count number of rows first
+SORT BY #ACCOUNT-NUMBER USING #AMOUNT
+  AT BREAK OF #ACCOUNT-NUMBER
+    #CNT-1 := #CNT-1 + 1
+  END-BREAK
+  AT END OF DATA
+    #CNT-1 := #CNT-1 + 1                   /* Add summary line
+    #CNT-2 := COUNT(#AMOUNT) + 1
+  END-ENDDATA
+END-SORT
+*
+#PEACHTREE-DATE       := FUNCTION-CALENDAR(<#DATN,'D'>)
+#PEACHTREE-REC-CNT    := #CNT-1
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #ACCOUNT-NUMBER USING #ACCOUNT-DESCRIPTION #AMOUNT #OUTPUT-RECORD.TXN-CODE
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #AMOUNT
+  AT BREAK OF #ACCOUNT-NUMBER
+    #PEACH-ACCOUNT-NUMBER := OLD(#ACCOUNT-NUMBER)
+    #DESCRIPTION-1        := OLD(#ACCOUNT-DESCRIPTION)
+    COMPRESS 'CCRD' #PEACHTREE-DATE INTO #DESCRIPTION-2
+*   IF #ACCOUNT-NUMBER = #WRITE-OFF-TRAN          /* PM7
+    IF OLD(#ACCOUNT-NUMBER) = #WRITE-OFF-TRAN     /* PM7
+      COMPRESS #PEACH-ACCOUNT-NUMBER '- 07' INTO #PEACH-ACCOUNT-NUMBER
+    ELSE
+      COMPRESS #PEACH-ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    END-IF
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    #PEACH-REC-CNT-NEW := #PEACHTREE-REC-CNT -1             /* vt5
+    #PEACH-ACC-NBR := '1010 - 00'                           /* vt5
+    COMPRESS #PEACHTREE-DATE #COMMA
+*      #DESCRIPTION-1  #COMMA                               /* vt5
+      #DESCRIPTION-2 #COMMA                                 /* vt5
+*      #PEACHTREE-REC-CNT #COMMA                            /* vt5
+      #PEACH-REC-CNT-NEW #COMMA                             /* vt5
+      #PEACH-ACCOUNT-NUMBER #COMMA
+*      #DESCRIPTION-2 #COMMA                                /* vt5
+      #DESCRIPTION-1 #COMMA                                 /* vt5
+      #PEACHTREE-AMOUNT #COMMA                              /* vt5
+      #PEACH-ACC-NBR #COMMA                                 /* vt5
+      #DESCRIPTION-2                                        /* vt5
+      INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 2 #PEACHTREE
+    #GRAND-TOTAL-AMOUNT := #GRAND-TOTAL-AMOUNT + #TOTAL-AMOUNT
+    RESET #TOTAL-AMOUNT #PEACHTREE-DYNAMIC-FIELDS
+  END-BREAK
+END-SORT
+*
+END-SUBROUTINE
+*
+*********************************************************
+DEFINE SUBROUTINE CREATE-CC-PEACHTREE-FILE-BY-TRANSACTION
+*********************************************************
+*
+RESET #PEACHTREE-DYNAMIC-FIELDS
+#PEACHTREE-REC-CNT    := #CNT-2
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #OUTPUT-RECORD.ID-NUMBER #OUTPUT-RECORD.POLICY-NUMBER         /* vt2
+    USING #ACCOUNT-NUMBER #AMOUNT ID-NUMBER-A
+    #NAME #OUTPUT-RECORD.TXN-CODE  #OUTPUT-RECORD.CLERK-ID            /* vt2
+    #OUTPUT-RECORD.#REFUND                                            /* vt2
+  RESET #DESCRIPTION-1 #DESCRIPTION-2
+  IF #ACCOUNT-NUMBER = #WRITE-OFF-TRAN
+    COMPRESS #ACCOUNT-NUMBER '- 07' INTO #PEACH-ACCOUNT-NUMBER
+  ELSE
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+  END-IF
+  COMPRESS #OUTPUT-RECORD.TXN-CODE #DATN-MM #DATN-DD 'CN' #OUTPUT-RECORD.ID-NUMBER-A
+    INTO #DESCRIPTION-1 LEAVING NO
+  IF #OUTPUT-RECORD.TXN-CODE NE 'APFP'
+    COMPRESS #NAME #OUTPUT-RECORD.POLICY-NUMBER INTO #DESCRIPTION-2
+  ELSE
+    #DESCRIPTION-2 := #NAME
+  END-IF
+  #TOTAL-AMOUNT := #TOTAL-AMOUNT + #AMOUNT
+  MOVE EDITED #AMOUNT (EM=-ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+  MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+  COMPRESS #PEACHTREE-DATE #COMMA
+    #DESCRIPTION-1  #COMMA
+    #PEACHTREE-REC-CNT #COMMA
+    #PEACH-ACCOUNT-NUMBER #COMMA
+    #DESCRIPTION-2 #COMMA
+    #OUTPUT-RECORD.CLERK-ID #COMMA
+    #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+  WRITE WORK FILE 3 #PEACHTREE
+  RESET #PEACHTREE-DYNAMIC-FIELDS
+*
+  AT BREAK OF #OUTPUT-RECORD.POLICY-NUMBER                                   /* vt1 \/
+    IF OLD(#OUTPUT-RECORD.CLERK-ID) <> 'MBR'                                 /* YK7
+      RESET #APPR-EMAIL-INFO #OWNER-EMAIL                                                /* YF1
+      #APPR-EMAIL-INFO.CC-CHARGE-AMOUNT := SUM(#AMOUNT)
+      #APPR-EMAIL-INFO.DAL-CN  := OLD(#OUTPUT-RECORD.ID-NUMBER)
+      #APPR-EMAIL-INFO.POLICY-NUMBER  := OLD(#OUTPUT-RECORD.POLICY-NUMBER)
+* YK12 >
+*       #POL-SEG := F_POLICY_SEGMENT(<#APPR-EMAIL-INFO.POLICY-NUMBER,#APPR-EMAIL-INFO.DAL-CN>)
+*       IF #POL-SEG NE 0
+*         #POLICY-SEGMENT := #POL-SEG
+*         #APPR-EMAIL-INFO.OWNER-EMAIL := FUNCTION-OWNER-EMAIL(<#APPR-EMAIL-INFO.DAL-CN,#POLICY-SEGMENT>)
+*       END-IF
+      #OWNER-CI := GET-POL-OWNER-CI(<#APPR-EMAIL-INFO.POLICY-NUMBER>)(1)
+      #PAYER-CI := GET-POL-PAYER-CI(<#APPR-EMAIL-INFO.POLICY-NUMBER>)
+      IF #OWNER-CI <> 0                                                                  /* YF1
+        #OWNER-EMAIL := F-PREF-EMAIL(<#OWNER-CI>)
+      END-IF                                                                             /* YF1
+      IF (#OWNER-CI <> #PAYER-CI) AND (#PAYER-CI <> 0)                                   /* YF1
+        COMPRESS #OWNER-EMAIL F-PREF-EMAIL(<#PAYER-CI>) INTO #OWNER-EMAIL WITH DELIMITER #EMAIL-DEL
+      END-IF
+      #APPR-EMAIL-INFO.OWNER-EMAIL := #OWNER-EMAIL
+* < YK12
+      IF #APPR-EMAIL-INFO.OWNER-EMAIL = ' '
+        #APPR-EMAIL-INFO.OWNER-EMAIL   := FUNCTION-MEMBER-EMAIL(<#APPR-EMAIL-INFO.DAL-CN>)
+      END-IF
+      IF #APPR-EMAIL-INFO.OWNER-EMAIL = ' '
+        #APPR-EMAIL-INFO.OWNER-EMAIL   := FUNCTION-CN-EMAIL(<#APPR-EMAIL-INFO.DAL-CN>)
+      END-IF
+      #APPR-EMAIL-INFO.#REFUND := #OUTPUT-RECORD.#REFUND                  /* vt2
+      WRITE WORK FILE 9 #APPR-EMAIL-INFO
+    END-IF
+  END-BREAK
+*
+  AT END OF DATA
+    #ACCOUNT-NUMBER := FUNCTION-ACCT-NUMBER(<'CASH  '>)(1)
+    COMPRESS #ACCOUNT-NUMBER '- 00' INTO #PEACH-ACCOUNT-NUMBER
+    #DESCRIPTION-1  := FUNCTION-ACCT-NUMBER(<'CASH  '>)(2)
+    COMPRESS #PEACHTREE-DATE #DESCRIPTION-1 INTO #DESCRIPTION-1
+    RESET #DESCRIPTION-2
+    COMPRESS 'CCRD' #PEACHTREE-DATE INTO #DESCRIPTION-2
+    MOVE EDITED #TOTAL-AMOUNT (EM=ZZZZZZZZ9.99) TO #PEACHTREE-AMOUNT
+    MOVE LEFT #PEACHTREE-AMOUNT TO #PEACHTREE-AMOUNT
+    COMPRESS #PEACHTREE-DATE #COMMA
+      #DESCRIPTION-1  #COMMA
+      #PEACHTREE-REC-CNT #COMMA
+      #PEACH-ACCOUNT-NUMBER #COMMA
+      #DESCRIPTION-2 #COMMA
+      #PEACHTREE-AMOUNT INTO #PEACHTREE LEAVING NO
+    WRITE WORK FILE 3 #PEACHTREE
+  END-ENDDATA
+END-SORT
+*
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE CREATE-CC-FILE-BY-CLERK        /* YK1
+*****************************************
+*
+* Create all columns header for clerks first
+READ WORK FILE 1 #OUTPUT-RECORD
+END-ALL
+*
+SORT BY #OUTPUT-RECORD.TXN-CODE #OUTPUT-RECORD.CLERK-ID USING #AMOUNT
+  AT START OF DATA
+    COMPRESS 'Row Labels' #TRAN-USER-ARRAY(*) 'Total' INTO #REPORT-OUTPUT WITH #TAB
+    WRITE WORK FILE 4 #REPORT-OUTPUT
+    IF #CLERK-SEQ > 0
+      EXPAND ARRAY #USER-TOTAL TO (*:#CLERK-SEQ)
+      EXPAND ARRAY #TRAN-USER-TOTAL TO (*:#CLERK-SEQ)
+    ELSE
+      ESCAPE ROUTINE IMMEDIATE
+    END-IF
+    RESET #REPORT-OUTPUT
+    #REPORT-OUTPUT   := #OUTPUT-RECORD.TXN-CODE
+    #TRAN-USER-TOTAL(*) := '0.00'
+  END-START
+  AT BREAK OF #OUTPUT-RECORD.CLERK-ID
+    #TOTAL-AMOUNT := SUM(#AMOUNT)
+    #CLERK-ID := OLD(#OUTPUT-RECORD.CLERK-ID)
+    EXAMINE #TRAN-USER-ARRAY(*) FOR #CLERK-ID INDEX #I
+    #USER-TOTAL(#I) := #USER-TOTAL(#I) + #TOTAL-AMOUNT
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #TRAN-USER-TOTAL(#I)       /* vt3 was em=-zzzz9.99
+    #TRAN-USER-TOTAL(#I) := *TRIM(#TRAN-USER-TOTAL(#I))
+  END-BREAK
+  AT BREAK OF #OUTPUT-RECORD.TXN-CODE
+    #TOTAL-AMOUNT := SUM(#AMOUNT)
+    MOVE EDITED #TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #WORK-AMOUNT
+    #WORK-AMOUNT := *TRIM(#WORK-AMOUNT)
+    COMPRESS #REPORT-OUTPUT #TRAN-USER-TOTAL(*) #WORK-AMOUNT
+      INTO #REPORT-OUTPUT WITH #TAB
+    WRITE WORK FILE 4 #REPORT-OUTPUT
+    RESET #REPORT-OUTPUT
+    #REPORT-OUTPUT := #OUTPUT-RECORD.TXN-CODE
+    #TRAN-USER-TOTAL(*) := '0.00'
+  END-BREAK
+  AT END OF DATA
+    #GRAND-TOTAL-AMOUNT := TOTAL(#AMOUNT)
+    #REPORT-OUTPUT := 'Grand Total'
+    FOR #I = 1 TO #CLERK-SEQ
+      MOVE EDITED #USER-TOTAL(#I) (EM=-ZZZZZZZZ9.99) TO #WORK-AMOUNT
+      #WORK-AMOUNT := *TRIM(#WORK-AMOUNT)
+      COMPRESS #REPORT-OUTPUT #WORK-AMOUNT INTO #REPORT-OUTPUT WITH #TAB
+    END-FOR
+    MOVE EDITED #GRAND-TOTAL-AMOUNT (EM=-ZZZZZZZZ9.99) TO #WORK-AMOUNT
+    #WORK-AMOUNT := *TRIM(#WORK-AMOUNT)
+    COMPRESS #REPORT-OUTPUT #WORK-AMOUNT INTO #REPORT-OUTPUT WITH #TAB
+    WRITE WORK FILE 4 #REPORT-OUTPUT
+  END-ENDDATA
+END-SORT
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE CREATE-TRANSACTIONS-EMAIL       /* vt1  \/
+*****************
+READ WORK FILE 9 #APPR-EMAIL-INFO
+*
+  RESET EMAIL-INFORMATION PARM-LETTERS #POLICY-VARIABLES                                    /* YF2
+  EMAIL-INFORMATION.DAL-CN := EMAIL-INFORMATION.PENDING-CN := #APPR-EMAIL-INFO.DAL-CN       /* vt2
+  EMAIL-INFORMATION.E-CHARGE-AMOUNT := #APPR-EMAIL-INFO.CC-CHARGE-AMOUNT                    /* vt2  YK11
+
+  IF #APPR-EMAIL-INFO.CC-CHARGE-AMOUNT GT 0                                                 /* vt2
+    EMAIL-INFORMATION.TEMPLATE-TYPE    := #WEB-CHARGE-SUCCESSFUL-TEMPLATE1
+    EMAIL-INFORMATION.OWNER-EMAIL   := #APPR-EMAIL-INFO.OWNER-EMAIL
+    EMAIL-INFORMATION.POLICY-NUMBER := #APPR-EMAIL-INFO.POLICY-NUMBER
+*
+    WRITE WORK FILE 5 EMAIL-INFORMATION
+  ELSE                                                                                     /* vt2 \/
+    PARM-LETTERS.ID-NUMBER := VAL(#APPR-EMAIL-INFO.DAL-CN)                                 /* YF2 \/
+    PARM-LETTERS.POLICY-NUMBER := #APPR-EMAIL-INFO.POLICY-NUMBER
+    IF PARM-LETTERS.POLICY-NUMBER <> #SERVICE
+      FIND(1) ST-V WITH ST-V.ID-NUMBER = PARM-LETTERS.ID-NUMBER
+        IF NO
+          ESCAPE BOTTOM
+        END-NOREC
+        FOR #J = 1 TO C*ACTIVE-SEGMENTS
+          IF ST-V.POLICY-ID (#J) = PARM-LETTERS.POLICY-NUMBER
+            #MODE := ST-V.MODE(#J)
+            #BILL-CYCLE := ST-V.BILL-CYCLE(#J)
+            #MONTHLY-PREM:= ST-V.ANNUAL-PREM(#J) / 12
+* Paid to date calculation
+            CALLNAT 'GPDTOSXX'
+              ST-V.ISSUE-DATE (#J)
+              ST-V.MONTH-ALLOC-AMT (#J)
+              ST-V.PAID-TO-DATE (#J)
+              #PAID-TO-DATE
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+      END-FIND
+    END-IF
+    MOVE EDITED #APPR-EMAIL-INFO.CC-CHARGE-AMOUNT (EM=Z,ZZZ,ZZ9.99) TO #CHARGE
+    COMPRESS '$' *TRIM(#CHARGE) INTO #CHARGE LEAVING NO
+    PARM-LETTERS.AMOUNT := #CHARGE
+    PARM-LETTERS.PROCESS-SUBTYPE := 'A'
+* Premium due and Next payment date
+    IF #MODE = #CC-MODE(*)
+      PARM-LETTERS.PLAN := FUNCTION-PAYMENT-MODE(<#MODE>) (1)
+      PERFORM CALCULATE-BILL-CYCLE-DATES
+      CC-PAYMENT.PARM-DATE := #DATN
+      CC-PAYMENT.ID-NUMBER := PARM-LETTERS.ID-NUMBER
+      CALLNAT 'WCCNCC11' CC-PAYMENT ERROR-MESSAGE
+*
+      FOR #X = 1 TO C@PAY-POLICY
+        IF CC-PAYMENT.POLICY-NBR(#X) = PARM-LETTERS.POLICY-NUMBER
+          FOR #XX = 1 TO C@AVAILABLE-PAYMENT(#X)
+            DECIDE FOR FIRST CONDITION
+              WHEN CC-PAYMENT.LOAN-MODE(#X,#XX) = #CC-MODE(*)
+                #TOTAL := #TOTAL + LOAN-AUTO-PAY-AMT(#X,#XX)
+              WHEN CC-PAYMENT.PAYMENT-MODE(#X,#XX) = #CC-MODE(*)
+                #TOTAL := #TOTAL + CC-PAYMENT.DEFAULT-AMOUNT(#X,#XX)
+              WHEN NONE
+                IGNORE
+            END-DECIDE
+          END-FOR
+        ELSE
+          ESCAPE TOP
+        END-IF
+      END-FOR
+*
+      #TOTAL := #TOTAL + #AmountOverdue
+      MOVE EDITED #TOTAL (EM=ZZ,ZZ9.99) TO PARM-LETTERS.OTHER-AMOUNT
+      PARM-LETTERS.OTHER-AMOUNT := *TRIM(PARM-LETTERS.OTHER-AMOUNT)
+      COMPRESS '$' PARM-LETTERS.OTHER-AMOUNT INTO PARM-LETTERS.OTHER-AMOUNT LEAVING NO
+      PARM-LETTERS.PROCESS-SUBTYPE := 'B'
+    END-IF
+    PARM-LETTERS.PROCESS-TYPE  := #WCS
+    PARM-LETTERS.EMAIL-ADDRESS := #APPR-EMAIL-INFO.OWNER-EMAIL
+    CALLNAT 'GPBNCOMM' PARM-LETTERS                                                              /* YF2 /\
+  END-IF
+END-WORK                                                                                   /* vt2 /\
+END-SUBROUTINE                                             /* vt1 /\
+*
+*****************
+DEFINE SUBROUTINE GET-NEW-ACCT-NUM
+*****************
+*
+IF #SG-CATEGORY-1 = 'SP' AND #SG-CATEGORY-2 = 'AL'
+  #ACCOUNT-NUMBER      := '4028'
+  #ACCOUNT-DESCRIPTION := 'First Year Premiums - AL'
+ELSE
+  RESET #PLAN
+  FIND(1) ST-V WITH ST-V.ID-NUMBER = ACCT-REG-V.ID-NUMBER
+    FOR #K = 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.POLICY-ID (#K) = ACCT-REG-V.POLICY-NUMBER
+        MOVE ST-V.PLAN(#K) TO #PLAN
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-FIND
+*
+  #GL-ACCOUNT(*) := F-GL-ACCOUNT(<ACCT-REG-V.ID-NUMBER,#POL-SEG,#SG-CATEGORY-1,#PLAN>)(*)
+  IF #GL-ACCOUNT(*) <> ' '
+    #ACCOUNT-NUMBER      := #GL-ACCOUNT(1)
+    #ACCOUNT-DESCRIPTION := #GL-ACCOUNT(2)
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+********************************************
+DEFINE SUBROUTINE CALCULATE-BILL-CYCLE-DATES
+********************************************
+*
+RESET #MonthOverdue #AmountOverdue
+#NEXT-BC-DATE(*) := F-BILL-DATE(<#PAID-TO-DATE,#PROCESS>)(*)
+
+IF #PTD-YYYYMM < #YYYYMM
+  #MonthOverdue := VAL(#DATN-MM) - #PTD-MM
+  IF #MonthOverdue < 0
+    #MonthOverdue := #MonthOverdue + 12
+  END-IF
+  #AmountOverdue := #MONTHLY-PREM * #MonthOverdue
+END-IF
+*
+IF #BILL-CYCLE IS (N1)
+  #N := VAL(#BILL-CYCLE)
+ELSE
+  #N := 3
+END-IF
+#NEXT-PAY-DATE := FUNCTION-CALENDAR(<#NEXT-BC-DATE(#N),'W'>)
+*
+IF #AmountOverdue = 0
+  PARM-LETTERS.EVENT-DATE-A := #NEXT-PAY-DATE
+ELSE
+  PARM-LETTERS.EVENT-DATE-A := FUNCTION-CALENDAR(<#NEXT-BC-DATE(1),'W'>)
+END-IF
+END-SUBROUTINE
+*
+END

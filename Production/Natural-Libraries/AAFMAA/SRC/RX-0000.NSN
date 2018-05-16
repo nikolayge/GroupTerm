@@ -1,0 +1,291 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* RX-0000 Driver for RX requests
+* bz Aug 29, 2017. Ver-2.3(10/05/2017)
+* Dependency: DB RX-COMM(file 92)
+*             DDM RX-COMM, LDA RX000LDA
+*             PDA RX000PDA - Subprogram communication parameters
+*             RX-1000 Submit Order
+*             RX-2000 Retrieve Results and parse result summary
+*             RX-2001 Parse Details (Fills,Doctors,Eligibility)
+*             RX-3000 Compile HTML report, submit to DAL
+*             RX-4000 Request Pre authorized report (might not be used)
+*             RX-TEST create sample order (in prod returns nothing)
+* Input: Parameters AT-number, Clerk-Id, Mode (T - testing)
+*        Selected Options for previously submitted orders: Repeat, Retrieve, Show Summary and reports
+* Output: New/Update(for repeated order) DB record - Only one for every SSN!
+*                                                    Might req. additional logic for 9+ policies
+*         result summary, HTML report
+* Env.Settings: TN-3270 Scripts ctrl-F2 => Show_RX_Local.txt
+*                               ctrl-F4 => Show_RX.txt
+* -- Request
+* Check for existing
+* Save results in DB file
+* Save request and response
+* Move request and response to arch ?
+
+DEFINE DATA
+PARAMETER USING RX000PDA
+LOCAL USING RX000LDA
+LOCAL
+1 AT-V VIEW of A-APPL-TRACKING
+  2 SSN
+  2 NAME
+  2 MEMBER-CN
+* ------------------------------------------------------------------------
+1 f_Log           (A) DYNAMIC INIT <'/usr/SAG/APPS/RX/Log.txt'>
+1 #i              (I2)
+1 l_Test          (L)
+1 v_A             (A) DYNAMIC
+1 v_B             (A) DYNAMIC
+1 sel             (N1)
+1 v_Wait          (I2)  INIT  <15>
+1 L@              (L)
+1 #d0             (D)  INIT <*DATX>            /* 60 days
+1 #d              (D)                          /* 60 days
+1 rx_Age          (I4) INIT <61>               /* 60 days
+1 l_Conf          (L)
+/* data for details
+1 f_html          (A) DYNAMIC INIT <'file:\\@@FTP-URI\FTP\NewBiz\rxReports\Details_@@AT.html'>
+/* Created in
+1 p_Parms-Det
+  2 El_B          (A10/300)
+  2 El_E          (A10/300)
+  2 Fills (999)
+    3 Fl_r      (A/17) DYNAMIC
+    3 it_Name   (A58/20)
+    3 it_Cd     (A20/20)
+/* data for details End
+END-DEFINE
+ON ERROR
+  PRINT NOTITLE  'Please notify MSS' //
+    *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR /
+    'AT:' p_AT
+    'Hit Enter to continue'
+  ESCAPE ROUTINE
+END-ERROR
+
+DEFINE WINDOW WIN-0000
+  SIZE 20 * 70
+  BASE 5 / 6
+  TITLE   ' RX Request '
+  CONTROL SCREEN
+
+DEFINE WINDOW WIN-Wait
+  SIZE 4 * 20
+  BASE 16 / 30
+  TITLE ' RX delay '
+  CONTROL SCREEN
+
+DEFINE WORK FILE 2 f_Log TYPE 'UNFORMATTED' ATTRIBUTES 'APPEND'
+L@ := FN_Exist(<f_Log,1>)
+COMPRESS '--' *DAT4U *TIME 'AT:' p_AT H'0A' INTO v_A
+WRITE WORK FILE 2 VARIABLE v_A
+SET KEY PF2
+SET KEY PF3
+SET KEY PF4
+SET KEY PF5
+IF F-IS-DEV(<>) OR p_Mode = 'T'
+  l_Test := TRUE
+  p_Mode := 'T'
+END-IF
+sel := 0
+FIND(1) AT-V WITH ID-NUMBER = p_AT END-FIND
+FIND(1) RX-V WITH RX-SSN = AT-V.SSN
+  IF NO RECORD FOUND
+    PERFORM sbr_New
+    ESCAPE BOTTOM
+  END-NOREC
+  MOVE EDITED RX-UPD (EM=99999999) TO v_A                    /* 60 days
+  MOVE EDITED v_A TO #d (EM=YYYYMMDD)                        /* 60 days
+  rx_Age := #d0 - #d                                         /* 60 days
+  IF rx_Age <= 60
+    PERFORM sbr_Old
+  ELSE
+    sel := 1
+  END-IF
+  IF sel = 1
+    RESET RX-TRACK RX-STATUS RX-URL SUMMARY
+    RX-AT := p_AT
+    IF l_Test RX-CLERK := 'TST'
+    ELSE RX-CLERK := p_Clerk
+    END-IF
+    UPDATE
+  END-IF
+END-FIND
+DECIDE ON FIRST VALUE OF sel
+  VALUE 0, 1
+    CALLNAT 'RX-1000' p_Parms
+    IF p_RC = 0   PERFORM sbr_Wait
+    ELSE          PERFORM sbr_Error_Exit
+    END-IF
+    CALLNAT 'RX-2000' p_Parms
+    IF p_RC = 0
+      CALLNAT 'RX-2001' p_Parms p_Parms-Det
+      CALLNAT 'RX-3000' p_Parms p_Parms-Det
+      PERFORM sbr_Show
+      IF  S-MAX = ' '
+        IF RX-STATUS = 'Eligibility only'
+          p_Message := 'RX: Eligibility only'
+        ELSE
+          p_Message := 'RX: No information'
+        END-IF
+      ELSE
+        COMPRESS 'RX Max:' S-MAX  INTO p_Message
+      END-IF
+    ELSE
+      PERFORM sbr_Error_Exit
+    END-IF
+  VALUE 2
+    CALLNAT 'RX-2000' p_Parms
+    IF p_RC = 0
+      CALLNAT 'RX-2001' p_Parms p_Parms-Det
+      CALLNAT 'RX-3000' p_Parms p_Parms-Det
+      PERFORM sbr_Show
+      COMPRESS 'RX Max:' S-MAX INTO p_Message
+    ELSE
+      PERFORM sbr_Error_Exit
+    END-IF
+  VALUE 3   PERFORM sbr_show
+    p_Message := 'Cancel'
+  VALUE 5
+    p_Message := 'Cancel'
+    p_RC := 0
+  NONE IGNORE
+END-DECIDE
+
+* ------------------------------------------------------------------------
+DEFINE sbr_New
+*      -------
+INPUT WINDOW='WIN-0000' (AD=O IP=OFF)
+  02/1  *DAT4U(AD=I)  14x  '-- Confirm RX Order  --' 14x *TIMX(AD=I)
+  04/3  'AT:' p_AT (EM=ZZZZZZ) 4x 'User:' p_Clerk (AD=O)  37x l_Test(EM=/Test)
+  06/3  'CN:' MEMBER-CN   25x AT-V.NAME
+  09/3  'Confirm RX Order N/Y' l_Conf(AD=MU EM=N/Y)
+IF NOT l_Conf p_RC := 1 p_Message := 'Cancel' ESCAPE MODULE END-IF   /* Temporarily
+
+RX-SSN   := AT-V.SSN
+RX-AT    := p_AT
+IF l_Test RX-CLERK := 'TST'
+ELSE      RX-CLERK := p_Clerk
+END-IF
+STORE RX-V
+END-SUBROUTINE
+* ------------------------------------------------------------------------
+DEFINE sbr_Old
+*      -------
+MOVE EDITED #d (EM=MM/DD/YYYY) TO v_A
+COMPRESS 'RX records last updated: ' v_A '-' rx_Age 'days' INTO v_A
+REPEAT UNTIL sel <> 0
+  INPUT WINDOW='WIN-0000' (AD=O IP=OFF)
+    01/01  *DAT4U(AD=I)  14x  '-- Select action --' 14x *TIMX(AD=I)
+    03/03  'AT:' p_AT (EM=ZZZZZZ) 4x 'User:' p_Clerk (AD=O)  37x l_Test(EM=/Test)
+    04/03  'CN:' MEMBER-CN 4x 'SSN :' AT-V.SSN(EM=999-99-9999) 10x AT-V.NAME
+    06/07  v_A(AL=55)
+    07/07  'Status:' RX-STATUS(AD=I) 5x 'Max priority:' S-MAX(AD=I)
+    08/07  'Fills :' S-RX(AD=I EM=Z9)    19x 'Eligibility:' S-ELIG(AD=I EM=Z9)
+    09/07  'High  :' S-HIGH(EM=Z9) 3x 'Medium:' S-MEDIUM(EM=Z9) 3x 'Low:' S-LOW(EM=Z9)
+    11/10  'Repeat order ............1'
+    12/10  'Retrieve result .........2' 2x '(For orders running too long)'
+*    13/10  'Recreate report & DAL ...3'
+    13/10  'Show summary & reports ..3'
+    14/10  'Cancel Order and exit ...4'
+    15/10  'Select .................' sel(AD=IM EM=9)
+    18/03  'PF3-Cancel Order'
+  IF *PF-KEY = 'PF3' OR sel = 4
+    sel := 5
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+END-SUBROUTINE
+* ------------------------------------------------------------------------
+DEFINE sbr_Show
+*      ----------
+FIND(1) RX-V WITH RX-SSN = AT-V.SSN
+  INPUT WINDOW='WIN-0000' (AD=OL IP=OFF)
+    2/5   'Results:' RX-AT(AD=I) 3x 'Date:' RX-UPD(AD=I EM=9999-99-99) 3x 'User:' RX-CLERK(AD=I) /
+    3/5   'Applicant: CN' MEMBER-CN 5x NAME
+    4/17  'Status:'  RX-STATUS(AD=I)
+    6/17  'Max Priority    :'  S-MAX(AD=I)
+    7/17  'Eligible        :'  S-ELIG
+    8/17  'Fills           :'  S-RX
+    09/17  'High            :'  S-HIGH
+    10/17  'Medium          :'  S-MEDIUM
+    11/17  'Low             :'  S-LOW
+    17/3   'PF2-View report         PF4-PreAuth report         ENTER-Exit'(I)
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF2'
+      IF l_Test
+        COMPRESS p_AT '-T' INTO v_A LEAVING NO SPACE
+        EXAMINE f_html FOR '@@FTP-URI' REPLACE 'ftp.testing.local' /* 'ftp.aafmaa.com'
+      ELSE
+        v_A := p_AT
+        EXAMINE f_html FOR '@@FTP-URI' REPLACE 'ftp.aafmaa.com'
+      END-IF
+      EXAMINE f_html FOR '@@AT' REPLACE v_A
+      SET CONTROL 'N' INPUT " "
+      PRINT f_html /
+        // 3x 'Hit magic keys'(I) 'ctrl-PF2'(U) 'to view report'(I)
+        / 3x 'or'(I) 'ENTER'(U) 'to continue'(I)
+      p_Message := v_A  p_RC := 0
+    VALUE 'PF4'
+      v_A := p_Message
+      CALLNAT 'RX-4000' p_Parms
+      IF p_RC <> 0
+        PRINT 'PreAuth request fail' / 'RX Order was not effected' / 'RC:' p_RC 'Please contact MSS'
+      ELSE
+        SET CONTROL 'N' INPUT " "
+        PRINT p_Message
+          // 3x 'IntelliScript image is available for only 15 sec'
+          // 3x 'Hit magic keys'(I) 'ctrl-PF4'(U) 'to view report'(I)
+          / 3x 'or'(I) 'ENTER'(U) 'to continue'(I)
+      END-IF
+      p_Message := v_A  p_RC := 0
+    NONE IGNORE
+  END-DECIDE
+END-FIND
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Error_Exit
+*      --------------
+CLOSE WORK FILE 2
+IF p_RC = 22
+  PRINT NOTITLE // '-'(70)                /
+    5x 'Order was submitted but results were not ready' /
+    5x 'Please retrieve results again' /
+    '-'(70)
+  p_RC := 0
+  ESCAPE MODULE
+END-IF
+
+IF p_RC = 10
+  ESCAPE MODULE /* request canceled
+END-IF
+
+PRINT NOTITLE // '-'(70)                /
+  'Error in the RX Request' p_RC   /
+  'AT' p_AT                        /
+  p_Message                       //
+  'Please notify MSS'
+PRINT NOTITLE '-'(70)                   /
+IF p_RC = 9
+  p_Message := 'Internal'
+END-IF
+COMPRESS 'RX Request Error.' p_Message INTO p_Message
+ESCAPE MODULE
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Wait
+*      --------
+FOR #i = v_Wait TO 1 STEP -1
+  CALLNAT 'USR2027N' 1
+  SET CONTROL 'N'
+  INPUT WINDOW='WIN-Wait' (AD=OL SG=OFF IP=OFF)
+    2x 'Delay:' #i(EM=Z9'sec')
+END-FOR
+END-SUBROUTINE
+* -------------------------------------------------------------
+END

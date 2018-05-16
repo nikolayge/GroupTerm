@@ -1,0 +1,1243 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+************************************************************************
+* NAME         : GPOPACHR                                              *
+* AUTHOR       : Copyright: Electronic Data Systems                    *
+* DESCRIPTION  : Review ACH (EZPay) reversal files                     *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    06/18/2009  None    Program Written                           *
+* PAM    07/18/2009  PM1     ACH returns Phase II                      *
+* PAM    08/12/2009  PM2     ACH returns Phase III                     *
+* PAM    06/17/2010  PM3     Allow loan transactions reversal on paid  *
+*                            up policies                               *
+* vxt    12/20/2013  vt1     Add new GL accounts / Ticket 2447/        *
+* vxt    08/15/2014  vt2     Fix 1316 error in Production              *
+* YAK    01/20/2018  YK1     Add error processing log                  *
+*                            Fix Services payment reversal error       *
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX
+LOCAL USING OBJLUSER
+LOCAL USING GPOAFILE
+LOCAL USING GPOAACHR
+LOCAL USING GPOLACHT
+LOCAL USING GPOASELF
+LOCAL USING OBJAGENT
+LOCAL USING GPOAACHD
+LOCAL USING GPOAACHP
+LOCAL USING GPOAACHE                  /* PM2
+LOCAL USING GPRA0003                  /* YK1
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS               /* VT1 \/
+  2 ID-NUMBER
+  2 PLAN (9)                          /* vt1 /\
+  2 C*ACTIVE-SEGMENTS                 /* YK1
+  2 POLICY-ID (9)                     /* YK1
+*
+1 AR-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER               (N6)
+  2 TRANSACTION-DATN        (P9)
+  2 TXN-CODE                (A4)
+  2 SEQUENCE-NUM            (N1)
+  2 TXN-ACCT-NUMBER         (N3)
+  2 DEBIT-AMOUNT            (P7.2)
+  2 CREDIT-AMOUNT           (P7.2)
+  2 CASH-CODE
+  2 POLICY-NUMBER
+  2 STATUS-TYPE
+  2 ACTIVITY-TYPE
+  2 SG-CATEGORY-1           (A2/15)
+  2 SG-CATEGORY-2           (A2/15)
+  2 SG-AMOUNT               (N6.2/15)
+*
+1 #I1                       (I4)
+1 #I2                       (I4)
+1 #I3                       (I4)
+1 #I4                       (I4)
+1 #TB1                      (I4)
+1 #SCR-IND                  (I4)
+1 #LINE-COUNT               (I4)
+1 #REV-IND                  (I4)
+1 #DT-IND                   (I4)
+1 #DET-IND                  (I4)
+1 #MAIN-DET-IND             (I4)
+1 #MAX-ENTRY                (I4)
+1 #MAIN-MAX-ENTRY           (I4)
+1 #BILL-I1                  (I4)
+1 #BILL-I2                  (I4)
+1 #SEGMENT                  (I2)
+1 #DECEASED                 (A1)
+1 #PAID-UP                  (A1)     /* PM1
+1 #LAPSED                   (L)      /* PM1
+1 #FULL-ACCESS              (L)
+1 #ADMIN-ACCESS             (L)
+1 #APPROVE-FILE             (L)
+1 #PROCESS-FILE             (L)
+1 #APPROVE                  (L)
+1 #PROCESS                  (L)
+1 #REVERSABLE               (L)
+1 #CREATE-BILL              (A1)     /* PM1
+1 #STOP-ACCOUNT             (A1)     /* PM1
+1 #TEXT                     (A78)
+1 #FUNCTION-ATTRIBUTES      (A68)
+1 REDEFINE #FUNCTION-ATTRIBUTES
+  2 #PROGRAM                (A8)
+  2 #SEPARATOR              (A1)
+  2 #FUNCTION-PARM          (A7)
+  2 #HEADER-1               (A50)
+  2 #SECURITY-CODE          (N2)
+*
+1 #WORK-AREAS
+  2 #SHCMD                   (A250)
+  2 #UNIX                    (A70) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ACHPROGRESS/'>
+  2 #AAFMAA                  (A70) INIT <'ftp/finmgmt/ACH_FILES'>
+  2 #UNIX-APPROVE            (A70) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ACHAPPROVE/'>
+  2 #UNIX-PROCESSED          (A70) INIT <'/usr/SAG/AAFMAA/batch/workfiles/PERMDA/ACHPROCESSED/'>
+  2 #NX-FILE-NAME            (A)   DYNAMIC
+  2 #WORKFILE                (A100)
+  2 #WORKFILE-APPROVED       (A100)
+  2 #APPROVE-HEADING         (A7)  INIT <'APPROVE'>
+  2 #PROCESS-HEADING         (A7)  INIT <'PROCESS'>
+  2 #HEADING                 (A7)
+  2 #TYPE                    (A1)                /* PM1
+  2 #WORKFIELD               (A)   DYNAMIC
+  2 #TOTAL-AMOUNT            (P11.2)
+  2 #BATCH-TOTAL             (P11.2)
+  2 #DATN                    (N8)
+  2 REDEFINE #DATN
+    3 #DATN-A                 (A8)
+  2 #TIMN                    (N7)
+  2 REDEFINE #TIMN
+    3 #TIMN-A                 (A6)
+    3 #TIMN-REST              (A1)
+  2 #KEY-MEMBER              (N6)
+  2 REDEFINE #KEY-MEMBER
+    3 #KEY-MEMBER-A           (A6)
+  2 #HOLD-TRAN-CODE          (A4)
+  2 #POLICY-STATUS           (A1)
+  2 #SCREEN                  (P5)
+  2 #SCREEN-COUNT            (P5)
+  2 #MAIN-SCREEN             (P5)
+  2 #MAIN-SCREEN-COUNT       (P5)
+*
+1 #NX-WORK-FIELDS
+  2 #NOTE-TEXT               (A60/10)
+  2 #TO-INIT                 (A3/10)
+  2 #TO-INIT-B               (A3/10)             /* PM2
+  2 #NX-IND                  (I4)
+*
+1 #DATE-FIELDS
+  2 #WORK-DATE               (N8)
+  2 REDEFINE #WORK-DATE
+    3 #WORK-DATE-YYYY         (N4)
+    3 #WORK-DATE-MM           (N2)
+    3 #WORK-DATE-DD           (N2)
+  2 #WORK-END-DATE           (N8)
+  2 #RETURN-CALC             (N8)
+  2 #REQUEST                 (A1)   INIT <'B'>
+*
+1 #MEMBER-TABLE             (100)
+  2 #TRAN-REVERSED           (A2)
+  2 #TRAN-CODE               (A4)
+  2 #ACCOUNT-NUMBER          (A4)
+  2 #POLICY-NUMBER           (A16)
+  2 #DEBIT-AMOUNT            (P7.2)
+  2 #CREDIT-AMOUNT           (P7.2)
+  2 #SERVICE-TRAN            (L)
+*
+1 #DISPLAY-TABLE            (15)
+  2 #DISPLAY-MEMBER          (A8)
+  2 #DISPLAY-TRAN-CODE       (A4)
+  2 #DISPLAY-ACCOUNT-NUM     (A4)
+  2 #DISPLAY-POLICY-NUM      (A16)
+  2 #DISPLAY-DEBIT-AMT       (P7.2)
+  2 #DISPLAY-CREDIT-AMT      (P7.2)
+  2 #DISPLAY-REASON          (A9)
+  2 #DISPLAY-EIL             (A5)
+*
+1 #GRAND-TOTALS
+  2 #REVERSABLE-CNT          (P5)
+  2 #REVERSABLE-DEBIT        (P11.2)
+  2 #REVERSABLE-CREDIT       (P11.2)
+  2 #INACTIVE-CNT            (P5)
+  2 #INACTIVE-DEBIT          (P11.2)
+  2 #INACTIVE-CREDIT         (P11.2)
+  2 #REVERSED-CNT            (P5)
+  2 #REVERSED-DEBIT          (P11.2)
+  2 #REVERSED-CREDIT         (P11.2)
+  2 #MISMATCHED-CNT          (P5)
+  2 #MISMATCHED-DEBIT        (P11.2)
+  2 #MISMATCHED-CREDIT       (P11.2)
+  2 #DECEASED-CNT            (P5)
+  2 #DECEASED-DEBIT          (P11.2)
+  2 #DECEASED-CREDIT         (P11.2)
+  2 #TOTAL-CNT               (P5)
+  2 #TOTAL-DEBIT-AMOUNT      (P11.2)
+  2 #TOTAL-CREDIT-AMOUNT     (P11.2)
+  2 #NUMBER-OF-CHANGES       (P5)                /* PM1
+*
+1 #TOTALS-TABLE             (100)
+  2 #TB-ACCOUNT-NUM          (A4)
+  2 #TB-CNT                  (P5)
+  2 #TB-DEBIT-AMOUNT         (P11.2)
+  2 #TB-CREDIT-AMOUNT        (P11.2)
+*
+1 #DISPLAY-TOTALS-TABLE     (9)                 /* vt2 was 8
+  2 #DISP-ACCOUNT-NUM        (A4)
+  2 #DISP-CNT                (P5)
+  2 #DISP-DEBIT-AMT          (P11.2)
+  2 #DISP-CREDIT-AMT         (P11.2)
+*
+1 #SUNGARD-INFO
+  2  #SUN-TRAN               (A4)
+  2  #SUN-ACCT-NUM-IN        (A4)
+  2  #SUN-CAT-1              (A2)
+  2  #SUN-AMT-SIGN           (A1)
+*
+  2  #SUN-ACCT-NUM           (A4)
+  2  #SUN-AMT-D-C            (A1)
+  2  #SUN-CN                 (N6)
+  2  #SUN-AMT                (N6.2)
+  2  #SUN-SOURCE             (A2)
+*
+1 #ERROR                    (L)
+1 #DESCRIPTION              (A70/20)
+*
+1 #POL-NUM         (A16)                           /* vt1
+1 #K               (I2)                            /* vt1
+1 #PLAN            (A3)                            /* vt1
+* YK1 >
+1 LOG-MESSAGE       (A300)
+1 #LOG-FILE         (A) Dynamic INIT <'/usr/SAG/tmp/ACH_LOG.txt'>
+1 #SERVICES-ACCOUNT-NUMBER (A4) CONST <'4118'>
+* < YK1
+END-DEFINE
+***********************************************************************
+* INCLUDE GONERCXX
+* YK1 >
+ON ERROR
+  BACKOUT TRANSACTION
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  ERROR-PROGRAM := *PROGRAM
+  ERROR-OBJECT  := P_ERROR_PROGRAM
+  ERROR-LINE    := P_ERROR_LINE
+  ERROR-NUMBER  := P_ERROR_NUM
+  RESET LOG-MESSAGE
+  COMPRESS ERROR-NUMBER ERROR-LINE ERROR-PROGRAM ERROR-OBJECT *DAT4I *TIMX INTO LOG-MESSAGE
+  DEFINE WORK FILE 11 #LOG-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+  WRITE WORK FILE 11 VARIABLE LOG-MESSAGE
+  CLOSE WORK FILE 11
+END-ERROR
+* < YK1
+DEFINE WINDOW CONFIRMATION-BOX
+  SIZE 12*60
+  BASE 5/7
+*
+IF *DATA NE 0
+  INPUT #FUNCTION-ATTRIBUTES
+END-IF
+*
+RESET #ADMIN-ACCESS #FULL-ACCESS
+IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A'
+  #ADMIN-ACCESS  := #FULL-ACCESS := TRUE
+ELSE
+  IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'U'
+    #FULL-ACCESS := TRUE
+  END-IF
+END-IF
+*
+IF NOT #FULL-ACCESS
+  #TEXT := 'User not authorized to perform this function. Browse access only'
+END-IF
+*
+#DATN := *DATN                                                     /* PM1
+*
+RESET #APPROVE #PROCESS #APPROVE-FILE #PROCESS-FILE
+DECIDE FOR FIRST CONDITION
+  WHEN #FUNCTION-PARM = 'A' OR = ' '
+    #APPROVE := TRUE
+    #HEADING := #APPROVE-HEADING
+    PERFORM LOAD-FTP-FILE
+  WHEN #FUNCTION-PARM = 'B'
+    #HEADING := #PROCESS-HEADING
+    #PROCESS := TRUE
+    PERFORM LOAD-FILE-TO-PROCESS
+  WHEN NONE
+    WRITE 'Error in program. Please contact a technical representative'
+    ESCAPE ROUTINE
+END-DECIDE
+*
+PERFORM LOAD-TABLE
+PERFORM PROCESS-TABLE
+*
+COMPUTE #SCREEN-COUNT = #TB1 / 8 + 1
+#MAIN-MAX-ENTRY := #TB1
+#SCREEN         := 1
+*
+PERFORM NEXT-SCREEN
+*
+REPEAT
+  PERFORM SET-KEYS
+*
+  IF #ACH-ERROR-CODE = 99
+    #TEXT := 'No records to process'
+  END-IF
+*
+  #MAIN-DET-IND := ((#SCREEN - 1) * 8) + 1
+  #LINE-COUNT   := #MAIN-DET-IND + 8
+  IF #LINE-COUNT > #MAIN-MAX-ENTRY
+    #LINE-COUNT := #MAIN-MAX-ENTRY
+  END-IF
+*
+  RESET #SCR-IND #DISPLAY-TOTALS-TABLE (*)
+  FOR #MAIN-DET-IND #MAIN-DET-IND TO #LINE-COUNT
+    ADD +1 TO #SCR-IND
+    #DISP-ACCOUNT-NUM (#SCR-IND) := #TB-ACCOUNT-NUM (#MAIN-DET-IND)
+    #DISP-CNT         (#SCR-IND) := #TB-CNT (#MAIN-DET-IND)
+    #DISP-DEBIT-AMT   (#SCR-IND) := #TB-DEBIT-AMOUNT (#MAIN-DET-IND)
+    #DISP-CREDIT-AMT  (#SCR-IND) := #TB-CREDIT-AMOUNT (#MAIN-DET-IND)
+  END-FOR
+*
+  INPUT TEXT #TEXT USING MAP 'GPOMACHR'
+*
+  DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF4'
+      #MAIN-SCREEN-COUNT := #SCREEN-COUNT
+      #MAIN-SCREEN       := #SCREEN
+      PERFORM DISPLAY-DETAILS
+      #SCREEN            := #MAIN-SCREEN
+      #SCREEN-COUNT      := #MAIN-SCREEN-COUNT
+    VALUE 'PF2'
+      #PROCESS-FILE      := TRUE
+    VALUE 'PF5'
+      #APPROVE-FILE      := TRUE
+    VALUE 'PF3'
+      PERFORM DISPLAY-CANCEL-SCREEN
+      #FUNCTION-PARM := 'PROC '
+      #PROGRAM := 'G1000PUI'
+      STACK TOP DATA #FUNCTION-ATTRIBUTES
+      FETCH #PROGRAM
+    VALUE 'PF8', 'PF7'
+      PERFORM NEXT-SCREEN
+    VALUE 'PF12'
+      #CGA-SCR-COMMAND := 'GM'
+      RESET #CGA-SCR-SUFFIX
+      PERFORM CALL-G1000PXX
+    NONE
+      IGNORE
+  END-DECIDE
+*
+  IF NOT #FULL-ACCESS
+    #TEXT := 'User not authorized to perform this function. Browse access only'
+    ESCAPE TOP
+  END-IF
+*
+  IF #APPROVE-FILE
+    PERFORM APPROVE-FILE
+    #CGA-SCR-COMMAND := 'UI'
+    RESET #CGA-SCR-SUFFIX
+    END TRANSACTION
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #PROCESS-FILE
+    PERFORM PROCESS-FILE
+    #CGA-SCR-COMMAND     := #CGA-ORIG-COMMAND := 'TA'
+    #CGA-SCR-SUFFIX      := #CGA-ORIG-SUFFIX  := 'EZ*'
+    #CGA-MF-SCR-PARM-1-N := #TIMN
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+PERFORM CALL-G1000PXX
+*
+***********************************************************************
+DEFINE SUBROUTINE LOAD-FTP-FILE
+***********************************************************************
+*
+#UNIX-FILE-FOLDER := #UNIX
+#WORK-FILE-FOLDER := #AAFMAA
+*
+CALLNAT 'GPOSFILE'
+  #PDA-WORKFILE
+*
+IF #WORKFILE-ERROR
+  FETCH 'GPOPACHR'
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE LOAD-FILE-TO-PROCESS
+***********************************************************************
+*
+#SELECT-FILE-FOLDER := #UNIX-APPROVE
+RESET #SELECT-FILE-NAME
+*
+CALLNAT 'GPOSSELF'
+  #PDA-SELECT-FILE
+*
+#WORK-FILE-NAME     := #SELECT-FILE-NAME
+#WORK-FILE-FOLDER   := #SELECT-FILE-FOLDER
+COMPRESS #SELECT-FILE-FOLDER #SELECT-FILE-NAME INTO #UNIX-FILE-FOLDER LEAVING NO
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE LOAD-TABLE
+***********************************************************************
+*
+CALLNAT 'GPOSACHR'
+  #PDA-ACHR-TABLE
+  #PDA-WORKFILE
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE PROCESS-TABLE
+***********************************************************************
+*
+FOR #I1 1 TO 12
+  IF #ACHR-DATE (#I1) = 0
+    ESCAPE BOTTOM
+  END-IF
+*
+  PERFORM FORMAT-DATES
+*
+  FOR #I2 1 TO 500
+    IF #ACHR-MEMBER-NUMBER (#I1,#I2) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF #ACHR-REJECTION-CODE (#I1,#I2) NE MASK ('R')
+      ESCAPE TOP
+    END-IF
+*
+    COMPRESS #ACHR-MEMBER-NUMBER (#I1,#I2)
+      INTO #KEY-MEMBER-A LEAVING NO
+    PERFORM LOAD-TRANSACTIONS
+    PERFORM COMPARE-MEMBER-INFO
+  END-FOR
+END-FOR
+*
+#TYPE := 'C'            /* PM1
+CALLNAT 'GPOSACHC'      /* PM1
+  #PDA-ACHR-TABLE       /* PM1
+  #PDA-GPOAACHP (*)     /* PM1
+  #PDA-GPOAACHE (*)     /* PM2
+  #DATN                 /* PM1
+  #TIMN                 /* PM1
+  #TYPE                 /* PM1
+  #NUMBER-OF-CHANGES    /* PM1
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SET-KEYS
+***********************************************************************
+*
+SET KEY PF4   NAMED 'Dtail'
+SET KEY PF3   NAMED 'Retrn'
+SET KEY PF12  NAMED 'Quit'
+SET KEY PF7   NAMED 'Up'
+SET KEY PF8   NAMED 'Down'
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #APPROVE
+    SET KEY PF5   NAMED 'Appve'
+  WHEN #PROCESS
+    SET KEY PF2   NAMED 'Submt'
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE DISPLAY-CANCEL-SCREEN
+***********************************************************************
+*
+SET WINDOW 'CONFIRMATION-BOX'
+INPUT USING MAP 'GPOMACHE'
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CALL-G1000PXX
+***********************************************************************
+*
+SET KEY OFF
+FETCH 'G1000PXX'
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE LOAD-TRANSACTIONS
+***********************************************************************
+*
+RESET #MEMBER-TABLE (*) #I3 #TOTAL-AMOUNT
+*
+READ AR-V BY ID-NUMBER FROM #KEY-MEMBER
+  IF AR-V.ID-NUMBER GT #KEY-MEMBER
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF  (AR-V.TRANSACTION-DATN < #WORK-DATE)
+      OR (AR-V.TRANSACTION-DATN > #WORK-END-DATE)
+      OR (AR-V.CASH-CODE NE 'E')
+    ESCAPE TOP
+  END-IF
+*
+  #SUN-TRAN := AR-V.TXN-CODE
+*
+  IF AR-V.SG-AMOUNT (1) = 0
+    RESET #SUN-CAT-1
+    PERFORM REVERSE-TRANSACTIONS
+    PERFORM GET-GL-ACCT-NUM
+*
+    ADD +1 TO #I3
+    #TRAN-CODE (#I3)             := #SUN-TRAN
+    #ACCOUNT-NUMBER (#I3)        := #SUN-ACCT-NUM
+    #POLICY-NUMBER (#I3)         := AR-V.POLICY-NUMBER
+    #DEBIT-AMOUNT (#I3)          := AR-V.CREDIT-AMOUNT
+    #CREDIT-AMOUNT (#I3)         := AR-V.DEBIT-AMOUNT
+    #TRAN-REVERSED (#I3)         := AR-V.STATUS-TYPE
+    PERFORM ADD-TO-TOTAL
+  ELSE
+    FOR #I4 1 TO 15
+      IF AR-V.SG-AMOUNT (#I4) NE 0
+        MOVE SG-CATEGORY-1 (#I4) TO #SUN-CAT-1
+        PERFORM REVERSE-TRANSACTIONS
+        PERFORM GET-GL-ACCT-NUM
+*
+        IF   (#SUN-TRAN = 'PREP' OR = 'PRER')
+            AND (#SUN-ACCT-NUM = '2235')
+          MOVE 'BADJ' TO #SUN-TRAN
+        END-IF
+*
+        ADD +1 TO #I3
+        #TRAN-CODE (#I3)          := #SUN-TRAN
+        #ACCOUNT-NUMBER (#I3)     := #SUN-ACCT-NUM
+        #POLICY-NUMBER (#I3)      := AR-V.POLICY-NUMBER
+        #TRAN-REVERSED (#I3)      := AR-V.STATUS-TYPE
+        IF #ACCOUNT-NUMBER (#I3) = #SERVICES-ACCOUNT-NUMBER           /* YK1
+          #SERVICE-TRAN(#I3) := TRUE                                  /* YK1
+        END-IF                                                        /* YK1
+*
+        IF AR-V.DEBIT-AMOUNT NE 0
+          IF AR-V.SG-AMOUNT (#I4) LT 0
+            COMPUTE #DEBIT-AMOUNT (#I3) = AR-V.SG-AMOUNT (#I4) * -1
+          ELSE
+            #CREDIT-AMOUNT (#I3)  := AR-V.SG-AMOUNT (#I4)
+          END-IF
+        END-IF
+*
+        IF AR-V.CREDIT-AMOUNT NE 0
+          IF AR-V.SG-AMOUNT (#I4) LT 0
+            COMPUTE #CREDIT-AMOUNT (#I3) = AR-V.SG-AMOUNT (#I4) * -1
+          ELSE
+            #DEBIT-AMOUNT (#I3)   := AR-V.SG-AMOUNT (#I4)
+          END-IF
+        END-IF
+*
+        PERFORM ADD-TO-TOTAL
+      END-IF
+    END-FOR
+  END-IF
+END-READ
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE UPDATE-REVERSED-TRANSACTIONS
+***********************************************************************
+*
+FOR #I1 1 TO 12
+  IF #ACHR-DATE (#I1) = 0
+    ESCAPE BOTTOM
+  END-IF
+*
+  PERFORM FORMAT-DATES
+*
+  FOR #I2 1 TO 500
+    IF #ACHR-MEMBER-NUMBER (#I1,#I2) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF #ACHR-REJECTION-CODE (#I1,#I2) NE MASK ('R')
+      ESCAPE TOP
+    END-IF
+*
+    COMPRESS #ACHR-MEMBER-NUMBER (#I1,#I2) INTO #KEY-MEMBER-A LEAVING NO
+*
+    R01. READ AR-V BY ID-NUMBER FROM #KEY-MEMBER
+      IF AR-V.ID-NUMBER GT #KEY-MEMBER
+        ESCAPE BOTTOM
+      END-IF
+*
+      IF  (AR-V.TRANSACTION-DATN < #WORK-DATE)
+          OR (AR-V.TRANSACTION-DATN > #WORK-END-DATE)
+          OR (AR-V.CASH-CODE NE 'E')
+        ESCAPE TOP
+      END-IF
+*
+      AR-V.ACTIVITY-TYPE := #ACHR-REJECTION-CODE (#I1,#I2)
+      AR-V.STATUS-TYPE   := 'RV'
+*
+      UPDATE (R01.)
+      END TRANSACTION
+    END-READ
+  END-FOR
+END-FOR
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE GET-GL-ACCT-NUM
+***********************************************************************
+*
+IF #SUN-CAT-1 = '**'
+  RESET #SUN-CAT-1
+END-IF
+*
+IF   (#SUN-TRAN = 'BADJ')
+    AND (#SUN-CAT-1 = 'UN')
+  RESET #SUN-CAT-1
+END-IF
+*
+IF   (#SUN-TRAN = 'ADCR' OR = 'RDCR')
+    AND (#SUN-CAT-1 = 'DC')
+  RESET #SUN-CAT-1
+END-IF
+*
+RESET #SUN-ACCT-NUM
+*
+CALLNAT 'ATHS03P2'
+  #SUN-TRAN
+  #SUN-ACCT-NUM-IN
+  #SUN-CAT-1
+  #SUN-AMT-SIGN
+*
+  #SUN-ACCT-NUM
+  #SUN-AMT-D-C
+  #SUN-CN
+  #SUN-AMT
+  #SUN-SOURCE
+*
+if #datn ge 20140101                                                     /* vt1
+  if #sun-tran = 'PREP' or = 'PRER'  or = 'FPFP' or = 'FPFR' or = 'FPRP' or = 'RIDP' or = 'RIDR' or = 'DUEP' or = 'DUER' or = 'DISC'            /* vt1
+    perform get-new-gl-act-num                                           /* vt1
+  end-if                                                                 /* vt1
+end-if                                                                   /* vt1
+*
+IF   (#SUN-TRAN = 'ADDL')
+    AND (AR-V.SEQUENCE-NUM = 2)
+  MOVE '4315' TO #SUN-ACCT-NUM
+  MOVE 'INTV' TO #SUN-TRAN
+END-IF
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE REVERSE-TRANSACTIONS
+***********************************************************************
+*
+FOR #REV-IND 1 TO #ACHR-NUMBER-TRANS
+  IF #SUN-TRAN = #ACHR-INCOMING-TRANSACTION (#REV-IND)
+    #SUN-TRAN := #ACHR-OUTGOING-TRANSACTION (#REV-IND)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF #REV-IND GT #ACHR-NUMBER-TRANS
+  WRITE 'OOPS - DIDN"T FIND TRANSACTION' 2X #SUN-TRAN
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE ADD-TO-TOTAL
+***********************************************************************
+*
+IF #DEBIT-AMOUNT (#I3) NE 0
+  ADD #DEBIT-AMOUNT (#I3) TO #TOTAL-AMOUNT
+END-IF
+*
+IF #CREDIT-AMOUNT (#I3) NE 0
+  SUBTRACT #CREDIT-AMOUNT (#I3) FROM #TOTAL-AMOUNT
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE COMPARE-MEMBER-INFO
+***********************************************************************
+*
+FOR #I3 1 TO 100
+  IF #TRAN-CODE (#I3) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  #HOLD-TRAN-CODE := #TRAN-CODE (#I3)
+  IF NOT (#SERVICE-TRAN(#I3))
+    #SEGMENT        := F_POLICY_SEGMENT (<#POLICY-NUMBER (#I3),#ACHR-MEMBER-NUMBER (#I1,#I2)>)
+    #POLICY-STATUS  := FUNCTION-POLICY-STATUS (<#SEGMENT,#ACHR-MEMBER-NUMBER (#I1,#I2)>)
+    #DECEASED       := FUNCTION-DECEASED (<#ACHR-MEMBER-NUMBER (#I1,#I2),#SEGMENT>)        /* PM1
+    #PAID-UP        := FUNCTION-POLICY-PAID-UP (<#ACHR-MEMBER-NUMBER (#I1,#I2),#SEGMENT>)  /* PM1
+  END-IF
+*
+  #CREATE-BILL    := 'Y'                               /* PM1
+  #STOP-ACCOUNT   := 'N'                               /* PM1
+  RESET #LAPSED                                        /* PM1
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN  #SERVICE-TRAN(#I3)                           /* YK1
+      ADD +1 TO #REVERSABLE-CNT                        /* YK1
+      ADD #DEBIT-AMOUNT (#I3)  TO #REVERSABLE-DEBIT    /* YK1
+      ADD #CREDIT-AMOUNT (#I3) TO #REVERSABLE-CREDIT   /* YK1
+    WHEN #TOTAL-AMOUNT NE #ACHR-REJECTION-AMOUNT (#I1,#I2)
+      PERFORM CREATE-CREDIT
+      ADD +1 TO #MISMATCHED-CNT
+      ADD #DEBIT-AMOUNT (#I3)  TO #MISMATCHED-DEBIT
+      ADD #CREDIT-AMOUNT (#I3) TO #MISMATCHED-CREDIT
+    WHEN #TRAN-REVERSED (#I3) = 'RV'
+      ADD +1 TO #REVERSED-CNT
+      ADD #DEBIT-AMOUNT (#I3)  TO #REVERSED-DEBIT
+      ADD #CREDIT-AMOUNT (#I3) TO #REVERSED-CREDIT
+      ESCAPE TOP                                       /* DO NOT PROCESS TRANS ALREADY REVERSED
+    WHEN #DECEASED NE 'N'                              /* PM1
+      IF #DECEASED = 'P'                               /* PM1
+        PERFORM CREATE-CREDIT
+      ELSE                                             /* PM1
+        PERFORM CREATE-WRITE-OFF                       /* PM1
+        #CREATE-BILL := 'N'                            /* PM1
+      END-IF                                           /* PM1
+      #STOP-ACCOUNT  := 'Y'                            /* PM1
+      ADD +1 TO #DECEASED-CNT
+      ADD #DEBIT-AMOUNT (#I3)  TO #DECEASED-DEBIT
+      ADD #CREDIT-AMOUNT (#I3) TO #DECEASED-CREDIT
+    WHEN #POLICY-STATUS NE 'D'
+      #LAPSED := FUNCTION-LAPSED (<#ACHR-MEMBER-NUMBER (#I1,#I2),#SEGMENT,#WORK-DATE,#DATN>) /* PM1
+      IF #LAPSED                                       /* PM1
+        IGNORE                                         /* PM1
+      ELSE                                             /* PM1
+        PERFORM CREATE-WRITE-OFF                       /* PM1
+        #CREATE-BILL := 'N'                            /* PM1
+      END-IF                                           /* PM1
+      #STOP-ACCOUNT  := 'Y'                            /* PM1
+      ADD +1 TO #INACTIVE-CNT
+      ADD #DEBIT-AMOUNT (#I3)  TO #INACTIVE-DEBIT
+      ADD #CREDIT-AMOUNT (#I3) TO #INACTIVE-CREDIT
+    WHEN #PAID-UP = 'Y' AND NOT #TRAN-CODE (#I3) = 'PADF' OR = 'PADV' OR = 'AIAF' OR = 'AIAV' /* PM3
+      IF FUNCTION-ACH-LTC (<#ACHR-MEMBER-NUMBER (#I1,#I2),#SEGMENT>) = TRUE /* PM1
+        #CREATE-BILL  := 'N'                           /* PM1
+      END-IF                                           /* PM1
+      PERFORM CREATE-WRITE-OFF                         /* PM1
+      #STOP-ACCOUNT  := 'Y'                            /* PM1
+      ADD +1 TO #MISMATCHED-CNT                        /* PM1
+      ADD #DEBIT-AMOUNT (#I3)  TO #MISMATCHED-DEBIT    /* PM1
+      ADD #CREDIT-AMOUNT (#I3) TO #MISMATCHED-CREDIT   /* PM1
+    WHEN NONE
+      #REVERSABLE := FUNCTION-ACH-REVERSABLE (<#SEGMENT,#ACHR-MEMBER-NUMBER (#I1,#I2),
+        #TRAN-CODE (#I3),#DEBIT-AMOUNT(#I3)>)
+      IF NOT #REVERSABLE
+        PERFORM CREATE-CREDIT
+      END-IF
+      ADD +1 TO #REVERSABLE-CNT
+      ADD #DEBIT-AMOUNT (#I3)  TO #REVERSABLE-DEBIT
+      ADD #CREDIT-AMOUNT (#I3) TO #REVERSABLE-CREDIT
+  END-DECIDE
+*
+  ADD +1 TO #TOTAL-CNT
+  ADD #DEBIT-AMOUNT (#I3)      TO #TOTAL-DEBIT-AMOUNT
+  ADD #CREDIT-AMOUNT (#I3)     TO #TOTAL-CREDIT-AMOUNT
+  ADD #DEBIT-AMOUNT (#I3)      TO #BATCH-TOTAL
+  SUBTRACT #CREDIT-AMOUNT (#I3) FROM #BATCH-TOTAL
+*
+  PERFORM ADD-TO-TOTAL-TABLE
+  PERFORM ADD-TO-BILL-FILE
+END-FOR
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE ADD-TO-TOTAL-TABLE
+***********************************************************************
+*
+FOR #TB1 1 TO 100
+  IF #TB-ACCOUNT-NUM (#TB1) = ' '
+    #TB-ACCOUNT-NUM (#TB1) := #ACCOUNT-NUMBER (#I3)
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #TB-ACCOUNT-NUM (#TB1) = #ACCOUNT-NUMBER (#I3)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+ADD +1                   TO #TB-CNT (#TB1)
+ADD #DEBIT-AMOUNT (#I3)  TO #TB-DEBIT-AMOUNT (#TB1)
+ADD #CREDIT-AMOUNT (#I3) TO #TB-CREDIT-AMOUNT (#TB1)
+*
+ADD +1 TO #DT-IND
+#DT-MEMBER-ID      (#DT-IND) := #ACHR-MEMBER-NUMBER (#I1,#I2)
+#DT-TRAN-CODE      (#DT-IND) := #TRAN-CODE (#I3)
+#DT-ORIG-TRAN-CODE (#DT-IND) := #HOLD-TRAN-CODE
+#DT-ACCOUNT-NUMBER (#DT-IND) := #ACCOUNT-NUMBER (#I3)
+#DT-POLICY-NUMBER  (#DT-IND) := #POLICY-NUMBER (#I3)
+#DT-DEBIT-AMOUNT   (#DT-IND) := #DEBIT-AMOUNT (#I3)
+#DT-CREDIT-AMOUNT  (#DT-IND) := #CREDIT-AMOUNT  (#I3)
+#DT-REJECTION-CODE (#DT-IND) := #ACHR-REJECTION-CODE (#I1,#I2)
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CREATE-CREDIT
+***********************************************************************
+*
+RESET #SUN-CAT-1
+IF #DEBIT-AMOUNT (#I3) - #CREDIT-AMOUNT (#I3) GT 0
+  #SUN-TRAN := 'RDCR'
+  #DEBIT-AMOUNT (#I3)  := #DEBIT-AMOUNT (#I3) - #CREDIT-AMOUNT (#I3)
+  RESET #CREDIT-AMOUNT (#I3)
+ELSE
+  #SUN-TRAN := 'ADCR'
+  #CREDIT-AMOUNT (#I3) := #CREDIT-AMOUNT (#I3) - #DEBIT-AMOUNT (#I3)
+  RESET #DEBIT-AMOUNT (#I3)
+END-IF
+*
+PERFORM GET-GL-ACCT-NUM
+*
+#TRAN-CODE (#I3)       := #SUN-TRAN
+#ACCOUNT-NUMBER (#I3)  := #SUN-ACCT-NUM
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE CREATE-WRITE-OFF                               /* PM1
+***********************************************************************
+*
+RESET #SUN-CAT-1
+IF #TRAN-CODE (#I3) = 'PADF' OR = 'PADV' OR = 'AIAF' OR = 'AIAV'
+  #SUN-TRAN := 'LWOF'
+ELSE
+  #SUN-TRAN := 'PWOF'
+END-IF
+*
+IF #DEBIT-AMOUNT (#I3) - #CREDIT-AMOUNT (#I3) GT 0
+  #DEBIT-AMOUNT (#I3)  := #DEBIT-AMOUNT (#I3) - #CREDIT-AMOUNT (#I3)
+  RESET #CREDIT-AMOUNT (#I3)
+ELSE
+  #CREDIT-AMOUNT (#I3) := #CREDIT-AMOUNT (#I3) - #DEBIT-AMOUNT (#I3)
+  RESET #DEBIT-AMOUNT (#I3)
+END-IF
+*
+PERFORM GET-GL-ACCT-NUM
+*
+#TRAN-CODE (#I3)       := #SUN-TRAN
+#ACCOUNT-NUMBER (#I3)  := #SUN-ACCT-NUM
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE ADD-TO-BILL-FILE
+***********************************************************************
+*
+FOR #BILL-I1 1 TO 500
+  IF #BILL-MEMBER-ID (#BILL-I1) = ' '
+    #BILL-MEMBER-ID (#BILL-I1) := #ACHR-MEMBER-NUMBER (#I1,#I2)
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #BILL-MEMBER-ID (#BILL-I1) = #ACHR-MEMBER-NUMBER (#I1,#I2)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+#BILL-REJECTION-CODE   (#BILL-I1) := #ACHR-REJECTION-CODE (#I1,#I2)
+#BILL-REJECTION-AMOUNT (#BILL-I1) := #ACHR-REJECTION-AMOUNT (#I1,#I2)
+#BILL-CREATE           (#BILL-I1) := #CREATE-BILL                /* PM1
+#BILL-STOP             (#BILL-I1) := #STOP-ACCOUNT               /* PM1
+*
+FOR #BILL-I2 1 TO 500
+  IF #BILL-TRAN-CODE     (#BILL-I1,#BILL-I2) = ' '
+    #BILL-ORIG-TRAN      (#BILL-I1,#BILL-I2) := #DT-ORIG-TRAN-CODE (#DT-IND)
+    #BILL-TRAN-CODE      (#BILL-I1,#BILL-I2) := #TRAN-CODE (#I3)
+    #BILL-POLICY-NUMBER  (#BILL-I1,#BILL-I2) := #POLICY-NUMBER (#I3)
+    #BILL-DEBIT-AMOUNT   (#BILL-I1,#BILL-I2) := #DEBIT-AMOUNT (#I3)
+    #BILL-CREDIT-AMOUNT  (#BILL-I1,#BILL-I2) := #CREDIT-AMOUNT (#I3)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE DISPLAY-DETAILS
+***********************************************************************
+*
+SET KEY PF2  = OFF
+SET KEY PF4  = OFF
+SET KEY PF5  = OFF
+SET KEY PF12 = OFF
+*
+COMPUTE #SCREEN-COUNT = #DT-IND / 15 + 1
+#MAX-ENTRY := #DT-IND
+*
+#SCREEN := 1
+PERFORM NEXT-SCREEN
+*
+REPEAT
+  #DET-IND := ((#SCREEN - 1) * 15) + 1
+  #LINE-COUNT := #DET-IND + 14
+  IF #LINE-COUNT > #MAX-ENTRY
+    #LINE-COUNT := #MAX-ENTRY
+  END-IF
+*
+  RESET #SCR-IND #DISPLAY-TABLE (*)
+  FOR #DET-IND #DET-IND TO #LINE-COUNT
+    ADD +1 TO #SCR-IND
+    #DISPLAY-MEMBER      (#SCR-IND) := #DT-MEMBER-ID (#DET-IND)
+    #DISPLAY-TRAN-CODE   (#SCR-IND) := #DT-TRAN-CODE (#DET-IND)
+    #DISPLAY-ACCOUNT-NUM (#SCR-IND) := #DT-ACCOUNT-NUMBER (#DET-IND)
+    #DISPLAY-POLICY-NUM  (#SCR-IND) := #DT-POLICY-NUMBER (#DET-IND)
+    #DISPLAY-DEBIT-AMT   (#SCR-IND) := #DT-DEBIT-AMOUNT (#DET-IND)
+    #DISPLAY-CREDIT-AMT  (#SCR-IND) := #DT-CREDIT-AMOUNT (#DET-IND)
+    #WORKFIELD                      := FUNCTION-ACH-REASON (<#DT-REJECTION-CODE (#DET-IND),'A'>)
+    #DISPLAY-REASON      (#SCR-IND) := #WORKFIELD
+*
+    #SEGMENT  := F_POLICY_SEGMENT (<#DT-POLICY-NUMBER (#DET-IND),#DT-MEMBER-ID (#DET-IND)>)        /* PM1
+    #DECEASED := FUNCTION-DECEASED (<#DT-MEMBER-ID (#DET-IND),#SEGMENT>)                           /* PM1
+    #LAPSED   := FUNCTION-LAPSED (<#DT-MEMBER-ID (#DET-IND),#SEGMENT,#WORK-DATE,#DATN>)            /* PM1
+    #PAID-UP  := FUNCTION-POLICY-PAID-UP (<#DT-MEMBER-ID (#DET-IND),#SEGMENT>)                     /* PM1
+*
+    DECIDE FOR FIRST CONDITION                      /* PM1
+      WHEN #DT-ORIG-TRAN-CODE (#DET-IND) = 'APFR'
+        #DISPLAY-EIL (#SCR-IND) := '(EIL)'
+      WHEN #DECEASED = 'P'                          /* PM1
+        #DISPLAY-EIL (#SCR-IND) := '(D-P)'          /* PM1
+      WHEN #DECEASED = 'S'                          /* PM1
+        #DISPLAY-EIL (#SCR-IND) := '(D-S)'          /* PM1
+      WHEN #LAPSED                                  /* PM1
+        #DISPLAY-EIL (#SCR-IND) := '(LPS)'          /* PM1
+      WHEN #PAID-UP = 'Y'                           /* PM1
+        #DISPLAY-EIL (#SCR-IND) := '(PDU)'          /* PM1
+      WHEN NONE                                     /* PM1
+        IGNORE                                      /* PM1
+    END-DECIDE                                      /* PM1
+  END-FOR
+*
+  INPUT TEXT #TEXT USING MAP 'GPOMACHD'
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN *PF-KEY = 'PF3'
+      ESCAPE BOTTOM
+    WHEN *PF-KEY = 'PF7' OR = 'PF8'
+      PERFORM NEXT-SCREEN
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-REPEAT
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE FORMAT-DATES
+***********************************************************************
+*
+#WORK-DATE    := #ACHR-DATE (#I1)
+ADD 2000      TO #WORK-DATE-YYYY
+#WORK-DATE-DD := 01
+*
+CALLNAT 'GDATESXX'
+  #WORK-END-DATE
+  #WORK-DATE
+  #RETURN-CALC
+  #REQUEST
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE NEXT-SCREEN
+***********************************************************************
+*
+IF *PF-KEY = 'PF8'
+  IF #SCREEN LT #SCREEN-COUNT
+    #SCREEN := #SCREEN + 1
+  END-IF
+*
+  IF #SCREEN = #SCREEN-COUNT
+    #TEXT := 'Last Screen'
+  END-IF
+ELSE
+  IF #SCREEN GT 1
+    #SCREEN := #SCREEN - 1
+  END-IF
+*
+  IF #SCREEN = 1
+    IF #FULL-ACCESS
+      #TEXT   := 'First Screen'
+    END-IF
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE APPROVE-FILE
+***********************************************************************
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+COMPRESS #UNIX-APPROVE #WORK-FILE-NAME ':' #DATN-A ':' #TIMN-A
+  INTO #WORKFILE-APPROVED LEAVING NO
+COMPRESS 'mv' #UNIX-FILE-FOLDER #WORKFILE-APPROVED INTO #SHCMD
+*
+CALL 'SHCMD' #SHCMD
+*
+RESET PARM-GEN-TABLE
+#SUB-KEY := 'A'
+RESET #NOTE-TEXT (*)
+COMPRESS 'An ACH return file -' #WORK-FILE-NAME '- has been approved'
+  INTO #NOTE-TEXT (2)
+#NOTE-TEXT (3) := 'for processing by Financial Management.'
+*
+PERFORM SEND-NX-MESSAGE
+*
+SET WINDOW 'CONFIRMATION-BOX'
+INPUT USING MAP 'GPOMACHA'
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE PROCESS-FILE
+***********************************************************************
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+#CGA-SCR-SUFFIX := '*NX'
+CALLNAT 'GPOSACHD'
+  #PDA-GPOAACHD (*)
+  #DT-IND
+  #DATN
+  #TIMN
+  #NX-FILE-NAME
+  #SELECT-FILE-NAME-ONLY
+  #WORK-DATE            /* PM1
+*
+RESET #TYPE             /* PM1
+CALLNAT 'GPOSACHC'
+  #PDA-ACHR-TABLE
+  #PDA-GPOAACHP (*)
+  #PDA-GPOAACHE (*)     /* PM2
+  #DATN
+  #TIMN
+  #TYPE                 /* PM1
+  #NUMBER-OF-CHANGES    /* PM1
+*
+PERFORM UPDATE-REVERSED-TRANSACTIONS
+*
+PERFORM SEND-CAP-NX     /* PM2
+*
+RESET PARM-GEN-TABLE
+#SUB-KEY := 'B'
+RESET #NOTE-TEXT (*)
+#NOTE-TEXT (2) := 'An ACH Peachtree file has been generated by Policy Services.'
+#NOTE-TEXT (3) := #NX-FILE-NAME
+PERFORM SEND-NX-MESSAGE
+*
+COMPRESS #UNIX-PROCESSED #SELECT-FILE-NAME-ONLY ':' #DATN-A ':' #TIMN-A
+  INTO #WORKFILE-APPROVED LEAVING NO
+COMPRESS 'mv' #UNIX-FILE-FOLDER #WORKFILE-APPROVED INTO #SHCMD
+*
+CALL 'SHCMD' #SHCMD
+*
+SET WINDOW 'CONFIRMATION-BOX'
+INPUT USING MAP 'GPOMACHP'
+SET WINDOW OFF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SEND-NX-MESSAGE
+***********************************************************************
+*
+MOVE EDITED #BATCH-TOTAL (EM=ZZ,ZZZ,ZZZ,ZZ9.99) TO #NOTE-TEXT (5)
+MOVE LEFT #NOTE-TEXT (5) TO #NOTE-TEXT (5)
+COMPRESS '$' #NOTE-TEXT (5) INTO #NOTE-TEXT (5) LEAVING NO
+COMPRESS 'BATCH TOTAL =' #NOTE-TEXT (5) INTO #NOTE-TEXT (5)
+*
+#ACTION  := 'GET'
+#KEY     := 'RACH'
+#DATE    := *DATN
+*
+CALLNAT 'OBJNGENT' PARM-GEN-TABLE
+*
+SEPARATE ADDL-INFO (1) INTO #TO-INIT (*) WITH DELIMITER ':'
+*
+#CGA-SCR-SUFFIX := '*NX'
+*
+FOR #NX-IND 1 TO 10
+  IF #TO-INIT (#NX-IND) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #TO-INIT (#NX-IND) = 'CEB' OR = 'EAC'
+    ESCAPE TOP
+  END-IF
+*
+  FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT (#NX-IND) #NOTE-TEXT (1:5)
+END-FOR
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE SEND-CAP-NX                                  /* PM2
+***********************************************************************
+*
+RESET PARM-GEN-TABLE
+*
+#SUB-KEY := 'A'
+#ACTION  := 'GET'
+#KEY     := 'RACH'
+#DATE    := *DATN
+*
+CALLNAT 'OBJNGENT' PARM-GEN-TABLE
+SEPARATE ADDL-INFO (1) INTO #TO-INIT (*) WITH DELIMITER ':'
+*
+#SUB-KEY := 'B'
+CALLNAT 'OBJNGENT' PARM-GEN-TABLE
+SEPARATE ADDL-INFO (1) INTO #TO-INIT-B (*) WITH DELIMITER ':'
+*
+FOR #I1 1 TO 500
+  IF #EIL-MEMBER-ID (#I1) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  RESET #NOTE-TEXT (*)
+  COMPRESS 'Member' #EIL-MEMBER-ID (#I1) 'had an EIL payment (APFP) reversed via' INTO #NOTE-TEXT (2)
+  COMPRESS 'the ACH return process for policy' #EIL-POLICY-NUMBER (#I1) INTO #NOTE-TEXT (3)
+  COMPRESS #NOTE-TEXT (3) '.' INTO #NOTE-TEXT (3) LEAVING NO
+*
+  FOR #NX-IND 1 TO 10
+    IF #TO-INIT (#NX-IND) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT (#NX-IND) #NOTE-TEXT (1:5)
+  END-FOR
+*
+  FOR #NX-IND 1 TO 10
+    IF #TO-INIT-B (#NX-IND) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    FETCH RETURN 'G4090PNX' #CGA-CLERK #TO-INIT-B (#NX-IND) #NOTE-TEXT (1:5)
+  END-FOR
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************
+DEFINE SUBROUTINE GET-NEW-GL-ACT-NUM                             /* vt1 \/
+*****************
+*
+RESET #PLAN
+FIND ST-V WITH ST-V.ID-NUMBER = AR-V.ID-NUMBER
+  FOR #K 1 C*ACTIVE-SEGMENTS                                     /* YK1
+    IF ST-V.POLICY-ID(#K) = AR-V.POLICY-NUMBER                   /* YK1
+      MOVE ST-V.PLAN(#K) TO #PLAN
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+END-FIND
+*
+if function-term-policy(<#plan>)
+  decide on first value of #plan
+    value 'LT'
+      if #sun-cat-1 = '1Y'
+        #sun-acct-num := 4021
+      else
+        if #sun-cat-1 = 'RN'
+          #sun-acct-num := 4031
+        end-if
+      end-if
+    value 'RT'
+      if #sun-cat-1 = '1Y'
+        #sun-acct-num := 4023
+      else
+        if #sun-cat-1 = 'RN'
+          #sun-acct-num := 4033
+        end-if
+      end-if
+    value 'EZ'
+      if #sun-cat-1 = '1Y'
+        #sun-acct-num := 4024
+      else
+        if #sun-cat-1 = 'RN'
+          #sun-acct-num := 4034
+        end-if
+      end-if
+    none value
+      if #sun-cat-1 = '1Y'
+        #sun-acct-num := 4022
+      else
+        if #sun-cat-1 = 'RN'
+          #sun-acct-num := 4032
+        end-if
+      end-if
+  end-decide
+else
+  IF VAWL-TRUE(<#plan>)
+      or (#plan = mask(NN'F')) or ( #plan = mask(N'P'))
+    if #sun-cat-1 = '1Y'
+      #sun-acct-num := 4026
+    else
+      if #sun-cat-1 = 'RN'
+        #sun-acct-num := 4036
+      end-if
+    end-if
+  else
+    decide on first value of #plan
+      value 'GPL' , 'GP2'
+        if #sun-cat-1 = '1Y'
+          #sun-acct-num := 4025
+        else
+          if #sun-cat-1 = 'RN'
+            #sun-acct-num := 4035
+          end-if
+        end-if
+      value 'AL'
+        if #sun-cat-1 = '1Y'
+          #sun-acct-num := 4028
+        end-if
+      value 'SO'
+        if #sun-cat-1 = 'SO'
+          #sun-acct-num := 4112
+        end-if
+      none value
+        ignore
+    end-decide
+  end-if
+end-if
+*
+if #sun-cat-1 = 'SP'
+  #sun-acct-num := 4027
+end-if
+*
+end-subroutine                                               /* vt1 /\
+*
+END

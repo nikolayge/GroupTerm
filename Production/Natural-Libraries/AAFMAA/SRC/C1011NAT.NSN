@@ -1,0 +1,254 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: C1011NAT   AT PREMIER SERVICES PSM
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+*                                                                      *
+* NGG    12/30/2011          Initial creation.                         *
+* NGG    04/23/2012  NG1     Create service in Draft mode              *
+* NGG    04/23/2012  NG2     Reverse Premier service from S=No Application *
+* NGG    05/06/2014  NG3     Prevent to override service A status      *
+* YAK    07/31/2014  YK1     Fix FPF for PSM with allotment            *
+* NGG    20141023    NG4     Annuity multiple products                 *
+*
+DEFINE DATA
+PARAMETER
+1 #AT-NUMBER                 (N6)
+1 #P-SERVICE-IND             (A1)
+1 #REQUEST                   (I4)
+1 #MSG                       (A) DYNAMIC
+1 #ERRORS                    (L)
+1 #SVC-M-RATE                (A7) OPTIONAL
+1 #CRM-SERVICE-ID            (A50) OPTIONAL
+LOCAL USING OBJLMB01
+LOCAL USING OBJAMB01
+LOCAL USING OBJAMR01
+LOCAL USING GPRATR01
+LOCAL
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 CONTACT-ID (N8)
+  2 MODE       (A1)
+  2 PLAN       (A3)
+  2 INTRO-FLAG (A1)
+  2 MEMBER-CN  (A6) 2 REDEFINE MEMBER-CN
+    3 MEMBER-CN-N (N6)
+  2 AT-STATUS   (A2) 2 REDEFINE AT-STATUS
+    3 AT-STATUS-1 (A1)
+1 SVC-STATUS-V VIEW OF A-SVC-MEMBER
+  2 SVC-STATUS (A1)
+*
+1 #SERVICE-ISN    (P8)
+1 #PAYMENT-PERIOD (I2)
+1 #AGE            (N3)
+1 BLANK   (A1) CONST <' '>
+1 YES     (A1) CONST <'Y'>
+1 NO      (A1) CONST <'N'>
+1 PREMIER (A3) CONST <'PSM'>
+1 TR_FUNCTION_CODE (A) DYNAMIC CONST <'Service'>
+END-DEFINE
+*
+*
+DECIDE ON FIRST VALUE OF #REQUEST
+  VALUE 1  /* GET
+    #P-SERVICE-IND := NO
+    S-E.
+    FIND (1) SVC-MEMBER-V WITH SVC-AT-NUMBER = #AT-NUMBER
+    END-FIND
+    FIND AT-V WITH ID-NUMBER = #AT-NUMBER                                      /* YK1
+    END-FIND                                                                   /* YK1
+    IF *NUMBER ( S-E. ) > 0
+      IF #CRM-SERVICE-ID SPECIFIED
+        #CRM-SERVICE-ID := SVC-MEMBER-V.CRM-SERVICE-ID
+      END-IF
+      IF SVC-MEMBER-V.SVC-STATUS = 'A' OR= 'P' OR= 'D'      /* NG1
+        #P-SERVICE-IND := YES
+        DECIDE FOR FIRST CONDITION
+*         WHEN SVC-MEMBER-V.SVC-MODE = 'G' OR= 'E' OR= 'M' OR= '0' OR= BLANK     /* YK1
+          WHEN SVC-MEMBER-V.SVC-MODE = 'E' OR= 'M' OR= '0' OR= BLANK             /* YK1
+            #PAYMENT-PERIOD := 1
+          WHEN SVC-MEMBER-V.SVC-MODE = 'G'                                       /* YK1
+            IF AT-V.MODE = 'G'                                                   /* YK1
+              #PAYMENT-PERIOD := 2                                               /* YK1
+            ELSE                                                                 /* YK1
+              #PAYMENT-PERIOD := 1                                               /* YK1
+            END-IF                                                               /* YK1
+          WHEN SVC-MEMBER-V.SVC-MODE = 'Q' OR= '4'
+            #PAYMENT-PERIOD := 3
+          WHEN SVC-MEMBER-V.SVC-MODE = 'S' OR= '2'
+            #PAYMENT-PERIOD := 6
+          WHEN NONE
+            #PAYMENT-PERIOD := 12
+        END-DECIDE
+        IF #SVC-M-RATE SPECIFIED
+          IF SVC-MEMBER-V.SVC-PAY-UP = YES
+            MOVE EDITED SVC-MEMBER-V.SVC-ONE-TIME-FEE (EM=ZZZ9.99) TO #SVC-M-RATE
+            MOVE LEFT JUSTIFIED #SVC-M-RATE TO #SVC-M-RATE
+          ELSE
+            SVC-MEMBER-V.SVC-MONTHLY-RATE := SVC-MEMBER-V.SVC-MONTHLY-RATE * #PAYMENT-PERIOD
+            MOVE EDITED SVC-MEMBER-V.SVC-MONTHLY-RATE (EM=ZZZ9.99) TO #SVC-M-RATE
+            MOVE LEFT JUSTIFIED #SVC-M-RATE TO #SVC-M-RATE
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  VALUE 2  /* UPDATE
+* If the insurance policy is a 'SP' or 'SPF' or 'AL', then the plan
+* will be considered a 1-time payment plan. Update SVC-PAY-UP to 'Y'
+* and place the 1-time outstanding fee amount in the SVC-ONE-TIME-FEE bucket.
+    DECIDE ON FIRST VALUE OF #P-SERVICE-IND
+      VALUE YES /* Create PS or change PS status according AT status
+        FIND AT-V WITH ID-NUMBER = #AT-NUMBER
+        END-FIND
+        FIND SVC-STATUS-V WITH SVC-AT-NUMBER = #AT-NUMBER
+          IF NO RECORDS
+            IF AT-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+              #MSG := 'Premier Services are not available for GEN/Spouse application'
+              #ERRORS := true
+            ELSE
+              PERFORM CREATE-SERVICE
+            END-IF
+            ESCAPE BOTTOM
+          END-NOREC
+          #SERVICE-ISN := *ISN (0107)
+          IF SVC-STATUS-V.SVC-STATUS = 'S' /* No application
+            SVC-STATUS-V.SVC-STATUS := 'D' /* Temporary draft
+          END-IF
+          PERFORM CHANGE-STATUS
+        END-FIND
+      VALUE NO /* Terminate PS
+        FIND SVC-MEMBER-V WITH SVC-AT-NUMBER = #AT-NUMBER
+          IF NO RECORDS
+            ESCAPE BOTTOM
+          END-NOREC
+          BEFORE_IMAGE.SVC-MODE             := SVC-MEMBER-V.SVC-MODE
+          BEFORE_IMAGE.SVC-STATUS           := SVC-MEMBER-V.SVC-STATUS
+          SVC-MEMBER-V.SVC-STATUS := 'S'
+          SVC-MEMBER-V.SVC-TERMINATION-DATE := *DATN
+          SVC-MEMBER-V.LAST-UPD-USER := *USER
+          SVC-MEMBER-V.LAST-UPD-DATE := *DATN
+          SVC-MEMBER-V.LAST-UPD-TIME := *TIMN
+          UPDATE (0124)
+          PERFORM TR-LOG
+          ESCAPE BOTTOM
+        END-FIND
+      NONE VALUE IGNORE
+    END-DECIDE
+  VALUE 3 /* Change PS status according AT status
+    FIND AT-V WITH ID-NUMBER = #AT-NUMBER
+    END-FIND
+    FIND SVC-MEMBER-V WITH SVC-AT-NUMBER = #AT-NUMBER
+      #SERVICE-ISN := *ISN (0144)
+      PERFORM CHANGE-STATUS
+    END-FIND
+  VALUE 4 /* CHANGE Draft Status      NG1
+    SVC-DRAFT.
+    FIND (1) SVC-MEMBER-V WITH SVC-AT-NUMBER = #AT-NUMBER
+      BEFORE_IMAGE.SVC-MODE             := SVC-MEMBER-V.SVC-MODE
+      BEFORE_IMAGE.SVC-STATUS           := SVC-MEMBER-V.SVC-STATUS
+      IF #P-SERVICE-IND = YES
+        SVC-MEMBER-V.SVC-STATUS := 'P'
+      ELSE
+        SVC-MEMBER-V.SVC-STATUS := 'S'
+        SVC-MEMBER-V.SVC-TERMINATION-DATE := *DATN
+      END-IF
+      SVC-MEMBER-V.LAST-UPD-USER := *USER
+      SVC-MEMBER-V.LAST-UPD-DATE := *DATN
+      SVC-MEMBER-V.LAST-UPD-TIME := *TIMN
+      UPDATE ( SVC-DRAFT.)
+      PERFORM TR-LOG
+    END-FIND
+  NONE VALUE IGNORE
+END-DECIDE
+*
+DEFINE CREATE-SERVICE
+/*     ==============
+#SVC-MEMBER.SVC-PLAN := PREMIER
+#SVC-MEMBER.SVC-ISSUE-DATE := *DATN
+* #SVC-MEMBER.SVC-STATUS := 'P'                  /* NG1
+#SVC-MEMBER.SVC-STATUS := 'D'                    /* NG1 Create in draft mode
+#SVC-MEMBER.SVC-CREATED-BY := *USER
+#SVC-MEMBER.SVC-AT-NUMBER := #AT-NUMBER
+#SVC-MEMBER.SVC-ID-NUMBER := AT-V.MEMBER-CN-N
+#SVC-MEMBER.SVC-MODE := AT-V.MODE
+**IF AT-V.PLAN = 'SP' OR= 'SPF' OR= 'AL'
+IF AT-V.PLAN = 'SP' OR= 'SPF' OR IS-ANNUITY-LIFE (< AT-V.PLAN >)  /* NG4
+  #SVC-MEMBER.SVC-PAY-UP := 'Y'
+END-IF
+IF #CRM-SERVICE-ID SPECIFIED
+  #SVC-MEMBER.CRM-SERVICE-ID := #CRM-SERVICE-ID
+END-IF
+IF SVC-MEMBER-V.SVC-MODE = BLANK   /* NG3
+  SVC-MEMBER-V.SVC-MODE := '0'
+END-IF
+*
+CALLNAT 'SVCNMB01' #SVC-MEMBER #MSG
+END-SUBROUTINE
+*                       Change PS status according Application status
+DEFINE CHANGE-STATUS
+/*     =============
+SVC-L.
+GET SVC-MEMBER-V #SERVICE-ISN
+BEFORE_IMAGE.SVC-MODE             := SVC-MEMBER-V.SVC-MODE
+BEFORE_IMAGE.SVC-STATUS           := SVC-MEMBER-V.SVC-STATUS
+IF SVC-STATUS-V.SVC-STATUS = 'D'
+  SVC-MEMBER-V.SVC-STATUS := SVC-STATUS-V.SVC-STATUS
+END-IF
+IF SVC-MEMBER-V.SVC-STATUS = 'C' /* Canceled
+    OR= 'T'                      /* Terminated
+    OR= 'S'                      /* No application
+    OR= 'A'                      /* Approved  NG3
+  ESCAPE ROUTINE /* can not change PS status
+END-IF
+DECIDE ON FIRST VALUE OF AT-STATUS-1
+  VALUE 'S'                       /* Sales
+    IGNORE
+  VALUE 'P', 'U'                  /* Pending Underwriting
+    SVC-MEMBER-V.SVC-STATUS := 'P'
+  VALUE 'W'                       /* Withdrown
+    SVC-MEMBER-V.SVC-STATUS := 'W'
+  VALUE 'A'                       /* Approved
+    SVC-MEMBER-V.SVC-STATUS := 'A'
+  ANY VALUE
+    IF AT-V.MODE NE BLANK        /* NG3
+      SVC-MEMBER-V.SVC-MODE   := AT-V.MODE   /* Sync Payment Mode with Insurance
+    END-IF
+    #AGE := GET-AGE (< AT-V.CONTACT-ID >)
+    #SVC-RATES.SVC-PLAN := SVC-MEMBER-V.SVC-PLAN
+    #SVC-RATES.SVC-PLAN-AGE-FROM := #AGE
+    #SVC-RATES.SVC-PLAN-AGE-TO   := #AGE
+    CALLNAT 'SVCNMR01' #SVC-RATES #MSG
+    SVC-MEMBER-V.SVC-MONTHLY-RATE := #SVC-RATES.SVC-PLAN-RATE / 12
+*         SVC-MEMBER-V.SVC-REACTIVATION-FEE := #SVC-RATES.SVC-REACTIVATION-FEE
+*   IF AT-V.PLAN = 'SP' OR= 'SPF' OR= 'AL'
+    IF AT-V.PLAN = 'SP' OR= 'SPF' OR IS-ANNUITY-LIFE (< AT-V.PLAN >)  /* NG4
+      SVC-MEMBER-V.SVC-PAY-UP := 'Y'
+      SVC-MEMBER-V.SVC-ONE-TIME-FEE := #SVC-RATES.SVC-ONE-TIME-FEE
+    ELSE
+      RESET SVC-MEMBER-V.SVC-PAY-UP
+        SVC-MEMBER-V.SVC-ONE-TIME-FEE
+    END-IF
+    SVC-MEMBER-V.LAST-UPD-USER := *USER
+    SVC-MEMBER-V.LAST-UPD-DATE := *DATN
+    SVC-MEMBER-V.LAST-UPD-TIME := *TIMN
+    UPDATE ( SVC-L.)
+    PERFORM TR-LOG
+  NONE VALUE IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+DEFINE TR-LOG
+/*     ======
+AFTER_IMAGE.SVC-MODE       := SVC-MEMBER-V.SVC-MODE
+AFTER_IMAGE.SVC-STATUS     := SVC-MEMBER-V.SVC-STATUS
+TR_ID_NUMBER  := SVC-MEMBER-V.SVC-ID-NUMBER
+TR_NAME       := FUNCTION-MEMBER-NAME (< SVC-MEMBER-V.SVC-ID-NUMBER >)
+TR_CLERK      := SVC-MEMBER-V.LAST-UPD-USER
+CALLNAT 'GPRNTR01' TR_FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+END-SUBROUTINE
+*
+END

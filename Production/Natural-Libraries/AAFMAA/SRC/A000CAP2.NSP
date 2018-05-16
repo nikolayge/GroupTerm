@@ -1,0 +1,256 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* A000CAP2 bz 03-28-2016
+* Report all CAP2 - Stats and exclusions
+DEFINE DATA
+LOCAL
+*
+1 NT-V VIEW OF A-NOTES    /* File 38     XNOTES
+ 2 ID-NUMBER    (N6)
+ 2 C*NOTE-TABLE
+ 2 NOTE-TABLE  (500)
+   3 NOTE-DATE         (N8)
+   3 REDEFINE NOTE-DATE
+     4 NOTE-DATE_A     (A8)
+   3 NOTE-TEXT         (A60)
+
+*
+ 1 ST-V VIEW OF A-STATUS
+   2 NUMBER-MEMBERSHIPS
+   2 BRIDGER-IND
+   2 DEBIT-CREDIT-AMT      (N7.2)
+   2 C*ACTIVE-SEGMENTS
+   2 ACTIVE-SEGMENTS(9)
+     3 POLICY-ID
+     3 PLAN   
+     3 STATUS
+     3 MODE
+     3 PAY-STATUS
+     3 ISSUE-DATE   (EM=9999-99-99)
+     3 REDEFINE ISSUE-DATE
+       4 ISSUE-DATE_A        (A8)
+     3 X-LOAN-DATE           (N8)
+     3 REDEFINE X-LOAN-DATE
+       4 X-LOAN-DATE_A       (A8) 
+     3 X-LOAN-AMOUNT         (N5.2)     /* FIXED
+     3 X-ACCUM-INTEREST      (N5.2)     /* FIXED
+     3 OUT-TERM-REF-AMOUNT   (N7.2) 
+     3 OUT-TERM-REF-YEAR     (N4)
+     3 CONV-DURATION         (N3)       /* 999 - CAP Loan
+     3 REDEFINE CONV-DURATION
+       4 CONV-DURATION_A     (A3)
+*
+ 1 f_Out                (A80)    INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/CAP2_@@DD@@ENV.txt">
+ 1 f_Log                (A80)    INIT <"/usr/SAG/AAFMAA/batch/workfiles/WORK/CAP2_@@DD@@ENV_LOG.txt">
+ 1 v_PN                 (I1)     INIT  <1>
+ 1 A400                 (A400) 
+ 1 dm                   (A1)     INIT <H'09'>
+ 1 #i                   (I4)
+ 1 #j                   (I4) 
+ 1 #k                   (I4) 
+ 1 c_In                 (I4)
+ 1 c_999                (I4)
+ 1 c_Cap2               (I4)
+ 1 c_Cap2_A             (I4)
+ 1 c_Cap2_A2            (I4)
+ 1 c_Cap2_F             (I4)
+ 1 c_Cap2_F2            (I4)
+ 1 c_No_999             (I4)
+ 1 c_Err_1              (I4)
+ 1 #d0                  (D)
+ 1 v_A                  (A)  DYNAMIC
+ 1 v_RC                 (N3)
+ 1 rep_A                (A/8) DYNAMIC
+ 1 N01                  (N1) 
+ 1 v_L                  (L)
+ 1 A60                  (A60)
+ 1 A04                  (A04)                     
+*
+END-DEFINE
+ON ERROR
+  WRITE  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR / NT-V.ID-NUMBER
+END-ERROR
+IF *DEVICE <> 'BATCH'
+  MOVE EDITED *DATN(EM=9999-99-99) TO v_A
+  EXAMINE f_Out FOR '@@DD' REPLACE v_A
+  EXAMINE f_Log FOR '@@DD' REPLACE v_A
+  IF F-IS-DEV(<>)
+    EXAMINE f_Out FOR '@@ENV' REPLACE '_Test'
+    EXAMINE f_Log FOR '@@ENV' REPLACE '_Test'
+  ELSE
+    EXAMINE f_Out FOR '@@ENV' DELETE
+    EXAMINE f_Log FOR '@@ENV' DELETE
+  END-IF  
+  DEFINE WORK FILE 1 f_Out TYPE 'ASCII-COMPRESSED'
+  v_RC := PRT_FN_PUT(<v_PN, f_Log>)
+END-IF
+COMPRESS 
+             'CN'
+             'Note date'
+             'Note' 
+             'Loan date'
+             'Amount' 
+             'Policy'
+             'Plan'
+             'Mode'
+             'Pay status'
+             'Issue date'
+             'Term ref amount'
+             'Term ref year' 
+             'Bridger'
+             'Debit/Credit'
+             INTO A400 WITH DELIMITERS dm
+           WRITE WORK FILE 1 A400
+ FORMAT(1) PS=240 LS=120
+ WRITE(1) NOTITLE *DAT4U  '*CAP2 Notes. Statistics and exceptions' /
+          'CN'  dm 'Note date' dm 'Note' dm 'Message'  
+ READ  NT-V  BY ID-NUMBER FROM 1900 TO 300000
+    c_In := c_In + 1
+    EXAMINE NOTE-TEXT(*) FOR '*CAP2' GIVING INDEX #i 
+    IF #i > 0 
+       c_Cap2 := c_Cap2 + 1
+       IF NOTE-DATE(#i) = MASK(YYYYMMDD)
+          MOVE EDITED NOTE-DATE_A(#i) TO #d0(EM=YYYYMMDD)
+          MOVE EDITED #d0(EM=MM/DD/YYYY) TO rep_A(1)
+       ELSE   
+         rep_A(1) := NOTE-DATE_A(#i)
+       END-IF  
+       FIND(1) ST-V WITH ID-NUMBER = NT-V.ID-NUMBER
+               IF NO RECORD FOUND 
+                  c_Err_1 := c_Err_1 + 1
+                  PRINT(1) ID-NUMBER dm NOTE-DATE(#i) dm NOTE-TEXT(#i) dm 'Status file not found'
+                  COMPRESS ID-NUMBER dm rep_A(1) dm NOTE-TEXT(#i) INTO A400 LEAVING NO SPACE
+                  WRITE WORK FILE 1 A400                       
+                  ESCAPE BOTTOM
+               END-NOREC         
+
+               EXAMINE CONV-DURATION_A(*) FOR '999' GIVING NUMBER N01 GIVING INDEX #j
+*               IF N01 > 1 PRINT ID-NUMBER N01 END-IF
+               c_999 := c_999 + N01
+               IF N01 = 0 
+                 c_No_999 := c_No_999 + 1
+                 PRINT(1) ID-NUMBER dm NOTE-DATE(#i) dm NOTE-TEXT(#i) dm 'No Policy with CAP Loan id'
+                 COMPRESS ID-NUMBER dm rep_A(1) dm NOTE-TEXT(#i) INTO A400 LEAVING NO SPACE
+                 WRITE WORK FILE 1 A400                       
+                 ESCAPE BOTTOM
+               END-IF
+               IF N01 = 1
+                 IF STATUS(#j) = 'F'
+                    c_Cap2_F := c_Cap2_F + 1
+                    COMPRESS ID-NUMBER dm rep_A(1) dm NOTE-TEXT(#i) dm INTO A400 LEAVING NO SPACE
+                    WRITE WORK FILE 1 A400                       
+                 ELSE 
+                   c_Cap2_A := c_Cap2_A + N01  
+                    PERFORM sbr_Out
+                 END-IF
+                 ESCAPE BOTTOM                    
+               END-IF
+               #k := 0
+               FOR #j = 1 TO  C*ACTIVE-SEGMENTS
+                 IF CONV-DURATION(#j) <> 999 ESCAPE TOP END-IF
+                 IF STATUS(#j) = 'D'
+                     #k := #k + 1
+                     c_Cap2_A := c_Cap2_A + 1  
+                     IF #k > 1 
+                        c_Cap2_A2 := c_Cap2_A2 + 1
+                        PRINT(1) ID-NUMBER dm NOTE-DATE(#i) dm NOTE-TEXT(#i) dm 'Multiple 999 with D'
+                        rep_A(8) := '*'
+                     ELSE 
+                        rep_A(8) := ' '   
+                     END-IF
+                     PERFORM sbr_Out 
+                 END-IF    
+                END-FOR
+                IF #k = 0
+                   c_Cap2_F2 := c_Cap2_F2+ 1
+                   PRINT(1) ID-NUMBER dm NOTE-DATE(#i) dm NOTE-TEXT(#i) dm 'Muliple 999 with F'
+                   COMPRESS ID-NUMBER dm rep_A(1) dm NOTE-TEXT(#i) INTO A400 LEAVING NO SPACE
+                   WRITE WORK FILE 1 A400   
+                END-IF                       
+                
+       END-FIND
+    END-IF  /* got *CAP2
+ END-READ
+ CLOSE WORK FILE  1
+ SKIP(1) 1
+ WRITE(1)       
+  'Notes Cns                       ' dm c_In       /
+  'All *CAP2 notes                 ' dm c_Cap2     /
+  '  ALl Policies with CAP id      ' dm c_999      /
+  '    Active policy               ' dm c_Cap2_A   /
+  '    Active multiple policy      ' dm c_Cap2_A2  /  
+  '    Failed only policy          ' dm c_Cap2_F   /
+  '    Failed only multiple policy ' dm c_Cap2_F2  /
+  '    No Policy with CAP Loan id  ' dm c_No_999  /
+  'Errors - No status file         ' dm c_Err_1 
+  
+  CLOSE PRINTER(1)
+* = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = = =
+DEFINE sbr_Out
+      IF X-LOAN-DATE(#j) = MASK(YYYYMMDD)
+         MOVE EDITED X-LOAN-DATE_A(#j) TO #d0(EM=YYYYMMDD)
+         MOVE EDITED #d0(EM=MM/DD/YYYY) TO rep_A(2)
+      ELSE   
+        rep_A(2) := ' '
+      END-IF  
+
+      IF X-LOAN-AMOUNT(#j) <> 0
+        MOVE EDITED X-LOAN-AMOUNT(#j)(EM=Z,ZZZ,ZZZ.99) TO rep_A(3)
+      ELSE  
+        rep_A(3) := ' '
+      END-IF
+
+      IF ISSUE-DATE(#j) = MASK(YYYYMMDD)
+         MOVE EDITED ISSUE-DATE_A(#j) TO #d0(EM=YYYYMMDD)
+         MOVE EDITED #d0(EM=MM/DD/YYYY) TO rep_A(4)
+      ELSE   
+        rep_A(4) := ' '
+      END-IF  
+
+      IF OUT-TERM-REF-AMOUNT(#j) <> 0
+        MOVE EDITED OUT-TERM-REF-AMOUNT(#j)(EM=Z,ZZZ,ZZZ.99) TO rep_A(5)
+      ELSE  
+        rep_A(5) := ' '
+      END-IF
+
+      IF OUT-TERM-REF-YEAR(#j) <> 0
+        MOVE EDITED OUT-TERM-REF-AMOUNT(#j)(EM=9999) TO rep_A(6)
+      ELSE  
+        rep_A(6) := ' '
+      END-IF
+        
+     IF DEBIT-CREDIT-AMT <> 0
+        MOVE EDITED DEBIT-CREDIT-AMT(EM=Z,ZZZ,ZZZ.99) TO rep_A(7)
+      ELSE  
+        rep_A(7) := ' '
+      END-IF
+
+      IF N01 > 1
+         rep_A(8) := '*'
+      ELSE   
+         rep_A(8) := ' '
+      END-IF   
+      CALLNAT 'GPYSTSXX' PAY-STATUS(#j) A04 v_L A60
+*      PRINT PAY-STATUS(#j) A04
+      COMPRESS NUMERIC 
+            ID-NUMBER 
+          dm  rep_A(1)
+          dm  NOTE-TEXT(#i) 
+          dm  rep_A(2)
+          dm  rep_A(3)
+          dm  POLICY-ID(#j)
+          dm  PLAN(#j)
+          dm  MODE(#j)
+          dm  A04
+          dm  rep_A(4)
+          dm  rep_A(5)
+          dm  rep_A(6)
+          dm  BRIDGER-IND  
+          dm  rep_A(7)
+                             INTO A400 LEAVING NO SPACE
+       WRITE WORK FILE 1 A400                       
+END-SUBROUTINE
+END

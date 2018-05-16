@@ -1,0 +1,258 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: E4205SDM - THIS SUBPROGRAM HANDLES NOTE PROCESSING
+DEFINE DATA
+* * * * * * * * *
+* M O D I F I C A T I O N  L O G
+*
+* DRW 02/25/2009 DW1 Increase Note occurrance from 60 to 500
+* DRW 02/28/2009 DW2 Insert notes into correct sequence
+* DRW 10/13/2009 DW3 Add User-0Company to Note File and PD FILE
+* NGG 20121002   NG1 CN Expansion Project - New beneficiary database file
+* NGG 09/17/2014 NG2  MS STATISTICS
+* * * * * * * * * * *
+PARAMETER
+*
+1 #CN          (N6)
+1 REDEFINE #CN
+  2 #CN-A       (A6)
+1 #INT         (I2)
+1 #HOLD-CLERK  (A3)
+1 #NOTE-TEXT   (A60/10)
+1 REDEFINE #NOTE-TEXT
+  2 #NOTE-TEXT-OCC  (10)
+    3 #NOTE-TEXT-1ST-3    (A3)
+    3 #NOTE-TEXT-PAC-MM   (A2)
+    3 #NOTE-TEXT-PAC-FL1  (A1)
+    3 #NOTE-TEXT-PAC-DD   (A2)
+    3 #NOTE-TEXT-PAC-FL2  (A1)
+    3 #NOTE-TEXT-PAC-YYYY (A4)
+    3 #NOTE-TEXT-PAC-FL3  (A47)
+1 REDEFINE #NOTE-TEXT
+  2 #NOTE-TEXT-OCC-2   (10)
+    3 #NOTE-TEXT-N8          (N8)   /* Used to store Note-date for MIGMERGE only
+    3 #NOTE-TEXT-A52         (A52)
+*
+LOCAL USING E4205LDM
+LOCAL
+* * * *
+1 #PROGRAM          (A8)              /* NG2
+1 #USE-TIMX         (L) INIT <TRUE>   /* NG2
+1 #USER-COMPANY     (A1)     /* DW3
+*
+1 TM-V VIEW OF A-TERMINALS   /* DW3
+  2 USER-COMPANY
+  2 CLERK-ID
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 NOTE-REC-IND   (A1)
+* * * *
+1 MBRSHIP-MTD-DET-V VIEW OF A-MBRSHIP-MTD-DETAIL
+  2 ID-NUMBER        (N6)
+  2 ENTRY-DATE       (N8)
+  2 REDEFINE ENTRY-DATE
+    3 ENTRY-DATE-A    (A8)
+  2 REC-ISN          (N8)
+  2 CODE             (A1)
+  2 ISSUE-DATE       (N8)
+  2 NUM-MBRSHIPS     (N3)
+  2 USER             (A3)
+  2 USER-COMPANY     (A1)                 /* DW3
+*
+1 #I1         (I2)
+1 #I2         (I2)
+1 #WRITE-NOTE-RECORD  (L)       /* TRUE IF NOTE RECORD TO BE WRITTEN
+1 #NOTE-REC-NOT-FOUND (L) INIT <TRUE>  /* TRUE IF NO NOTE RECORD YET
+1 #NOTE-ISN (P8)
+1 #ST-ISN   (P8)
+*
+1 #MAX-NT-NOTES    (N3) INIT <500>          /* DW2
+1 #NOTES-EXIST       (L)
+* 1 #LST-AST-LINE              (I2)
+1 #INSERT-CRIT-NOTE-HERE     (I2)          /* DW2
+1 #INSERT-NON-CRIT-NOTE-HERE (I2)
+1 #INSERT-NOTE-HERE          (I2)
+1 #MULTIPLE-LINE (L)
+1 #LINE-NUM      (P3)
+1 #NOTE-DATE     (N8)
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+* WRITE 'top of E4205SDM note date = ' #NOTE-TEXT-N8 (10)
+**IF  (#CN LT 200000)  /* no notes for AT or IM #'s
+IF  (#CN LT 500000)  /* no notes for AT or IM #'s NG1
+    OR ((#CN GE 600000) AND  (#CN LT 700000))
+  IGNORE
+ELSE
+  ESCAPE ROUTINE
+END-IF
+*
+IF #NOTE-TEXT-N8 (10) = MASK (YYYYMMDD)    /* Use linkage date if date has /* DW2
+  MOVE #NOTE-TEXT-N8 (10) TO #NOTE-DATE    /* been passed
+ELSE                                       /* Otherwise use *DATN
+  MOVE *DATN TO #NOTE-DATE
+END-IF
+*
+MOVE 'I' TO #USER-COMPANY                        /* DW3
+FIND (1) TM-V WITH CLERK-ID = #HOLD-CLERK
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  IF TM-V.USER-COMPANY = 'S'
+    MOVE TM-V.USER-COMPANY TO #USER-COMPANY
+  END-IF
+END-FIND                                        /* END DW3
+*
+RESET #NOTE-REC-NOT-FOUND
+FIND (1) NOTES-V WITH ID-NUMBER = #CN
+  IF NO RECORDS FOUND
+    MOVE TRUE TO #NOTE-REC-NOT-FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  MOVE *ISN TO #NOTE-ISN
+END-FIND
+*
+IF #NOTE-REC-NOT-FOUND
+  MOVE #CN TO NOTES-V.ID-NUMBER
+ELSE
+  GET NOTES-V #NOTE-ISN
+END-IF
+*
+RESET #INSERT-CRIT-NOTE-HERE #INSERT-NON-CRIT-NOTE-HERE
+*
+FOR #I2 1 TO NOTES-V.C*NOTE-TABLE          /* DW1
+  IF NOTES-V.NOTE-DATE (#I2) = 0
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF    ((NOTES-V.NOTE-TEXT (#I2) NE MASK ('*')) /*Find slot for crit note
+      AND   (NOTES-V.NOTE-LINE-NUM (#I2) = 1)
+      AND   (#INSERT-CRIT-NOTE-HERE = 0))
+*
+      OR   ((NOTES-V.NOTE-TEXT (#I2) = MASK ('*'))
+      AND   (NOTES-V.NOTE-LINE-NUM (#I2) = 1)
+      AND   (#NOTE-DATE LE NOTES-V.NOTE-DATE (#I2)) /* In ascending date order
+      AND   (#INSERT-CRIT-NOTE-HERE = 0))
+    MOVE #I2 TO #INSERT-CRIT-NOTE-HERE
+  END-IF
+*
+  IF    (NOTES-V.NOTE-TEXT (#I2) NE MASK ('*')) /*Find slot for non-crit note
+      AND   (NOTES-V.NOTE-LINE-NUM (#I2) = 1)
+      AND   (#NOTE-DATE GE NOTES-V.NOTE-DATE (#I2)) /* In descending date order
+      AND   (#INSERT-NON-CRIT-NOTE-HERE = 0)
+    MOVE #I2 TO #INSERT-NON-CRIT-NOTE-HERE
+  END-IF
+END-FOR
+*
+IF NOTES-V.C*NOTE-TABLE = 0                           /* DW2
+  MOVE NOTES-V.C*NOTE-TABLE TO #INSERT-CRIT-NOTE-HERE
+    #INSERT-NON-CRIT-NOTE-HERE
+ELSE
+  IF #INSERT-CRIT-NOTE-HERE = 0
+    MOVE NOTES-V.C*NOTE-TABLE TO #INSERT-CRIT-NOTE-HERE
+  ELSE
+    SUBTRACT 1 FROM #INSERT-CRIT-NOTE-HERE
+  END-IF
+*
+  IF #INSERT-NON-CRIT-NOTE-HERE = 0
+    MOVE NOTES-V.C*NOTE-TABLE TO #INSERT-NON-CRIT-NOTE-HERE
+  ELSE
+    SUBTRACT 1 FROM #INSERT-NON-CRIT-NOTE-HERE
+  END-IF
+END-IF                                           /* END DW2
+*
+IF #NOTE-TEXT (1) = MASK ('*')
+  MOVE #INSERT-CRIT-NOTE-HERE TO #INSERT-NOTE-HERE
+ELSE
+  MOVE #INSERT-NON-CRIT-NOTE-HERE TO #INSERT-NOTE-HERE
+END-IF
+*
+IF NOTES-V.C*NOTE-TABLE GT (#MAX-NT-NOTES - #INT) /* INT = # of addl notes
+  COMPUTE #I2 = #MAX-NT-NOTES - #INT           /* DROP OLDEST NOTES             DW1
+ELSE
+  MOVE NOTES-V.C*NOTE-TABLE TO #I2    /* LAST USED NOTE
+END-IF
+*
+REPEAT                /* Start at lowest Note - #i2 is at the bottom
+  IF  (#I2 = 0)                  /* AT BEGINNING
+*  OR (#I2 = #LST-AST-LINE)  /* AT last non-asterisk line
+      OR (#I2 = #INSERT-NOTE-HERE)  /* Insert new Note(s) after this line
+    RESET #MULTIPLE-LINE
+    RESET #LINE-NUM
+    MOVE #INT TO #LINE-NUM
+    IF #INT GT 1
+      MOVE TRUE TO #MULTIPLE-LINE
+    END-IF
+*
+* Insert new notes in reverse order
+    FOR #I1 1 TO #INT
+      MOVE #NOTE-DATE             TO NOTES-V.NOTE-DATE     (#I2 + #INT)
+      MOVE #HOLD-CLERK            TO NOTES-V.NOTE-CLERK-ID (#I2 + #INT)
+      MOVE #LINE-NUM              TO NOTES-V.NOTE-LINE-NUM (#I2 + #INT)
+      MOVE #NOTE-TEXT (#LINE-NUM) TO NOTES-V.NOTE-TEXT     (#I2 + #INT)
+      MOVE #USER-COMPANY TO NOTES-V.USER-COMPANY  (#I2 + #INT)   /*DW3
+*
+      IF #MULTIPLE-LINE
+        SUBTRACT 1 FROM #LINE-NUM
+      END-IF
+*
+      SUBTRACT 1 FROM #I2
+    END-FOR
+*
+    ESCAPE BOTTOM
+  ELSE       /* Push lower notes down to make room for more
+    MOVE NOTES-V.NOTE-DATE    (#I2) TO NOTES-V.NOTE-DATE    (#I2 + #INT)
+    MOVE NOTES-V.NOTE-CLERK-ID(#I2) TO NOTES-V.NOTE-CLERK-ID(#I2 + #INT)
+    MOVE NOTES-V.NOTE-LINE-NUM(#I2) TO NOTES-V.NOTE-LINE-NUM(#I2 + #INT)
+    MOVE NOTES-V.NOTE-TEXT    (#I2) TO NOTES-V.NOTE-TEXT    (#I2 + #INT)
+    MOVE NOTES-V.USER-COMPANY (#I2) TO NOTES-V.USER-COMPANY (#I2 + #INT)   /*DW3
+  END-IF
+*
+  SUBTRACT 1 FROM #I2
+END-REPEAT
+*
+IF #NOTE-REC-NOT-FOUND
+  STORE NOTES-V
+  MOVE *ISN (0222) TO #NOTE-ISN
+ELSE
+  UPDATE (0125)
+END-IF
+*
+FIND (1) ST-V WITH MEMBER-KEY = #CN-A
+  MOVE 'Y' TO NOTE-REC-IND
+  MOVE *ISN TO #ST-ISN
+  UPDATE (0228)
+END-FIND
+*
+FOR #I1 1 TO 10
+  IF #NOTE-TEXT-1ST-3 (#I1) = '*@ '
+    RESET MBRSHIP-MTD-DET-V                /* create 'pd' entry
+    COMPRESS #NOTE-TEXT-PAC-YYYY (#I1) #NOTE-TEXT-PAC-MM (#I1)
+      #NOTE-TEXT-PAC-DD (#I1) INTO ENTRY-DATE-A LEAVING NO
+    MOVE #NOTE-ISN      TO REC-ISN
+    MOVE 'S'            TO CODE
+    MOVE #ST-ISN        TO MBRSHIP-MTD-DET-V.ISSUE-DATE
+    MOVE ST-V.ID-NUMBER TO MBRSHIP-MTD-DET-V.ID-NUMBER
+    MOVE #USER-COMPANY  TO MBRSHIP-MTD-DET-V.USER-COMPANY   /*DW3
+    MOVE #HOLD-CLERK    TO USER
+    STORE MBRSHIP-MTD-DET-V
+*
+    MOVE *PROGRAM TO #PROGRAM
+    CALLNAT 'MSSNL003'           /* NG2
+      MBRSHIP-MTD-DET-V.ID-NUMBER
+      MBRSHIP-MTD-DET-V.CODE
+      #USER-COMPANY
+      MBRSHIP-MTD-DET-V.ISSUE-DATE
+      #PROGRAM
+      #USE-TIMX
+  END-IF
+END-FOR
+*
+END

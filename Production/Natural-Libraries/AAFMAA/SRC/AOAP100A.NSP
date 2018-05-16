@@ -1,0 +1,212 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: AOAP100A - BATCH "RP" DRIVER
+*
+*   THIS PROGRAM IS INTENDED FOR BATCH ONLY
+*
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.BENEFIT-ANALYSIS-BLOCK
+LOCAL
+*
+* * * *   S T A T U S   F I L E   * * * * * * * * * * * * * * *
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER      (N6)
+  2 REDEFINE ID-NUMBER
+    3 ID-NBR       (A6)
+  2 RANK            (A3)
+  2 NAME            (A25)
+  2 RETIRED-PAY-AMT (P5)
+  2 DATE-RETIRED    (N8)
+  2 REDEFINE DATE-RETIRED
+   3 DATE-RETIRED-YYYY (N4)
+   3 DATE-RETIRED-MM   (N2)
+   3 DATE-RETIRED-DD   (N2)
+  2 BASE-PAY-EF-DATE      (N8)
+  2 ACTIVE-DUTY-BASE-DATE (N8)
+  2 SERVICE-DATE-1405     (N8)
+*
+1 #RP-EXTR
+ 2 #RP-EXTR-ID-NUMBER       (N6)
+ 2 #RP-EXTR-RANK            (A3)
+ 2 #RP-EXTR-NAME            (A26)
+ 2 #RP-EXTR-RET-DATE        (N8)
+ 2 #RP-EXTR-PEBD            (N8)
+ 2 #RP-EXTR-BASD            (N8)
+ 2 #RP-EXTR-1405-DT         (N8)
+ 2 #RP-EXTR-CALC-RET-PAY    (N7.2)
+ 2 #RP-EXTR-H-C-RET-PAY     (N7.2)
+ 2 #RP-EXTR-DIFFERENCE      (N7.2)
+*
+1 #DATN       (N8)
+1 REDEFINE #DATN
+  2 #YYYY     (N4)
+  2 REDEFINE #YYYY
+    3 #CENT   (N2)
+    3 #YY     (A2)
+  2 #MMDD     (N4)
+  2 REDEFINE #MMDD
+    3 #MM     (A2)
+    3 #DD     (A2)
+*
+1 #I1                 (I2)
+1 #I2                 (I2)
+1 #TOT-RECS-READ      (P5)
+1 #TOT-RECS-SELECTED  (P5)
+1 #TOT-RECS-UPDATED   (P5)
+1 #TOT-RECS-MISMATCHED (P5)
+1 #TOT-RECS-CLOSE      (P5)
+*
+1 #HOLD-RP-DIFF               (P5)
+1 #CALC-NEW-RP                (P5.7)
+1 #HOLD-NEW-RP-DIFF           (P5)
+1 #HOLD-ST-ISN                (N8)
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+FORMAT     LS=133 PS=66
+FORMAT (2) LS=133 PS=66
+WRITE  (2) TITLE LEFT 'PROGRAM:' *PROGRAM
+              8X 'MISMATCHED RETIRED PAY'
+              5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+FORMAT (3) LS=133 PS=66
+WRITE  (3) TITLE LEFT 'PROGRAM:' *PROGRAM
+              8X 'FIXED RETIRED PAY'
+              5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+FORMAT (4) LS=133 PS=66
+WRITE  (4) TITLE LEFT 'PROGRAM:' *PROGRAM
+              8X 'MISMATCHED RETIRED PAY MINUS '
+              5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+*
+MOVE *DATN TO #DATN
+* READ RECORDS ST-V LOGICAL BY MEMBER-KEY
+READ RECORDS ST-V PHYSICAL
+  ADD 1 TO #TOT-RECS-READ
+*
+  IF  (RETIRED-PAY-AMT = 0)
+*  OR (NOT (DATE-RETIRED-YYYY = 1988 OR = 1989))
+   OR (NOT (DATE-RETIRED-YYYY = 1987))
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  IF BASE-PAY-EF-DATE = 0
+    MOVE ACTIVE-DUTY-BASE-DATE TO BASE-PAY-EF-DATE
+  END-IF
+  MOVE *ISN TO #HOLD-ST-ISN
+END-ALL
+*
+SORT BY DATE-RETIRED
+        ID-NUMBER
+USING   BASE-PAY-EF-DATE
+        RANK
+        NAME
+        RETIRED-PAY-AMT
+        ACTIVE-DUTY-BASE-DATE
+        SERVICE-DATE-1405
+        #HOLD-ST-ISN
+*
+  ADD 1 TO #TOT-RECS-SELECTED
+  MOVE 'RP'         TO #CGA-SCR-COMMAND
+                       #CGA-ORIG-COMMAND
+  MOVE ID-NUMBER    TO #CGA-SCR-ID
+                       #CGA-ID
+                       #CGA-ORIG-ID
+  MOVE 'RP*'        TO #CGA-SCR-SUFFIX
+  MOVE #HOLD-ST-ISN TO #CGA-ISN
+  FETCH RETURN 'D3000PXX'
+*
+  COMPUTE #HOLD-RP-DIFF = #CGA-RET-PAY - ST-V.RETIRED-PAY-AMT
+*
+  IF  (#HOLD-RP-DIFF GT +2.00)
+   OR (#HOLD-RP-DIFF LT -2.00)
+    ADD 1 TO #TOT-RECS-MISMATCHED
+  ELSE
+    ADD 1 TO #TOT-RECS-CLOSE
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  RESET #CALC-NEW-RP
+  IF   (DATE-RETIRED-YYYY = 1989)
+    COMPUTE ROUNDED #CALC-NEW-RP
+                           = ST-V.RETIRED-PAY-AMT * (1.047 / 1.036)
+  ELSE
+    IF   (DATE-RETIRED-YYYY = 1988)
+      COMPUTE ROUNDED #CALC-NEW-RP
+                             = ST-V.RETIRED-PAY-AMT * (1.040 / 1.032)
+    ELSE
+      IF   (DATE-RETIRED-YYYY = 1987)
+        COMPUTE ROUNDED #CALC-NEW-RP
+                             = ST-V.RETIRED-PAY-AMT * (1.042 / 1.037)
+      END-IF
+    END-IF
+  END-IF
+  COMPUTE ROUNDED #HOLD-NEW-RP-DIFF = #CGA-RET-PAY - #CALC-NEW-RP
+*
+  IF  (#HOLD-NEW-RP-DIFF GT +2.00)
+   OR (#HOLD-NEW-RP-DIFF LT -2.00)
+    MOVE ID-NUMBER    TO #RP-EXTR-ID-NUMBER
+    MOVE RANK         TO #RP-EXTR-RANK
+    MOVE NAME         TO #RP-EXTR-NAME
+    MOVE DATE-RETIRED TO #RP-EXTR-RET-DATE
+    MOVE BASE-PAY-EF-DATE TO #RP-EXTR-PEBD
+    MOVE ACTIVE-DUTY-BASE-DATE TO #RP-EXTR-BASD
+    MOVE SERVICE-DATE-1405     TO #RP-EXTR-1405-DT
+    MOVE #CGA-RET-PAY          TO #RP-EXTR-CALC-RET-PAY
+    MOVE RETIRED-PAY-AMT       TO #RP-EXTR-H-C-RET-PAY
+    MOVE #HOLD-RP-DIFF         TO #RP-EXTR-DIFFERENCE
+    WRITE WORK 1 #RP-EXTR
+*
+    IF #HOLD-RP-DIFF GT 0
+      DISPLAY (2) 'CN NUMBER' #CGA-SCR-ID
+                  'RANK'               RANK
+                  'NAME'               NAME
+                  'DATE/RETIRED'       DATE-RETIRED
+                  'PEBD'               BASE-PAY-EF-DATE
+                  'BASD'               ACTIVE-DUTY-BASE-DATE
+                  '1405-DT'            SERVICE-DATE-1405
+                  'CALCULATED/RETIRED PAY' #CGA-RET-PAY
+                  'HARD-CODED/RETIRED PAY' ST-V.RETIRED-PAY-AMT
+                  'DIFFERENCE'             #HOLD-RP-DIFF
+    ELSE
+      DISPLAY (4) 'CN NUMBER' #CGA-SCR-ID
+                  'RANK'               RANK
+                  'NAME'               NAME
+                  'DATE/RETIRED'       DATE-RETIRED
+                  'PEBD'               BASE-PAY-EF-DATE
+                  'BASD'               ACTIVE-DUTY-BASE-DATE
+                  '1405-DT'            SERVICE-DATE-1405
+                  'CALCULATED/RETIRED PAY' #CGA-RET-PAY
+                  'HARD-CODED/RETIRED PAY' ST-V.RETIRED-PAY-AMT
+                  'DIFFERENCE'             #HOLD-RP-DIFF
+    END-IF
+  ELSE
+    DISPLAY (3) 'CN NUMBER' #CGA-SCR-ID
+                'RANK'               RANK
+                'NAME'               NAME
+                'DATE/RETIRED'       DATE-RETIRED
+                'PEBD'               BASE-PAY-EF-DATE
+                'BASD'               ACTIVE-DUTY-BASE-DATE
+                '1405-DT'            SERVICE-DATE-1405
+                'NEW CALCULATED/RETIRED PAY' #CGA-RET-PAY
+                'OLD HARD-CODED/RETIRED PAY' ST-V.RETIRED-PAY-AMT
+    ADD 1 TO #TOT-RECS-UPDATED
+    GET ST-V #HOLD-ST-ISN
+    MOVE #CGA-RET-PAY TO ST-V.RETIRED-PAY-AMT
+    UPDATE (0198)
+    END TRANSACTION
+  END-IF
+END-SORT
+* END-READ
+*
+WRITE (2) 'TOTAL RECS READ         = ' #TOT-RECS-READ
+WRITE (2) 'TOTAL RECS SELECTED     = ' #TOT-RECS-SELECTED
+WRITE (2) 'TOTAL RECS UPDATED      = ' #TOT-RECS-UPDATED
+WRITE (2) 'TOTAL RECS MISMATCHED   = ' #TOT-RECS-MISMATCHED
+WRITE (2) 'TOTAL RECS CLOSE        = ' #TOT-RECS-CLOSE
+*
+END

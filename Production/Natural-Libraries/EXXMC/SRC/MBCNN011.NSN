@@ -1,0 +1,240 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center/Member Account Settings
+* Object name - MBCNN011
+***********************************************************************
+*        MODIFICATION LOG
+***********************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11172014       Initial Creation
+***********************************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 PROCESS-NAME      (A) DYNAMIC
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+*
+LOCAL USING OBJAWEBU
+LOCAL USING MBCLN010
+LOCAL USING PARSER-X
+LOCAL USING ERROR_LN
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 #CN          (A)  DYNAMIC
+1 #ErrorCode   (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value       (A) DYNAMIC
+1 #I           (I2)
+1 #SSN         (A9)
+1 #ISN         (P9)
+1 #YES         (A1) CONST <'Y'>
+1 #NO          (A1) CONST <'N'>
+1 #TRUE        (A) DYNAMIC CONST <'true'>
+1 #FALSE       (A) DYNAMIC CONST <'false'>
+1 #ContactId   (N8)
+1 #DateOfBirth (N8)
+1 #UserID_Available  (A) DYNAMIC
+1 #Dynamic_Name      (A) DYNAMIC
+1 #XML               (A) DYNAMIC
+1 #Update            (L)
+1 C@SecurityQuestion (N2)
+*
+1 #UpdatePassword    (A) DYNAMIC CONST <'UpdatePassword'>
+1 #UpdateUserName    (A) DYNAMIC CONST <'UpdateUserName'>
+1 #UpdateDalAccessDate (A) DYNAMIC CONST <'UpdateDALAccessDate'>
+1 #UpdateSecurityQuestions (A) DYNAMIC CONST <'UpdateSecurityQuestions'>
+1 #UpdatePaperlessOptions  (A) DYNAMIC CONST <'UpdatePaperlessOptions'>
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberLogin/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    if #value is (N6)
+      MemberLogin.CN := val(#value)
+    end-if
+  VALUE 'MemberLogin/UserName/$'
+    MemberLogin.UserName := *TRIM(XML_PARSER_CONTENT)
+    MemberLogin.UserName := *TRANSLATE(MemberLogin.UserName,LOWER)
+  VALUE 'MemberLogin/Password/$'
+    MemberLogin.Password := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberLogin/SecurityQuestions/SecurityQuestion'
+    C@SecurityQuestion := C@SecurityQuestion + 1
+  VALUE 'MemberLogin/SecurityQuestions/SecurityQuestion/Key/$'
+    #I := C@SecurityQuestion
+    MemberLogin.Key(#I) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberLogin/SecurityQuestions/SecurityQuestion/Answer/$'
+    #I := C@SecurityQuestion
+    MemberLogin.Answer(#I) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberLogin/DALAccessDate/$'
+    MemberLogin.DALAccessDate := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberLogin/PaperlessOptions/AnnsDeliveryFlag/$'
+    MemberLogin.AnnsDeliveryFlag := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberLogin/PaperlessOptions/BillDeliveryFlag/$'
+    MemberLogin.BillDeliveryFlag := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberLogin/PaperlessOptions/AnnRepDeliveryFlag/$'
+    MemberLogin.AnnRepDeliveryFlag := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'MemberLogin/PaperlessOptions/FIRDeliveryFlag/$'
+    MemberLogin.FIRDeliveryFlag := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+* Business Logic
+DECIDE ON FIRST VALUE PROCESS-NAME
+  VALUE #UpdatePassword
+    PERFORM UPDATE-PASSWORD
+  VALUE #UpdateUserName
+    PERFORM UPDATE-USER-NAME
+  VALUE #UpdateDalAccessDate
+    PERFORM UPDATE-DAL-ACCESS-DATE
+  VALUE #UpdateSecurityQuestions
+    PERFORM UPDATE-SECURITY-QUESTIONS
+  VALUE #UpdatePaperlessOptions
+    PERFORM UPDATE-PAPERLESS-OPTIONS
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #ErrorCode = '0' AND #Update
+    END TRANSACTION
+  WHEN #ErrorCode <> '0' AND #Update
+    BACKOUT TRANSACTION
+  WHEN NONE
+    IGNORE
+END-DECIDE
+PERFORM CREATE-RESPONSE
+*
+*********************************
+DEFINE SUBROUTINE UPDATE-PASSWORD
+*********************************
+*
+RESET PARM-WEB-ACCOUNT-INFO
+PARM-WEB-ACCOUNT-INFO.MEMBER-CN := MemberLogin.CN
+PARM-WEB-ACCOUNT-INFO.WEB-USER-PASSWORD := MemberLogin.Password
+PARM-WEB-ACCOUNT-INFO.#ACTION   := #UpdatePassword
+PARM-WEB-ACCOUNT-INFO.PROFILE-UPDATE-DATE := PARM-WEB-ACCOUNT-INFO.DATE-MODIFIED := *DATN
+CALLNAT 'OBJNWEBU' PARM-WEB-ACCOUNT-INFO
+IF PARM-WEB-ACCOUNT-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-WEB-ACCOUNT-INFO.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE UPDATE-USER-NAME
+**********************************
+*
+RESET PARM-WEB-ACCOUNT-INFO
+PARM-WEB-ACCOUNT-INFO.MEMBER-CN := MemberLogin.CN
+PARM-WEB-ACCOUNT-INFO.WEB-USER-NAME := MemberLogin.UserName
+PARM-WEB-ACCOUNT-INFO.#ACTION   := #UpdateUserName
+PARM-WEB-ACCOUNT-INFO.PROFILE-UPDATE-DATE := PARM-WEB-ACCOUNT-INFO.DATE-MODIFIED := *DATN
+CALLNAT 'OBJNWEBU' PARM-WEB-ACCOUNT-INFO
+IF PARM-WEB-ACCOUNT-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-WEB-ACCOUNT-INFO.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE UPDATE-DAL-ACCESS-DATE
+****************************************
+*
+RESET PARM-WEB-ACCOUNT-INFO
+PARM-WEB-ACCOUNT-INFO.MEMBER-CN := MemberLogin.CN
+IF MemberLogin.DALAccessDate IS (N8)
+  PARM-WEB-ACCOUNT-INFO.DAL-ACCESS-DATE := VAL(MemberLogin.DALAccessDate)
+ELSE
+  #ErrorCode := #INCORRECT-DAD-FORMAT
+  ESCAPE ROUTINE
+END-IF
+PARM-WEB-ACCOUNT-INFO.#ACTION   := #UpdateDALAccessDate
+CALLNAT 'OBJNWEBU' PARM-WEB-ACCOUNT-INFO
+IF PARM-WEB-ACCOUNT-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-WEB-ACCOUNT-INFO.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+*******************************************
+DEFINE SUBROUTINE UPDATE-SECURITY-QUESTIONS
+*******************************************
+*
+RESET PARM-WEB-ACCOUNT-INFO
+PARM-WEB-ACCOUNT-INFO.MEMBER-CN            := MemberLogin.CN
+PARM-WEB-ACCOUNT-INFO.#ACTION              := #UpdateSecurityQuestions
+PARM-WEB-ACCOUNT-INFO.SECURITY-QUESTION(*) := MemberLogin.Key(*)
+PARM-WEB-ACCOUNT-INFO.SECURITY-ANSWER(*)   := MemberLogin.Answer(*)
+PARM-WEB-ACCOUNT-INFO.PROFILE-UPDATE-DATE := PARM-WEB-ACCOUNT-INFO.DATE-MODIFIED := *DATN
+CALLNAT 'OBJNWEBU' PARM-WEB-ACCOUNT-INFO
+IF PARM-WEB-ACCOUNT-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-WEB-ACCOUNT-INFO.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE UPDATE-PAPERLESS-OPTIONS
+******************************************
+*
+RESET PARM-WEB-ACCOUNT-INFO
+PARM-WEB-ACCOUNT-INFO.MEMBER-CN           := MemberLogin.CN
+PARM-WEB-ACCOUNT-INFO.#ACTION             := #UpdatePaperlessOptions
+PARM-WEB-ACCOUNT-INFO.BILL-DELIVERY-FLAG  := MemberLogin.BillDeliveryFlag
+PARM-WEB-ACCOUNT-INFO.ANNS-DELIVERY-FLAG  := MemberLogin.AnnsDeliveryFlag
+PARM-WEB-ACCOUNT-INFO.PROFILE-UPDATE-DATE := PARM-WEB-ACCOUNT-INFO.DATE-MODIFIED := *DATN
+CALLNAT 'OBJNWEBU' PARM-WEB-ACCOUNT-INFO
+IF PARM-WEB-ACCOUNT-INFO.#RETURN-CODE NE ' '
+  #ErrorCode := PARM-WEB-ACCOUNT-INFO.#RETURN-CODE
+  ESCAPE ROUTINE
+END-IF
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE CREATE-RESPONSE
+*********************************
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS '<MemberLogin>' '<CN>' MemberLogin.CN '</CN>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</MemberLogin>' INTO #XML LEAVING NO
+RESPONSE-DATA := #XML
+END-SUBROUTINE
+END

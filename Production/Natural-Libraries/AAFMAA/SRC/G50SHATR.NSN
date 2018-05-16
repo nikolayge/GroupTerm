@@ -1,0 +1,119 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* G50_1
+
+DEFINE DATA 
+PARAMETER
+1 p_Scr_CN    (N9)
+1 p_New_CN    (N9)
+1 p_Msg       (A)  DYNAMIC
+1 p_Last_Date (N8) 
+LOCAL
+ 1 AR-V VIEW OF A-ADDRESS-RELATIONSHIP
+   2 CONTACT-ID        (N8)
+   2 ADDRESS-POOL-ID   (N8)
+   2 ADDR-TYPE-CD      (A1)  
+*
+*  1 POOL-V VIEW OF A-ADDRESS-POOL
+*    2 ADDRESS-POOL-ID   (N8)
+*
+1 ST-V VIEW OF A-STATUS
+    2 ID-NUMBER
+    2 MEMBER-CONTACT-ID
+    2 C*LINKED-CN   
+    2 LINKED-CN (N6/6)
+*
+1 STM-V VIEW OF A-STATUS
+    2 ID-NUMBER
+    2 MEMBER-CONTACT-ID
+*    2 C*LINKED-CN   
+*    2 LINKED-CN (N6/5)
+*
+1 TR-V VIEW OF A-TRANSACTION-REGISTER
+  2 DATE-LAST-UPDATE (N8)
+  2 CONTACT-ID       (N8)
+  2 TERMINAL-ID      (A8)
+  2 TRANSACTION-DATN (P9)
+  2 C*CHANGED-DATA-TABLE
+  2 OLD-DATA         (A125/32)
+  2 NEW-DATA         (A125/32)
+1 v_CN    (N6)
+1 #i      (N6)
+1 #sh     (N6)
+1 last_CN (N6)
+1 A08     (A08)
+1 #DL      (D)
+END-DEFINE
+ p_New_CN := 0
+ p_Msg    := ' ' 
+IF p_Scr_CN > 220000
+  p_Msg := 'Likely you entered SSN'
+  ESCAPE ROUTINE
+END-IF  
+  v_CN := p_Scr_CN
+
+ FIND(1) ST-V WITH ID-NUMBER= v_CN
+    IF NO RECORD FOUND 
+       p_Msg := 'Incorrect CN'
+       ESCAPE ROUTINE 
+    END-NOREC   
+ END-FIND
+
+ IF ST-V.C*LINKED-CN = 0
+     p_Msg := 'No Links. No reason to use suffix SHA'
+     ESCAPE ROUTINE 
+ END-IF
+
+ FIND AR-V  WITH AR-V.CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+      WHERE ADDR-TYPE-CD = 'P'    
+    AR_F.
+    FIND AR-V  WITH AR-V.ADDRESS-POOL-ID = AR-V.ADDRESS-POOL-ID 
+      FIND(1) STM-V WITH MEMBER-CONTACT-ID = AR-V.CONTACT-ID 
+*           PRINT 'Found STM-V' STM-V.ID-NUMBER 'WITH' MEMBER-CONTACT-ID 
+            FIND  TR-V WITH ID-NUMBER = STM-V.ID-NUMBER SORTED BY TRANSACTION-DATN DESCENDING
+*             PRINT ID-NUMBER NEW-DATA(1)(EM=' ['XXXXXXXXXX']' AL=10) p_Last_Date TRANSACTION-DATN CONTACT-ID
+
+               FOR #i = 1 TO C*CHANGED-DATA-TABLE
+                 IF NEW-DATA(#i) = SCAN ('CG-ADDRES')
+                    IF p_Last_Date < TRANSACTION-DATN 
+                       p_Last_Date := TRANSACTION-DATN
+                       last_CN := STM-V.ID-NUMBER
+*                       PRINT 'Found! CG-ADDRES ' TRANSACTION-DATN
+                       ESCAPE BOTTOM
+                     END-IF
+                 END-IF       
+               END-FOR  
+            END-FIND /* TR */
+        IF STM-V.MEMBER-CONTACT-ID <> ST-V.MEMBER-CONTACT-ID 
+           COMPRESS p_Msg STM-V.ID-NUMBER INTO p_Msg
+           #sh := #sh + 1
+        END-IF
+      END-FIND /* STM */ 
+    END-FIND /*AR by POOL ID */ 
+     IF  #sh < 1
+        p_Msg := 'No shared primary addresses. No reason to use suffix SHA'
+        ESCAPE ROUTINE 
+     END-IF
+ END-FIND
+ 
+ FIND STM-V WITH ID-NUMBER = ST-V.LINKED-CN(1)
+      IF NO RECORD FOUND
+        COMPRESS 'Data Error' ST-V.ID-NUMBER 'has incorrect link' ST-V.LINKED-CN(1) INTO p_Msg
+        ESCAPE ROUTINE 
+     END-NOREC
+ END-FIND
+ IF p_Last_Date = 0 
+    COMPRESS 'No address transaction for' ST-V.ID-NUMBER p_Msg INTO p_Msg 
+    ESCAPE ROUTINE 
+ END-IF 
+   MOVE p_Last_Date TO A08
+   MOVE EDITED A08 TO #DL (EM=YYYYMMDD)
+   MOVE EDITED #DL(EM=MMDDYYYY) TO A08
+   p_Last_Date := val(A08)
+   MOVE EDITED #DL(EM=MM/DD/YY) TO A08
+   COMPRESS 'Shr pr.addr' p_Msg 'Last' A08 INTO p_Msg
+   p_New_CN := last_CN
+END

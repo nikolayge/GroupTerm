@@ -1,0 +1,132 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Online Application Service payment
+* Object name - WEBN0004
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    02122012       Initial Creation
+********************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC        /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING SVCA0003                /* PDA to pass data to Payment Apply subprogram
+LOCAL USING ERROR_L
+LOCAL
+1 Payment
+  2 CN     (A) DYNAMIC
+  2 Plan   (A) DYNAMIC
+  2 Amount (A) DYNAMIC  
+*
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+*
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #WEB-CLERK        (A3) INIT <'WEB'>
+1 #APPLY            (A) DYNAMIC CONST <'APPLY'>
+1 #CREDIT-CARD      (A1) CONST <'C'> 
+1 #SERVICES-DUES    (A6) CONST <'DUEPPS'>
+1 #MSG              (A) DYNAMIC 
+*
+1 #I              (I2)
+1 #II             (I2)
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+* Include the Parser
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to repesent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of founld element
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+PERFORM APPLY-PAYMENT
+*
+IF #ErrorCode = '0'
+  END TRANSACTION
+END-IF
+*
+PERFORM COMPOSE-XML
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'ServicePayment'
+    RESET Payment
+    IGNORE
+  VALUE 'ServicePayment/CN/$'
+    Payment.CN     := *TRIM(XML_PARSER_CONTENT)    
+  VALUE 'ServicePayment/Plan/$'
+    Payment.Plan   := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'ServicePayment/Amount/$'
+    Payment.Amount := *TRIM(XML_PARSER_CONTENT)
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+/*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE APPLY-PAYMENT
+*******************************
+*
+RESET PARM-SVC
+IF Payment.CN IS (N6) THEN
+  PARM-SVC.SVC-MEMBER-ID := VAL(Payment.CN)
+ELSE
+  #ErrorCode    := #CN-INVALID
+  ESCAPE ROUTINE
+END-IF
+*
+PARM-SVC.ACTION         := #APPLY
+PARM-SVC.USER           := #WEB-CLERK
+PARM-SVC.SVC-PLAN       := Payment.Plan 
+PARM-SVC.CASH-MODE      := #CREDIT-CARD
+PARM-SVC.SVC-TRAN-TYPE  := #SERVICES-DUES
+PARM-SVC.SVC-PAY-AMOUNT := VAL(Payment.Amount)
+CALLNAT 'SVCN0003' PARM-SVC #MSG
+IF #MSG <> ' '
+  #ErrorCode := #MSG
+END-IF  
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS '<ServicePayment>' '<CN>' Payment.CN '</CN>' -
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '</ServicePayment>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

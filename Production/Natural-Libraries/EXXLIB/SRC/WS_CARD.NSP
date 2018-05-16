@@ -1,0 +1,182 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* WECN0030 - E-Check request to SAGE
+* Accepts Request Data from IAS and calls WebService that communicates with SAG
+* Called from -
+*
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+DEFINE DATA
+LOCAL
+*
+1 #REQUEST        (A)  DYNAMIC
+1 #WEBCHARGE-LOG  (A500)
+1 D1              (A) DYNAMIC
+1 D2              (A) DYNAMIC
+*
+1 CardHolderName (A) DYNAMIC INIT <'Yelena A Kegeles'>
+* 1 CardNumber     (A) DYNAMIC INIT <'4036902113788811'>
+1 CardNumber     (A) DYNAMIC INIT <'4111111111111111'>
+1 CardExpDate    (A) DYNAMIC INIT <'0618'>
+1 CardCvv        (A) DYNAMIC INIT <'177'>
+1 Street         (A) DYNAMIC INIT <'Test Street'>
+1 City           (A) DYNAMIC INIT <'Reston'>
+1 State          (A) DYNAMIC INIT <'VA'> 
+1 ZipCode        (A) DYNAMIC INIT <'20191'>
+1 CNumber        (A) DYNAMIC INIT <'999999'>
+1 Amount         (A) DYNAMIC INIT <'1.00'> 
+1 ApplicationSource  (A) DYNAMIC INIT <'Test'>
+1 User           (A) DYNAMIC     INIT <'AAFMAA\\ykegeles'>
+
+*
+1 v_Env           (A) DYNAMIC
+1 v_Res           (A) DYNAMIC
+1 v_RC            (I4)
+*
+1 #DATN           (N8)
+1 #TIMN           (N7)
+1 #ACCEPTED       (A) DYNAMIC CONST <'ACCEPTED'> 
+1 URL_wsIAS       (A)  DYNAMIC
+* 1 URL_Test        (A)  DYNAMIC  INIT <"http://localhost:49247/api/cardsale/PostCardSaleIAS">
+* 1 URL_Test        (A)  DYNAMIC  INIT <"http://vt-aafweb08-a.testing.local:40001/api/cardsale/PostCardSaleIAS">
+1 URL_Test        (A)  DYNAMIC  INIT <"http://sagewebapiv2.testing.local/api/cardsale/PostCardSaleIAS">
+1 URL_Prod        (A)  DYNAMIC  INIT <"https://sagewebapiservice.aafmaa.com/api/cardsale/PostCardSaleIAS">
+1 ResultCode       (N3)
+1 ResultMessage    (A) DYNAMIC  
+*
+1 ParsedResult            (A150)
+1 REDEFINE ParsedResult
+  2 Field1                (A21)
+  2 ApprovalIndicator     (A1)
+  2 Field2                (A13)
+  2 Message               (A32)
+  2 Field3                (A10)
+  2 Code                  (A6)
+  2 Field4                (A15)
+  2 Reference             (A10)
+  2 Field5                (A19)
+  2 RiskIndicator         (A2)
+  2 Field6                (A13)
+  2 Invoice               (A6)
+1 #ERROR-CODE             (A3)  
+END-DEFINE
+*
+ON ERROR
+  PRINT  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+END-ERROR
+*
+DEFINE WORK FILE 3 "C:\Users\ykegeles\Temp\wsIAS.log" ATTRIBUTES "APPEND" 
+#DATN := *DATN
+#TIMN := *TIMN
+*
+PERFORM CREATE-REQUEST
+
+MOVE EDITED F-IS-DEV(<>) (EM=Prod/Test) TO v_Env
+
+DECIDE ON FIRST VALUE v_Env
+ VALUE 'Test'
+    URL_wsIAS   :=  URL_Test
+ VALUE 'Prod'
+  URL_wsIAS   :=  URL_Prod
+ NONE
+    ResultCode := 1
+    COMPRESS 'Unknown environment' v_Env INTO #WEBCHARGE-LOG
+    WRITE WORK FILE 3 #WEBCHARGE-LOG
+    CLOSE WORK 3
+    ESCAPE ROUTINE
+END-DECIDE
+PERFORM CALL-SERVICE
+*
+********************************
+DEFINE SUBROUTINE CREATE-REQUEST
+********************************
+* Create request in Jason Format for Web API
+D1 := '":"'
+D2 := '","'
+COMPRESS
+  '={"'
+  'CardHolderName' D1 CardHolderName D2
+  'CardNumber' D1 CardNumber D2
+  'CardExpDate' D1 CardExpDate D2
+  'CardCvv' D1 CardCvv D2
+  'Street' D1 Street D2
+  'City' D1 City D2
+  'State' D1 State D2
+  'ZipCode' D1 ZipCode D2
+  'CNumber' D1 CNumber D2
+  'Amount' D1 Amount D2
+  'ApplicationSource' D1 ApplicationSource D2
+  'UserLoginName' D1 User
+  '"}'
+  INTO #REQUEST LEAVING NO
+*
+COMPRESS #DATN #TIMN 'Member CN =' CNumber #REQUEST INTO #WEBCHARGE-LOG
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE CALL-SERVICE
+******************************
+*
+REQUEST DOCUMENT FROM URL_wsIAS
+  WITH DATA
+      NAME ' ' VALUE #REQUEST
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+PRINT v_Res
+*
+COMPRESS #DATN #TIMN 'Member CN =' CNumber 'Response Code = ' v_RC v_Res INTO #WEBCHARGE-LOG
+WRITE WORK FILE 3 #WEBCHARGE-LOG
+CLOSE WORK 3
+*
+* Parse Response
+EXAMINE v_Res FOR '{' DELETE
+EXAMINE v_Res FOR '}' DELETE
+ParsedResult := v_Res
+* write Field1
+* write EApprovalIndicator 
+* write Field2
+* write  EMessage
+* write Field3
+* write  Code 
+* write Field4                 
+* write  Reference
+* write Field5
+* write  RiskIndicator
+* write Field6
+* write  Invoice
+*
+PRINT v_RC
+PRINT ApprovalIndicator
+IF v_RC = 200 and ApprovalIndicator = 'A' AND Message = #ACCEPTED
+  ResultCode := 0
+  ResultMessage := #ACCEPTED
+ELSE
+  ResultCode := v_RC
+  DECIDE ON FIRST VALUE Code
+    VALUE '900016'
+      ResultMessage := 'Invalid Routing Number'
+    VALUE '900005'
+      ResultMessage := 'Invalid Account Number'
+    NONE VALUE
+      ResultMessage := 'Unknown Error'
+  END-DECIDE   
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE Test_wsIAS
+REQUEST DOCUMENT FROM URL_Test
+  RETURN
+    PAGE v_Res
+RESPONSE v_RC
+END-SUBROUTINE
+*
+END

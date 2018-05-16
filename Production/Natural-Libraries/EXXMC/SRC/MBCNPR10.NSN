@@ -1,0 +1,294 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center 'SchedulePayment' Step 1 - called via EntireX
+* MBCNPR10 - Accepts Request Data from Member Center/Payment Center
+*            calls to save payment request, save/update bank account routines, 
+*            creates Response XML
+* Called from - NATSERV0 (EntireX NATURAL server)
+**********************************************************
+*        MODIFICATION LOG
+**********************************************************
+* USER   DATE      TAG  REASON
+* YAK    08202014       Initial Creation
+**********************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+LOCAL USING MBCAPR01
+LOCAL USING PARSER-X
+LOCAL USING OBJLPRST
+LOCAL USING ERROR_L
+LOCAL
+1 ERROR-MESSAGE     (A100)
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML               (A) DYNAMIC
+1 #I                (I2)
+1 #II               (I2)
+1 #III              (I2)
+1 #I1               (I2)
+1 #ErrorCode        (A3)
+1 #value            (A) DYNAMIC
+1 #ActionType       (A) DYNAMIC
+*
+1 #SUCCESS-CODE    (A4) CONST <'0'>
+1 #AMOUNT          (A) DYNAMIC
+1 #DATE            (A20)
+1 #PAYMENT-ID      (N4)
+1 #FLEX-PLAN       (A2)
+1 #FLEX-KEY        (A3)
+1 ERROR-LOG        (A100)
+1 #FULL-NAME       (A) DYNAMIC
+1 #ACTIVE          (A1) CONST <'A'>
+1 #GET             (A) DYNAMIC CONST <'GET'>           
+1 #GET-ST          (A) DYNAMIC CONST <'GET-ST'>        
+1 #ECHECK          (A) DYNAMIC CONST <'eCheck'>
+1 #EZ-PAY          (A) DYNAMIC CONST <'EZ-Pay'>     
+1 #REQUEST-KEY      (A7)
+1 REDEFINE #REQUEST-KEY                                           
+  2 #REQUEST-CN     (N6)                               
+  2 #REQUEST-STATUS (A1)                               
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Save request for each Policy
+CALLNAT 'MBCNPR20' Members 
+RESET RESPONSE-DATA XML
+PERFORM COMPOSE-RESPONSE-DATA
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'Members/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      Members.CN_Owner := VAL(#value)
+    END-IF
+  VALUE 'Members/User/$'
+    Members.User := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/PaymentMethod/$'
+    Members.PaymentMethod := *TRIM(XML_PARSER_CONTENT)
+* VALUE 'Members/ProcessType/$'
+*   Members.ProcessType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'Members/Member'
+    ADD 1 TO Members.C@Member
+    EXPAND ARRAY Members.Member TO
+      (1:Members.C@Member)      
+  VALUE 'Members/Member/CN/$'
+    #I := Members.C@Member
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      Members.CN(#I) := VAL(#value)      
+    END-IF
+* Get Payment Information by Policy
+  VALUE 'Members/Member/Policies/Policy'
+    #I := Members.C@Member
+    ADD 1 TO Members.C@Policy(#I)
+    EXPAND ARRAY Members.Policy TO
+      (*:*,1:Members.C@Policy(#I))
+  VALUE 'Members/Member/Policies/Policy/PolicyNumber/$'
+    #I := Members.C@Member
+    #II := Members.C@Policy(#I)
+    Members.PolicyNumber(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/Policies/Policy/Payments/Payment'
+    #I := Members.C@Member
+    #II := Members.C@Policy(#I)
+    ADD 1 TO Members.C@Payment(#I,#II)
+    EXPAND ARRAY Members.Payment TO
+      (*:*,*:*,1:Members.C@Payment(#I,#II))
+  VALUE 'Members/Member/Policies/Policy/Payments/Payment/@ID'
+    #I := Members.C@Member
+    #II := Members.C@Policy(#I)
+    #III := Members.C@Payment(#I,#II)
+    IF XML_PARSER_CONTENT IS (I2) THEN
+      Members.ID(#I,#II,#III) := VAL(XML_PARSER_CONTENT)
+    END-IF
+  VALUE 'Members/Member/Policies/Policy/Payments/Payment/PaymentType/$'
+    #I := Members.C@Member
+    #II := Members.C@Policy(#I)
+    #III := Members.C@Payment(#I,#II)
+    Members.PaymentType(#I,#II,#III) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/Policies/Policy/Payments/Payment/Amount/$'
+    #I := Members.C@Member
+    #II := Members.C@Policy(#I)
+    #III := Members.C@Payment(#I,#II)
+    Members.Amount(#I,#II,#III) := *TRIM(XML_PARSER_CONTENT)    
+* Get Bank Account Data from XML
+  VALUE 'Members/BankAccounts/BankAccount'
+    #I := Members.C@Member
+    ADD 1 TO Members.C@Account(*)
+    EXPAND ARRAY Members.Account TO
+      (*:*,1:Members.C@Account(#I))
+  VALUE 'Members/BankAccounts/BankAccount/CheckType/$'
+    #II := Members.C@Account(#I)
+    Members.CheckType(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/RoutingNumber/$'
+    #II := Members.C@Account(#I)
+    Members.RoutingNumber(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountNumber/$'
+    #II := Members.C@Account(#I)
+    Members.AccountNumber(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountType/$'
+    #II := Members.C@Account(#I)
+    Members.AccountType(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountHolderFirstName/$'
+    #II := Members.C@Account(#I)
+    Members.AccountHolderFirstName(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountHolderLastName/$'
+    #II := Members.C@Account(#I)
+    Members.AccountHolderLastName(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountStreet/$'
+    #II := Members.C@Account(#I)
+    Members.AccountStreet(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountCity/$'
+    #II := Members.C@Account(#I)
+    Members.AccountCity(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountState/$'
+    #II := Members.C@Account(#I)
+    Members.AccountState(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/AccountZipCode/$'
+    #II := Members.C@Account(#I)
+    Members.AccountZipCode(*,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/BankAccounts/BankAccount/SaveBankAccountInfoInd/$'
+    #II := Members.C@Account(#I)
+    Members.SaveBankAccountInfoInd(*,#II) := XML_PARSER_CONTENT
+* Get Payment Request data from XML
+  VALUE 'Members/Member/PaymentRequests/PaymentRequest'
+    #I := Members.C@Member
+    ADD 1 TO Members.C@PaymentRequest(#I)
+    EXPAND ARRAY Members.PaymentRequest TO
+      (*:*,1:Members.C@PaymentRequest(#I))
+  VALUE 'Members/Member/PaymentRequests/PaymentRequest/RequestType/$'
+    #I := Members.C@Member
+    #I1 := Members.C@PaymentRequest(#I)
+    Members.RequestType(#I,#I1) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/PaymentRequests/PaymentRequest/RequestStatus/$'
+    #I := Members.C@Member
+    #I1 := Members.C@PaymentRequest(#I)
+    Members.RequestStatus(#I,#I1) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/PaymentRequests/PaymentRequest/RequestDate/$'
+    #I := Members.C@Member
+    #I1 := Members.C@PaymentRequest(#I)
+    Members.RequestDate(#I,#I1) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/PaymentRequests/PaymentRequest/PaymentDate/$'
+    #I := Members.C@Member
+    #I1 := Members.C@PaymentRequest(#I)
+    Members.PaymentDate(#I,#I1) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/PaymentRequests/PaymentRequest/PolicyNumber/$'
+    #I := Members.C@Member
+    #I1 := Members.C@PaymentRequest(#I)
+    Members.PayPolicyNumber(#I,#I1) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/PaymentRequests/PaymentRequest/PaymentAmount/$'
+    #I := Members.C@Member
+    #I1 := Members.C@PaymentRequest(#I)
+    Members.PaymentAmount(#I,#I1) := XML_PARSER_CONTENT
+* Srart Parsing for Mobile Website 
+* Get Bank Account Data from XML for Mobile Website (temporary keeps old structure)
+  VALUE 'Members/Member/BankAccounts/BankAccount'
+    #I := Members.C@Member
+    ADD 1 TO Members.C@Account(#I)
+    EXPAND ARRAY Members.Account TO
+      (*:*,1:Members.C@Account(#I))
+  VALUE 'Members/Member/BankAccounts/BankAccount/CheckType/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.CheckType(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/RoutingNumber/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.RoutingNumber(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountNumber/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountNumber(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountType/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountType(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountHolderFirstName/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountHolderFirstName(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountHolderLastName/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountHolderLastName(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountStreet/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountStreet(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountCity/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountCity(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountState/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountState(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/AccountZipCode/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.AccountZipCode(#I,#II) := XML_PARSER_CONTENT
+  VALUE 'Members/Member/BankAccounts/BankAccount/SaveBankAccountInfoInd/$'
+    #I := Members.C@Member
+    #II := Members.C@Account(#I)
+    Members.SaveBankAccountInfoInd(#I,#II) := XML_PARSER_CONTENT
+* End parsing for Mobile Website    
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET XML
+ErrorCode        := XML_PARSER_RESPONSE
+ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+ESCAPE MODULE
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN ErrorCode <> ' ' AND ErrorDescription = ' '
+    #ErrorCode       := ErrorCode
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  WHEN ErrorCode = ' '
+    ErrorCode        :=  #SUCCESS-CODE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+COMPRESS
+  '<Members>' '<CN>' Members.CN_Owner '</CN>' XML '<ErrorCode>' ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' ErrorDescription '</ErrorDescription>'
+  '</Members>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

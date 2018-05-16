@@ -1,0 +1,142 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*  GOMSCN01 
+* 1. Populate Email in STATUS 
+* Prerequisites: Field MEMBER-CONTACT-ID must has correct value
+* Usage 
+* CALLNAT 'GOMSCN01' p_CN p_Err p_Err_Dscr p_Mod
+* Parameters: 
+*  p_CN       (N6) 
+*  p_Err      (N4)  
+*  p_Err_Dscr (A78)   
+*  p_Mod      (A1)  
+*
+* bz created 05/15/2011
+DEFINE DATA 
+PARAMETER USING GOMSCA01
+PARAMETER 
+1 p_CN       (N6)
+1 p_Err      (N4)  
+1 p_Err_Dscr (A78) 
+1 p_Mod      (A1)  
+LOCAL
+1 ST-V VIEW OF A-STATUS
+   2 ID-NUMBER
+   2 MEMBER-CONTACT-ID
+*   2 INTERNET-ADDR
+   2 DTS-DATN                 
+   2 DTS-TIMN                 
+*
+1 STATS-V VIEW OF A-MBRSHIP-STATS
+ 2 MONTH-KEY (N6.0)
+/*     *THIS MONTHS CURRENT STATISTICS
+ 2 MTD-AFSC-GAINS-BY-PLAN-PE
+  3 MTD-AFSC-GAINS-BY-PLAN (P7.0/1:12)
+ 2 MTD-AFSC-LOSSES-BY-TYPE-PE
+  3 MTD-AFSC-LOSSES-BY-TYPE (P7.0/1:2)
+ 2 AER-CLIENTS
+ 2 NMCRS-CLIENTS
+ 2 AFAS-CLIENTS
+ 2 CGMA-CLIENTS
+ 2 NRS-CLIENTS
+ 2 MCRS-CLIENTS
+ 2 UWSF-CLIENTS
+ 2 ME-AFSC-LIFETIME-MBRS
+*
+ 1 MBRSHIP-MTD-DET-V VIEW OF A-MBRSHIP-MTD-DETAIL
+   2 ID-NUMBER (N6.0)
+   2 ENTRY-DATE (N8.0)
+   2 REC-ISN (N8.0)
+   2 CODE (A1)
+   2 ISSUE-DATE (N8.0)
+   2 NUM-MBRSHIPS (N3.0)
+   2 USER-COMPANY (A1)
+   2 PLAN (A3)
+*
+1  p_#I       (I2)       INIT <1>
+1  v_ISN      (P9)
+1 v_YYYYMMDD              (N8) INIT <*DATN>
+1 REDEFINE v_YYYYMMDD     
+  2 v_YYYYMM              (N6) 
+1 v_Ind                   (N2)  
+1 v_N8                     (N8)
+END-DEFINE
+*
+  ON ERROR 
+     p_Err := *ERROR-NR
+     COMPRESS 'Natural Error:'  *PROGRAM *ERROR-NR  'Error Line:' *ERROR-LINE INTO p_Err_Dscr
+     ESCAPE ROUTINE 
+  END-ERROR 
+* 
+*   PRINT *PROGRAM *LINE 'TOP - - - - - - - - - - ' 
+ IF p_CN = 0
+     p_Err := 0001  COMPRESS 'CN = 0' INTO p_Err_Dscr  ESCAPE ROUTINE 
+  END-IF
+
+*
+ FIND ST-V WITH ID-NUMBER = p_CN
+     IF NO RECORD FOUND
+         p_Err := 0002  COMPRESS 'CN:' p_CN 'NOT FOUND' INTO p_Err_Dscr  ESCAPE ROUTINE 
+     END-NOREC
+    v_ISN := *ISN
+ END-FIND
+*
+  RESET MBRSHIP-MTD-DET-V
+  MBRSHIP-MTD-DET-V.ID-NUMBER := p_CN
+  MBRSHIP-MTD-DET-V.ENTRY-DATE := 99999999 - *DATN
+  MBRSHIP-MTD-DET-V.REC-ISN := v_ISN
+  MBRSHIP-MTD-DET-V.CODE := 'N'
+  MBRSHIP-MTD-DET-V.ISSUE-DATE  := *DATN
+  MBRSHIP-MTD-DET-V.USER-COMPANY   := 'S'
+  MBRSHIP-MTD-DET-V.PLAN := #MSC.SVC-PLAN
+  STORE MBRSHIP-MTD-DET-V
+
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+   IF  #MSC.NOTE-MSG(1) = ' ' COMPRESS p_CN 'Test' 'CRM' '**********' INTO #MSC.NOTE-MSG(1) END-IF
+   IF  #MSC.CLERK-ID  = ' ' #MSC.CLERK-ID := 'CRM' END-IF
+       CALLNAT 'E4205SDM' p_CN
+                          p_#I
+                          #MSC.CLERK-ID  
+                          #MSC.NOTE-MSG(*)
+
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+PERFORM WRITE-STATS
+
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+
+DEFINE SUBROUTINE WRITE-STATS
+
+  FIND (1) STATS-V WITH MONTH-KEY = v_YYYYMM
+        IF NO RECORDS FOUND
+            ESCAPE BOTTOM
+        END-NOREC
+*
+    DECIDE ON FIRST #MSC.SVC-PLAN
+      VALUE 'FER'  v_Ind := 1  AFAS-CLIENTS  := AFAS-CLIENTS  + 1
+      VALUE 'NER'  v_Ind := 2  NMCRS-CLIENTS := NMCRS-CLIENTS + 1
+      VALUE 'CER'  v_Ind := 3  CGMA-CLIENTS  := CGMA-CLIENTS  + 1 
+      VALUE '3S'   v_Ind  := 4
+      VALUE '3SC'  v_Ind  := 5
+      VALUE '3SW'  v_Ind  := 8
+      VALUE '3SR'  v_Ind  := 9
+      VALUE 'AER'  v_Ind := 10 AER-CLIENTS   := AER-CLIENTS  + 1  
+      VALUE 'UER'  v_Ind := 11 UWSF-CLIENTS  := UWSF-CLIENTS + 1
+    NONE       ESCAPE ROUTINE
+     MTD-AFSC-GAINS-BY-PLAN (v_Ind) := MTD-AFSC-GAINS-BY-PLAN (v_Ind) + 1
+     ME-AFSC-LIFETIME-MBRS          := ME-AFSC-LIFETIME-MBRS + 1
+  END-DECIDE
+  UPDATE
+
+*
+END-FIND
+*
+END-SUBROUTINE
+
+
+
+END

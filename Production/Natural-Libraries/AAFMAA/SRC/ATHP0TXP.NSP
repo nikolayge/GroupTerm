@@ -1,0 +1,239 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* DV_TXP
+* Description
+* Creates Multipage Output files by CNs
+* Assumptions: 
+*   1) No blank lines between last page page-break (if exist) 
+*       and the first line of the next report
+*   2) First (Indication) line of the document has a CN positions 5-10 
+*       and Indicator ^ in the position 30
+*   3) First (Indication) line will be eleminated from otput
+* Modifications log
+**______________________________________________________________________________
+* 02/02/2012   Boris Zaslavskiy        Initial creation
+* ______________________________________________________________________________
+DEFINE DATA 
+LOCAL USING GPRL0EML
+LOCAL
+1 Line-I         (A200)
+1 Line-I_HOLD    (A200)
+1 CN-id          (A1)    INIT  <H'5E'>
+1 Page-id        (A1)    INIT  <H'0C'>
+1 l_Test         (L)     INIT <FALSE>
+
+1 File_11           (A79)
+   INIT <"/usr/SAG/AAFMAA/batch/workfiles/PROD/INI/CAP_LOAN_LAPS_PDF.INI">
+1 File_In            (A)    DYNAMIC   /* From ini */
+1 File_Log           (A)    DYNAMIC   /* From ini */
+1 Prefix             (A)    DYNAMIC   /* From ini */
+1 DIR_UNIX           (A)    DYNAMIC   /* From ini */
+1 DIR_WIN            (A)    DYNAMIC   /* From ini */
+1 SUBDIR_WIN         (A)    DYNAMIC   /* From ini */
+1 FTP_Script         (A)    DYNAMIC   /* From ini */
+1 FTP_PDF            (A)    DYNAMIC   /* From ini */
+1 File_Out           (A)    DYNAMIC             
+1 File_1             (A)    DYNAMIC        
+1 File_2             (A)    DYNAMIC        
+1 File_3             (A)    DYNAMIC          
+1 File_4             (A)    DYNAMIC        
+
+1 Parm-value     (A90) INIT <" ">
+1 Parm-id        (A40) INIT <" ">
+1 v_#CNs             (N3) 
+1 v_CNs          (A6/300)
+
+1 #i             (N5)    INIT  <0>
+1 #j             (N5)    INIT  <0>
+1 #k             (N5)    INIT  <0>
+1 Current_CN     (A)        DYNAMIC
+1 v_D            (D)     INIT <*DATX>
+1 v_A10          (A10)
+1 shcmd          (A)    DYNAMIC                    
+1 rc             (I4)   
+1 nl             (A1)    INIT <H'0D'>
+1 dm             (A1)    INIT <H'09'>
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - 
+1 v_XML (A60/11) INIT
+    <
+    "<DOCUMENT>",
+    "<DOCTYPE></DOCTYPE>",
+    "<DOCTITLE>CapLoanDefRpt</DOCTITLE>",                     
+    "<CN>@CN</CN>",
+    "<SUBMITDATE>@DATE</SUBMITDATE>",
+    "<FILENAME>@NAME</FILENAME>",
+    "<DESCRIPTION>CAP Loan Default Report</DESCRIPTION>",
+    "<CUSTOM id='DocDate'>@DATE</CUSTOM>",
+    "<MEMBERACCESSIBLE>False</MEMBERACCESSIBLE>",
+    "<ORGANIZATION>AAFMAA</ORGANIZATION>",
+    "</DOCUMENT>"
+    >
+END-DEFINE
+*
+ON ERROR
+PRINT *PROGRAM 'Err No:' *ERROR-NR  'Err line:'  *ERROR-LINE  /
+      "INI File ---:"   File_11     /
+      "IN  File ---:"   File_1      /
+      "Log file ---:"   File_3      /
+      "Out File ---:"   File_2      /
+      "XML File ---:"   File_4      /
+      "Current CN -:"   Current_CN  /
+      "CN Seq. # --:"   v_#CNs      /
+      "Line -------:"   Line-I      /
+      '#i' #i '#j' #j '#k' #k
+END-ERROR
+
+MOVE EDITED v_D (EM=YYYY/MM/DD) TO v_A10 
+
+PRINT (0) NOTITLE *DATV  " -- " *TIME "  Program:" *PROGRAM
+DEFINE WORK FILE 11 File_11                      /*    --db
+
+PERFORM GET-Parameters
+
+COMPRESS DIR_UNIX '/' File_IN   INTO File_1 LEAVING NO SPACE
+DEFINE WORK FILE 1 File_1
+
+COMPRESS DIR_UNIX '/' File_Log INTO File_3  LEAVING NO SPACE
+DEFINE WORK FILE 3 File_3        Type 'ASCII-COMPRESSED'
+
+COMPRESS DIR_UNIX '/' 'upload_index.xml' INTO File_4 LEAVING NO SPACE
+DEFINE WORK FILE 4 File_4      Type 'ASCII-COMPRESSED'
+WRITE WORK FILE 4 VARIABLE '<DOCUMENTS>'
+
+COMPRESS  "Program" *PROGRAM "   Date" *DATV  "   Time" *TIMX 
+          "     --  CAP LOAN LAPS  --"    INTO Line-I
+WRITE WORK FILE 3 VARIABLE Line-I
+
+READ WORK FILE 1 Line-I
+
+  IF SUBSTRING(Line-I, 1, 3) = "!NO" ESCAPE ROUTINE END-IF 
+* - - - - - -
+EXAMINE   Line-I STARTING FROM 30 ENDING AT 31 FOR CN-id
+          REPLACE  " " GIVING NUMBER #i                    
+  IF #i <> 0
+     v_#CNs := v_#CNs + 1
+     IF v_#CNs > 1 CLOSE WORK FILE 2  PERFORM sbr_FTP END-IF
+     Current_CN := SUBSTRING(Line-I,5,7)
+     Current_CN := *TRIM(Current_CN)
+     v_CNs(v_#CNs) := Current_CN
+     COMPRESS  Prefix '_' Current_CN '_' *DATN '.txt' INTO File_Out LEAVING NO SPACE
+     COMPRESS DIR_UNIX '/' File_Out                   INTO File_2 LEAVING NO SPACE
+     DEFINE WORK FILE 2 File_2      Type 'ASCII-COMPRESSED'
+     PERFORM sbr_XML
+     Line-I_HOLD := ' '   
+     ESCAPE TOP     /* bypass top line
+  END-IF 
+  IF v_#CNs > 0
+      EXAMINE Line-I FOR  Page-id   GIVING NUMBER #i
+      IF #i = 0
+         IF Line-I_HOLD <> ' '
+            WRITE WORK FILE 2 VARIABLE Line-I_HOLD
+            Line-I_HOLD := ' '
+         END-IF  
+      WRITE WORK FILE 2 VARIABLE Line-I
+     ELSE
+       Line-I_HOLD := Line-I   
+     END-IF    
+ END-IF
+END-WORK
+CLOSE WORK FILE 2
+PERFORM sbr_FTP 
+
+WRITE WORK FILE 4 VARIABLE '</DOCUMENTS>'
+CLOSE WORK FILE 4
+COMPRESS DIR_WIN '/' SUBDIR_WIN INTO DIR_WIN LEAVING NO SPACE
+COMPRESS FTP_Script " " File_4 " " 'upload_index.xml' " " DIR_Win INTO shcmd
+ call 'shcmd' shcmd
+ rc :=  RET('shcmd') 
+ IF rc <> 0
+    PRINT 'FTP Error for index file. Code:' rc
+ END-IF
+
+IF P_TO <> ' ' 
+   PERFORM sbr_EMAIL
+END-IF
+WRITE WORK FILE 3 VARIABLE nl "Total Letters" dm v_#CNs
+PRINT "Total Letters" dm v_#CNs
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DEFINE SUBROUTINE sbr_XML
+EXAMINE v_XML(*) FOR '@CN'    REPLACE  Current_CN 
+EXAMINE v_XML(*) FOR '@DATE'  REPLACE  v_A10
+EXAMINE v_XML(*) FOR '@NAME'  REPLACE  File_Out
+EXAMINE v_XML(*) FOR '.txt'    REPLACE  '.pdf'
+FOR #i = 1 TO 11
+  WRITE WORK FILE 4 VARIABLE v_XML(#i) 
+END-FOR
+RESET INITIAL v_XML(*)
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DEFINE sbr_FTP
+COMPRESS FTP_PDF  File_2  DIR_Win  SUBDIR_WIN INTO shcmd
+  call 'shcmd' shcmd
+ rc :=  RET('shcmd') 
+ IF rc > 0
+    PRINT 'FTP Error. Code:' rc //
+    shcmd 
+    
+ END-IF
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DEFINE sbr_EMAIL
+#k := 2
+FOR #i = 1 TO 250 STEP 10
+  IF v_CNs(#i) = ' ' ESCAPE BOTTOM END-IF
+     #k := #k + 1     
+     FOR #j = 0 TO 9 
+        COMPRESS p_MSG(#k) '@' v_CNs(#i + #j) INTO p_MSG(#k) LEAVING NO SPACE
+     END-FOR
+     EXAMINE p_MSG(#k) FOR '@' REPLACE FULL '  '
+END-FOR   
+COMPRESS '-- List of' v_#CNs  'processed CNs --       Date:' *DAT4U  '  Time:' *TIMX INTO p_MSG (1)
+ CALLNAT 'GPRS0EML' p_EMAIL
+IF p_rc > 0 
+   PRINT 'Send Email returns Error Code:' p_rc 
+END-IF   
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+DEFINE SUBROUTINE GET-PARAMETERS
+ READ WORK FILE 11  Line-I   /* 1 */
+  IF SUBSTRING ( Line-I,1,1 ) = "#" OR = "!" OR = ":"
+     IF l_Test PRINT (0) "!!" Line-I (AL=77) END-IF
+     ESCAPE TOP
+  END-IF
+  SEPARATE Line-I INTO Parm-value Parm-id WITH DELIMITER "<"
+  EXAMINE Parm-id FOR ">" REPLACE " "
+   DECIDE ON FIRST VALUE OF Parm-id
+    VALUE "FILE_IN"    File_in      := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "FILE_LOG"   File_Log     := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "PREFIX"     Prefix       := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "DIR_WIN"    DIR_WIN      := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "SUBDIR_WIN" SUBDIR_WIN   := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "DIR_UNIX"   DIR_UNIX     := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "FTP_SCRIPT" FTP_script   := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "FTP_PDF" FTP_PDF         := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "P_SUBJ"    P_SUBJ        := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "P_TO"    P_TO         := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+    VALUE "P_CC"    P_CC         := Parm-value 
+             IF l_Test  PRINT (0) Parm-id ':' Parm-value / '-'(50) END-IF
+
+          
+    NONE IGNORE
+  END-DECIDE
+ END-WORK
+END-SUBROUTINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -
+END

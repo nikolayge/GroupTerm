@@ -1,0 +1,186 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM GPBPCC03 (rewritten for use with SAGE Vault process)
+* Creates input file to IAS to apply transactions
+* Part II - Parse Credit Card response file from PayWare
+* Work file 1 - Response file from SAGE
+* Work file 2 - Approved / Reject transactions - input for the next step (IAS apply)
+* Work file 3 - Approved transactions file (report)
+* Work file 4 - Declined transactions file (report)
+* Work file 5 - Report with declined transactions to reprocess (for Policy Services)
+* Work file 6 - Detail transactions file input for sorting
+* Work file 7 - Detail transactions file ouput after sorting
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* YAK    02242009          Create program                              *
+* PAM    02262009  PM2     Added CAP credit card logic                 *
+* YAK    03302009  YK1     Eliminate an extra step in the process      *
+*                          Sort file after it has been created         *
+* YAK    04292009  YK2     Create file with rejected transactions for  *
+*                          manual reprocessing with full cc number     *
+* YAK    05262009  YK3     Read CC-INFO instead of STATUS file         *
+* YAK    05272009  YK4     Split response file from PayWare into       *
+*                          approved and declined transactions files    *
+* YAK    11022015  YK5     Changes to process credit cards through SAGE*
+* YAK    05092016  YK6     Changes to use GUID with SAGE               *
+* YAK    07012017  YK7     Changes for Payer project                   *
+************************************************************************
+*
+DEFINE DATA
+LOCAL
+*
+1 #CC-REC-OUT  (A68)               /* YK7
+1 REDEFINE #CC-REC-OUT
+  2 #CC-OUT-APP-REJ  (A3)
+  2 #CC-OUT-CN       (A6)
+  2 #CC-OUT-PAYER-CN (A6)          /* YK7
+  2 #CC-OUT-AMT      (N5.2)
+  2 #CC-OUT-REJ-DESC (A25)
+  2 #CC-AV-CODE      (A1)
+  2 #CC-OUT-CC-NUM   (A16)
+  2 #CC-OUT-EXP-DATE (A4)
+  2 REDEFINE #CC-OUT-EXP-DATE
+    3 #CC-OUT-EXP-MONTH (N2)
+    3 #CC-OUT-EXP-YEAR (N2)
+* YK7 >
+1 #CC-REC     (A50)    /* Transactions detail record layout
+1 REDEFINE #CC-REC
+  2 #SORT-KEY     (A12)
+  2 REDEFINE #SORT-KEY
+    3 #CC-IAS-CN    (A6)
+    3 #CC-PAYER-CN  (A6)
+  2 #CC-IAS-INFO  (A20)
+  2 REDEFINE #CC-IAS-INFO
+    3 #IAS-TRAN     (A4)
+    3 #CC-POL-NUM   (A16)
+  2 #CC-AMOUNT    (N5.2)
+  2 #IAS-ISS-DT   (A8)
+  2 #IAS-PLAN     (A3)
+* < YK7
+1 #CC-RESPONSE        (A150)
+1 unicAAFMAAKey       (A) DYNAMIC
+1 status              (A) DYNAMIC
+1 statusCode          (A) DYNAMIC
+1 statusDescription   (A) DYNAMIC
+1 addressVerification (A) DYNAMIC
+1 transactionAmount   (A) DYNAMIC
+1 creditCardNumber    (A) DYNAMIC
+1 creditCardExpMonth  (A) DYNAMIC
+1 creditCardExpYear   (A) DYNAMIC
+1 creditCardHoldeName (A) DYNAMIC
+*
+1 #TOT-APPR-AMT    (N7.2)
+1 #TOT-REJ-AMT     (N7.2)
+1 #TOT-CC-AMT      (N7.2)
+1 #ID-NUMBER       (N6)
+*
+1 #I1               (I2)
+1 #TAB             (A1)   INIT <H'09'>
+1 #CNT-APP         (N5)
+1 #CNT-REJ         (N5)
+END-DEFINE
+************************************************************************
+*
+* DEFINE WORK FILE 1 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_RESPONSE.TXT"                                      /* YK7
+* DEFINE WORK FILE 2 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_SAGE_TRAN.TXT" TYPE 'ASCII-COMPRESSED'             /* YK7
+* DEFINE WORK FILE 3 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_APPROVED.TXT"  TYPE 'ASCII-COMPRESSED'             /* YK7
+* DEFINE WORK FILE 4 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_DECLINED.TXT"  TYPE 'ASCII-COMPRESSED'             /* YK7
+* DEFINE WORK FILE 5 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_REPROCESS.TXT" TYPE 'ASCII-COMPRESSED'             /* YK7
+* DEFINE WORK FILE 6 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CCDETAIL.TXT"                                         /* YK7
+* DEFINE WORK FILE 7 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_DETAIL_SORT.TXT" TYPE 'ASCII-COMPRESSED'           /* YK7
+*
+on error                               /* vt \/
+print #cc-response
+end-error                             /* vt /\   
+*
+READ WORK 1 RECORD #CC-RESPONSE
+  IF #CC-RESPONSE = ' '
+    ESCAPE TOP
+  END-IF
+*   SEPARATE #CC-RESPONSE INTO unicAAFMAAKey statusDescription status statusCode
+*                     connectionStatus addressVerification transactionAmount
+*     SEPARATE #CC-RESPONSE INTO unicAAFMAAKey statusCode status statusDescription          /* YK5
+*                       connectionStatus addressVerification transactionAmount              /* YK5
+*                     with delimiter #TAB                                                   /* YK5
+  SEPARATE #CC-RESPONSE INTO unicAAFMAAKey status statusCode statusDescription addressVerification
+    transactionAmount creditCardNumber creditCardExpMonth creditCardExpYear creditCardHoldeName with delimiter #TAB
+  RESET #CC-REC-OUT
+  status := *TRIM(status)
+  #CC-AV-CODE    := *TRIM(addressVerification)
+  #CC-OUT-CC-NUM := *TRIM(creditCardNumber)
+  #CC-OUT-EXP-MONTH := val(creditCardExpMonth)
+  #CC-OUT-EXP-YEAR  := val(creditCardExpYear)
+  unicAAFMAAKey := *TRIM(unicAAFMAAKey)
+  #CC-OUT-CN := substr(unicAAFMAAKey,1,6)
+  #CC-OUT-PAYER-CN := substr(unicAAFMAAKey,7,6)
+  transactionAmount := *TRIM(transactionAmount)
+  MOVE EDITED  transactionAmount to #CC-OUT-AMT (EM=ZZZZ9.99)
+  if status = 'A'                       /* approved/InBatch                               /* YK5
+    MOVE 'APP' TO #CC-OUT-APP-REJ
+*
+    ADD #CC-OUT-AMT TO #TOT-APPR-AMT
+    ADD 1 TO #CNT-APP
+* write approved transactions                                       /* YK4
+    compress unicAAFMAAKey #TAB statusDescription #TAB
+      status #TAB addressVerification #TAB transactionAmount #TAB creditCardNumber #TAB creditCardExpMonth #TAB creditCardExpYear
+      into #CC-RESPONSE leaving no
+    write work file 3 #CC-RESPONSE                                 /* YK4
+*
+  else                  /* rejected
+    MOVE 'REJ' TO #CC-OUT-APP-REJ
+    #CC-OUT-REJ-DESC := *TRIM(statusDescription)
+    ADD #CC-OUT-AMT TO #TOT-REJ-AMT
+    ADD 1 TO #CNT-REJ
+*
+* write rejected transactions                                       /* YK4
+    compress unicAAFMAAKey #TAB statusDescription #TAB
+      status #TAB addressVerification #TAB transactionAmount #TAB creditCardNumber #TAB creditCardExpMonth #TAB creditCardExpYear
+      into #CC-RESPONSE leaving no
+    write work file 4 #CC-RESPONSE                                 /* YK4
+* write rejected ccard transactions to be manually reprocessed      /* YK2
+* New report with customer information for rejected transactions
+    compress unicAAFMAAKey #TAB creditCardHoldeName #TAB creditCardNumber #TAB creditCardExpMonth #TAB creditCardExpYear #TAB
+      statusDescription #TAB transactionAmount into #CC-RESPONSE leaving no
+    WRITE WORK FILE 5 #CC-RESPONSE
+  end-if
+*
+  WRITE WORK 2 #CC-REC-OUT
+*
+END-WORK
+*
+COMPUTE #TOT-CC-AMT = #TOT-APPR-AMT + #TOT-REJ-AMT
+WRITE 'Approved Transactions' #CNT-APP
+WRITE 'TOT-APPROVED =' #TOT-APPR-AMT (EM=ZZZ,ZZZ.99)
+WRITE 'Rejected Transactions' #CNT-REJ
+WRITE 'TOT-REJECTED =' #TOT-REJ-AMT  (EM=ZZZ,ZZZ.99)
+WRITE 'TOT-CC-AMT   =' #TOT-CC-AMT (EM=ZZZ,ZZZ.99)
+*
+*
+PERFORM SORT-DETAIL-REC-FILE            /* YK1
+*
+************************************
+DEFINE SUBROUTINE SORT-DETAIL-REC-FILE
+**************************************
+*
+READ WORK 6 RECORD #CC-REC
+END-ALL
+*
+* SORT BY #CC-IAS-CN #IAS-ISS-DT #IAS-TRAN     /* #CC-POL-NUM
+*   USING #CC-REC
+SORT BY #SORT-KEY #CC-IAS-INFO                 /* YK7
+    USING #CC-REC                              /* YK7
+* tran code added  DW1 2/28/2006
+* so INT would preceed PRN to prevent
+* abends by PRN clearing loan before INT is applied
+* so sort will be DUEP/INPx/PRNx/PREP/RIDP
+*
+  WRITE WORK 7 #CC-REC
+*
+END-SORT
+END-SUBROUTINE
+*
+END

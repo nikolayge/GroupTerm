@@ -1,0 +1,296 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center 'GetExtPayerPayment' function - called via EntireX
+* MBCNCC1A - Accepts Request Data from Member Center/Pay My bill
+*            calls calculation module, creates Response XML
+* Called from    - NATSERV0 (EntireX NATURAL server)
+*
+***********************************************************
+*        MODIFICATION LOG
+***********************************************************
+* USER   DATE      TAG  REASON
+* YAK    02232012       Initial Creation
+* bz-2918 02-24-2017    set amount to 0.00 instead of blank     
+***********************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+LOCAL USING MBCLCC1A
+LOCAL USING WCCA0011
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL
+1 ERROR-MESSAGE     (A100)
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML               (A) DYNAMIC
+1 #I                (I2)
+1 #II               (I2)
+1 #ErrorCode        (A3)
+1 #value            (A) DYNAMIC
+1 #DUE-DATE         (N8)
+1 #TOTAL-AMOUNT     (N7.2)
+1 #ELIGIBLE-MODE    (A1/5) CONST <'A','S','Q','M','G'>
+1 #SERVICE          (A) DYNAMIC CONST <'Service Plan'>   
+1 #PREM             (A) DYNAMIC CONST <'PREP'>    
+1 #DUES             (A) DYNAMIC CONST <'DUEP  '>    
+1 #RIDER            (A) DYNAMIC CONST <'RIDP'>    
+1 #DUES-PS          (A) DYNAMIC CONST <'DUEPPS'>  
+1 #MONTHLY          (A) DYNAMIC CONST <'M'>  
+1 #LOAN             (A6/3) CONST <'PRNF','PRNV','PRNC'>
+1 #FPF-TRAN         (A4) CONST <'FPFP'>
+1 #PREM-MODE        (A1)
+1 #MAX-DATE         (N8)
+*
+1 #SUCCESS-CODE    (A4) CONST <'0'>
+1 #AMOUNT          (A) DYNAMIC
+1 #PAYMENT-ID      (N4)
+1 #POLICY-MODE     (A1)
+1 #DATN            (N8)
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Business Logic
+*
+#DATN := *DATN
+RESET RESPONSE-DATA XML
+#MAX-DATE := VAL(FUNCTION-CALENDAR(<#DATN,'I'>))
+*
+PERFORM GET-PAYMENTS
+PERFORM POPULATE-PAYMENT-DATA
+IF #ErrorCode = ' '
+  PERFORM COMPOSE-XML
+END-IF  
+*
+PERFORM COMPOSE-RESPONSE-DATA
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+* <ExternalPayer>
+*   <CN>171303</CN>
+*   <InsuredName>John Smith</InsuredName>
+*   <PolicyNumber>171303-1</PolicyNumber>
+*   <DueDate>20120519</DueDate>
+*   <Amount>12.33</Amount>
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'ExternalPayer'
+    Ignore
+  VALUE 'ExternalPayer/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      ExternalPayer.CN := VAL(#value)
+    END-IF
+  VALUE 'ExternalPayer/PolicyNumber/$'
+    ExternalPayer.PolicyNumber := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+RESET XML
+ErrorCode        := XML_PARSER_RESPONSE
+ErrorDescription := XML_PARSER_ERROR_TEXT
+PERFORM COMPOSE-RESPONSE-DATA
+ESCAPE MODULE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE GET-PAYMENTS
+******************************
+* Get payments for the CN
+RESET CC-PAYMENT
+CC-PAYMENT.PARM-DATE := *DATN
+CC-PAYMENT.ID-NUMBER := ExternalPayer.CN
+CALLNAT 'WCCNCC11' CC-PAYMENT ERROR-MESSAGE
+IF ERROR-MESSAGE NE ' '
+  ErrorCode := SUBSTR(ERROR-MESSAGE,1,4)
+  COMPRESS '*MemberCN*' CC-PAYMENT.ID-NUMBER ERROR-MESSAGE INTO ErrorDescription
+* Write log file
+  RESET XML
+  PERFORM COMPOSE-RESPONSE-DATA
+  ESCAPE MODULE
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+COMPRESS XML '<Payments>' INTO XML LEAVING NO
+FOR #II = 1 TO ExternalPayer.C@PAYMENT
+  IF ExternalPayer.Amount(#II) = ' '               /* bz-2918
+     ExternalPayer.Amount(#II) := '0.00'           /* bz-2918
+  END-IF                                           /* bz-2918  
+  COMPRESS XML '<Payment ID="'ExternalPayer.ID(#II)'">'
+    '<PaymentType>'ExternalPayer.PaymentType(#II)'</PaymentType>'
+    '<DueDate>'ExternalPayer.DueDate(#II)'</DueDate>'
+    '<Amount>'ExternalPayer.Amount(#II)'</Amount>'
+    '</Payment>' INTO XML LEAVING NO
+END-FOR
+COMPRESS XML '</Payments>' INTO XML LEAVING NO
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+DECIDE FOR FIRST CONDITION
+  WHEN ErrorCode = ' ' AND XML = ' '
+    ErrorCode := #ErrorCode := #NO-PAYMENTS-DUE
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  WHEN ErrorCode <> ' ' AND ErrorDescription = ' '
+    #ErrorCode       := ErrorCode
+    ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+  WHEN ErrorCode = ' ' AND XML <> ' '
+    ErrorCode        :=  #SUCCESS-CODE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+* message used only for Pay My Bill page
+IF ErrorCode = #NO-PAYMENTS-DUE
+  ErrorDescription := 'You cannot use Pay My Bill for this policy.' - 
+    'Please contact Policy Services to make a payment.' -
+    'If you are the policy owner, you may pay through the Member Center.'
+END-IF                      
+COMPRESS
+  '<ExternalPayer>' '<CN>' ExternalPayer.CN '</CN>'
+  '<InsuredName>'ExternalPayer.InsuredName'</InsuredName>'
+  '<PolicyNumber>'ExternalPayer.PolicyNumber'</PolicyNumber>'
+  '<DueDate>'ExternalPayer.FirstDueDate'</DueDate>'
+  '<Amount>'ExternalPayer.TotalAmount'</Amount>'
+  XML
+  '<ErrorCode>' ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' ErrorDescription '</ErrorDescription>'
+  '</ExternalPayer>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE POPULATE-PAYMENT-DATA
+***************************************
+*
+* EXAMINE FULL POLICY-NBR(*) FOR ExternalPayer.PolicyNumber INDEX #I
+FOR #I = 1 TO C@PAY-POLICY
+  IF POLICY-NBR(#I) = ExternalPayer.PolicyNumber
+    ESCAPE BOTTOM
+  END-IF    
+END-FOR
+* 
+DECIDE FOR FIRST CONDITION
+  WHEN #I > C@PAY-POLICY
+* Wrong policy number
+    #ErrorCode := #INVALID-POLICY-NUMBER
+  WHEN #I > 0 AND #I < C@PAY-POLICY AND C@AVAILABLE-PAYMENT(#I) = 0
+    #ErrorCode := #NO-PAYMENTS-DUE    
+*   WHEN NOT (CC-PAYMENT.PAYMENT-MODE(#I,1) = #ELIGIBLE-MODE(*)) AND
+*        NOT (CC-PAYMENT.TRAN-TYPE(#I,*) = #FPF-TRAN)   
+*     #ErrorCode := #NO-PAYMENTS-DUE
+  WHEN ANY  
+    ExternalPayer.TotalAmount  := '0'
+    ExternalPayer.FirstDueDate := '0'
+    ESCAPE ROUTINE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+* Calculate Policy Payment
+#POLICY-MODE := CC-PAYMENT.PAYMENT-MODE(#I,1)
+PERFORM CALCULATE-PAYMENT 
+* Check service
+EXAMINE CC-PAYMENT.POLICY-NBR(*) FOR #SERVICE INDEX #I
+IF #I <> 0 AND CC-PAYMENT.PAYMENT-MODE(#I,1) = #POLICY-MODE
+  PERFORM CALCULATE-PAYMENT 
+END-IF
+*
+IF #TOTAL-AMOUNT <= 0
+  #ErrorCode := #NO-PAYMENTS-DUE
+  ExternalPayer.TotalAmount := '0'
+  ESCAPE ROUTINE
+END-IF
+IF #DUE-DATE = 0
+  #DUE-DATE := *DATN
+END-IF  
+MOVE EDITED #TOTAL-AMOUNT (EM=ZZZZZ9.99) TO ExternalPayer.TotalAmount
+ExternalPayer.TotalAmount := *TRIM(ExternalPayer.TotalAmount)
+ExternalPayer.FirstDueDate := #DUE-DATE
+END-SUBROUTINE
+*
+**======================
+DEFINE CALCULATE-PAYMENT
+**======================
+C@Payment := C@Payment + C@AVAILABLE-PAYMENT(#I)
+EXPAND ARRAY Payment TO (*:C@Payment)
+ExternalPayer.InsuredName := CC-PAYMENT.INSURED-NAME
+FOR #II = 1 TO C@Payment
+* exclude non-payable
+  IF NOT (CC-PAYMENT.PAYMENT-MODE(#I,1) = #ELIGIBLE-MODE(*)) 
+    IF CC-PAYMENT.TRAN-TYPE(#I,#II) <> #FPF-TRAN
+      ESCAPE TOP
+    END-IF
+  END-IF        
+*   IF CC-PAYMENT.TRAN-TYPE(#I,#II) = #PREM AND 
+*      CC-PAYMENT.PAID-TO-DATE(#I,#II) > #MAX-DATE
+*     ESCAPE TOP
+*   END-IF   
+  IF CC-PAYABLE(#I,#II) = 'T'
+    IF CC-PAYMENT.TRAN-TYPE(#I,#II) = #LOAN(*) AND CC-PAYMENT.PAYMENT-MODE(#I,#II) <> #MONTHLY
+      C@Payment := C@Payment - 1
+      ESCAPE TOP
+    END-IF    
+    #PAYMENT-ID := #PAYMENT-ID + 1
+    ExternalPayer.ID(#PAYMENT-ID) := #PAYMENT-ID
+    ExternalPayer.PaymentType(#PAYMENT-ID) := TRAN-TYPE(#I,#II)
+    ExternalPayer.DueDate(#PAYMENT-ID)     := PAID-TO-DATE(#I,#II)
+    IF CC-PAYMENT.TRAN-TYPE(#I,#II) = #PREM OR = #DUES OR = #RIDER
+      IF CC-PAYMENT.PAID-TO-DATE(#I,#II) > #MAX-DATE
+        ESCAPE TOP
+      END-IF  
+*     DUE-AMOUNT(#I,#II) := DUE-AMOUNT(#I,#II) * DEFAULT-PREM(#I) 
+      DUE-AMOUNT(#I,#II) := DEFAULT-AMOUNT(#I,#II)
+      #DUE-DATE  := PAID-TO-DATE(#I,#II)
+      #PREM-MODE := CC-PAYMENT.PAYMENT-MODE(#I,#II)
+    END-IF  
+    IF TRAN-TYPE(#I,#II) = #DUES-PS AND CC-PAYMENT.PAYMENT-MODE(#I,#II) = #PREM-MODE
+*     DUE-AMOUNT(#I,#II) := DUE-AMOUNT(#I,#II) * DEFAULT-PREM(#I) 
+      DUE-AMOUNT(#I,#II) := DEFAULT-AMOUNT(#I,#II)
+      IF #DUE-DATE = 0
+        #DUE-DATE := PAID-TO-DATE(#I,#II)
+      END-IF  
+    END-IF
+    MOVE EDITED DUE-AMOUNT(#I,#II) (EM=ZZZZZ9.99) TO ExternalPayer.Amount(#PAYMENT-ID)
+    ExternalPayer.Amount(#PAYMENT-ID) := *TRIM(ExternalPayer.Amount(#PAYMENT-ID))
+    IF DUE-AMOUNT(#I,#II) < 0
+      COMPRESS '-' ExternalPayer.Amount(#PAYMENT-ID) TO ExternalPayer.Amount(#PAYMENT-ID) LEAVING NO
+    END-IF
+    #TOTAL-AMOUNT := #TOTAL-AMOUNT + DUE-AMOUNT(#I,#II)
+  END-IF
+END-FOR
+C@Payment := #PAYMENT-ID
+END-SUBROUTINE
+END

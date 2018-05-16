@@ -1,0 +1,482 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Test Double Ownership and change dates
+* GPL/GP2 Proj
+*  
+* -- Request
+* Check for existing
+* Save results in DB file 
+* Save 402 request and response 
+
+DEFINE DATA
+PARAMETER
+1 p_AT       (N6) BY VALUE
+1 p_Clerk    (A3) BY VALUE
+1 p_Message  (A) DYNAMIC
+1 p_Mode     (A1) /* T = test mote
+1 p_RC       (N4)
+LOCAL USING ADDA0001
+LOCAL
+1 GT-V VIEW OF A-GEN-TABLE
+  2  GEN-NUMBER-VALUE  
+  2  GEN-DESCRIPTION
+*      -------- SOURCE FIELD(S) -------
+*      GEN-KEY(1-4)
+*      GEN-SUB-KEY(1-3)
+
+1 v_AT_REQ         (A) DYNAMIC
+* -----------------------------------
+1 AT-V VIEW of A-APPL-TRACKING
+  2 ID-NUMBER             (N6)
+  2 CONTACT-ID            (N8)
+* -----------------------------------  
+ 1 CNT-V VIEW OF A-CONTACTS
+  2 FULL-NAME 
+    3 FIRST-NAME            (A25)
+    3 MIDDLE-NAME           (A25)  
+    3 LAST-NAME             (A25)
+    3 SUFFIX                (A10) 
+   2 SSN                    (N9)  (EM=999-99-9999)
+   2 DATE-OF-BIRTH          (N8)  (EM=9999-99-99)
+   2 REDEFINE DATE-OF-BIRTH 
+     3 DATE-OF-BIRTH_A      (A8) 
+   2 GENDER-CD              (A1)  
+   2 MILITARY-STATUS
+* ---------------------------------------------------------------------   
+1  MIB-V VIEW OF A-MIB
+  2  MIB-SSN       (N9)  (EM=999-99-9999)    /* SSN         /* DE
+  2  MIB-DATE      (N8)  (EM=9999-99-99)     /* Date
+  2  MIB-AT        (N6)  (EM=999999)         /* AT
+  2  MIB-CLERK     (A3)
+  2  MIB-COMM      (A1)                      /* (R)equest / (S)ubmit
+  2  MIB-CODES#    (N2)                      /* 0:No info 
+  2 C*MIB-RECORD
+  2  MIB-RECORD    (20)                      /* PE 20 times 
+     3  MIB-MATCH            (A3)             /* Hit/Try
+     3  MIB-FORM      
+        4  MIB-FORM-TYPE    (A4/19)          /* 
+        4  MIB-FORM-DATE    (A10/19)         /* YYYY-MM-DD Code Date
+        4  MIB-FORM-TEXT    (A120/19)        /* Compressed Codes for 1 DATE
+* ------------------------------------
+1 v_Srch                 (L)   
+1 v_Occ                (A8)
+* ------------------------------------     
+1 v_Name                 (A70)
+1 v_Msg                  (A78)
+* -----------------
+1 CMD                    (A) DYNAMIC INIT <'/usr/SAG/APPS/MIB/MIBget @@F_REQ'>
+1 RESP                   (A) DYNAMIC
+1 FNC                    (A) DYNAMIC 
+* -----------------
+ 1 file_Req               (A) DYNAMIC INIT <'/usr/SAG/APPS/MIB/402/REQ-402_@@AT.xml'>
+ 1 file_Resp              (A) DYNAMIC INIT <'/usr/SAG/APPS/MIB/402/RESP-402_@@AT.xml'>
+ 1 file_TMPL_402          (A) DYNAMIC INIT <'/usr/SAG/APPS/MIB/TMPL_402.xml'>
+ 1 file_Log               (A) DYNAMIC INIT <'/usr/SAG/APPS/MIB/Log_402.txt'>
+ 1 XML                    (A) DYNAMIC
+ 1 xml_Form               (A) DYNAMIC INIT <'<FormResponse><ResponseData>@@FR</ResponseData></FormResponse>'>
+ 1 v_A130                 (A130)
+ 1 msg_MIB_Rec            (A75)
+ 1 has_MIB                (L)
+ 1 l_Test                 (L)
+*
+ 1 #i                     (I2)
+ 1 #j                     (I2)
+ 1 v_A                    (A) DYNAMIC
+ 1 v_B                    (A) DYNAMIC
+ 1 pars_B                 (I2)
+ 1 pars_E                 (I2)
+ 1 pars_L                 (I2)
+ 
+ 1 tst_Case               (A3)
+ 1 v_L                    (L)
+ 1 v_CODE                 (A15/8)
+ 1 v_CODE_Msg             (A8/8)
+ 1 v_Result               (A7) 
+ 1 has_MIB_Text           (A40)
+ 1 has_MIB_cv             (C)
+ 1 has_MIB_Confirm        (L) 
+ 1 cv_ResultInfoDesc      (C) 
+ 1 v_ResultInfoDesc       (A79)
+ 1 l_Unknown_Code         (L) 
+END-DEFINE
+
+ON ERROR
+    COMPRESS *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR INTO p_Message 
+    p_RC := 10
+    PERFORM sbr_Error_Exit
+  END-ERROR
+
+ IF F-IS-DEV(<>) OR p_Mode = 'T' l_Test := TRUE END-IF
+ FORMAT LS=100 PS=30
+* DEFINE WORK FILE 2 file_Log TYPE 'ASCII-COMPRESSED'
+ SET KEY PF2
+ SET KEY PF3
+* ---------- 
+  PERFORM sbr_Get_Data 
+  IF v_Msg <> ' ' 
+     p_RC := 1
+     p_Message := v_Msg
+     PERFORM sbr_Error_Exit
+  END-IF     
+ IF l_Test  
+   PERFORM sbr_Testing  
+ END-IF
+* ----------- 
+ IF has_MIB 
+    has_MIB_Text := 'Duplicate submission. Submit anyway? '
+    MOVE (AD=I) TO has_MIB_cv
+ ELSE   
+    has_MIB_Text := ' '
+    MOVE (AD=NP) TO has_MIB_cv
+ END-IF   
+ REPEAT
+ v_Name := EDIT_NAME_FMLS(<FULL-NAME>)
+ INPUT (AD=O IP=OFF) WITH TEXT v_Msg
+     01/2 'MIB Communication - Submission'(I) 3x 'AT:' AT-V.ID-NUMBER(AD=IO EM=999999) 3x 'ID:' v_AT_REQ(AL=15) 
+       5x l_Test (EM=[Prod]/[Test]) 
+      02/2 'Name:' v_Name(AD=OI)
+      03/2 'Birth date :' DATE-OF-BIRTH(AD=I) 'Gender :' GENDER-CD(AD=I)' State:' #ADD-STATE(AD=I)
+      04/2 'SSN    :' SSN(AD=I) 'Occupation:' v_Occ(AD=I)
+      06/2  msg_MIB_Rec
+      07/2  has_MIB_Text(AD=OI)  has_MIB_Confirm (AD=MI EM=N/Y CV=has_MIB_cv)
+      09/2 'Code-1:' v_Code(1)(AD=MI) v_Code_Msg(1)(AD=OI)
+      10/2 'Code-2:' v_Code(2)(AD=MI) v_Code_Msg(2)(AD=OI)
+      11/2 'Code-3:' v_Code(3)(AD=MI) v_Code_Msg(3)(AD=OI)
+      12/2 'Code-4:' v_Code(4)(AD=MI) v_Code_Msg(4)(AD=OI)
+      13/2 'Code-5:' v_Code(5)(AD=MI) v_Code_Msg(5)(AD=OI)
+      14/2 'Code-6:' v_Code(6)(AD=MI) v_Code_Msg(6)(AD=OI)
+      15/2 'Code-7:' v_Code(7)(AD=MI) v_Code_Msg(7)(AD=OI)
+      16/2 'Code-8:' v_Code(8)(AD=MI) v_Code_Msg(8)(AD=OI)
+      18/2 'Result:' v_Result  (AD=OI)
+      20/2 v_ResultInfoDesc (AD=O CV=cv_ResultInfoDesc)
+      23/2 'F2=Submit     F3=Cancel'
+
+ v_Msg := ' ' v_Result := ' ' l_Unknown_Code := FALSE v_ResultInfoDesc := ' '
+ DECIDE ON FIRST VALUE *PF-KEY
+    VALUE 'PF2'
+     IF has_MIB AND NOT has_MIB_Confirm
+        REINPUT 
+        'To submit confirm Duplicate Submission' MARK *has_MIB_Confirm (AD=I)
+     END-IF 
+     IF v_Code(*) <> ' ' 
+       FOR #i = 1 TO 8
+          v_A := *TRIM(v_Code(#i))
+          IF *LENGTH(v_A) < 6 AND v_A <> ' '
+             COMPRESS 'Code' #i 'is too short' INTO v_Msg
+             REINPUT v_Msg MARK *v_Code(#i) 
+          END-IF  
+       END-FOR   
+     ELSE 
+       v_Msg := 'At least one code is requered'
+       REINPUT v_Msg MARK *v_Code(1) 
+     END-IF  
+              
+     PERFORM sbr_Request
+     IF v_Result = 'Success'
+       PERFORM sbr_Store
+       COMPRESS 'MIB Submit.' MIB-CODES# 'code' INTO p_Message
+       p_RC := 0
+       ESCAPE ROUTINE
+     ELSE
+       IF v_Code_Msg(*) <> ' ' 
+         MOVE(AD=N) TO cv_ResultInfoDesc
+         FOR #i = 1 TO 8
+           IF v_Code_Msg(#i) <> ' '
+             v_Msg := 'Please correct invalid code' 
+             REINPUT FULL v_Msg MARK *v_Code(1)
+           END-IF
+         END-FOR
+       ELSE 
+          IF l_Unknown_Code
+            MOVE(AD=I) TO cv_ResultInfoDesc
+            IF #j = 1 
+               FOR #i = 1 TO 8
+                 IF v_Code(#i) <> ' '
+                   v_Code_Msg(#i) := 'Invalid'
+                   ESCAPE BOTTOM
+                 END-IF  
+               END-FOR      
+            END-IF   
+          ELSE 
+            p_Message := v_ResultInfoDesc
+            PERFORM sbr_Error_Exit 
+          END-IF 
+       END-IF  
+     END-IF
+    VALUE 'PF3'
+       SET KEY OFF
+       p_Message := 'Cancel'
+       p_RC := 0
+       ESCAPE ROUTINE
+    VALUE 'ENTR'
+       v_Code_msg(*) := ' '
+   NONE IGNORE
+  END-DECIDE
+END-REPEAT
+* -------------------------------------------------------------
+DEFINE sbr_Get_Data
+*      -----------
+  FIND(1) AT-V WITH ID-NUMBER = p_AT
+      IF NO RECORD FOUND
+         COMPRESS 'AT' p_AT 'not found' INTO v_Msg
+         ESCAPE ROUTINE
+      END-NOREC
+  END-FIND
+  v_AT_REQ := p_AT
+  IF l_Test
+    COMPRESS v_AT_REQ '-TST' INTO v_AT_REQ LEAVING NO SPACE 
+  END-IF
+  
+  FIND(1) CNT-V WITH CONTACT-ID = AT-V.CONTACT-ID
+       IF NO RECORD FOUND
+         COMPRESS 'Contact' AT-V.CONTACT-ID 'not found' INTO v_Msg
+         ESCAPE ROUTINE
+      END-NOREC
+  END-FIND
+  IF MILITARY-STATUS = 'A' 
+     v_Occ := 'Military'
+  ELSE   
+     v_Occ := 'Unknown'
+  END-IF
+   RESET #PDA-ADDRESS
+  #ADD-TYPE := 'P'
+  #ADD-CONTACT-ID := AT-V.CONTACT-ID
+  CALLNAT 'ADDN0001'   #PDA-ADDRESS
+ 
+  FIND MIB-V WITH MIB-SSN = SSN
+    WHERE MIB-COMM = 'S'
+    IF NO RECORD FOUND
+       has_MIB := FALSE
+       MOVE EDITED SSN (EM=999-99-9999) TO msg_MIB_Rec
+       COMPRESS 'No MIB records for SSN:' msg_MIB_Rec INTO msg_MIB_Rec
+       ESCAPE BOTTOM
+    END-NOREC
+       has_MIB := TRUE
+       COMPRESS 'Has' *COUNTER 'MIB submitted records' INTO msg_MIB_Rec
+  END-FIND 
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Request
+*      -----------
+/* --- Read template --- 
+ DEFINE WORK FILE 1 file_TMPL_402 TYPE 'UNFORMATTED'
+ READ WORK FILE 1 ONCE XML
+ CLOSE WORK FILE 1
+/* --- Create request ---
+ PERFORM sbr_Create_Request
+ IF v_Msg <> ' '
+    ESCAPE ROUTINE
+ END-IF   
+/* --- Store Request ---
+ EXAMINE file_Req  FOR '@@AT' REPLACE v_AT_REQ
+ v_L := FN_Exist(<file_Req,1>)
+ DEFINE WORK FILE 1 file_Req  TYPE 'UNFORMATTED'
+ WRITE WORK FILE 1 VARIABLE XML
+ CLOSE WORK FILE 1
+ EXAMINE CMD       FOR '@@F_REQ' REPLACE file_REQ
+ CALL INTERFACE4 'CMDX' CMD RESP FNC
+ p_RC := RET('CMDX')
+ IF p_RC <> 0 
+   p_RC := 4
+   p_Message := 'Interface Error'
+   PERFORM sbr_Error_Exit 
+ END-IF    
+ EXAMINE RESP FOR H'22' DELETE   
+ EXAMINE file_Resp FOR '@@AT' REPLACE v_AT_REQ   
+* PRINT '[' file_Resp ']'                                                    /* --db
+ v_L := FN_EXIST(<file_Resp,1>)
+ DEFINE WORK FILE 1 file_Resp TYPE 'UNFORMATTED' 
+ WRITE WORK FILE 1 VARIABLE RESP                 
+ CLOSE WORK FILE 1                               
+* 
+ PERFORM sbr_Response
+ 
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Create_Request
+*      ------------------
+ IF l_Test
+  EXAMINE XML FOR '@@TC-TID' REPLACE '1'
+  EXAMINE XML FOR '@@TID'    REPLACE 'True'
+  EXAMINE XML FOR '@@OCC'    REPLACE 'Unknown'
+ ELSE 
+  EXAMINE XML FOR '@@TC-TID' REPLACE '0'
+  EXAMINE XML FOR '@@TID'    REPLACE 'False'
+ END-IF
+EXAMINE XML FOR '@@AT' REPLACE v_AT_REQ
+v_A := *DATN
+v_B := *TIMN
+COMPRESS v_AT_REQ '-' v_A '-' v_B INTO v_A LEAVING NO SPACE
+EXAMINE XML FOR '@@TRAN' REPLACE v_A
+
+MOVE EDITED *DATN(EM=9999-99-99) TO v_A
+EXAMINE XML FOR '@@DD' REPLACE v_A
+
+MOVE EDITED *TIMX(EM=HH:MM:SS'Z') TO v_A
+EXAMINE XML FOR '@@TT' REPLACE v_A
+
+v_A := SSN 
+EXAMINE XML FOR '@@SSN' REPLACE v_A
+
+EXAMINE XML FOR '@@FIRST' REPLACE FIRST-NAME
+EXAMINE XML FOR '@@MIDD'  REPLACE MIDDLE-NAME
+EXAMINE XML FOR '@@LAST'  REPLACE LAST-NAME
+EXAMINE XML FOR '@@SFFX'  REPLACE SUFFIX
+EXAMINE XML FOR '@@OCCU'  REPLACE v_Occ
+DECIDE ON FIRST VALUE OF GENDER-CD
+  VALUE 'M'
+   v_A := '1'
+  VALUE 'F'
+   v_A := '2'
+  NONE 
+   v_A := '0' 
+END-DECIDE
+
+EXAMINE XML FOR '@@SEX'  REPLACE v_A
+
+MOVE EDITED DATE-OF-BIRTH(EM=9999-99-99) TO v_A
+EXAMINE XML FOR '@@DOB'  REPLACE v_A
+
+ IF #ADD-COUNTRY-CODE <> 'US' 
+    v_A := '0'
+    EXAMINE XML FOR '@@ZIP'        REPLACE v_A
+    EXAMINE XML FOR '@@TC-STATE'   REPLACE v_A
+    COMPRESS 'COUN' #ADD-COUNTRY-CODE INTO v_A LEAVING NO SPACE
+    FIND(1) GT-V WITH SEC-KEY = v_A END-FIND
+    MOVE EDITED GEN-NUMBER-VALUE(EM=ZZZ9) TO v_A
+    v_A := *TRIM(v_A)
+    EXAMINE XML FOR '@@TC-COUNTRY' REPLACE v_A
+ ELSE
+    v_A := '1' 
+    EXAMINE XML FOR '@@TC-COUNTRY' REPLACE v_A  
+    v_A := #ADD-ZIP5
+    EXAMINE XML FOR '@@ZIP' REPLACE v_A
+    v_A := #ADD-STATE
+    v_A := FUNCTION-STATE-CODE(<v_A,'N'>)
+    EXAMINE XML FOR '@@TC-STATE' REPLACE v_A
+ END-IF
+ v_A := ' ' #j := 0
+ FOR #i = 1 TO 8 
+   IF v_Code(#i) = ' ' ESCAPE TOP END-IF
+   #j := #j + 1
+   IF #j > 1 COMPRESS v_A H'0D0A' INTO v_A LEAVING NO SPACE END-IF
+   COMPRESS v_A xml_Form INTO v_A LEAVING NO SPACE
+   EXAMINE v_A FOR '@@FR' REPLACE v_Code(#i)
+ END-FOR
+   EXAMINE XML FOR '@@FORM' REPLACE v_A
+* 
+ END-SUBROUTINE
+*
+* -------------------------------------------------------------
+ DEFINE sbr_Response
+* -------------
+  v_ResultInfoDesc := ' ' v_Result := ' '  v_Code_msg(*) := ' '
+  EXAMINE RESP FOR H'22' DELETE
+  EXAMINE RESP FOR H'0A' DELETE
+  EXAMINE RESP FOR H'09' DELETE
+ IF RESP = SCAN '<env:Fault>'
+    EXAMINE RESP FOR '<faultstring>'  POSITION pars_B
+    EXAMINE RESP FOR '</faultstring>' POSITION pars_E
+    pars_B := pars_B + 13
+    pars_L := pars_E - pars_B
+    IF pars_L > 0
+       l_Unknown_code := TRUE
+       v_ResultInfoDesc := SUBSTR(RESP,pars_B, pars_L)
+       v_Result := 'Fault'
+*      p_RC := 1
+       ESCAPE ROUTINE
+    END-IF 
+ END-IF  
+
+ EXAMINE RESP FOR '<ResultCode'  POSITION pars_B
+ EXAMINE RESP FOR '</ResultCode>' POSITION pars_E
+ pars_B := pars_B + 17
+ pars_L := pars_E - pars_B
+ v_Result := SUBSTR(RESP,pars_B, pars_L)
+
+ IF v_Result = 'Success'
+    ESCAPE ROUTINE
+ END-IF
+ 
+ FOR #i = 1 TO 8 
+   IF v_Code(#i) = ' ' ESCAPE TOP END-IF
+   v_A := *TRIM(v_Code(#i))
+   EXAMINE RESP FOR v_A POSITION pars_B
+   IF pars_B <> 0
+      v_Code_Msg(#i) := 'Invalid'
+   END-IF   
+ END-FOR
+ IF v_Code_Msg(*) <> ' '
+   IGNORE
+ ELSE  
+   EXAMINE RESP FOR '<ResultInfoDesc>'  POSITION pars_B
+   EXAMINE RESP FOR '</ResultInfoDesc>' POSITION pars_E
+   pars_B := pars_B + 16
+   pars_L := pars_E - pars_B
+   v_ResultInfoDesc := SUBSTR(RESP,pars_B, pars_L)
+   IF v_ResultInfoDesc = SCAN 'MIBReportCode'
+      EXAMINE v_ResultInfoDesc FOR 'Invalid Value' POSITION pars_B
+      v_ResultInfoDesc := SUBSTR(v_ResultInfoDesc , pars_B)
+      l_Unknown_Code := TRUE
+   ELSE
+      l_Unknown_Code := FALSE
+   END-IF   
+ END-IF
+END-SUBROUTINE
+* -------------------------------------------------------------
+DEFINE sbr_Store
+* -------------
+     RESET MIB-V
+     MIB-SSN            :=  SSN
+     MIB-DATE           := *DATN
+     MIB-AT             := AT-V.ID-NUMBER
+     MIB-COMM           := 'S'
+     IF l_Test 
+           MIB-Clerk    := 'TST'
+     ELSE
+        MIB-Clerk       := p_Clerk
+     END-IF 
+     FOR #i = 1 TO 8
+        IF v_Code(#i) <> ' ' 
+           COMPRESS MIB-FORM-TEXT(1,1) v_Code(#i) INTO MIB-FORM-TEXT(1,1)
+           MIB-CODES#      :=  MIB-CODES# + 1
+        END-IF   
+     END-FOR
+     STORE MIB-V
+END-SUBROUTINE 
+* -------------------------------------------------------------
+DEFINE sbr_Error_Exit
+*      --------------
+  PRINT NOTITLE // '-'(70)                          /
+          'Error in the MIB Submit:' p_RC           /
+          'Please notify MSS' 3x *DAT4U  3x *TIMX   /
+          'AT' p_AT                                 /
+           p_Message                                / 
+          '-'(70) 
+  IF p_RC = 10 
+       p_Message := 'Internal'
+       PRINT '='pars_B  '='pars_E  '='pars_L 
+  END-IF
+  COMPRESS 'MIB Submit Error' INTO p_Message  
+  ESCAPE MODULE
+END-SUBROUTINE    
+* -------------------------------------------------------------
+DEFINE sbr_Testing
+*      -----------
+     CALLNAT 'MIB-TEST' tst_Case 
+                       FIRST-NAME MIDDLE-NAME LAST-NAME SUFFIX v_Occ
+                       GENDER-CD  DATE-OF-BIRTH_A #ADD-STATE
+                       p_AT SSN
+ END-SUBROUTINE
+* -------------------------------------------------------------
+END
+* <env:Envelope xmlns:env="http://schemas.xmlsoap.org/soap/envelope/">
+* <env:Body><env:Fault><faultcode>General</faultcode>
+* <faultstring>Schema Error 
+* :  cvc-simple-type 1
+* : element {http://ACORD.org/Standards/Life/2}BirthDate value '1955-00-00' is not a valid instance of type {http://www.w3.org/2001/XMLSchema}date
+* </faultstring>
+* </env:Fault></env:Body></env:Envelope>

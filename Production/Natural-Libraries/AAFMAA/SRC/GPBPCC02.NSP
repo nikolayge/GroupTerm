@@ -1,0 +1,175 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM GPBPCC02 (restructured ATHPCCRS)
+* Part I (program 2) - Sort summary transaction file & combine charges
+*                      by CC Number
+* work file 1 - Summary transaction file
+* work file 2 - Combined charges for viewing by user
+*               file sorted by cc number, cc number masked
+* work file 3 - Combined charges to be send to CC company
+*               file sorted by cc number, full cc number included
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* DRW    10052005      Create program                                  *
+* YAK    03272009  YK1 Build a new record layout for PayWare           *
+* YAK    05262009  YK2 Use functions to get credit Card Info from the  *
+*                      new file.Send name and address only if confirmed*
+* YAK    04012015  YK3 Recompile with new PDA for CC file              *
+* YAK    11022015  YK4 Changes to process credit cards through SAGE    *
+* YAK    04282016  YK5 Add Policy number to input structure            *
+*                      Populate required Credit Card information       *
+* YAK    09122016  YK6 Get default credit card (can have multiple)     *
+* YAK    07012017  YK7 Changes for Payer project                       *  
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING OBJLCC01     /* YK3   local data area for CC-INFO file
+LOCAL
+* YK7 >
+1 #CC-REC     (A50)   /* Transactions detail & summary record layout
+1 REDEFINE #CC-REC     /* If there is more than 1 detail record for CN/Payer - replace details with "*"
+  2 #SORT-KEY     (A12)
+  2 REDEFINE #SORT-KEY
+    3 #CC-IAS-CN    (A6)
+    3 #CC-PAYER-CN  (A6)
+  2 #CC-IAS-INFO  (A20)
+  2 REDEFINE #CC-IAS-INFO
+    3 #IAS-TRAN     (A4)
+    3 #CC-POL-NUM   (A16)
+  2 #CC-AMOUNT    (N5.2)
+  2 #IAS-ISS-DT   (A8)
+  2 #IAS-PLAN     (A3)
+* < YK7
+*
+1 #CC-SAGE-RECORD   (A218)     /* YK1    YK4
+1 REDEFINE #CC-SAGE-RECORD
+  2 CardGUID          (A32)
+  2 CardNumber        (A16)
+  2 expMonth          (A2)
+  2 expYear           (A2)
+  2 transactionAmount (A8)
+  2 NameOnCard        (A25)
+  2 zipCode           (A5)        /* YK4
+  2 Street            (A50)       /* YK4
+  2 City              (A50)       /* YK4
+  2 State             (A2)        /* YK2
+  2 unicAafmaaNumber  (A26)
+*
+1 #Name               (A)  DYNAMIC /* YK2
+1 #TAB                (A1) init <H'09'>
+1 #MASK-CC-NUM        (A) DYNAMIC
+1 #ID-NUMBER          (N6)
+1 FullNumber          (A) DYNAMIC
+1 #OUTPUT-RECORD      (A214)
+*
+1 #TOT-AMT            (N7.2)
+1 #RECS-READ          (N5)
+1 #RECS-OUT           (N5)
+* YK7
+1 #STUB-INFO          (A20) CONST <'********************'>
+1 #KEY                (A12)
+1 REDEFINE #KEY
+  2 #KEY-IAS-CN       (A6)
+  2 #KEY-PAYER-CN     (A6)
+1 #IAS-INFO           (A20)
+1 #PAYER-AMOUNT       (N5.2)        /* YK7
+1 #PAYER-CN           (N6)
+1 #PAYER-COUNT        (N2)
+1 #BATCH-TOTAL        (A12)
+
+END-DEFINE
+* * * * * * * * * * * * * * * * *
+*
+ON ERROR
+  WRITE #CC-REC
+END-ERROR
+*  
+* DEFINE WORK FILE 1 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CCDETAIL.TXT"                                         /* YK7
+* DEFINE WORK FILE 2 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_REQUEST.TXT" TYPE 'ASCII-COMPRESSED'               /* YK7
+* DEFINE WORK FILE 3 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_TOTALS.TXT" TYPE 'ASCII-COMPRESSED'                /* YK7
+*
+* Read transactions detail file from GPBPCC01
+* Summary file not needed any more
+* Sort by Insured CN/Payer CN before writing SAGE transactions file
+READ WORK 1 RECORD #CC-REC
+END-ALL
+* YK7 >
+SORT BY #SORT-KEY USING #CC-IAS-INFO #CC-AMOUNT
+  #RECS-READ := #RECS-READ + 1
+  #PAYER-AMOUNT := #PAYER-AMOUNT + #CC-AMOUNT
+  #PAYER-COUNT := #PAYER-COUNT + 1
+  AT BREAK OF #SORT-KEY
+    #KEY := OLD(#SORT-KEY)
+    IF #PAYER-COUNT = 1
+      #IAS-INFO := OLD(#CC-IAS-INFO)
+    ELSE
+      #IAS-INFO := #STUB-INFO
+    END-IF
+    #TOT-AMT := #TOT-AMT + #PAYER-AMOUNT
+    PERFORM BUILD-PAYWARE-REC       /* YK1
+* ADD #CC-AMT  TO #TOT-AMT
+  END-BREAK
+  AT END OF DATA
+    MOVE EDITED #TOT-AMT (EM=Z,ZZZ,ZZ9.99) TO #BATCH-TOTAL
+    WRITE WORK FILE 3 VARIABLE 'Records Read     = ' #RECS-READ
+    WRITE WORK FILE 3 VARIABLE 'Records Written  = ' #RECS-OUT
+    WRITE WORK FILE 3 VARIABLE 'Total to SAGE    = ' #BATCH-TOTAL
+  END-ENDDATA
+END-SORT
+* END-WORK
+* < YK7
+*
+WRITE 'Recs Read     =' #RECS-READ
+WRITE 'Recs Written  =' #RECS-OUT
+WRITE 'Total to SAGE =' #TOT-AMT (EM=Z,ZZZ,ZZ9.99)
+*
+***********************************
+DEFINE SUBROUTINE BUILD-PAYWARE-REC         /* YK1
+***********************************
+*
+COMPRESS #KEY #IAS-INFO INTO unicAafmaaNumber
+* MOVE EDITED #CC-AMT (EM=ZZZZ9.99) TO transactionAmount  /* YK7
+MOVE EDITED #PAYER-AMOUNT (EM=ZZZZ9.99) TO transactionAmount
+*
+* Get credit card information from the credit card file   /* YK2
+*
+* #ID-NUMBER := VAL(#CC-CN)                               /* YK7
+#ID-NUMBER := VAL(#KEY-PAYER-CN)                          /* YK7
+* FIND(1) CC-INFO-V WITH ID-NUMBER = #ID-NUMBER
+FIND CC-INFO-V WITH ID-NUMBER = #ID-NUMBER
+    WHERE CC-DEFAULT-IND = 'Y'                                /* YK6
+  expMonth        := CC-EXPIRATION-MONTH
+  expYear         := SUBSTR(CC-EXPIRATION-YEAR,3,2)
+  CardNumber    := CC-INFO-V.CC-NUMBER
+  CardGuid      := CC-INFO-V.CC-GUID
+*
+  NameOnCard    := CC-INFO-V.CCHOLDER-NAME
+  IF NameOnCard = SCAN(',')
+    #Name := NameOnCard
+    NameOnCard  := FUNCTION-FORM-NAME(<#Name,'C'>)
+  END-IF
+  IF CC-ADDR-VALIDATION-CODE = 'Y'
+    Street        := CC-INFO-V.CCHOLDER-STREET-ADDR         /* YK4
+    City          := CC-INFO-V.CCHOLDER-CITY                /* YK4
+    State         := CC-INFO-V.CCHOLDER-STATE-CD            /* YK4
+    zipCode       := CC-INFO-V.CCHOLDER-ZIP-CODE
+  END-IF
+END-FIND
+*
+* YK5 Add GUID
+COMPRESS CardGUID #TAB CardNumber #TAB expMonth #TAB expYear #TAB transactionAmount #TAB
+  NameOnCard #TAB zipCode #TAB Street #TAB City #TAB State #TAB unicAafmaaNumber
+  INTO #OUTPUT-RECORD LEAVING NO
+WRITE WORK 2 #OUTPUT-RECORD
+*
+#RECS-OUT := #RECS-OUT + 1
+RESET #KEY #IAS-INFO #PAYER-AMOUNT #CC-SAGE-RECORD #PAYER-COUNT
+*
+END-SUBROUTINE
+*
+END

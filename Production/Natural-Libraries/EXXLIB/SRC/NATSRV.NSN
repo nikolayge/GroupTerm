@@ -1,0 +1,109 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Created to be used for any generic process through EntireX
+* NATSERV0 - EntireX Driver module (dynamic parameters length)
+* Call Business Object module based on ProcessName
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    03010010       Initial Creation
+********************************************************
+*
+DEFINE DATA PARAMETER
+1 PROCESS-NAME      (A) Dynamic
+1 REQUEST-DATA      (A) Dynamic
+1 RESPONSE-DATA     (A) Dynamic        /* Out
+*
+LOCAL USING P_PARMS
+LOCAL USING GPRA0003
+LOCAL USING GPRL0EML
+LOCAL
+1 LOG-MESSAGE       (A30000)
+1 #XML              (A) DYNAMIC
+1 LOG_ACTION        (A) DYNAMIC
+1 #FAILED-ON-HOLD   (A) DYNAMIC CONST <'F'>
+1 #ErrorTag         (A) Dynamic
+1 #ErrorTagClose    (A) Dynamic
+1 #LOG-FILE         (A) Dynamic INIT <'/usr/SAG/tmp/natsrv_'>
+1 #DATN             (N8)
+1 #N                (N7) 
+END-DEFINE
+*
+#DATN := *DATN
+COMPRESS #LOG-FILE #DATN '.log' INTO #LOG-FILE LEAVING NO
+DEFINE WORK FILE 1 #LOG-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+*
+ON ERROR
+  BACKOUT TRANSACTION
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+    ERROR-PROGRAM := *PROGRAM
+    ERROR-OBJECT  := P_ERROR_PROGRAM
+    ERROR-LINE    := P_ERROR_LINE
+    ERROR-NUMBER  := P_ERROR_NUM
+  RESET LOG-MESSAGE
+  COMPRESS ERROR-NUMBER ERROR-LINE ERROR-PROGRAM ERROR-OBJECT *DATN *TIME INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+  CLOSE WORK FILE 1
+  IF *ERROR-NR = 3009
+    CALLNAT 'NATSRV' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    ESCAPE ROUTINE
+  END-IF  
+  ERROR-MESSAGE := 'Error occured while processing your request'
+  COMPRESS '<' #ErrorTag '>'
+           '<ErrorCode>' ERROR-NUMBER '</ErrorCode>' -
+           '<ErrorDescription>' ERROR-MESSAGE '</ErrorDescription>' -
+           '</' #ErrorTag '>'
+      INTO RESPONSE-DATA LEAVING NO
+  IF *ERROR-NR = 3145
+    LOG_ACTION := #FAILED-ON-HOLD
+    CALLNAT 'ERR_LOG' LOG_ACTION PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  END-IF
+  P_TO     := 'ykegeles@aafmaa.com'
+* P_CC     := '7037861865@messaging.sprintpcs.com'
+  P_SUBJ   := '"SSRS Error"'
+  P_MSG(1) := 'Error processing request from SSRS'
+  P_MSG(2) := LOG-MESSAGE
+  CALLNAT 'GPRS0EML' p_EMAIL
+*
+  ESCAPE ROUTINE
+END-ERROR
+*
+COMPRESS *DATN *TIMN PROCESS-NAME REQUEST-DATA INTO LOG-MESSAGE
+WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+DECIDE ON FIRST VALUE PROCESS-NAME
+  VALUE 'EmailList'
+     #ErrorTag := 'EmailList'
+     CALLNAT 'RQSTN001' REQUEST-DATA RESPONSE-DATA
+  VALUE 'UpdateSendFlag'
+     #ErrorTag := 'LetterInfo'
+     CALLNAT 'RQSTN002' REQUEST-DATA RESPONSE-DATA
+  VALUE 'UpdateOpenedFlag'
+     #ErrorTag := 'LetterInfo'
+     CALLNAT 'RQSTN003' REQUEST-DATA RESPONSE-DATA     
+  VALUE 'CreateIndexFile'
+     #ErrorTag := 'IndexFile'
+     CALLNAT 'RQSTN004' REQUEST-DATA RESPONSE-DATA
+  NONE VALUE
+     IGNORE
+END-DECIDE
+#XML := RESPONSE-DATA
+#N := *LENGTH(#XML) 
+WRITE WORK FILE 1 VARIABLE #N
+REPEAT
+LOG-MESSAGE := #XML
+WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+IF *LENGTH(#XML) > 32000
+  #XML := SUBSTR(#XML,32001)
+ELSE
+  ESCAPE BOTTOM  
+END-IF
+END-REPEAT
+CLOSE WORK FILE 1
+*
+END
+

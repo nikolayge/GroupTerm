@@ -1,0 +1,245 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* CALLNAT 'S2000NNM' #HOLD-ISN
+************************************************************************
+* NAME         : S2000NNM                                              *
+* AUTHOR       : Copyright: Metrostar Systems Inc.                     *
+* DESCRIPTION  : Create new Contact record from Services AT            *
+************************************************************************
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* NGG    04/09/2010  None    Program Written                           *
+* RSE    06/16/2010  RE1     Remove call to GUPCISXX                   *
+* RSE    06/20/2010  RE2     Add parms to create Contacts for 3SW/AER  *
+* RSE    02/28/2011  RE3     Populate death-related fields for AER/3SW *
+* RSE    03/16/2011  RE4     Populate MILITARY-STATUS on Contact record*
+* TMT    10/08/2013  TT1     ADDRESS NORMALIZATION                     *
+* TMT    06/13/2014  TT2     CONTACT NORMALIZATION                     *
+************************************************************************
+DEFINE DATA
+PARAMETER
+1 #STATUS-ISN         (N8)
+1 #3SW-OR-AER         (L)    /* RE2 Start
+1 #FIRST-NAME         (A25)
+1 #MIDDLE-NAME        (A25)
+1 #LAST-NAME          (A25)
+1 #SUFFIX             (A10)
+1 #CGA-CLERK          (A3)
+1 #CAUSE-OF-DEATH     (A35)
+1 #MIL-STATUS         (A1)   /* RE4
+*
+LOCAL
+1 #COID-KEY    (A8)  CONST   <'MASTERCO'>
+*
+1 STATUS VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 SSN
+*   2 DATE-OF-BIRTH             /* TT2
+*   2 SEX
+  2 SPOUSE-CONTACT-ID           /* RE2 Start
+  2 NAME-SP
+*   2 SEX-SP
+*   2 DATE-OF-BIRTH-SP
+  2 DATE-OF-DEATH
+  2 SSN-SP
+  2 APPL-SOURCE
+  2 RANK                        /* RE2 End
+*
+1 APPLICATION VIEW OF A-APPL-TRACKING
+  2 FIRST-NAME                      (A25)
+  2 MIDDLE-NAME                     (A25)
+  2 LAST-NAME                       (A25)
+  2 SUFFIX                          (A10)
+  2 APPL-SOURCE                     (A7)
+  2 SSN
+  2 RANK-ID
+  2 RANK
+*
+1 TERM-V VIEW OF A-TERMINALS
+  2 TERMINAL-ID      (A8)
+  2 COMMENTS         (A20)
+  2 REDEFINE COMMENTS
+    3 LAST-COID      (N8)
+    3 #SP            (A2)
+    3 #DESCRIPTION   (A10)
+*
+1 CNT-REL VIEW OF A-CONTACT-RELATIONSHIPS     /* RE2 Start
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+  2 LAST-USER-UPD
+  2 LAST-DATE-UPD
+  2 LAST-TIME-UPD                             /* RE2 End
+*
+1 CNT VIEW OF A-CONTACTS
+  2 CONTACT-ID       (N8)         /* D
+  2 ID-NUMBER        (N6)         /* D
+  2 RANK-ID
+  2 PREFIX-TITLE
+  2 MILITARY-STATUS               /* RE4
+  2 FIRST-NAME       (A25)
+  2 MIDDLE-NAME      (A25)
+  2 LAST-NAME        (A25)
+  2 SUFFIX           (A10)
+  2 GENDER-CD        (A1)         /* --NA
+  2 DATE-OF-BIRTH    (N8)
+  2 DATE-OF-DEATH    (N8)         /* RE2
+  2 DATE-OF-DEATH-REPORTED (N8)   /* RE3 START
+  2 DATE-OF-DEATH-STATUS-CODE(A1)
+  2 DATE-OF-DEATH-STATUS-DATE(N8)
+  2 LAST-DEATH-DATE-UPD(N8)
+  2 LAST-DEATH-USER-UPD(A8)
+  2 CAUSE-OF-DEATH   (A50)
+  2 DEATH-DOCUMENT-VALIDATION-CODE
+  2 SSN              (N9)         /* D
+  2 LAST-RANK-DATE-UPD(N8)                        /* RE4
+  2 LAST-RANK-USER-UPD                        /* RE4
+  2 LAST-USER-UPD    (A8)
+  2 LAST-DATE-UPD    (N8)
+  2 LAST-TIME-UPD    (N7)
+*
+1 #DS-SSN            (N9)
+*
+END-DEFINE
+GET STATUS #STATUS-ISN
+IF *ISN (0111) = 0
+  ESCAPE ROUTINE
+END-IF
+IF STATUS.MEMBER-CONTACT-ID NE 0
+  ESCAPE ROUTINE
+END-IF
+FIND CNT WITH SSN = STATUS.SSN
+  IF NO RECORDS FOUND
+    PERFORM NEW-CONTACT
+    ESCAPE BOTTOM
+  END-NOREC
+END-FIND
+*
+IF #3SW-OR-AER                                         /* RE2 Start
+  FIND (1) APPLICATION WITH SSN = STATUS.SSN-SP
+    IF NO RECORDS FOUND
+      ESCAPE ROUTINE
+    END-NOREC
+    FIND (1) TERM-V WITH TERMINAL-ID = #COID-KEY
+      IF NO RECORDS FOUND
+        RESET TERM-V
+        TERMINAL-ID := #COID-KEY
+        LAST-COID := 0
+        STORE TERM-V
+        ESCAPE BOTTOM
+      END-NOREC
+      ADD 1 TO LAST-COID
+      UPDATE
+    END-FIND
+    RESET CNT
+    ASSIGN CNT.CONTACT-ID    = LAST-COID
+    ASSIGN CNT.ID-NUMBER     = 0
+    ASSIGN CNT.RANK-ID       = APPLICATION.RANK-ID
+    ASSIGN CNT.PREFIX-TITLE  = APPLICATION.RANK
+    ASSIGN CNT.FIRST-NAME    = APPLICATION.FIRST-NAME
+    ASSIGN CNT.MIDDLE-NAME   = APPLICATION.MIDDLE-NAME
+    ASSIGN CNT.LAST-NAME     = APPLICATION.LAST-NAME
+    ASSIGN CNT.SUFFIX        = APPLICATION.SUFFIX
+*     ASSIGN CNT.GENDER-CD     = STATUS.SEX-SP                /* TT2
+*     ASSIGN CNT.DATE-OF-BIRTH = STATUS.DATE-OF-BIRTH-SP      /* TT2
+    ASSIGN CNT.DATE-OF-DEATH = 0
+    ASSIGN CNT.SSN           = STATUS.SSN-SP
+    ASSIGN CNT.LAST-USER-UPD = #CGA-CLERK
+    ASSIGN CNT.LAST-DATE-UPD = *DATN
+    ASSIGN CNT.LAST-TIME-UPD = *TIMN
+    STORE CNT
+    ASSIGN STATUS.SPOUSE-CONTACT-ID = CNT.CONTACT-ID
+    UPDATE (0111)
+  END-FIND
+*
+  MOVE MEMBER-CONTACT-ID TO CNT-REL.CONTACT-1-ID
+  MOVE 'S'               TO CNT-REL.ROLE-1-CD
+  MOVE SPOUSE-CONTACT-ID TO CNT-REL.CONTACT-2-ID
+  MOVE 'S'               TO CNT-REL.ROLE-2-CD
+  MOVE #CGA-CLERK        TO CNT-REL.LAST-USER-UPD
+  MOVE *DATN             TO CNT-REL.LAST-DATE-UPD
+  MOVE *TIMN             TO CNT-REL.LAST-TIME-UPD
+  STORE CNT-REL
+*
+END-IF                                              /* RE2 End
+*****************************
+DEFINE SUBROUTINE NEW-CONTACT
+*****************************
+FIND (1) APPLICATION WITH SSN = STATUS.SSN
+  IF NO RECORDS FOUND
+    IF NOT #3SW-OR-AER
+      ESCAPE ROUTINE
+    END-IF
+  END-NOREC
+  FIND (1) TERM-V WITH TERMINAL-ID = #COID-KEY
+    IF NO RECORDS FOUND
+      RESET TERM-V
+      TERMINAL-ID := #COID-KEY
+      LAST-COID := 0
+      STORE TERM-V
+      ESCAPE BOTTOM
+    END-NOREC
+    ADD 1 TO LAST-COID
+    UPDATE
+  END-FIND
+  ASSIGN CNT.CONTACT-ID    = LAST-COID
+  ASSIGN CNT.ID-NUMBER     = STATUS.ID-NUMBER
+  ASSIGN CNT.RANK-ID       = APPLICATION.RANK-ID
+  IF #3SW-OR-AER                                         /* RE2 Start
+    ASSIGN CNT.PREFIX-TITLE  = APPLICATION.RANK
+    ASSIGN CNT.FIRST-NAME    = #FIRST-NAME
+    ASSIGN CNT.MIDDLE-NAME   = #MIDDLE-NAME
+    ASSIGN CNT.LAST-NAME     = #LAST-NAME
+    ASSIGN CNT.SUFFIX        = #SUFFIX
+    ASSIGN CNT.DATE-OF-DEATH-REPORTED = *DATN  /* RE3 START
+    ASSIGN CNT.DATE-OF-DEATH-STATUS-CODE = 'C'
+    ASSIGN CNT.DATE-OF-DEATH-STATUS-DATE = *DATN
+    ASSIGN CNT.CAUSE-OF-DEATH = #CAUSE-OF-DEATH
+    ASSIGN CNT.LAST-DEATH-DATE-UPD = *DATN
+    ASSIGN CNT.LAST-DEATH-USER-UPD = #CGA-CLERK
+    ASSIGN CNT.MILITARY-STATUS = #MIL-STATUS   /* RE4
+    IF STATUS.APPL-SOURCE = 'AER'
+      MOVE 'DD1300' TO DEATH-DOCUMENT-VALIDATION-CODE
+    ELSE
+      MOVE 'N' TO DEATH-DOCUMENT-VALIDATION-CODE
+    END-IF                                                   /* RE3 END
+  ELSE                                                   /* RE2 End
+    ASSIGN CNT.FIRST-NAME    = APPLICATION.FIRST-NAME
+    ASSIGN CNT.MIDDLE-NAME   = APPLICATION.MIDDLE-NAME
+    ASSIGN CNT.LAST-NAME     = APPLICATION.LAST-NAME
+    ASSIGN CNT.SUFFIX        = APPLICATION.SUFFIX
+  END-IF
+*   ASSIGN CNT.GENDER-CD     = STATUS.SEX                        /* TT2
+*   ASSIGN CNT.DATE-OF-BIRTH = STATUS.DATE-OF-BIRTH              /* TT2
+  ASSIGN CNT.SSN           = STATUS.SSN
+  ASSIGN CNT.DATE-OF-DEATH = STATUS.DATE-OF-DEATH
+  ASSIGN CNT.LAST-USER-UPD = #CGA-CLERK
+  ASSIGN CNT.LAST-DATE-UPD = *DATN
+  ASSIGN CNT.LAST-TIME-UPD = *TIMN                       /* RE2
+  IF CNT.RANK-ID > 0                                     /* RE4
+    ASSIGN CNT.LAST-RANK-DATE-UPD = *DATN                /* RE4
+    ASSIGN CNT.LAST-RANK-USER-UPD = #CGA-CLERK           /* RE4
+  END-IF                                                 /* RE4
+  STORE CNT
+  ASSIGN STATUS.MEMBER-CONTACT-ID = CNT.CONTACT-ID
+  UPDATE (0111)
+*  CALLNAT 'GUPCISXX'
+*    CNT.CONTACT-ID
+*    CNT.CONTACT-ID
+*    #ORIG-COMMAND
+*    CNT.ID-NUMBER
+*    #CGA-USER-COMPANY
+*    #CGA-CLERK
+*    #MODE
+*    #MSG
+END-FIND
+END-SUBROUTINE
+
+END

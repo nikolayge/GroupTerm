@@ -1,0 +1,997 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPOWNR      ** OWNERSHIP OF POLICY PROCESSING
+DEFINE DATA     /*    ******* TR LOG IS COMMENTED OUT AT LINE 7170 ***
+*               /*    creates file of all beneficiaries in file 3 <<<<
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06032004  PM1     Added check to bypass pending AT CN's.      *
+* RSE    09302009  RE1     Change 600K logic for Unification           *
+* vxt    10042010  vt1     Get the address info from the address pool
+* vxt    11/24/2010 vt2    Get the name from the new file              *
+* vxt    03/22/2011 vt3    get the address info for each CN, not only for owner CN.
+* vxt    02/29/2012 vt4    expand #num-read field size.                *
+* RSE    10/12/2012 RE2    CN Expansion Project -                      *
+*                          Get beneficiary data from new bene files    *
+* JNT    09/23/2013 JT1    Address normalization                       *
+* vxt    03/10/2016 vt5    /Ticket 4306 - remove delete of records.    *
+* vxt    03/23/2016 vt6    /Ticket 4370 - remove updating of records   *
+************************************************************************
+*
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING G3500AAD
+LOCAL USING GONERLXX
+LOCAL USING ADDA0001                            /* vt1 pda for the address
+LOCAL
+*
+1 #DP-CODE-FIXED (L)
+1 #SPLIT     (A1)
+1 #STREET   (A25)
+1 #STREET-2 (A25)
+1 #CITY     (A22)
+1 #STATE    (A2)
+1 #ERR-MSG  (A60)
+1 #NO-SSN    (A200)
+1 #AMT-9    (A9)
+1 #DATE-10  (A10)
+1 #NON-INS-OWNER    (L) /* has at least 1 non-insured owner
+1 #MULTIPLE-OWNER   (L) /* more than 1 owner for this member
+1 #OWNER-OCC-9 (9)
+  2 #OWNER-FLAG (A1)   /* " "=owner is insured "N"=owner is not insured
+  2 #OWNER-CN   (N6/10)  /* up to 10 owners for each pol
+*
+  2 #OWNER-CN-BY-POL (N6)    /* all 1st owners of each policies
+  2 #OWNER-CN-SEG    (I2/9)  /* all segs of of pols owned by above
+  2 #ISS-DATE        (N8/9)  /* all pols owned by above non-mbr-owner
+  2 #ISS-DATE-DISP   (A10/9)
+*    beneficiary info output
+  2 #BENE-TYPE       (A1/2)
+  2 #BENE-TEXT       (A60/10)
+*
+1 #HAS-MBR-OWNER      (L)
+1 #NON-MBR-HAS-ASQM   (L)
+1 #HAS-NON-MBR-OWNER  (L)
+1 #MBR-W-MULT-OWNERS  (L)
+1 #TYPE   (A8)
+* 1 #UPDATE           (L)      /* vt6
+1 #HAS-LINKAGE      (L)
+1 #TOT-C            (P7)           /* RE2 START Formerly P5
+1 #TOT-C-NO-ADDR    (P7)
+1 #TOT-C-NO-SSN     (P7)
+1 #TOT-NON-MBR-INS  (P7)
+1 #TOT-NON-MBR-INS-CONV (P7)
+1 #TOT-CONV         (P7)
+1 #TOT-NON-MBR-INS-UNCONV (P7)
+1 #A-S-Q-M-NMO      (P7)
+1 #MULT-OWNRS      (P7)
+1 #MBR-MULT-OWNERS   (P7)          /* RE2 END
+*
+1 #SCR-AS-OF-DATE   (A10)
+1 #SCR-POL-OWNER    (A60/3)
+1 REDEFINE #SCR-POL-OWNER
+  2 #SCR-POL-OWNER-OCC  (3)
+    3 #SCR-POL-OWNER-1ST-41  (A52)
+    3 #SCR-POL-OWNER-LAST-8  (A8)
+1 #SCR-POL-NUM      (A14)
+1 #SCR-ISS-DATE     (A10)
+1 #SCR-FACE-AMT     (A11)
+1 #SCR-PLAN         (A3)
+1 #SCR-PREM         (A11)
+1 #SCR-FREQ         (A11)
+*
+1 #MOD-PREM         (P5.2)
+1 #POL-NUM         (A16)
+1 #NON-MBR-OWN-FILE (A250)
+1 #SCR-ZIP-BAR-CODE    (A14)
+* 1 #DEAR-FORMATED-NAME  (A70)                         /* vt2
+1 #MBR-ID-NUMBER       (A8)
+*
+1 #BENE-INFO
+  2 #BENE-INFO-1 (A125)
+  2 #BENE-INFO-2 (A125)
+  2 #BENE-INFO-3 (A125)
+  2 #BENE-INFO-4 (A125)
+  2 #BENE-INFO-5 (A125)
+  2 #BENE-INFO-6 (A125)
+*
+1 #A250    (A250)
+1 REDEFINE #A250
+  2 #A125-A (A125)
+  2 #A125-B (A125)
+*
+**1 NT-V VIEW OF A-NOTES    /* note file used for pending beneficiaries
+1 BENE-F-V VIEW OF A-BENE-FINAL                    /* RE2
+  2 ID-NUMBER          (N6)    /* let D = bene designation (1-4)
+  2 NOTE-DATE          (N8/60) /* LET P/A = PRINCIPAL/ALTERNATE DESING
+  2 REDEFINE NOTE-DATE         /* let L = linked policies
+    3 BENE-DATES-6-POLS (6)
+      4 BENE-ISS-DT       (N6/7)   /* (D, L)
+      4 BENE-SPLIT-IND    (N1/7)   /* (D, L)
+      4 BENE-LST-UPD      (N8)     /* (D)
+      4 BENE-STRT-PEND    (N8)     /* (D)
+      4 BENE-FOL-UP-IND   (N1)     /* (D)
+      4 BENE-OWN-TRNSF-DT (N8)     /* (D)
+      4 BENE-SUC-OWN      (N1)     /* (d)
+      4 BENE-NEW-LAYOUT   (N1)     /* (d)
+      4 BENE-FIL1         (A4)
+  2 NOTE-CLERK-ID       (A3/60)
+  2 REDEFINE NOTE-CLERK-ID
+    3 BENE-MISC-6-POLS  (6)
+      4 BENE-STATUS      (A1)     /* (D)
+      4 BENE-RESTRICT    (A1)     /* (D)
+      4 BENE-MISC-PRIM-SEC (2)
+        5 BENE-TYPE        (A1)    /* (D, P/A)
+        5 BENE-SHARE-TYP   (A1)    /* (D, P/A)
+        5 BENE-MISC-FIL-2  (A12)
+  2 NOTE-TEXT          (A60/60)
+  2 REDEFINE NOTE-TEXT
+    3 BENE-TEXTS-6-POLS (6)
+      4 BENE-TEXT-PRIM-SEC (2)
+        5 BENE-TEXT-OCC    (5)
+          6 BENE-TEXT        (A60)   /* (D, P/A, text-line)
+          6 REDEFINE BENE-TEXT
+            7 BENE-TEXT-1ST-25   (A25)
+            7 BENE-TEXT-LST-35   (A35)
+*
+1 NS-V VIEW OF A-NOTES    /*  used for notes
+  2 NOTE-TEXT          (A60/60)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A  (A6)
+  2 PROCESS-IND
+  2 PAD-CODE
+  2 SSN
+*   2 ADDRESS-1                                               /* vt1 \/          JT1 start
+*   2 ADDRESS-2
+*   2 ADDRESS-3
+*   2 ZIP-CODE                                                /* vt1 /\          JT1 end
+  2 INTRO-FLAG
+  2 NAME                                                        /* vt2
+  2 LINKED-CN   (10)
+  2 REDEFINE LINKED-CN
+    3 LINKED-CN-OCC (10)
+      4 LINKED-CN-A (A6)
+*   2 S-ADDRESS-1                                           /* vt1 \/            JT1 start
+*   2 S-ADDRESS-2
+*   2 S-ADDRESS-3
+*   2 S-ZIP-CODE                                            /* vt1 /\            JT1 end
+  2 X-LOAN-AMOUNT   (9)
+  2 X-LOAN-AMOUNT-2 (9)
+  2 NUMBER-MEMBERSHIPS
+  2 SPLIT-IND     (9)
+  2 ISSUE-DATE     (9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DT-OCC  (9)
+      4 ISS-DT-CENT     (N2)
+      4 ISS-DT-YYMMDD   (N6)
+  2 STATUS         (9)
+  2 NUM-MBRSHIPS   (9)
+  2 PAY-STATUS     (9)
+  2 FACE-AMOUNT    (9)
+  2 MODE           (9)
+  2 PLAN           (9)
+  2 PAID-TO-DATE   (9)
+  2 ANNUAL-PREM    (9)
+  2 FIRS-LOCATION-CODE  (9)
+  2 OWNERSHIP-FLAG     (9)
+  2 MEMBER-CONTACT-ID                                      /* vt1
+*
+1 LK-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 member-contact-id                                     /* vt2
+  2 PROCESS-IND
+  2 NAME                                                  /* vt2
+  2 ISSUE-DATE   (1)
+  2 PLAN         (1)
+  2 FACE-AMOUNT  (1)
+*
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY       (N4)
+  2 #MM         (N2)
+  2 #DD         (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A     (A4)
+  2 #MM-A       (A2)
+  2 #DD-A       (A2)
+*
+1 #HAS-NON-MBR-ASQ (L)
+1 #HAS-MBR-ASQ     (L)
+1 #3-MONS-AGO   (N8)
+1 #NO-BD-CNT  (P7)      /* RE2 formerly P5
+1 #NO-LINKAGE (L)
+1 #FOUND-BD-REC (L)
+1 #FOUND-BD   (L)
+1 #DP-MBR-OWNER  (L)
+1 #DP-OWNER      (A5)
+1 #ST-OWNER      (A5)
+1 #BD-OWNER      (A3)
+1 #BD-MBR-OWNER  (L)
+1 #MBR-RESTR  (P7)      /* RE2 formerly P5
+1 #NUM-READ   (P9)   /* vt4  was p5
+1 #I1         (I2)
+1 #I2         (I2)
+1 #I3         (I2)
+1 #I4         (I2)
+1 #I5         (I2)
+1 #I6         (I2)
+1 #CNT-1      (P4)
+1 #CNT-2      (P4)
+1 #CNT-3      (P4)
+1 #CNT-4      (P7)     /* RE2 start formerly P5
+1 #CNT-5      (P7)
+1 #CNT-6      (P7)
+1 #CNT-7      (P7)
+1 #CNT-8      (P7)
+1 #CNT-9      (P7)
+1 #CNT-10     (P7)
+1 #CNT-11     (P7)
+1 #CNT-12     (P7)
+1 #CNT-13     (P7)
+1 #CNT-14     (P7)
+1 #LETTERS    (P7)     /* RE2 END
+1 #NT-NUM     (N6)
+1 #LST-BD-NON-MBR (A35)
+1 #BD-NON-MBR (A35)
+1 REDEFINE #BD-NON-MBR
+  2 #BD-NON-MBR-6A  (A6)
+  2 #BD-NON-MBR-7TH (A1)
+  2 #BD-NON-MBR-6A-2  (A6)
+  2 #BD-NON-MBR-7TH-2 (A1)
+1 REDEFINE #BD-NON-MBR
+  2 #BD-NON-MBR-6A-OCC (5)
+    3 #BD-NON-MBR-6-X  (A6)
+    3 #BD-NON-MBR-FILL (A1)
+*
+1 #ADDRESS-1        (A70)         /* VT1 \/
+1 #ADDRESS-2        (A70)
+1 #ADDRESS-3        (A70)
+1 #S-ADDRESS-1        (A70)
+1 #S-ADDRESS-2        (A70)
+1 #S-ADDRESS-3        (A70)
+*                                 /*  vt1 /\
+1 #contact-id         (n8)           /* vt2 \/
+1 #name-f             (a70)
+1 #name-st            (a70)
+1 #name-lk            (a70)
+1 #first-name-f       (a25)
+1 #middle-name-f      (a25)
+1 #last-name-f        (a25)
+1 #suffix-f           (a10)
+1 #zip-code-n         (n9)
+1 #s-zip-code-n       (n9)
+*                                 /* VT2 /\
+END-DEFINE
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Exceptions'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'MISMATCHED NON-MBR OWNERSHIP conditions'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  ' Over 3 month old policies with no BD record'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (4) LS=133 PS=76
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Members with Multiple Owners'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (5) LS=133 PS=76
+WRITE  (5) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'All non-member owner contacts'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (6) LS=133 PS=76
+WRITE  (6) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Converted POLICIES WITH NON-MEMBER OWNERS'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (7) LS=133 PS=76
+WRITE  (7) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Unconverted POLICIES WITH NON-MEMBER OWNERS'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (8) LS=133 PS=76
+WRITE  (8) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Contact Numbers with no Addresses '
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (9) LS=133 PS=76
+WRITE  (9) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Contact Numbers with no Social Security Numbers'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (10) LS=133 PS=76
+WRITE  (10) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Deleted Contact Linkages'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (11) LS=133 PS=76
+WRITE  (11) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'PREM-PAYING non-mbr owner A/S/Q/M'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (12) LS=133 PS=76
+WRITE  (12) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Contact Number with no ADDRESS and Linkage (was deleted)'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+FORMAT (13) LS=133 PS=76
+WRITE  (13) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'Ownership Flag = "N"'
+  5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-AS-OF-DATE WITH '/'
+SUBTRACT 3 FROM #MM
+IF #MM LT 1
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+MOVE #YYYYMMDD TO #3-MONS-AGO
+*
+READ ST-V WITH MEMBER-KEY = '001900'
+*  IF ID-NUMBER GE  600000                   RE1
+  IF AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)   /* RE1
+    END TRANSACTION
+    ESCAPE TOP                            /* RE1
+*    ESCAPE BOTTOM                        /* RE1
+  END-IF
+*
+  RESET #PDA-ADDRESS                                                         /* vt3 \/
+  MOVE ST-V.MEMBER-CONTACT-ID  TO #ADD-CONTACT-ID  #contact-id
+  MOVE 'P' TO #ADD-TYPE        /* to get the primary address
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+  MOVE #ADD-LINE-1 TO #ADDRESS-1
+  move #add-line-2 to #address-2
+  MOVE #ADD-LINE-3 TO #ADDRESS-3
+  move #add-zip-code to #zip-code-n
+*
+  reset #PDA-ADDRESS
+  MOVE ST-V.MEMBER-CONTACT-ID  TO #ADD-CONTACT-ID
+  MOVE 'S' TO #ADD-TYPE        /* to get the secondary address
+  CALLNAT 'ADDN0001' #PDA-ADDRESS
+  MOVE #ADD-LINE-1 TO #S-ADDRESS-1
+  move #add-line-2 to #s-address-2
+  MOVE #ADD-LINE-3 TO #S-ADDRESS-3
+  move #add-zip-code to #s-zip-code-n                                        /* vt3 /\
+*
+*  RESET #UPDATE           /* vt6
+  IF ST-V.PROCESS-IND = 'C'   /* owner contact logic
+      AND NOT ST-V.INTRO-FLAG = 'A'                                  /* PM1
+    ADD 1 TO #TOT-C
+*
+*    write '=' id-number
+    FOR #I1 1 TO 10  /* clear mis-matched linkages
+      IF ST-V.LINKED-CN (#I1) = 0
+        ESCAPE BOTTOM
+      END-IF
+*
+*      write '=' id-number '='linked-cn(*)
+      FIND (1) LK-V WITH MEMBER-KEY = ST-V.LINKED-CN-A (#I1)
+        IF NO RECORDS FOUND
+*          write 'linked CN not found' st-v.linked-cn(#i1)
+          WRITE (5) '     ' ST-V.LINKED-CN (#I1)
+            '*** Linked CN not found'
+          ADD 1 TO #CNT-10
+          DISPLAY (10) #CNT-10 ST-V.ID-NUMBER ST-V.LINKED-CN (#I1)
+*            ST-V.NAME                                                    /* vt2
+            #name-st                                                        /* vt2
+*          MOVE TRUE TO #UPDATE             /* vt6
+          RESET ST-V.LINKED-CN (#I1)
+          ESCAPE BOTTOM
+        END-NOREC
+*
+        move lk-v.member-contact-id to #contact-id                           /* vt2 \/
+        #name-f := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME-f,#MIDDLE-NAME-f,#LAST-NAME-f,#SUFFIX-f>)
+        compress #first-name-f #middle-name-f #last-name-f into #name-lk
+*                                                                            /* vt2 /\
+*        COMPUTE #NT-NUM = ST-V.LINKED-CN (#I1) + 400000             /* RE2
+        MOVE TRUE TO #FOUND-BD-REC
+        RESET #NO-LINKAGE
+*        FIND (1) NT-V WITH ID-NUMBER = #NT-NUM                      /* RE2
+        FIND (1) BENE-F-V WITH ID-NUMBER = ST-V.LINKED-CN (#I1)      /* RE2
+          IF NO RECORDS FOUND
+            RESET #FOUND-BD-REC
+            MOVE TRUE TO #NO-LINKAGE
+          END-NOREC
+        END-FIND
+*
+        IF #FOUND-BD-REC
+          MOVE TRUE TO #NO-LINKAGE
+          LB2.      FOR #I2 1 TO 6
+            MOVE BENE-TEXT-LST-35 (#I2, 2, 5) TO #BD-NON-MBR
+            FOR #I3 1 TO 5
+              IF #BD-NON-MBR-6-X (#I3) = ST-V.ID-NUMBER-A
+                RESET #NO-LINKAGE
+                ESCAPE BOTTOM (LB2.)
+              END-IF
+            END-FOR
+          END-FOR
+        END-IF
+*
+        IF #NO-LINKAGE
+          ADD 1 TO #CNT-10
+          DISPLAY (10) #CNT-10 ST-V.ID-NUMBER ST-V.LINKED-CN (#I1)
+*            ST-V.NAME                                                               /* vt2
+            #name-st                                                                    /* vt2
+*          MOVE TRUE TO #UPDATE              /* vt6
+          RESET ST-V.LINKED-CN (#I1)
+*
+          FOR #I3 1 TO 10
+            IF ST-V.LINKED-CN (#I3) NE 0
+              WRITE (10) '   Also linked to' ST-V.LINKED-CN (#I3)
+            END-IF
+          END-FOR
+        END-IF
+*
+*        WRITE (5) '      Owner of pols on' LK-V.ID-NUMBER LK-V.NAME                /* vt2
+        WRITE 'OWNER OF POLS ON' LK-V.ID-NUMBER #NAME-LK
+        WRITE (5) '      Owner of pols on' LK-V.ID-NUMBER #name-lk                  /* vt2
+      END-FIND
+    END-FOR
+*
+    RESET #HAS-LINKAGE
+    FOR #I3 1 TO 10
+      IF ST-V.LINKED-CN (#I3) NE 0
+        MOVE TRUE TO #HAS-LINKAGE
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*  below to extract state and city                                              vt1 \/
+*     MOVE 'S' TO #SPLIT
+*    RESET #STREET #STREET-2 #CITY #STATE
+*    CALLNAT 'GCTSTSXX'  /* split city/state
+*     #SPLIT
+*     ST-V.ADDRESS-1
+*     ST-V.ADDRESS-2
+*     ST-V.ADDRESS-3
+*     #STREET
+*     #STREET-2
+*     #CITY
+*     #STATE
+*     #ERR-MSG
+*
+***    RESET #PDA-ADDRESS                                                 /* vt3 \/
+***    MOVE ST-V.MEMBER-CONTACT-ID  TO #ADD-CONTACT-ID  #contact-id
+*    write st-v.member-contact-id '=' #add-contact-id
+***    MOVE 'P' TO #ADD-TYPE        /* to get the primary address
+***    CALLNAT 'ADDN0001' #PDA-ADDRESS
+***    MOVE #ADD-LINE-1 TO #ADDRESS-1
+*    COMPRESS #ADD-CITY #ADD-STATE INTO #ADDRESS-2
+***    move #add-line-2 to #address-2
+***    MOVE #ADD-LINE-3 TO #ADDRESS-3
+***    move #add-zip-code to #zip-code-n
+*    write ' after addn0001' '=' #address-2 / '=' #address-3
+*
+***    reset #PDA-ADDRESS
+***    MOVE ST-V.MEMBER-CONTACT-ID  TO #ADD-CONTACT-ID
+***    MOVE 'S' TO #ADD-TYPE        /* to get the secondary address
+***    CALLNAT 'ADDN0001' #PDA-ADDRESS
+***    MOVE #ADD-LINE-1 TO #S-ADDRESS-1
+*    COMPRESS #ADD-CITY #ADD-STATE INTO #S-ADDRESS-2
+***    move #add-line-2 to #s-address-2
+***    MOVE #ADD-LINE-3 TO #S-ADDRESS-3
+***    move #add-zip-code to #s-zip-code-n                                 /* vt3 /\
+*
+    #name-f := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME-f,#MIDDLE-NAME-f,#LAST-NAME-f,#SUFFIX-f>)   /* vt2
+    compress #first-name-f #middle-name-f #last-name-f into #name-st                                /* vt2
+*
+*    IF   (ADDRESS-2 = ' ')                              /* vt1 \/
+*        AND (ADDRESS-3 = ' ')
+    IF   (#ADDRESS-2 = ' ')
+        AND (#ADDRESS-3 = ' ')                           /* VT1 /\
+        AND (NOT #HAS-LINKAGE)
+      ADD 1 TO #CNT-12
+      DISPLAY (12) #CNT-12 ST-V.ID-NUMBER
+*      NAME                                               /* vt2
+        #name-st                                          /* vt2
+        SSN
+*
+*      write ' right before deletion ' ST-V.ID-NUMBER '=' Address-2 / '=' Address-3 / '=' #has-linkage /
+*        '=' #address-2 / '=' #address-3 / '=' name / '=' #name-st /
+*************      DELETE (0347)                  /* vt5
+*************      END TRANSACTION                /* vt5
+      ESCAPE TOP
+    END-IF
+*
+*    IF   (ADDRESS-2 = ' ')                              /* vt1 \/
+*        AND (ADDRESS-3 = ' ')
+    IF   (#ADDRESS-2 = ' ')
+        AND (#ADDRESS-3 = ' ')                           /* VT1 /\
+      ADD 1 TO #TOT-C-NO-ADDR
+      ADD 1 TO #CNT-8
+      DISPLAY (8) #CNT-8 ST-V.ID-NUMBER
+*      NAME                                                   /* vt2
+        #name-st                                              /* vt2
+        SSN
+        'Linked/To'  LINKED-CN (1)
+    END-IF
+*
+    IF SSN = 0
+      ADD 1 TO #TOT-C-NO-SSN
+      RESET LK-V
+      FIND (1) LK-V WITH MEMBER-KEY = ST-V.LINKED-CN-A (1)
+      END-FIND
+*
+      RESET #PDA-ADDRESS
+      MOVE ST-V.MEMBER-CONTACT-ID TO #ADD-CONTACT-ID  #contact-id                   /* vt1  \/
+      move 'P' to #add-type
+      CALLNAT 'ADDN0001' #PDA-ADDRESS
+      MOVE #ADD-LINE-1 TO #ADDRESS-1
+      COMPRESS #ADD-CITY #ADD-STATE INTO #ADDRESS-2
+      MOVE #ADD-LINE-3 TO #ADDRESS-3
+      move #add-zip-code to #zip-code-n
+*
+      #name-f := FUNCTION-FRM-NAME(<#CONTACT-ID,#FIRST-NAME-f,#MIDDLE-NAME-f,#LAST-NAME-f,#SUFFIX-f>)   /* vt2
+      compress #first-name-f #middle-name-f #last-name-f into #name-st                                /* vt2
+*                                                                       /* vt1  /\
+      ADD 1 TO #CNT-9
+      DISPLAY (9) #CNT-9  (EM=ZZZ9)
+        'CN'   ST-V.ID-NUMBER
+*      NAME                                                       /* vt2
+        #name-st (al=25)                                          /* vt2
+*         ADDRESS-1                                               /* vt1  \/
+*        ADDRESS-2
+        #ADDRESS-1 (AL=25)                                      /* vt1
+        #address-2 (AL=25)
+*         #address-3 (al=25)
+        #zip-code-n                                                /* vt1
+*       ADDRESS-3
+*        ZIP-CODE
+*                                                           /* vt1   /\
+        'Linked/To'  LINKED-CN (1)
+*
+    END-IF
+*
+    ADD 1 TO #CNT-5
+*    DISPLAY (5) #CNT-5 ST-V.ID-NUMBER ST-V.NAME ST-V.SSN                  /* vt2
+    DISPLAY (5) #CNT-5 ST-V.ID-NUMBER #name-st (al=25) ST-V.SSN            /* vt2
+      #ADDRESS-1 (AL=30)  #ADDress-2 (AL=30) #zip-code-n               /* vt1
+*      ST-V.ADDRESS-1 ST-V.ADDRESS-2 ST-V.ZIP-CODE                     /* vt1
+*
+*     IF ST-V.ADDRESS-3 NE ' '                    /* vt1 \/
+*      WRITE (5) '                                         addr-3 ='
+*        ST-V.ADDRESS-3
+*    END-IF
+    IF #ADDress-3 NE ' '
+      WRITE (5) '                                         addr-3 ='
+*        ST-V.ADDRESS-3                           /* vt1
+        #Address-3                            /* vt1  /\
+    END-IF
+*
+*     IF #UPDATE                                 /* vt6 \/
+*       UPDATE (0347)
+*     END-IF
+*     END TRANSACTION                            /* vt6 /\ 
+*
+    ESCAPE TOP
+  END-IF    /* end of owner contact logic
+*
+  IF NUMBER-MEMBERSHIPS = 0
+    END TRANSACTION
+    ESCAPE TOP
+  END-IF
+*
+  ADD 1 TO #NUM-READ
+* CALLNAT 'GOWNRSXX' ST-V.ID-NUMBER  /* currently not needed
+*   #NON-INS-OWNER
+*   #MULTIPLE-OWNER
+*   #OWNER-OCC-9 (1:9)
+*
+* IF #MULTIPLE-OWNER
+*   WRITE ST-V.ID-NUMBER 'member with multiple owners'
+* END-IF
+*
+  MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID
+  CALLNAT 'G3500SAD' #CGA-MASTER #PDA-AREA-G3500AAD
+*
+*  COMPRESS 'Dear' #FULL-RANK #LAST-NAME INTO #DEAR-FORMATED-NAME                        /* vt2
+  COMPRESS #EXT-DEAR-FORMATED-NAME ':' INTO #EXT-DEAR-FORMATED-NAME LEAVING NO           /* vt2
+  MOVE #EDS-ZIP-BAR-CODE TO #SCR-ZIP-BAR-CODE
+  COMPRESS 'CN' ST-V.ID-NUMBER INTO #MBR-ID-NUMBER LEAVING NO
+*
+*  COMPUTE #NT-NUM = ID-NUMBER + 400000           /* RE2
+*
+  MOVE TRUE TO #FOUND-BD-REC
+*  FIND (1) NT-V WITH ID-NUMBER = #NT-NUM         /* RE2
+  FIND (1) BENE-F-V WITH ID-NUMBER = ID-NUMBER    /* RE2
+    IF NO RECORDS FOUND
+      RESET #FOUND-BD-REC
+      ADD 1 TO #NO-BD-CNT
+*     WRITE ST-V.ID-NUMBER 'no BD record found'
+    END-NOREC
+  END-FIND
+*
+  RESET #HAS-NON-MBR-ASQ #HAS-MBR-ASQ
+  RESET #HAS-MBR-OWNER #HAS-NON-MBR-OWNER
+    #LST-BD-NON-MBR #MBR-W-MULT-OWNERS #NON-MBR-HAS-ASQM
+  FOR #I1 1 TO 9
+    IF STATUS (#I1) NE 'D'
+      ESCAPE TOP
+    END-IF
+*
+    IF ST-V.OWNERSHIP-FLAG (#I1) = 'N'
+      ADD 1 TO #CNT-13
+      DISPLAY (13) #CNT-13 ST-V.ID-NUMBER
+        'Int/Flg' ST-V.INTRO-FLAG
+        ST-V.ISSUE-DATE (#I1) MODE (#I1)
+*       PAY-STATUS (#I1) S-ADDRESS-1 PAD-CODE                                /* vt1
+        PAY-STATUS (#I1) #S-ADDRESS-1(AL=40) PAD-CODE                        /* vt1
+*
+      IF ((MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M')
+**          AND (S-ADDRESS-1 NE ' '))                                 /* vt1
+          AND (#S-ADDRESS-1 NE ' '))                                  /* vt1
+*      OR (PAD-CODE = 'N' OR = 'W')
+*      OR ((INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+*         AND (MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M'))
+        IGNORE
+      ELSE
+        RESET ST-V.OWNERSHIP-FLAG (#I1)
+        WRITE (13) 'N reset'
+*        MOVE TRUE TO #UPDATE            /* vt6
+      END-IF
+    END-IF
+*
+    IF   (MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M')
+        AND (PAY-STATUS (#I1) LT '40')
+      IF OWNERSHIP-FLAG (#I1) = 'N'
+        MOVE TRUE TO #HAS-NON-MBR-ASQ
+      ELSE
+        MOVE TRUE TO #HAS-MBR-ASQ
+      END-IF
+    END-IF
+*
+    IF NOT #FOUND-BD-REC
+      IF ST-V.ISSUE-DATE (#I1) LT #3-MONS-AGO
+        ADD 1 TO #CNT-3 /* another display # below at line 2760
+        DISPLAY (3) #CNT-3 ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+          ST-V.PLAN (#I1)
+      END-IF
+*
+      ESCAPE TOP
+    END-IF
+*
+    RESET #BD-NON-MBR #DP-MBR-OWNER #BD-MBR-OWNER #BD-OWNER
+    RESET #FOUND-BD
+*
+    IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'    /* sps/gen
+      IF FIRS-LOCATION-CODE (#I1) = '&' OR = 'X'
+        MOVE TRUE TO #DP-MBR-OWNER
+      END-IF
+    ELSE                                     /* members
+      IF FIRS-LOCATION-CODE (#I1) = '*' OR = ' ' OR = '5' OR = '6'
+        MOVE TRUE TO #DP-MBR-OWNER
+      END-IF
+    END-IF
+*
+    IF #DP-MBR-OWNER
+      COMPRESS 'MBR-' FIRS-LOCATION-CODE (#I1) INTO #DP-OWNER LEAVING NO
+    ELSE
+      COMPRESS 'NON-' FIRS-LOCATION-CODE (#I1) INTO #DP-OWNER LEAVING NO
+    END-IF
+*
+    IF OWNERSHIP-FLAG (#I1) = 'N'
+      COMPRESS 'NON-' OWNERSHIP-FLAG (#I1) INTO #ST-OWNER LEAVING NO
+    ELSE
+      COMPRESS 'MBR-' OWNERSHIP-FLAG (#I1) INTO #ST-OWNER LEAVING NO
+    END-IF
+*
+    LB1. FOR #I2 1 TO 6
+      FOR #I3 1 TO 7
+*       IF   (ISS-DT-YYMMDD (#I1) = BENE-ISS-DT    (#I2, #I3))
+*        AND (SPLIT-IND     (#I1) NE BENE-SPLIT-IND (#I2, #I3))
+*         WRITE (1) '*MISMATCHED SPL-IND' ST-V.ID-NUMBER
+*          ISS-DT-YYMMDD(#I1)
+*           'ST-spl-ind=' SPLIT-IND (#I1)
+*           'BD-spl-ind=' BENE-SPLIT-IND(#I2, #I3)
+*            'all-ST' SPLIT-IND (*)
+*            'all-BD' BENE-SPLIT-IND (#I2, *)
+*       END-IF
+*
+        IF   (ISS-DT-YYMMDD (#I1) = BENE-ISS-DT    (#I2, #I3))
+            AND (SPLIT-IND     (#I1) = BENE-SPLIT-IND (#I2, #I3))
+          IF BENE-SUC-OWN (#I2) NE 0
+            WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+              'Successor Owner'
+          END-IF
+*
+          MOVE TRUE TO #FOUND-BD
+          MOVE BENE-TEXT-LST-35 (#I2, 2, 5) TO #BD-NON-MBR
+*
+          IF ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+            IF #BD-NON-MBR-6A = ST-V.LINKED-CN-A (1)
+              MOVE TRUE TO #BD-MBR-OWNER
+            ELSE
+              IF #BD-NON-MBR = ' '
+                IF   (MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M')
+                    AND (PAY-STATUS (#I1) LT '40')
+                    AND (OWNERSHIP-FLAG (#I1) NE 'N')
+                  IGNORE
+                  WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+                    'Ins Owned A/S/Q SPS/GEN pol w own-flag set to N should it be blank?'
+*                 MOVE TRUE TO #UPDATE
+*                 MOVE 'N' TO ST-V.OWNERSHIP-FLAG (#I1)
+                END-IF
+              ELSE
+                ADD 1 TO #TOT-NON-MBR-INS
+              END-IF
+            END-IF
+          ELSE
+            IF #BD-NON-MBR = ' '
+              MOVE TRUE TO #BD-MBR-OWNER
+            ELSE
+              ADD 1 TO #TOT-NON-MBR-INS
+            END-IF
+          END-IF
+*
+          IF #BD-MBR-OWNER
+            MOVE TRUE TO #HAS-MBR-OWNER
+          ELSE
+            IF NOT #BD-MBR-OWNER
+              IF   (#BD-NON-MBR NE #LST-BD-NON-MBR)
+                  AND (#LST-BD-NON-MBR NE ' ')
+                MOVE TRUE TO #MBR-W-MULT-OWNERS
+              END-IF
+              MOVE #BD-NON-MBR TO #LST-BD-NON-MBR
+              MOVE TRUE TO #HAS-NON-MBR-OWNER
+            END-IF
+          END-IF
+*
+          IF   (BENE-RESTRICT (#I2) = 'Y')  /* restricted member owner
+              AND (#BD-MBR-OWNER)
+            ADD 1 TO #MBR-RESTR
+            WRITE ST-V.ID-NUMBER 'Member owner but restricted policy'
+          END-IF
+*
+          ESCAPE BOTTOM (LB1.)
+        END-IF
+      END-FOR
+    END-FOR
+*
+    IF #I2 GT 6
+      MOVE 1 TO #I2
+    END-IF
+*
+    IF #I3 GT 7
+      MOVE 1 TO #I3
+    END-IF
+*
+    IF NOT #FOUND-BD
+      IF ST-V.ISSUE-DATE (#I1) LT #3-MONS-AGO
+        ADD 1 TO #CNT-3
+        DISPLAY (3) #CNT-3 ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+          ST-V.PLAN (#I1)
+      END-IF
+*
+      ESCAPE TOP
+    END-IF
+*
+* all policies with BD records
+*   RESET #NON-MBR-OWN-FILE
+    RESET #BENE-INFO #I6
+*
+    IF #BD-NON-MBR-6A = MASK (NNNNNN) /* policies with owner CN
+      ADD 1 TO #TOT-CONV
+*
+      IF   (MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M')
+          AND (PAY-STATUS (#I1) LT '40')
+        ADD 1 TO #CNT-11
+        DISPLAY (11) #CNT-11 ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+          ST-V.MODE (#I1) ST-V.PAID-TO-DATE (#I1)
+*       WRITE ST-V.ID-NUMBER st-v.ISSUE-DATE (#I1) 'A/S/Q'
+        ADD 1 TO #A-S-Q-M-NMO
+        MOVE TRUE TO #NON-MBR-HAS-ASQM
+      END-IF
+*
+      RESET #TYPE
+      IF BENE-TYPE (#I2 , 1) = 'K' OR = 'P' OR = 'T' OR = 'X'
+        COMPRESS 'Trust' BENE-TYPE (#I2, 1) INTO #TYPE
+      END-IF
+*
+      IF    #BD-NON-MBR-6A-2 = MASK (NNNNNN)
+        WRITE (4) ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1) 'MULT-OWNERS'
+          #BD-NON-MBR #TYPE
+        ADD 1 TO #MULT-OWNRS
+      END-IF
+*
+      IF   (ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+          AND (#BD-NON-MBR-6A = ST-V.LINKED-CN-A (1)) /* OWNER IS LNKD MBR
+        IGNORE
+      ELSE
+        ADD 1 TO #TOT-NON-MBR-INS-CONV
+        ADD 1 TO #CNT-6
+        DISPLAY (6) #CNT-6 ST-V.ID-NUMBER
+          'Issue/date' ST-V.ISSUE-DATE (#I1)
+          'PLan'       ST-V.PLAN (#I1)
+          'INT/FLG'    INTRO-FLAG
+          'DP/MBR/OWN' #DP-MBR-OWNER
+          'BD/MBR/OWN' #BD-MBR-OWNER
+          'ST/OWN/FLG' OWNERSHIP-FLAG (#I1)
+          'DI/POL/COD' FIRS-LOCATION-CODE (#I1)
+          #BD-NON-MBR
+          'BD/TYPE'    BENE-TYPE (#I2, 1)
+          '#'          BENE-SHARE-TYP (#I2, 1)
+*
+        FIND (1) LK-V WITH MEMBER-KEY = #BD-NON-MBR-6A
+          IF NO RECORDS FOUND
+            WRITE (6) '     ' ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1)
+              'Owner CN above not found'
+          END-NOREC
+        END-FIND
+      END-IF
+    ELSE
+      IF #BD-NON-MBR NE ' '   /* unconverted non-mbr owner
+        ADD 1 TO #TOT-NON-MBR-INS-UNCONV
+*
+        IF   (MODE (#I1) = 'A' OR = 'S' OR = 'Q' OR = 'M')
+            AND (PAY-STATUS (#I1) LT '40')
+          WRITE ST-V.ID-NUMBER ST-V.ISSUE-DATE (#I1) 'A/S/Q'
+          ADD 1 TO #A-S-Q-M-NMO
+        END-IF
+        ADD 1 TO #CNT-7
+        DISPLAY (7) #CNT-7 ST-V.ID-NUMBER
+          'Issue/date' ST-V.ISSUE-DATE (#I1)
+          'PLan'       ST-V.PLAN (#I1)
+          'INT/FLG'    INTRO-FLAG
+          'BD/TYPE'    BENE-TYPE (#I2, 1)
+          '#'          BENE-SHARE-TYP (#I2, 1)
+          'DP/MBR/OWN' #DP-MBR-OWNER
+          'BD/MBR/OWN' #BD-MBR-OWNER
+          'ST/OWN/FLG' OWNERSHIP-FLAG (#I1)
+          'DI/POL/COD' FIRS-LOCATION-CODE (#I1)
+          #BD-NON-MBR
+*          S-ADDRESS-1                                             /* vt1
+          #S-ADDRESS-1  (AL=30)                                           /* vt1
+*
+        IF  (#BD-NON-MBR     = '*')
+            OR (#BD-NON-MBR-7TH = '*')
+          FOR #I4 1 TO 5
+            IF BENE-TEXT (#I2, 1, #I4) NE ' '
+              WRITE (7) '       desig' #I4 BENE-TEXT (#I2, 1, #I4)
+            END-IF
+          END-FOR
+        END-IF
+*
+*        IF S-ADDRESS-1 NE ' '                                                   /* vt1
+*          WRITE (7) S-ADDRESS-1 S-ADDRESS-2 S-ADDRESS-3 S-ZIP-CODE              /* vt1
+        IF #S-ADDRESS-1 NE ' '                                                   /* vt1
+          WRITE (7) #S-ADDRESS-1 #s-address-2 #S-ADDRESS-3 #s-zip-code-n                     /* vt1
+        END-IF
+*
+        FIND (1) NS-V WITH ID-NUMBER = ST-V.ID-NUMBER
+          FOR #I5 1 TO 60
+            IF   (NS-V.NOTE-TEXT (#I5) = MASK ('*'))
+                AND (NS-V.NOTE-TEXT (#I5) NE  MASK ('* POL ISS'))
+              COMPRESS #NON-MBR-OWN-FILE '{' NS-V.NOTE-TEXT (#I5)
+                INTO #NON-MBR-OWN-FILE LEAVING NO
+              WRITE (7) '    ' NS-V.NOTE-TEXT (#I5)
+            END-IF
+          END-FOR
+        END-FIND
+      END-IF
+    END-IF
+*
+* WRITE ST-V.ID-NUMBER 'i1/i2/i3' #I1 #I2 #I3
+    IF   (#BD-MBR-OWNER                 /* bd mbr owner
+*    AND (OWNERSHIP-FLAG (#I1) NE 'N')  /* st mbr owner    (NO LONGER)
+        AND  #DP-MBR-OWNER)                /* firs-loc-code mbr owner
+*
+        OR   (NOT #BD-MBR-OWNER             /* bd non mbr owner
+*    AND (OWNERSHIP-FLAG (#I1) = 'N')   /* st npnmbr owner (NO LONGER)
+        AND  NOT #DP-MBR-OWNER)            /* firs-loc-code non mbr owner
+*
+        OR NOT #FOUND-BD             /* BD not yet created for this policy
+      IGNORE
+    ELSE
+      IF #BD-MBR-OWNER
+        MOVE 'MBR' TO #BD-OWNER
+      ELSE
+        MOVE 'NON' TO #BD-OWNER
+      END-IF
+*
+      ADD 1 TO #CNT-2
+      DISPLAY (2) #CNT-2 ST-V.ID-NUMBER  /* all mismatcheds
+        'Issue-date' ST-V.ISSUE-DATE (#I1)
+        'PLan'       ST-V.PLAN (#I1)
+        'INTRO/FLAG'  INTRO-FLAG
+        'DP/OWN' #DP-OWNER
+*       'ST/OWN' #ST-OWNER     (NO LONGER)
+        'BD/OWN' #BD-OWNER
+        #BD-NON-MBR
+        'FND/BD' #FOUND-BD
+*
+      MOVE TRUE TO #DP-CODE-FIXED
+      IF #DP-MBR-OWNER
+        DECIDE ON FIRST VALUE FIRS-LOCATION-CODE (#I1)
+          VALUE '*' MOVE '4' TO FIRS-LOCATION-CODE (#I1)
+          VALUE ' ' MOVE '2' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '5' MOVE '3' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '6' MOVE '1' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '&' MOVE '7' TO FIRS-LOCATION-CODE (#I1)
+          VALUE 'X' MOVE '8' TO FIRS-LOCATION-CODE (#I1)
+          NONE      RESET #DP-CODE-FIXED
+        END-DECIDE
+      ELSE
+        DECIDE ON FIRST VALUE FIRS-LOCATION-CODE (#I1)
+          VALUE '4' MOVE '*' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '2' MOVE ' ' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '3' MOVE '5' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '1' MOVE '6' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '7' MOVE '&' TO FIRS-LOCATION-CODE (#I1)
+          VALUE '8' MOVE 'X' TO FIRS-LOCATION-CODE (#I1)
+          NONE      RESET #DP-CODE-FIXED
+        END-DECIDE
+      END-IF
+*
+      IF #DP-CODE-FIXED
+        WRITE (2) '   above dp-code changed to' FIRS-LOCATION-CODE (#I1)
+      END-IF
+    END-IF
+  END-FOR
+*
+  IF #HAS-MBR-ASQ AND #HAS-NON-MBR-ASQ
+    WRITE ST-V.ID-NUMBER 'has dual billing based on ownership-flag'
+  END-IF
+*
+  IF (#HAS-MBR-OWNER AND #HAS-NON-MBR-OWNER)
+      OR (#MBR-W-MULT-OWNERS)
+    ADD 1 TO #MBR-MULT-OWNERS
+    ADD 1 TO #CNT-4
+*    DISPLAY (4) #CNT-4 ST-V.ID-NUMBER ST-V.NAME                             /* vt2
+    DISPLAY (4) #CNT-4 ST-V.ID-NUMBER #name-st                                /* vt2
+      #HAS-MBR-OWNER #HAS-NON-MBR-OWNER
+    IF #NON-MBR-HAS-ASQM
+      WRITE (11) '         Above has multiple Owners'
+    END-IF
+  END-IF
+*
+*   IF #UPDATE                   /* vt6 \/
+*     UPDATE (0347)
+*   END-IF
+* *
+*   END TRANSACTION              /* vt6 /\
+END-READ
+*
+IF #CNT-10 = 0
+  WRITE (10) '//// No owner contacts with mismatched linkages'
+END-IF
+*
+WRITE 'total mbr-restricted=' #MBR-RESTR
+WRITE 'no bd rec found count=' #NO-BD-CNT
+WRITE 'number letters               =' #LETTERS
+WRITE 'tot-contact #"s              =' #TOT-C
+WRITE 'tot-contact #"s no addr      =' #TOT-C-NO-ADDR
+WRITE 'tot-contact #"s no SSN       =' #TOT-C-NO-SSN
+WRITE 'tot-NMI-owner policies       =' #TOT-NON-MBR-INS
+WRITE 'tot-NMI-A/S/Q/M pols         =' #A-S-Q-M-NMO
+WRITE 'tot-multiple-owner Pols      =' #MULT-OWNRS
+WRITE 'tot-multiple-owner MBRS      =' #MBR-MULT-OWNERS
+WRITE 'tot-pols with contact #      =' #TOT-CONV
+WRITE 'tot-NMI pols not linked 2 mbr=' #TOT-NON-MBR-INS-CONV
+WRITE 'tot-NMI pols w/o contact #   =' #TOT-NON-MBR-INS-UNCONV
+*
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-POL-NUM
+* * * * * * * * * * * * * * * *
+*
+CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1 /* build POL-#
+*
+END-SUBROUTINE
+*
+END

@@ -1,0 +1,261 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*********************************************************************
+* NAME         : GPBSCAPC                                           *
+* AUTHOR       : Rolly Estabillo                                    *
+* DESCRIPTION  : Select delinquent records (for collection)         *
+*********************************************************************
+* CRITERIA FOR PROCESSING MEMBER RECORDS THAT ARE DELINQUENT IN CAP *
+* LOAN PAYMENT                                                      *
+* 1. CAP loan amount > 0                                            *
+* 2. Not in bankruptcy                                              *
+* 3. CAP-BILL-DATE > 0                                              *
+* 4. CAP-BILL-DATE < 1st day of current month                       *
+* 5. Not auto pay                                                   *
+*********************************************************************
+*                       MODIFICATION LOG                            *
+* USER   DATE      TAG   REASON                                     *
+* RSE   01242012   None  Program Written                            *
+* RSE   03012012   RE1   Remove PAID-TO-DATE criterion              *
+* vxt   12162013   vt1   fix the nat error 3047                     *
+*********************************************************************
+DEFINE DATA LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 CAP-BILL-DATE
+  2 REDEFINE CAP-BILL-DATE
+    3 #FILLER          (A4)
+    3 #CAP-BILL-MM     (N2)
+  2 STATUS(9)
+  2 PAID-TO-DATE(9)
+  2 CONV-DURATION(9)
+  2 X-ALT-LP-IND(9)
+  2 X-LOAN-AMOUNT(9)
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 DATE-OF-DEATH
+*
+1 NT-V VIEW OF A-NOTES
+  2 NOTE-TEXT   (60)
+*
+1 PR-V VIEW OF A-PROCESS-REQUEST
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8)
+  2 LAST-UPD-TIME (N7)
+  2 PROCESSES(9)
+    3 PROCESS-DESCRIPTION (A250)
+    3 PROCESS-STATUS (A1)
+    3 PROCESS-STATUS-DATE (N8)
+    3 PROCESS-MESSAGE (A250)
+  2 C*PROCESSES
+  2 REQUEST-STATUS (A1/9)
+  2 REQUEST-STATUS-DATE (N8/9)
+  2 REQUEST-DATA        (A250)
+  2 REQUEST-FINAL-STATUS (A1)
+  2 REQUEST-FS-DATE (N8)
+  2 REQUEST-TYPE (A16)
+  2 REQUEST-KEY  (A32)
+  2 ID-NUMBER (N8)
+*
+1 TR-V VIEW OF A-TERMINALS
+  2 COMMENTS
+*
+1 #I                    (N2)
+1 #I1                   (I2)
+1 #I2                   (I2)
+1 #EXCLUDED             (L)
+1 #CAP-X                (I2)
+1 #CAP-AUTO-PAY         (L)
+1 #NO-CAP-LOAN          (L)
+1 #YYYYMMDD             (N8)
+1 REDEFINE #YYYYMMDD
+  2 FILLER              (N4)
+  2 #MM                 (N2)
+  2 #DD                 (N2)
+1 #YYYYMMDD-1           (N8)
+1 REDEFINE #YYYYMMDD-1
+  2 #YYYY-1             (N4)
+  2 #MM-1               (N2)
+  2 #DD-1               (N2)
+1 #YYYYMMDD-2           (N8)
+1 REDEFINE #YYYYMMDD-2
+  2 #YYYY-2             (N4)
+  2 #MM-2               (N2)
+  2 #DD-2               (N2)
+1 #INIT-USER            (A8)
+1 #POL-NUM              (A16)
+1 #ET-CTR               (N2)
+1 #PROCESS              (L)
+1 #DELETED              (L)
+**1 #UP-TO-DATE           (L)          /* RE1
+*
+END-DEFINE
+*
+MOVE *DATN TO #YYYYMMDD #YYYYMMDD-1 #YYYYMMDD-2
+MOVE 1 TO #DD #DD-1
+MOVE 31 TO #DD-2
+IF #MM-1 = 1
+  SUBTRACT 1 FROM #YYYY-2
+  MOVE 12 TO #MM-1 #MM-2
+ELSE
+  SUBTRACT 1 FROM #MM-1
+  SUBTRACT 1 FROM #MM-2
+END-IF
+*
+MOVE *INIT-USER TO #INIT-USER
+FIND (1) TR-V WITH TERMINAL-ID = #INIT-USER
+  MOVE COMMENTS TO LAST-UPD-USER
+END-FIND
+*
+PERFORM REFRESH-PROCESS-REQUEST             /* Delete records that don't meet criteria anymore
+*
+FIND ST-V WITH CAP-BILL-DATE > 0
+  RESET #PROCESS #DELETED
+  REJECT IF ST-V.ID-NUMBER < 1900 OR CAP-BILL-DATE GE  #YYYYMMDD
+  FIND PR-V WITH ID-NUMBER = ST-V.ID-NUMBER AND REQUEST-TYPE = 'DELINQUENT CAP'
+    IF NO RECORDS FOUND
+      PERFORM CHECK-IF-BANKRUPT/DEAD
+      ESCAPE BOTTOM
+    END-NOREC
+  END-FIND
+  IF NOT #PROCESS
+    ESCAPE TOP
+  END-IF
+  RESET #CAP-X #CAP-AUTO-PAY                     /*Find CAP Segment
+  RESET #NO-CAP-LOAN                             /* RE1  #UP-TO-DATE
+  FOR #I1 1 TO 9
+    IF (STATUS (#I1) = 'D')
+        AND (CONV-DURATION (#I1) = 999)
+*      IF PAID-TO-DATE(#I1) GE  #YYYYMMDD-1 /* AND PAID-TO-DATE(#I1) LE  #YYYYMMDD-2) OR    RE1
+*        ESCAPE BOTTOM                                                                      RE1
+*      END-IF                                                                               RE1
+      MOVE #I1 TO #CAP-X
+      IF X-ALT-LP-IND (#I1) = '1' OR = '2' OR = '3' OR = '4' OR ='8'
+        MOVE TRUE TO #CAP-AUTO-PAY
+      END-IF
+      IF X-LOAN-AMOUNT (#I1) = 0
+        MOVE TRUE TO #NO-CAP-LOAN
+        FOR #I2 1 TO 9
+          IF   (STATUS (#I2) = 'D')    /* Does any seg have a CAP loan?
+              AND (CONV-DURATION (#I2) = 999)
+              AND (X-LOAN-AMOUNT (#I2) NE 0)
+            RESET #NO-CAP-LOAN
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+      END-IF
+*
+      IF NOT #CAP-AUTO-PAY AND
+          NOT #NO-CAP-LOAN
+        CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1 /* build POL-#
+        MOVE ST-V.ID-NUMBER TO PR-V.ID-NUMBER
+        MOVE #POL-NUM TO REQUEST-DATA
+        MOVE *DATN TO LAST-UPD-DATE REQUEST-STATUS-DATE (1) REQUEST-FS-DATE
+        MOVE *TIMN TO LAST-UPD-TIME
+        MOVE 'REQUESTED' TO PROCESS-STATUS (1)
+        MOVE 'CAP COLLECTION DEFAULT PROCESSING' TO PROCESS-DESCRIPTION (1)
+        MOVE 'Y' TO REQUEST-STATUS (1) REQUEST-FINAL-STATUS
+        MOVE 'DELINQUENT CAP' TO REQUEST-TYPE
+        STORE PR-V
+        END TRANSACTION
+      END-IF
+    END-IF
+  END-FOR
+END-FIND
+*
+*****************************************
+DEFINE SUBROUTINE REFRESH-PROCESS-REQUEST
+*****************************************
+* READ PR-V BY ID-NUMBER                                          /* vt1
+*   REJECT IF REQUEST-FINAL-STATUS = 'C'                          /* vt1
+find pr-v with request-final-status ne 'C'                        /* vt1
+  RESET #CAP-X #CAP-AUTO-PAY                     /*Find CAP Segment
+  RESET #NO-CAP-LOAN                             /* RE1  #UP-TO-DATE
+  FIND ST-V WITH ID-NUMBER = PR-V.ID-NUMBER
+    IF CAP-BILL-DATE = 0 OR #CAP-BILL-MM = #MM
+      DELETE(0175)
+      MOVE TRUE TO #DELETED
+      END TRANSACTION
+    END-IF
+    IF #DELETED
+      ESCAPE BOTTOM
+    END-IF
+    FOR #I1 1 TO 9
+      IF (ST-V.STATUS (#I1) = 'D')
+          AND (CONV-DURATION (#I1) = 999)
+*        IF PAID-TO-DATE(#I1) GE  #YYYYMMDD-1 /* AND PAID-TO-DATE(#I1) LE  #YYYYMMDD-2) OR   RE1
+*          MOVE TRUE TO #UP-TO-DATE                                                          RE1
+*        END-IF                                                                              RE1
+        MOVE #I1 TO #CAP-X
+        IF X-ALT-LP-IND (#I1) = '1' OR = '2' OR = '3' OR = '4' OR ='8'
+          MOVE TRUE TO #CAP-AUTO-PAY
+        END-IF
+        IF X-LOAN-AMOUNT (#I1) = 0
+          MOVE TRUE TO #NO-CAP-LOAN
+          FOR #I2 1 TO 9
+            IF   (STATUS (#I2) = 'D')    /* Does any seg have a CAP loan?
+                AND (CONV-DURATION (#I2) = 999)
+                AND (X-LOAN-AMOUNT (#I2) NE 0)
+              RESET #NO-CAP-LOAN
+              ESCAPE BOTTOM
+            END-IF
+          END-FOR
+        END-IF
+      END-IF
+    END-FOR
+*    IF #UP-TO-DATE OR #CAP-AUTO-PAY OR #NO-CAP-LOAN     /* RE1
+    IF #CAP-AUTO-PAY OR #NO-CAP-LOAN                     /* RE1
+      DELETE(0175)
+      END TRANSACTION
+      MOVE TRUE TO #DELETED
+    END-IF
+  END-FIND
+  IF #DELETED
+    ESCAPE TOP
+  END-IF
+  FIND (1) NT-V WITH ID-NUMBER = PR-V.ID-NUMBER
+    IF NOTE-TEXT (*) = MASK ('*Mbr in bnkrptcy') OR = MASK ('*Do not send to collections')
+      DELETE(0175)
+      END TRANSACTION
+      MOVE TRUE TO #DELETED
+    END-IF
+  END-FIND
+  IF #DELETED
+    ESCAPE TOP
+  END-IF
+  FIND CNT-V WITH CONTACT-ID = MEMBER-CONTACT-ID
+    IF DATE-OF-DEATH > 0
+      DELETE(0175)
+      END TRANSACTION
+    END-IF
+  END-FIND
+end-find                                                                /* vt1
+* END-READ                                                              /* vt1
+*
+END-SUBROUTINE
+****************************************
+DEFINE SUBROUTINE CHECK-IF-BANKRUPT/DEAD
+****************************************
+FIND (1) NT-V WITH ID-NUMBER = ST-V.ID-NUMBER
+  IF NO RECORD FOUND
+    MOVE TRUE TO #PROCESS
+    ESCAPE BOTTOM
+  END-NOREC
+  IF NOTE-TEXT (*) = MASK ('*Mbr in bnkrptcy') OR = MASK ('*Do not send to collections')
+    IGNORE
+  ELSE
+    FIND CNT-V WITH CONTACT-ID = ST-V.MEMBER-CONTACT-ID
+      IF DATE-OF-DEATH = 0
+        MOVE TRUE TO #PROCESS
+      END-IF
+    END-FIND
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+**************
+END

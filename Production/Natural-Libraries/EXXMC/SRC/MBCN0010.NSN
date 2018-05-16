@@ -1,0 +1,171 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online
+* Get Member Profile Information
+* XML Request Parser/Serializer
+********************************************************************
+*        MODIFICATION LOG
+********************************************************************
+* USER   DATE      TAG  REASON
+* YAK    11152010       Initial Creation
+* YAK    02142011  YK1  Add Owner Field to Return XML
+* YAK    05032011  YK2  Use preferred e-mail instead of account email
+*                       (Retiring Account email)
+* YAK    08032011  YK3  Exclude non-military Rank-ids from displaying
+*                       on the Home Page
+* YAK    08032011  YK4  Add formatted name and Mbr Service Type Code
+* YAK    09202012  YK5  Add date of death to communication area
+* YAK    01122013  YK6  Add paperless options 
+*********************************************************************
+*
+DEFINE DATA PARAMETER
+*
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC         /* Out
+*
+LOCAL USING PARSER-X
+LOCAL USING MBCA0001
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 XML                          (A) DYNAMIC
+*
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #DEL              (A1) CONST <'-'>
+1 #I                (I2)
+1 #value            (A) DYNAMIC
+1 #NON-VALID-RANK   (L)
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Call Business Logic for Get
+CALLNAT 'MBCN0011' MemberProfile #ErrorCode
+IF #ErrorCode = '0'
+  PERFORM COMPOSE-XML
+  ESCAPE ROUTINE
+END-IF
+PERFORM COMPOSE-ERROR-XML
+*
+************************** CALLBACK HANDLER
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'MemberProfile/MemberInfo/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6) THEN
+      MemberProfile.CN := VAL(#value)
+    END-IF
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE COMPOSE-XML
+*****************************
+*
+COMPRESS '<MemberProfile>'
+  '<MemberInfo>'
+  '<CN>' MemberProfile.CN '</CN>'
+  '<ContactID>' MemberProfile.ContactID '</ContactID>'
+  '<MembershipDate>' MemberProfile.MembershipDate '</MembershipDate>'
+  '<MembershipType>' MemberProfile.MembershipType '</MembershipType>'
+  '<MemberServiceType>' MemberProfile.MemberServiceType '</MemberServiceType>'
+  '<MemberServiceTypeCode>' MemberProfile.MemberServiceTypeCode '</MemberServiceTypeCode>'  /* YK4
+  '<Owner>'MemberProfile.Owner'</Owner>'                                       /* YK1
+  '<FirstName>' MemberProfile.FirstName '</FirstName>'
+  '<MiddleName>' MemberProfile.MiddleName '</MiddleName>'
+  '<LastName>' MemberProfile.LastName '</LastName>'
+  '<Suffix>' MemberProfile.Suffix '</Suffix>'                                  /* YK4 
+  '<FormattedName>' MemberProfile.FormattedName '</FormattedName>'             /* YK4 
+  '<DateOfBirth>' MemberProfile.DateOfBirth '</DateOfBirth>'
+  '<DateOfDeath>' MemberProfile.DateOfDeath '</DateOfDeath>'                   /* YK5
+  '<PreferredEmail>' MemberProfile.EmailAddress '</PreferredEmail>'
+  '<PaperlessOptions>'                                                         /* YK6  
+    '<AnnsDeliveryFlag>'MemberProfile.AnnsDeliveryFlag'</AnnsDeliveryFlag>'    /* YK6
+    '<BillDeliveryFlag>'MemberProfile.BillDeliveryFlag'</BillDeliveryFlag>'    /* YK6
+    '<FIRDeliveryFlag>'MemberProfile.FIRDeliveryFlag'</FIRDeliveryFlag>'       /* YK6 
+    '<MBADeliveryFlag>'MemberProfile.MBADeliveryFlag'</MBADeliveryFlag>'       /* YK6  
+    '</PaperlessOptions>'                                                      /* YK6
+  '</MemberInfo>' INTO XML LEAVING NO
+COMPRESS XML
+  '<PrimaryAddress>'
+  '<Street><![CDATA[' MemberProfile.Street ']]></Street>'
+  '<Unit><![CDATA[' MemberProfile.Unit ']]></Unit>'
+  '<City><![CDATA[' MemberProfile.City ']]></City>'
+  '</PrimaryAddress>' INTO XML LEAVING NO
+COMPRESS XML
+  '<PreferredPhone>'
+  '<Type>'MemberProfile.Type '</Type>'
+  '<PhoneType>'MemberProfile.PhoneType '</PhoneType>'
+  '<DialNumber>' MemberProfile.DialNumber '</DialNumber>'
+  '<AreaCode>' MemberProfile.AreaCode '</AreaCode>'
+  '<Extension>' MemberProfile.Extension '</Extension>'
+  '</PreferredPhone>' INTO XML LEAVING NO
+COMPRESS XML '<MilitaryInfo>' INTO XML LEAVING NO                               /* YK3 start
+IF MemberProfile.MilitaryRankID = 1616              /* Non Military
+    OR = 1700                                       /* AAFMAA Employee
+    OR = 340                                        /* Unknown Army
+    OR = 620                                        /* Unknown Air Force
+    OR = 955                                        /* Unknown Coast Guard
+    OR = 1260                                       /* Unknown Marine
+    OR = 1608                                       /* Unknown Navy
+  #NON-VALID-RANK := TRUE
+END-IF
+IF #NON-VALID-RANK
+  COMPRESS XML '<MilitaryRankID />'
+    INTO XML LEAVING NO
+ELSE                                                                            /* YK3 end
+  COMPRESS XML '<MilitaryRankID>' MemberProfile.MilitaryRankID '</MilitaryRankID>'
+    INTO XML LEAVING NO
+END-IF
+COMPRESS XML
+  '<MilitaryStatus>' MemberProfile.MilitaryStatus '</MilitaryStatus>'
+  '<MilitaryBranch>' MemberProfile.MilitaryBranch '</MilitaryBranch>'
+  '</MilitaryInfo>' INTO XML LEAVING NO
+COMPRESS XML '</MemberProfile>' INTO XML LEAVING NO
+RESPONSE-DATA := XML
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE ROUTINE
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE COMPOSE-ERROR-XML
+***********************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+COMPRESS '<MemberProfile>' '<CN>' MemberProfile.CN '</CN>' -
+  '<ErrorCode>' #ErrorCode '</ErrorCode>' -
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>' -
+  '</MemberProfile>'
+  INTO RESPONSE-DATA LEAVING NO
+END-SUBROUTINE
+*
+END

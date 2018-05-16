@@ -1,0 +1,513 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: ATHPATPN
+* THIS PROGRAM CREATES A DAILY DOWNLOAD FILE OF PENDING APPLICATIONS
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    05042004  None    Program written per Clifton Brown.          *
+*                                                                      *
+* PAM    02072005  PM1     Added new 'SD' status to list.              *
+*                                                                      *
+* PAM    08022005  PM2     Added original user to download.            *
+*                                                                      *
+* SAG    12012005  RH1     SS - Replaced the HEX constant '05' (Tab    *
+*                          position EBCDIC to HEX code '09' ASCII      *
+*                                                                      *
+* SAG-DC 20061009          move '0' to blank field as found in M/F     *
+*                                                                      *
+* YAK    12202006  YAK1    Added last action date (last note date) and *
+*                          last note user to the report                *
+*                                                                      *
+* PAM    05152008  PM3     Added new underwriting email files          *
+*                                                                      *
+* PAM    10162008  PM4     Added another underwriting file             *
+*                                                                      *
+* PAM    11202008  PM5     Added PLAN to ATPEND file                   *
+*                                                                      *
+* PAM    06052009  PM6     Added Cap Type / Cap Ind to ATPEND file     *
+*                                                                      *
+* YAK    09022009  YK1     Create data for automated e-mail process    *
+* RSE    09212009  RE1     Change 600k logic for Unification           *
+* YAK    09022009  YK2     Add CC deposit indicator to the report      *
+* vxt    03/23/2011 vt1    Add logic to extract records in PX status   *
+*                          only if their last ST-NOTE-DATE is in the   *
+*                          last 180 days.                              *
+* YAK    08/24/2011 YK3    Get email from contact file instead of AT   *
+* YAK    11/30/2011 YK4    Add Autodialer file for applications in U2  *
+*                          status for more than 30 days                *
+* BZ     11/25/2014        Remove Med exem email/Dal OI-3155
+* vxt    03/23/2015 vt2    /Ticket 3391/                               *
+* YF     05/18/2017 YF1    /Ticket 3686/                               *
+* YF     05/23/2017 YF2    /Ticket 4004/                               *
+* YF     10/09/2017 YF3    /Ticket 5328/                               *
+* YF     11/27/2017 YF4    /Ticket 6554/                               *
+* YF     01/24/2018 YF5     Add opt-out option for AT emails           *
+************************************************************************
+*
+DEFINE DATA
+*
+LOCAL USING GPRA0005                  /* Fields to be passed to EmailCreator
+LOCAL USING GPRL0001                  /* Init properties
+LOCAL USING OBJLCOPH                  /* Contact phone            YK4
+LOCAL USING GPRA0003                  /* Error log                YK4
+LOCAL USING OBJLUSER                  /* User information         YF1
+LOCAL USING GPBACOMM                  /* Letter/Email parms       YF3
+LOCAL
+1 #SERVICES-AT-FLAG                   (A1)   INIT<'V'>
+1 #DISPLAY-NAME                       (A25)
+1 #DISPLAY-SSN                        (A11)
+1 #DISPLAY-APPL-STATUS                (A2)
+1 #DISPLAY-STATUS-DATE                (A10)
+1 #DISPLAY-STATUS-USER                (A3)
+1 #DISPLAY-ORIG-USER                  (A3)                        /* PM2
+1 #DISPLAY-LAST-NOTE-USER             (A03)                       /* YAK
+1 #DISPLAY-LAST-NOTE-DATE             (A10)                       /* YAK
+1 #DISPLAY-AT-NUMBER                  (A6)
+1 #DISPLAY-CN-NUMBER                  (A6)
+1 #DISPLAY-APPL-SOURCE                (A7)
+1 #DISPLAY-PLAN                       (A3)                        /* PM5
+1 #DISPLAY-EMAIL                      (A50)                       /* PM3
+1 #DISPLAY-CAP-IND                    (A1)                        /* PM6
+1 #DISPLAY-CAP-TYPE                   (A1)                        /* PM6
+1 #DISPLAY-CC-DEPOSIT-IND             (A1)                        /* YK2
+*
+1 #DISPLAY-STATUS-DATE-FORMAT         (A8)
+1 REDEFINE #DISPLAY-STATUS-DATE-FORMAT
+  2 #YYYY                             (A4)
+  2 #MM                               (A2)
+  2 #DD                               (A2)
+1 #WORK-SSN                           (A9)
+1 REDEFINE #WORK-SSN
+  2 #WORK-SSN-1RST-3                  (A3)
+  2 #WORK-SSN-NXT-2                   (A2)
+  2 #WORK-SSN-LST-4                   (A4)
+1 #LAST-RUN-DATE                      (A8)                        /* PM3
+1 REDEFINE #LAST-RUN-DATE                                         /* PM3
+  2 #LAST-RUN-DATE-N                   (N8)                       /* PM3
+1 #TO-DATE                            (N8)                        /* PM3
+1 #FROM-DATE                          (N8) INIT <00000001>        /* PM3
+1 #YESTERDAY                          (N8)                        /* PM3
+1 #REQUEST                            (A1) INIT <'E'>             /* PM3
+*
+1 #I1                                 (I2)
+1 #EXTRACT-RECORD                     (A200)
+1 #TAB                                (A1) INIT <H'09'>     /* SAG RH1 12012005 SS
+*
+1 APPL-TRACK VIEW OF A-APPL-TRACKING
+  2 SSN                               (N9)
+  2 REDEFINE SSN
+    3 SSN-1-3                         (A3)
+    3 SSN-4-5                         (A2)
+    3 SSN-6-9                         (A4)
+  2 NAME                              (A25)
+  2 APPL-SOURCE                       (A7)
+  2 USER-SOURCE                       (A3)                        /* PM2
+  2 DATE-RECEIVED                     (N8)
+  2 REDEFINE DATE-RECEIVED
+    3 DR-YYYY                         (A4)
+    3 DR-MM                           (A2)
+    3 DR-DD                           (A2)
+  2 ACTION-FLAG                       (A1)
+  2 ACTION-DATE                       (N8)
+  2 REDEFINE ACTION-DATE
+    3 AD-YYYY                         (A4)
+    3 AD-MM                           (A2)
+    3 AD-DD                           (A2)
+  2 AT-STATUS                         (A2)
+  2 ID-NUMBER                         (N6)
+  2 CONTACT-ID                        (N8)                       /* YK3
+  2 MEMBER-CN                         (A6)
+  2 REDEFINE MEMBER-CN
+    3 MEMBER-CN-N                     (N6)
+  2 PLAN                              (A3)                       /* PM5
+  2 CAP-IND                                                      /* PM6
+  2 CAP-TYPE                                                     /* PM6
+  2 INTRO-FLAG                        (A1)
+  2 INTERNET-ADDR                                                /* PM3
+  2 C*ST-NOTE-TBL                     (N2)                      /* YF3
+  2 ST-NOTE-USER                      (A3/50)
+  2 ST-NOTE-DATE                      (N8.0/50)
+  2 ST-NOTE-STATUS                    (A2/50)                   /* YF3
+  2 E-DEPOSIT-IND                    (A1)                       /* YK2
+  2 C*NOTES                                                      /* YAK
+  2 NOTES                             (A75/40)                   /* YAK
+  2 REDEFINE NOTES
+    3 NOTES-ARRAY                     (40)
+      4 NOTES-1                       (A1)
+      4 NOTE-USER                     (A3)
+      4 NOTE-2                        (A1)
+      4 NOTE-DATE                     (A10)
+      4 NOTE-FILLER                   (A60)
+  2 OPT-OUT                           (A1)                      /* YF5
+*
+1 #curr-date-d                         (d)                    /* vt1 \/
+1 #curr-date                           (n8)
+1 #180-date-back-d                     (d)
+1 #180-date-back-a                     (a8)
+1 redefine #180-date-back-a
+  2 #180-date-back                     (n8)
+1 #j                                   (i2)
+1 #last-st-note-date                   (n8)
+1 #last-j                              (i2)                   /* vt1 /\
+1 #PREF-PHONE                         (A10)                   /* YK4
+1 #DIAL-PHONE                         (N10)                   /* YK4
+1 #AUTO-DIALER-CONST (A8) INIT <'0002.wav'>                   /* YK4
+1 #DATE-DIFF                          (N8)                    /* YF3 START
+1 #X                                  (N8)
+1 #Y                                  (N8)
+1 #Z                                  (I2)
+1 #DATE1-N   (N8)
+1 REDEFINE #DATE1-N
+  2 #YY1 (A2)
+  2 #YY2 (A2)
+  2 #MM1 (A2)
+  2 #DD1 (A2)
+1 #DATE1-A (A8)
+1 #DATE2-N   (N8)
+1 REDEFINE #DATE2-N
+  2 #YY3 (A2)
+  2 #YY4 (A2)
+  2 #MM2 (A2)
+  2 #DD2 (A2)
+1 #DATE2-A (A8)
+1 #DATE1-D   (D)
+1 #DATE2-D   (D)
+*
+1 #AT-U2-10               (A10) CONST <'AT-U2-10'>
+1 #AT-U2                  (A10) CONST <'AT-U2'>
+1 #AT-U3                  (A10) CONST <'AT-U3'>
+1 #AT-U5                  (A10) CONST <'AT-U5'>
+1 #AT-S7-P                (A10) CONST <'AT-S7-P'>
+1 #AT-P-U                 (A10) CONST <'AT-P-U'>           /* YF3 END
+LOCAL  USING GONERLXX
+END-DEFINE
+DEFINE WORK FILE 7 TYPE 'ASCII-COMPRESSED'          /* YK4   Auto-dialer file
+DEFINE WORK FILE 8 TYPE 'ASCII-COMPRESSED'          /* YK4   backup file with ID numbers
+************************************************************************
+*
+ON ERROR
+  INCLUDE GABNDCX3                              /* SAG RH1 11292005 SS - END
+END-ERROR
+move *datx to #curr-date-d                                              /* vt1 \/
+move *datn to #curr-date
+compute #180-date-back-d = #curr-date-d - 180
+move edited #180-date-back-d(em=yyyymmdd) to #180-date-back-a           /* vt1 /\
+*
+#TO-DATE := *DATN                                              /* PM3
+CALLNAT 'GDATESXX'                                             /* PM3
+  #TO-DATE                                                     /* PM3
+  #FROM-DATE                                                   /* PM3
+  #YESTERDAY                                                   /* PM3
+  #REQUEST                                                     /* PM3
+*
+READ WORK 2 ONCE RECORD #LAST-RUN-DATE                         /* PM3
+WRITE '#LAST-RUN-DATE-N  = ' #LAST-RUN-DATE-N
+*
+COMPRESS'Last Name, First Name' #TAB
+  'SSN' #TAB
+  'STS' #TAB
+  'STS Date' #TAB
+  'User' #TAB
+  'Orig User' #TAB                                             /* PM2
+  'Last Note Date' #TAB                                        /* YAK
+  'Last Note User' #TAB                                        /* YAK
+  'AT Number' #TAB
+  'CN Number' #TAB
+  'Appl Source' #TAB
+  'Plan' #TAB                                                  /* PM5
+  'Cap' #TAB                                                   /* PM6
+  'Type' #TAB                                                  /* PM6
+  'CC Deposit' #TAB                                            /* YK2
+  'Email' INTO #EXTRACT-RECORD LEAVING NO                      /* PM3
+*
+WRITE WORK 1 #EXTRACT-RECORD
+WRITE WORK 3 #EXTRACT-RECORD                                 /* PM3
+WRITE WORK 4 #EXTRACT-RECORD                                 /* PM3
+WRITE WORK 5 #EXTRACT-RECORD                                 /* PM4
+RESET #EXTRACT-RECORD
+*
+READ APPL-TRACK BY ID-NUMBER STARTING FROM 500000
+*
+  IF APPL-TRACK.INTRO-FLAG EQ #SERVICES-AT-FLAG
+    ESCAPE TOP
+  END-IF
+*
+  if APPL-TRACK.AT-status = 'PX'                                       /* vt1 \/
+    for #j 1 50
+      if st-note-date(#j) ne 0
+        move #j to #last-j
+        move st-note-date(#j) to #last-st-note-date
+      end-if
+    end-for
+  end-if                                                              /* vt1 /\
+*
+  IF APPL-TRACK.AT-STATUS = 'PR' OR = 'PM' OR = 'PO' OR = 'P1' OR = 'P2'
+*      OR = 'P3' OR = 'PI' OR = 'PX' OR = 'PC' OR = 'PP'                     /* vt1
+      OR = 'P3' OR = 'PI'  OR = 'PC' OR = 'PP'                               /* vt1
+      OR = 'PY' OR = 'U1' OR = 'U2' OR = 'U4' OR = 'U3'
+      OR = 'U5' OR = 'U6' OR = 'AR'
+      OR = 'R1' OR = 'R2' OR = 'R3' OR = 'UU'                                /* YF2
+      OR = 'PU' OR = 'PB' OR = 'PA' OR = 'PV'                                /* YF2
+*            OR = 'SD'                                                /* PM1  /* vt2
+      or substr(appl-track.at-status,1,1) = 'S'                               /* vt2
+      or ((appl-track.at-status = 'PX') and                                 /* vt1 \/
+      (( #last-st-note-date ge #180-date-back)  and
+      (#last-st-note-date le #curr-date )))                                 /* vt1 /\
+*
+    COMPRESS SSN-1-3 '-' SSN-4-5 '-' SSN-6-9 INTO #DISPLAY-SSN
+      LEAVING NO
+    MOVE APPL-TRACK.NAME TO #DISPLAY-NAME
+    MOVE AT-STATUS TO #DISPLAY-APPL-STATUS
+    FOR #I1 1 TO 50
+      IF ST-NOTE-DATE (#I1) NE 0
+        ESCAPE TOP
+      ELSE
+        IF #I1 GT 1
+          COMPUTE #I1 = #I1 - 1
+        END-IF
+*
+        MOVE ST-NOTE-USER (#I1) TO #DISPLAY-STATUS-USER
+        MOVE ST-NOTE-DATE (#I1) TO #DISPLAY-STATUS-DATE-FORMAT
+        COMPRESS #MM '/' #DD '/' #YYYY TO                    /* YAK
+          #DISPLAY-STATUS-DATE LEAVING NO                    /* YAK
+        ESCAPE BOTTOM                                        /* YAK
+      END-IF
+    END-FOR
+    #I1 := C*NOTES                                           /* YAK
+    REPEAT WHILE #I1>0                                       /* YAK
+      IF NOTES-1(#I1) = '*'                                  /* YAK
+        MOVE NOTE-DATE(#I1) TO #DISPLAY-LAST-NOTE-DATE       /* YAK
+        MOVE NOTE-USER(#I1) TO #DISPLAY-LAST-NOTE-USER       /* YAK
+        ESCAPE BOTTOM
+      ELSE
+        #I1 := #I1 - 1
+      END-IF
+    END-REPEAT                                               /* YAK
+*
+    MOVE APPL-SOURCE TO #DISPLAY-APPL-SOURCE
+    MOVE USER-SOURCE TO #DISPLAY-ORIG-USER                   /* PM2
+    MOVE EDITED APPL-TRACK.ID-NUMBER (EM=999999)   TO #DISPLAY-AT-NUMBER
+    MOVE EDITED MEMBER-CN-N (EM=ZZZZZZ) TO #DISPLAY-CN-NUMBER
+** SAG-DC 20061009
+    IF #DISPLAY-CN-NUMBER EQ ' '
+      MOVE '0' TO #DISPLAY-CN-NUMBER
+      MOVE RIGHT #DISPLAY-CN-NUMBER  TO #DISPLAY-CN-NUMBER
+    END-IF
+** SAG-DC 20061009
+*
+    IF NOT APPL-TRACK.INTERNET-ADDR = ' ' OR = '?' OR = '999'/* PM3
+      #DISPLAY-EMAIL := APPL-TRACK.INTERNET-ADDR             /* PM3
+    END-IF                                                   /* PM3
+*
+    #DISPLAY-PLAN := APPL-TRACK.PLAN                         /* PM5
+    #DISPLAY-CC-DEPOSIT-IND := APPL-TRACK.E-DEPOSIT-IND     /* YK2
+    IF APPL-TRACK.CAP-IND = 'Y'                              /* PM6
+      #DISPLAY-CAP-IND  := 'Y'                               /* PM6
+      #DISPLAY-CAP-TYPE := APPL-TRACK.CAP-TYPE               /* PM6
+    ELSE                                                     /* PM6
+      #DISPLAY-CAP-IND  := 'N'                               /* PM6
+      RESET #DISPLAY-CAP-TYPE                                /* PM6
+    END-IF                                                   /* PM6
+*
+    COMPRESS    #DISPLAY-NAME #TAB
+      #DISPLAY-SSN  #TAB
+      #DISPLAY-APPL-STATUS #TAB
+      #DISPLAY-STATUS-DATE #TAB
+      #DISPLAY-STATUS-USER #TAB
+      #DISPLAY-ORIG-USER #TAB                                /* PM2
+      #DISPLAY-LAST-NOTE-DATE #TAB                           /* YAK
+      #DISPLAY-LAST-NOTE-USER #TAB                           /* YAK
+      #DISPLAY-AT-NUMBER #TAB
+      #DISPLAY-CN-NUMBER #TAB
+      #DISPLAY-APPL-SOURCE #TAB
+      #DISPLAY-PLAN #TAB                                     /* PM5
+      #DISPLAY-CAP-IND #TAB                                  /* PM6
+      #DISPLAY-CAP-TYPE #TAB                                 /* PM6
+      #DISPLAY-CC-DEPOSIT-IND #TAB                           /* YK2
+      #DISPLAY-EMAIL INTO #EXTRACT-RECORD LEAVING NO         /* PM3
+*
+    WRITE WORK 1 #EXTRACT-RECORD
+*
+    IF   APPL-TRACK.ACTION-DATE GT #LAST-RUN-DATE-N          /* PM3
+        AND APPL-TRACK.ACTION-DATE LE #YESTERDAY             /* PM3
+      DECIDE FOR FIRST CONDITION                             /* PM3
+        WHEN APPL-TRACK.AT-STATUS = 'U2'                     /* PM3
+          WRITE WORK 3 #EXTRACT-RECORD                       /* PM3
+        WHEN NONE                                            /* PM3
+          IGNORE                                             /* PM3
+      END-DECIDE                                             /* PM3
+    END-IF                                                   /* PM3
+*
+    RESET #DATE-DIFF #X #Y #Z #DATE1-N #DATE2-N PARM-LETTERS     /* YF3 START
+    IF APPL-TRACK.ACTION-DATE NE #CURR-DATE
+      DECIDE FOR FIRST CONDITION
+        WHEN APPL-TRACK.AT-STATUS = 'U2'
+          PERFORM RECURRING-EMAILS
+          IF #DATE-DIFF = 10
+            WRITE WORK 5 #EXTRACT-RECORD
+            PARM-LETTERS.PROCESS-TYPE := #AT-U2-10
+            PERFORM CREATE-EMAIL-INFO
+          ELSE IF #DATE-DIFF = 15
+              PERFORM CREATE-PHONE-INFO
+            ELSE
+              SUBTRACT 10 FROM #DATE-DIFF GIVING #X
+              IF #X GT 0
+                DIVIDE 7 INTO #X REMAINDER #Y
+              ELSE
+                #Y := -1
+              END-IF
+              IF #Y = 0
+                PARM-LETTERS.PROCESS-TYPE := #AT-U2
+                PERFORM CREATE-EMAIL-INFO
+              ELSE
+                IGNORE
+              END-IF
+            END-IF
+          END-IF
+        WHEN APPL-TRACK.AT-STATUS = 'U3'
+          PERFORM RECURRING-EMAILS
+          DIVIDE 7 INTO #DATE-DIFF REMAINDER #Y
+          IF #Y = 0
+            PARM-LETTERS.PROCESS-TYPE := #AT-U3
+            PERFORM CREATE-EMAIL-INFO
+          ELSE
+            IGNORE
+          END-IF
+        WHEN APPL-TRACK.AT-STATUS = 'U5'
+          PERFORM RECURRING-EMAILS
+          DIVIDE 14 INTO #DATE-DIFF REMAINDER #Y
+          IF #Y = 0
+            PARM-LETTERS.PROCESS-TYPE := #AT-U5
+            PERFORM CREATE-EMAIL-INFO
+          ELSE
+            IGNORE
+          END-IF
+        WHEN NONE
+          IGNORE
+      END-DECIDE
+    ELSE
+      FOR #Z 1 TO C*ST-NOTE-TBL
+        IF ST-NOTE-STATUS (#Z) = 'S7' AND ST-NOTE-DATE (#Z + 1) = #CURR-DATE
+            AND  SUBSTR(ST-NOTE-STATUS (#Z + 1),1,1) = 'P' AND APPL-TRACK.AT-STATUS = ST-NOTE-STATUS (#Z + 1)
+          PARM-LETTERS.PROCESS-TYPE := #AT-S7-P
+        END-IF
+        IF SUBSTR(ST-NOTE-STATUS (#Z),1,1) = 'P' AND ST-NOTE-DATE (#Z + 1) = #CURR-DATE
+            AND SUBSTR(ST-NOTE-STATUS (#Z + 1),1,1) = 'U' AND ST-NOTE-STATUS (#Z + 1) <> 'U6'   /* YF4
+            AND APPL-TRACK.AT-STATUS = ST-NOTE-STATUS (#Z + 1)
+          PARM-LETTERS.PROCESS-TYPE := #AT-P-U
+          PERFORM CREATE-EMAIL-INFO
+          ESCAPE BOTTOM
+        END-IF
+      END-FOR
+      IF PARM-LETTERS.PROCESS-TYPE = #AT-S7-P
+        PERFORM CREATE-EMAIL-INFO
+      ELSE
+        IGNORE
+      END-IF
+    END-IF                                                          /* YF3 END
+*
+    RESET #EXTRACT-RECORD #DISPLAY-NAME #DISPLAY-SSN #DISPLAY-ORIG-USER
+      #DISPLAY-LAST-NOTE-DATE #DISPLAY-LAST-NOTE-USER
+      #DISPLAY-APPL-STATUS #DISPLAY-STATUS-DATE #DISPLAY-STATUS-USER
+      #DISPLAY-AT-NUMBER #DISPLAY-CN-NUMBER #DISPLAY-APPL-SOURCE
+      #DISPLAY-EMAIL #DISPLAY-PLAN #DISPLAY-CAP-IND #DISPLAY-CAP-TYPE /* PM3 PM5 PM6
+  END-IF
+END-READ
+*
+CLOSE WORK FILE 2                                            /* PM3
+WRITE WORK 2 #YESTERDAY                                      /* PM3
+WRITE 'Yesterday =' #YESTERDAY
+*
+**********************************
+DEFINE SUBROUTINE RECURRING-EMAILS                             /* YF3
+**********************************
+*
+MOVE #CURR-DATE TO #DATE1-N
+MOVE APPL-TRACK.ACTION-DATE TO #DATE2-N
+IF #DATE2-N GT 0
+  PERFORM CALC-DATE-DIFF
+END-IF
+END-SUBROUTINE
+*
+********************************
+DEFINE SUBROUTINE CALC-DATE-DIFF                             /* YF3
+********************************
+*
+RESET #DATE1-A #DATE1-D #DATE2-A #DATE2-D
+COMPRESS #DD1 #MM1 #YY2 INTO #DATE1-A LEAVING NO SPACE
+COMPRESS #DD2 #MM2 #YY4 INTO #DATE2-A LEAVING NO SPACE
+MOVE EDITED #DATE1-A TO #DATE1-D (EM=DDMMYY)
+MOVE EDITED #DATE2-A TO #DATE2-D (EM=DDMMYY)
+#DATE-DIFF := #DATE1-D - #DATE2-D
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CREATE-EMAIL-INFO                          /* YK1
+***********************************
+*
+IF OPT-OUT = 'Y'                                             /* YF5 \/
+  ESCAPE ROUTINE
+END-IF                                                       /* YF5 /\
+PARM-LETTERS.ID-NUMBER := APPL-TRACK.MEMBER-CN-N
+FIND (1) USER-V WITH CLERK-ID = #DISPLAY-LAST-NOTE-USER
+  IF NO
+    ESCAPE BOTTOM
+  END-NOREC
+  PARM-LETTERS.ADD-INFO := USER-V.PHONE-EXTENSION
+END-FIND
+IF PARM-LETTERS.ADD-INFO = ' '
+  PARM-LETTERS.ADD-INFO := '4535'
+END-IF
+PARM-LETTERS.POLICY-NUMBER := APPL-TRACK.NAME
+COMPRESS APPL-TRACK.AD-MM APPL-TRACK.AD-DD APPL-TRACK.AD-YYYY INTO
+  PARM-LETTERS.FACE-AMOUNT WITH DELIMITER '/'
+PARM-LETTERS.REFERENCE := APPL-TRACK.ID-NUMBER
+CALLNAT 'GPBNCOMM' PARM-LETTERS
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE CREATE-PHONE-INFO                          /* YK1
+***********************************
+*
+* YK4 Start
+RESET #PREF-PHONE
+FIND CNT-PHONE-V WITH CONTACT-ID = APPL-TRACK.CONTACT-ID
+  ACCEPT IF PREFERRED-PHONE-IND = 'Y' AND TYPE = 'D'
+  DECIDE ON FIRST VALUE PHONE-TYPE-CODE
+    VALUE 'B'
+      COMPRESS FULL CNT-PHONE-V.AREA-CODE CNT-PHONE-V.DIAL-NUMBER INTO #PREF-PHONE LEAVING NO
+      ESCAPE BOTTOM
+    VALUE 'H'
+      COMPRESS FULL CNT-PHONE-V.AREA-CODE CNT-PHONE-V.DIAL-NUMBER INTO #PREF-PHONE LEAVING NO
+    VALUE 'C','O','M'
+      IF #PREF-PHONE = ' '
+        COMPRESS FULL CNT-PHONE-V.AREA-CODE CNT-PHONE-V.DIAL-NUMBER INTO #PREF-PHONE LEAVING NO
+      END-IF
+    NONE VALUE
+      IGNORE
+  END-DECIDE
+END-FIND
+IF #PREF-PHONE <> ' '
+  MOVE EDITED #PREF-PHONE TO #DIAL-PHONE (EM=9999999999)
+ELSE
+  WRITE 'No pref phone for '  APPL-TRACK.ID-NUMBER
+END-IF
+IF #DIAL-PHONE <> 0 AND #DIAL-PHONE > 2000000000
+  WRITE WORK FILE 7 VARIABLE #DIAL-PHONE ',' #AUTO-DIALER-CONST
+ELSE
+  COMPRESS 'Invalid telephone number on file for ' APPL-TRACK.ID-NUMBER
+    INTO ERROR-MESSAGE
+  ERROR-PROGRAM := *PROGRAM
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-IF
+WRITE WORK FILE 8 VARIABLE #DIAL-PHONE #TAB APPL-TRACK.ID-NUMBER #TAB APPL-TRACK.MEMBER-CN #TAB
+  APPL-TRACK.AT-STATUS #TAB APPL-TRACK.ACTION-DATE
+* YK4 End
+END-SUBROUTINE
+END

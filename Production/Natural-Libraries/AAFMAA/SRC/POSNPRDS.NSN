@@ -1,0 +1,101 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : POSNPRDS                                              *
+* AUTHOR       : Travis Tinger                                         *
+* DESCRIPTION  : Input parameter is #CONTACT-ID. This Subprogram       *
+*    will return all policy relationship information. If the optional  *
+*    parameter #RELATIONSHIP-TYPE is specified then this subprogram    *
+*    will only return policy relationship information pertinent to     *
+*    the specified relationship type                                   *
+*
+*    When the request is for all relationship types the first element
+* is relationtype=Insured (if any)
+*                                                                    *
+************************************************************************
+* Possible values for optional parameter #RELATIONSHIP-TYPE and the    *
+* meaning behind them: SEE POSLROLE                                                *
+*                                                                      *
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER  DATE       TAG   REASON                                        *
+* TMT  01/28/2015  NONE  Initial Creation                              *
+* NGG  02/28/2015  NONE  Added sequence and policy status              *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CONTACT-ID           (N8)   /* Input
+PARAMETER USING POSAGET
+LOCAL USING ERROR_L
+LOCAL USING POSL0002
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+  2 C*ACTIVE-SEGMENTS (N2)
+  2 POLICY-ID (A16/9)
+  2 STATUS    (A1/9)
+1 PN         (I2)
+1 #POLICY-ID (A16/99)
+1 #STATUS    (A1/99)
+1 I  (I2)
+1 L  (I2)
+1 #ERROR-CODE  (I4)
+1 #ERROR-LOG   (I4) CONST <3>
+END-DEFINE
+*
+RESET #NUMBER-OF-RELATIONS
+  PN L
+*
+*  Get policy list for #CONTACT-ID
+*
+FIND ST-V WITH MEMBER-CONTACT-ID = #CONTACT-ID
+  FOR I 1 TO C*ACTIVE-SEGMENTS
+    ADD 1 TO PN
+    #POLICY-ID (PN) := POLICY-ID (I)
+    #STATUS    (PN) := STATUS (I)
+  END-FOR
+END-FIND
+*
+FIND PC-V WITH CONTACT-ID = #CONTACT-ID
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  IF #RELATIONSHIP-TYPE > 0
+      AND #RELATIONSHIP-TYPE NE PC-V.RELATION
+    ESCAPE TOP
+  END-IF
+  ADD 1 TO L
+  EXPAND ARRAY #POLICY-RELATIONS TO (1:L)
+  MOVE BY NAME PC-V TO #POLICY-RELATIONS(L)
+  FOR I 1 TO PN
+    IF #POLICY-RELATIONS.POLICY-NUMBER (L) = #POLICY-ID (I)
+      #POLICY-RELATIONS.POLICY-STATUS (L):= #STATUS (I)
+      IF #STATUS (I) = 'D'
+        ESCAPE BOTTOM
+      END-IF
+    END-IF
+  END-FOR
+  IF #POLICY-RELATIONS.POLICY-STATUS (L) = ' '
+      #POLICY-RELATIONS.POLICY-STATUS (L)
+      := GET-POLICY-STATUS (< #POLICY-RELATIONS.POLICY-NUMBER (L) >)
+  END-IF
+END-FIND
+*
+IF L = 0
+  #MSG := #NOT-EXIST      /* 'No record exist'
+ELSE
+  RESET #MSG
+  #NUMBER-OF-RELATIONS := L
+END-IF
+*
+ON ERROR
+  #ERROR-CODE := *ERROR-NR
+  #MSG := 'INTERNAL ERROR'
+  CALLNAT 'AUCLOG' #ERROR-CODE #MSG #ERROR-LOG
+END-ERROR
+*
+END

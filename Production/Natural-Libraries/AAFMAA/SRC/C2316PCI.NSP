@@ -1,0 +1,1214 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PGM-ID: C2316PCI to handle loan payoffs after terminations or RPU's
+*    A/O 5/21/2008 it also creates CVAL trans on ACCT Register
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE      TAG  REASON                                           *
+* DRW  12272004  DW1  Increase variable loan to handle 999,999.99.     *
+* DRW  02022005  DW2  Make it work in batch (called from ATHPLAPS)     *
+* DRW  03162005  DW3  use Conv-duration to determine if CAP policy     *
+* DRW  04042005  DW4  use iss-dt not ln-date in desc on acct trns      *
+* DRW  05152005  DW5  Add face Amt & TPP linkage to CVALUSXX           *
+* DRW  05122005  DW6  Add Pol # to Batch screen                        *
+* DRW  05162005  DW7  Add Int Rate to Desc on TR                       *
+* PAM  12272006  PM8  Added 1099C processing                           *
+* PAM  01262006  PM9  Added NEWPAGE logic for forms                    *
+* DRW 12/05/2007 DW10 Clear CAP-BILL-DATE on a loan payoff             *
+* DRW 03/10/2007 DW11 Stop resetting Int Rate to 12%                   *
+* DRW 04/04/2008 DW12 Create WOFF Trans for Balanced Trans and CVAL    *
+*                     tran if LAPO. Put Policy Number on TR File       *
+* DRW 04/09/2008 DW13 Chg WOFF to LWOF                                 *
+* DRW 04/15/2008 DW14 Loan Payoff changes                              *
+* DRW 05/07/2008 DW15 Add Linkage for Call from C2500PAM (CMB5)        *
+* DRW 05/21/2008 DW16 Add CVAL processing when loans not paid off      *
+*                     and chg the way we find applicable policies to   *
+*                     process                                          *
+* DRW 06/02/2008 DW17 Handle RPU and Loan balance in CVAL Peocessing   *
+* DRW 06/05/2008 DW18 Handle Reinstatements                            *
+* DRW 06/10/2008 DW19 Do not use TPP in CSV for LAP? and RSGN          *
+* DRW 06/13/2008 DW20 Fix #i2 used with a LAPO or CMB5 from Batch      *
+* PAM 03/23/2009 PM21 Store terminated amounts for CMB5                *
+* DRW 09/25/2009 DW22 Fix Loan deletion on a split Condition
+* vxt 02/06/2012 vt1  add T cash code for collections.
+* vxt 03/22/2012 vt2  Add LWOV for CAP members with variable loan /ticket 832/     *
+* vxt 03/22/2012 vt3  Change $ to P for cash code./ticket 827/
+* vxt 04/06/2012 vt4  Populate the status.issue-date to Membership-detail file/ticket 969/
+* vxt 04/12/2012 vt5  Add B for CVAL transaction cash code value and D for death/ticket 827/.
+* vxt 05/15/2012 vt6  fix for production blow up from 05/14/2012.
+* YAK 10/03/2012 YK1  Use function to identify Level Term II plans
+* YAK 05/13/2013 YK2  Correct Loan Interest calculation OI-1054
+*                     Eliminate multiple calls to *DATN - use #DATN variable
+* YAK 05/02/2013 YK3  Include Debit/Credit amount when cashing the last active policy OI-852
+* YAK 08/23/2013 YK4  Fix 1Y / RN calculation
+* YAK 09/11/2013 YK5  Fix Collection process problem (C*ACTIVE-SEGMENTS = 0)
+* YAK 01/22/2014 YK6  Fix Collection process problem - do not reset BADJ
+* NGG 09/17/2014 NG3  MS STATISTICS
+* vxt 12/10/2014 vt7  /Ticket 3021/
+* vxt 03/23/2015 vt8  /Ticket 3418/
+* vxt 05/15/2015 vt9  /Ticket 3375/
+* bz  10/9/2014      OI-3078 (Change for cash code assigment)
+* vxt 10/19/2016 vt10 /Ticket 4335/                                    *
+* vxt 12/22/2016 vt11 /Ticket 2122/                                    *
+* NG  10/9/2017  NG4  /Ticket 5976/
+* vxt 01/19/2018 vt12 /Ticket 6490/                                    *
+* vxt 04/03/2018 vt13 /Ticket 8417/ - fix missing CVAL transaction
+************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK.CI-BLOCK
+LOCAL USING G1099PXC                                              /* PM8
+LOCAL USING CAPA0001   /* NG4
+*
+LOCAL
+1 #UPDATE            (I4) CONST <2>             /* NG4
+**** 1 #REINSTATE         (I4) CONST <4>             /* NG4  /* vt12  01/19/2018
+1 #PROGRAM           (A8)                       /* NG3
+1 #USE-TIMX          (L) INIT <TRUE>            /* NG3
+* below passed from C2320pci and C2500PAM
+1 #CURR-VAR-INT-RATE   (P2.3)
+1 #LAPO              (L)   /* This is on only for Batch Lapo's         /* DW12
+1 #CMBX              (A4)  /* to Indicate Coming from From C2500PAM   DW15
+1 #SEG-X             (I2)  /* Seg # of Termed Pol or Loan Write-Off from CMB5
+1 #TIMN              (N7)  /* Time from C2500PAM
+1 #CASH-CODE         (A1)   /* from C2500SAM                      end DW15
+1 #DID-REIN          (L)    /* from C2320PCI             /* DW18
+1 #did-coll          (l)    /*  vt1   from batch collection project
+1 #DID-DEAD          (L)    /* YK2
+1 #did-csv           (l)    /* vt11     12/22/2016
+* above passed from C2320pci and C2500PAM
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 member-contact-id               /* vt10
+* 2 INTRO-FLAG     /* DW3
+  2 PROCESS-IND
+  2 NAME
+  2 CAP-BILL-DATE                    /* DW10
+  2 DEBIT-CREDIT-AMT                 /* YK3
+  2 DATE-OF-DEATH                    /* YK2
+  2 C*ACTIVE-SEGMENTS                /* YK5
+  2 X-INTEREST-RATE    (9)
+  2 X-PRINCIPAL-CHG-CODE (9)
+  2 X-LOAN-DATE        (9)
+  2 REDEFINE X-LOAN-DATE
+    3 X-LOAN-DATE-OCC   (9)
+      4 X-LOAN-YYYY (N4)
+      4 X-LOAN-MM   (N2)
+      4 X-LOAN-DD   (N2)
+  2 X-LOAN-AMOUNT      (9)
+  2 X-ACCUM-INTEREST   (9)
+  2 X-NXT-YR-ACCUM-INT (9)
+  2 X-OLD-LOAN-AMT     (9)
+  2 X-CAP-AMT          (9)
+  2 X-BILL-INTEREST-AMT(9)
+  2 X-INTEREST-RECEIVED(9)
+  2 X-ALT-LP-IND       (9)
+  2 X-ALT-LP-AMT       (9)
+  2 face-amount         (9)
+*
+  2 X-LOAN-DATE-2        (9)
+  2 REDEFINE X-LOAN-DATE-2
+    3 X-LOAN-DATE-2-OCC   (9)
+      4 X-LOAN-YYYY-2 (N4)
+      4 X-LOAN-MM-2   (N2)
+      4 X-LOAN-DD-2   (N2)
+  2 X-LOAN-AMOUNT-2      (9)
+  2 X-ACCUM-INTEREST-2   (9)
+  2 X-NXT-YR-ACCUM-INT-2 (9)
+  2 X-OLD-LOAN-AMT-2     (9)
+  2 X-CAP-AMT-2          (9)
+  2 X-BILL-INTEREST-AMT-2(9)
+  2 X-INTEREST-RECEIVED-2(9)
+  2 X-ALT-LP-IND-2       (9)
+  2 X-ALT-LP-AMT-2       (9)
+  2 X-BILL-ADJUST        (9)          /* YK3
+  2 X-BILL-DOLLAR        (9)          /* YK3
+  2 C*OUT-TERM-REF-GROUP (N3)         /* YK3
+  2 OUT-TERM-REF-GROUP   (10)         /* YK3
+    3 OUT-TERM-REF-AMOUNT             /* YK3
+*
+  2 STATUS               (9)
+  2 policy-id            (9)          /* vt10
+  2 ONLINE-ACTION        (9)
+  2 ISSUE-DATE           (9)
+  2 CONV-DURATION        (9)
+  2 TERM-LOAN-PRIN                    /* PM21
+  2 TERM-ACC-INT                      /* PM21
+*
+1 ACCT-REG-V VIEW OF A-ACCOUNTING-REGISTER
+  2 ID-NUMBER             (N6)
+  2 PROCESS-IND           (A1)
+  2 TRANSACTION-DATN      (P9)
+  2 TRANSACTION-TIMN      (P7)
+  2 TXN-CODE              (A4)
+  2 SEQUENCE-NUM          (N1)
+  2 NAME                  (A25)
+  2 TXN-ACCT-NUMBER       (N3)
+  2 ACCT-DATE             (N8)
+  2 DATE-LAST-ACCT-UPDATE (N8)
+  2 DEBIT-AMOUNT          (P7.2)
+  2 CREDIT-AMOUNT         (P7.2)
+  2 DESCRIPTION           (A20)
+  2 MESSAGE-CODE          (A1)
+  2 POLICY-NUMBER                      /* DW12
+  2 AALP-FLAG             (A1)
+  2 CLERK-ID              (A3)
+  2 TERMINAL-ID           (A8)
+  2 CASH-CODE             (A1)
+  2 SUNGARD-INFO (15)
+    3 SG-CATEGORY-1       (A2)
+    3 SG-CATEGORY-2       (A2)
+    3 SG-AMOUNT           (N6.2)
+*
+*
+1 MBRSHIP-MTD-DET-V VIEW OF A-MBRSHIP-MTD-DETAIL   /* DW15
+  2 ID-NUMBER
+  2 ENTRY-DATE
+  2 REC-ISN
+  2 CODE
+  2 ISSUE-DATE
+  2 NUM-MBRSHIPS
+
+1 #PAID-OFF-LOANS       (18)
+  2 #POL-FIX-VAR      (A3)
+  2 #POL-ISS-DT       (N8)
+  2 #POL-LOAN-ISS-DT  (N8)
+  2 #POL-LOAN-PRIN-TR (A4)
+  2 #POL-LOAN-PRIN    (N7.2)   /* DW1    /* vt8  was n6.2
+  2 #POL-LOAN-INT-TR  (A4)
+  2 #POL-LOAN-INT     (N5.2)
+  2 #POL-LOAN-FLNP-TR (A4)
+*
+1 #POL-TOT-PRIN (N7.2)    /* DW1        /* vt8 was n6.2
+1 #POL-TOT-INT  (N5.2)
+1 #POL-NUM    (A16)    /* DW6
+1 #RATE-DISP  (A6)     /* DW7
+*
+1 #MMDDYYYY (A8)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM  (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY  (N4)
+    3 #MM    (N2)
+  2 #DD    (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A (A4)
+  2 #MM-A   (A2)
+  2 #DD-A   (A2)
+*
+1 #1Y-AGO (N8)          /* YK4
+1 REDEFINE #1Y-AGO      /* YK4
+  2 #1Y-AGO-YYYY (N4)   /* YK4
+*
+1 #I2    (I2)
+1 #I3    (I2)
+1 #I4    (I2)
+1 #PAYOFF-LOAN (L)
+1 #DAILY-INT   (P3.7)
+1 #TRAN-CODE   (A4)
+1 #TRAN-AMT    (P7.2)  /* DW1           /* vt8  was p6.2
+1 #TRAN-LN-ISS-DT (A10)
+1 #Y-N      (A1)
+1 #NOTE-TEXT  (A60/10)   /* DW2
+1 #TO-INIT    (A3)       /* DW2
+1 #HOLD-SUFFIX(A3)       /* DW2
+*
+1 #SUFFIX     (A3)
+1 #AS-OF-DT   (N8)
+1 #LOAN-BAL   (N7.2/9)
+1 #LOAN-BAL-2 (N7.2/9)
+1 #ACC-INT    (N7.2/9)
+1 #ACC-INT-2  (N7.2/9)
+1 #CSV        (N7.2/9)
+1 #CVALUE     (N7.2/9)
+1 #LVALUE     (N7.2/9)
+1 #MCSV       (N7.2/9)
+1 #DB         (N7.2/9)
+1 #ANN-PREMIUM (N7.2/9)
+1 #FACE-AMT    (N7.2/9)  /* DW5
+1 #TPP         (N7.2/9)  /* DW5
+1 #WOFF-AMT    (N7.2)    /* DW12
+1 #SAVE-TIMN   (P7)
+1 #AMT-OVERLOANED (N7.2)
+1 #amt-overloaned-cap    (n7.2)                       /* vt2
+1 #amt-overloaned-var    (n7.2)                       /* vt2
+1 #AMT-RPU-CSV    (N7.2)      /* DW17
+1 #YES-NO      (A1)
+1 #CN          (N6)
+1 #ISS-DT      (N8)
+1 #ISS-DT-X    (A10)
+1 #LOAN-DT-X   (A10)
+1 #LOAN-AMT-X  (A10)
+1 #INT         (I2)
+1 #HAS-LOAN      (L)      /* DW16
+1 #CI-TRANSACTION  (L)
+1 #PLAN    (A3)
+1 REDEFINE #PLAN
+  2 #PLAN-A1   (A1)
+  2 #PLAN-S2   (A2)
+1 #FOUND-SPLIT    (L)
+1 #RPU-WITH-LOANS (L)         /* DW17
+1 #NO-TPP-IN-CSV  (L)       /* DW19
+1 #issue-date      (n8)                 /* vt4
+1 #cval            (l)                  /* vt5
+* #loan            (l)                  /* vt5   /* vt12
+1 #dead            (l)                  /* vt5
+1 #DATN            (N8)                 /* YK2
+1 #POL-REMAIN      (L)                  /* YK3
+1 #TOTAL           (N7.2)               /* YK3
+1 #TERM-REFUND     (N7.2)               /* YK3
+1 #II              (I2)                 /* YK3
+1 #ADD-DEBIT-CREDIT (L)                 /* YK3
+1 #adjust-to-receive-from       (n7.2)   /* vt7
+1 #adjust-to-give-back          (n7.2)   /* vt7
+*
+1 #owner-cn                     (n6)     /* vt10 \/
+1 stat view of a-status
+  2 id-number
+  2 ssn
+  2 member-contact-id                    /* vt10 /\
+*
+1 loan  view of a-loans           /* vt13  \/
+  2 id-number
+*                                 /* vt13  /\
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+* WRITE 'very top of C2316pci before input'
+* WRITE 'scr-trans=' #SCR-TRAN (*) 'TIMN=' #TIMN
+* WRITE 'ci-v.id-number=' CI-V.ID-NUMBER '=' #did-coll '=' #LAPO
+
+INPUT #CURR-VAR-INT-RATE #LAPO                  /* DW12
+  #CMBX #SEG-X #TIMN #CASH-CODE #DID-REIN             /* DW15
+  #DID-COLL #DID-DEAD                                 /* vt1   YK2
+  #did-csv                                                               /* vt11 12/22/2016
+* write 'did-csv=' #did-csv
+*
+#DATN := *DATN                     /* YK2
+IF #TIMN NE 0                      /* DW15
+  MOVE #TIMN TO #SAVE-TIMN  /* Loaded in C2500PAM for CMB5
+*                           /* Load in C2301/C2302/C2320PCI   YK3
+ELSE
+  MOVE *TIMN TO #SAVE-TIMN   /* Default to current time    /* DW12
+END-IF
+* write 'save-timn=' #save-timn
+*
+GET ST-V #CGA-ISN
+*
+IF #DID-DEAD                         /* YK2
+  #AS-OF-DT := ST-V.DATE-OF-DEATH    /* YK2
+ELSE                                 /* YK2
+  MOVE #DATN TO #AS-OF-DT            /* YK2
+END-IF                               /* YK2
+*
+IF ST-V.STATUS(*) = 'D'              /* YK3
+  #POL-REMAIN := TRUE                /* YK3
+END-IF                               /* YK3
+*
+if #did-csv                                          /* vt11 12/22/2016 \/
+  #POL-REMAIN :=  FALSE
+end-if                                               /* vt11 12/22/2016 /\
+*
+RESET #SUFFIX      /* Use TPP in CSV
+MOVE st-V.FACE-AMOUNT (*) TO #FACE-AMT (*)
+CALLNAT 'CVALUSXX'
+  ST-V.ID-NUMBER
+  #SUFFIX
+  #AS-OF-DT
+  #LOAN-BAL   (1:9)
+  #LOAN-BAL-2 (1:9)
+  #ACC-INT    (1:9)
+  #ACC-INT-2  (1:9)
+  #CSV        (1:9)
+  #CVALUE     (1:9)
+  #LVALUE     (1:9)
+  #MCSV       (1:9)
+  #DB         (1:9)
+  #ANN-PREMIUM  (1:9)
+  #FACE-AMT   (1:9)   /* DW5
+  #TPP        (1:9)   /* DW5
+*
+IF #DID-REIN                                 /* DW18
+  PERFORM CREATE-CVAL-TRANS
+*   RESET #LOAN                                /* NG4              /* vt12 01/19/2018 \/
+*   #LOAN.ID-NUMBER := ST-V.ID-NUMBER
+*   CALLNAT 'CAPN0001'
+*     #REINSTATE
+*     #LOAN
+*     #RETURN-MSG                                                 /* vt12 01/19/2018 /\
+  ESCAPE ROUTINE
+END-IF
+*
+* FOR #I1 1 TO 9                                                /* DW16 YK3
+FOR #I1 1 TO C*ACTIVE-SEGMENTS                                  /* YK3
+  IF  ((ST-V.X-LOAN-AMOUNT         (#I1) NE 0)
+      OR  (#ACC-INT                (#I1) NE 0)
+      OR  (ST-V.X-LOAN-AMOUNT-2    (#I1) NE 0)
+      OR  (#ACC-INT-2              (#I1) NE 0))
+    MOVE TRUE TO #HAS-LOAN                                    /* DW16
+  END-IF
+END-FOR
+*
+IF NOT #HAS-LOAN                                 /* DW16
+    AND (#CMBX NE 'CMB5')
+  PERFORM CREATE-CVAL-TRANS
+  ESCAPE ROUTINE
+END-IF
+*
+IF   (*DEVICE NE 'BATCH')   /* DW2
+    AND (#CMBX NE 'CMB5')                           /* DW15
+  IF #CGA-CLERK = 'ELB'
+    MOVE 'Y' TO #Y-N   /* LEE wants his default to be Yes
+  END-IF
+* 'Do you want to delete any existing Loans' on map below
+  INPUT TEXT 'Enter (Y)es or (N)o' MARK *#Y-N USING MAP 'C2316MCX'
+*
+  IF NOT #Y-N = 'Y' OR = 'N'
+    REINPUT 'Must Be (Y)es or (N)o'
+      MARK *#Y-N
+  END-IF
+*
+  IF #Y-N NE 'Y'
+    PERFORM CREATE-CVAL-TRANS                   /* DW16
+    ESCAPE ROUTINE
+  END-IF
+END-IF                  /* DW2
+*
+IF   (*DEVICE eq 'BATCH')   /* vt1 \/
+    AND (#CMBX NE 'CMB5')
+  IF #CGA-CLERK = 'ELB' or = 'VXT'               /* vt for test
+    MOVE 'Y' TO #Y-N
+  END-IF
+end-if                      /* vt1  /\
+*
+RESET #I2 #PAYOFF-LOAN
+*
+* FOR #I1 1 TO 9                                                /* YK3
+FOR #I1 1 TO C*ACTIVE-SEGMENTS                                  /* YK3
+  RESET #RPU-WITH-LOANS                          /* DW17
+*
+  IF  ((ST-V.X-LOAN-AMOUNT         (#I1) NE 0)                     /* DW14
+      OR  (#ACC-INT                (#I1) NE 0)
+      OR  (ST-V.X-LOAN-AMOUNT-2    (#I1) NE 0)
+      OR  (#ACC-INT-2              (#I1) NE 0))
+*                     Has a loan
+    IF (#LAPO AND (*DEVICE = 'BATCH') /* Must be a Lapse Ovrloan from  /* DW16
+        AND (ST-V.STATUS (#I1) = 'E'))   /* ATHPLAPS Just terminated
+*
+        OR  ((#CMBX = 'CMB5')  /* Is an AM CMB3 Tran                /* DW15
+        AND (#I1 = #SEG-X))        /* Only process selected policy
+*
+      PERFORM DELETE-LOANS
+    END-IF
+  END-IF
+END-FOR
+*
+IF   (*DEVICE NE 'BATCH') /* Must be a CI Online trans       /* DW16
+    AND (#CMBX NE 'CMB5')     /* CMB5 is an AM CMB5
+* FOR #I3 1 TO 9
+  FOR #I3 1 TO C*ACTIVE-SEGMENTS                             /* YK3
+    RESET #RPU-WITH-LOANS                          /* DW17
+*
+    IF (#SCR-TRAN (#I3) = 'DEAD' OR = 'CSV' OR = 'ANNU' OR = 'CVEX'
+        OR = 'CVEI' OR = 'RSGN' OR = 'RPU')
+        OR (#SCR-TRAN (#I3) = MASK ('LAP'))
+      MOVE #FILE-MATCHING-INDX (#I3) TO #I1
+      PERFORM DELETE-LOANS    /* SPLIT TEST below NOT NEEDED 9/2009    DW22
+*      IF  (#SCR-TRAN (#I3) = 'CSV' OR = 'ANNU'                      * DW22
+*               OR = 'CVEX' OR = 'CVEI' OR = 'RSGN')
+*       AND (STATUS (#I1) = 'D')                    /* Must be split
+*       FOR #I4 1 TO 9    /* Check-for-splits (NOT NEEDED 9/2009)
+*         MOVE PLAN (#I4) TO #PLAN
+*
+*         IF   (ISSUE-DATE (#I4) = ISSUE-DATE (#I1))
+*          AND (#I4 NE #I1)
+*          AND (NOT #PLAN = 'RT' OR = 'LT') /* not LT / RT
+*          AND ((#PLAN-A1 LT 'U') OR (#PLAN-A1 GT 'Z')) /* not LT2
+*          AND (STATUS (#I4) = 'E')   /* just split
+*            WRITE 'line 3251 delete this line"s loans' #I4 'status=' STATUS (#I4)
+*                'loan =' X-LOAN-AMOUNT (#I4)
+*           MOVE #I4 TO #I1
+*           PERFORM DELETE-LOANS
+*           ESCAPE BOTTOM
+*         END-IF
+*       END-FOR                                                     /* END DW22
+*      ELSE
+*        PERFORM DELETE-LOANS
+*      END-IF
+    END-IF
+  END-FOR
+END-IF
+*
+IF #PAYOFF-LOAN
+  UPDATE (0302)
+END-IF
+*
+IF NOT (#POL-REMAIN)                  /* YK3
+  PERFORM CLEAR-DEBIT-CREDIT          /* YK3
+END-IF                                /* YK3
+*
+IF *DEVICE NE 'BATCH'
+  END TRANSACTION
+END-IF
+*
+IF   #PAYOFF-LOAN
+    AND (#CMBX NE 'CMB5')                          /*  DW15
+  IF *DEVICE = 'BATCH'                       /* DW2
+    MOVE 'LAP' TO #CGA-SCR-SUFFIX
+    NEWPAGE (8)                              /* PM9
+    WRITE (8) NOTITLE USING FORM 'C2316FCI'  /* DW2 to DAL
+    MOVE #SUFFIX TO #CGA-SCR-SUFFIX
+*
+    ESCAPE ROUTINE                           /* DW2
+  ELSE
+* List of Transactions for loans paid off on Map below
+    INPUT TEXT 'Press Enter to see Payment Calcs' USING MAP 'C2316MCI'
+  END-IF
+END-IF
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DELETE-LOANS                         /* DW16
+* * * * * * * * * * * * * * * *
+*
+RESET #AMT-OVERLOANED-CAP #AMT-OVERLOANED-VAR #AMT-OVERLOANED
+*
+CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1 /* build POL-#  /* DW6
+*
+IF  ((NOT #LAPO AND (#CMBX NE 'CMB5'))     /* Trans which    DW19   DW20
+    AND (#SCR-TRAN (#I3) = 'RPU'))  /* use no TPP in CSV
+    OR ((NOT #LAPO AND (#CMBX NE 'CMB5'))
+    AND (#SCR-TRAN (#I3) = MASK ('LAP')))
+    OR #LAPO                                   /* DW20
+  MOVE 'NTP' TO #SUFFIX  /* NTP = No Tot Prems Paid used
+ELSE
+  RESET #SUFFIX
+END-IF
+*
+CALLNAT 'CVALUSXX'
+  ST-V.ID-NUMBER
+  #SUFFIX
+  #AS-OF-DT
+  #LOAN-BAL   (1:9)
+  #LOAN-BAL-2 (1:9)
+  #ACC-INT    (1:9)
+  #ACC-INT-2  (1:9)
+  #CSV        (1:9)
+  #CVALUE     (1:9)
+  #LVALUE     (1:9)
+  #MCSV       (1:9)
+  #DB         (1:9)
+  #ANN-PREMIUM  (1:9)
+  #FACE-AMT   (1:9)
+  #TPP        (1:9)
+*
+IF ((NOT #LAPO AND (#CMBX NE 'CMB5'))                     /* DW20
+    AND (#SCR-TRAN (#I3) = 'RPU'))   /* The tran was an RPU    * DW17
+  MOVE TRUE TO #RPU-WITH-LOANS                                                /* DW17
+  COMPUTE #AMT-RPU-CSV = ST-V.X-LOAN-AMOUNT   (#I1) + #ACC-INT   (#I1)
+    + ST-V.X-LOAN-AMOUNT-2 (#I1) + #ACC-INT-2 (#I1)
+ELSE
+  if #i3 ge 1 and #i3 le 9                    /* vt6
+    if #scr-tran (#i3) = 'CSV' or = 'RSGN'    /* vt5 \/   /* YK3
+      move true to #cval
+    end-if
+*
+    if #scr-tran(#i3) = 'DEAD'
+      move true to #dead
+    end-if                                          /* vt5 /\
+  end-if                                      /* vt6
+  if st-v.conv-duration (#i1) = 999                          /* vt2 \/
+      and st-v.x-loan-amount(#i1) ne 0
+    compute #amt-overloaned-cap = ST-V.X-LOAN-AMOUNT   (#I1) + #ACC-INT   (#I1)
+    compute #amt-overloaned-var = ST-V.X-LOAN-AMOUNT-2 (#I1) + #ACC-INT-2 (#I1)
+      - #CSV (#I1)
+  else                                                       /* vt2 /\
+
+    COMPUTE #AMT-OVERLOANED = ST-V.X-LOAN-AMOUNT   (#I1) + #ACC-INT   (#I1)
+      + ST-V.X-LOAN-AMOUNT-2 (#I1) + #ACC-INT-2 (#I1)
+      - #CSV (#I1)
+* Include billing adjustment and debit credit amount if applicable   YK3
+
+    #AMT-OVERLOANED := #AMT-OVERLOANED + ST-V.X-BILL-ADJUST(#I1)  /* YK3
+    IF (NOT #POL-REMAIN) AND (NOT #ADD-DEBIT-CREDIT)              /* YK3
+      #AMT-OVERLOANED := #AMT-OVERLOANED + ST-V.DEBIT-CREDIT-AMT  /* YK3
+      #ADD-DEBIT-CREDIT := TRUE                                   /* YK3
+    END-IF                                                        /* YK3
+  end-if                                                    /* vt2
+END-IF
+*
+if #lapo                                                /* vt7   \/
+  if st-v.x-bill-adjust(#i1) ne 0
+    if st-v.x-bill-adjust(#i1) gt 0
+      #adjust-to-receive-from := st-v.x-bill-adjust (#i1)
+    else
+      #adjust-to-give-back := st-v.x-bill-adjust (#i1) * (-1)
+    end-if
+    add 1 to #i2
+    move 'BADJ' to #TRAN-CODE
+    PERFORM ACCT-TRANS
+  end-if
+*
+else
+  reset #adjust-to-receive-from #adjust-to-give-back
+end-if
+*                                                       /* vt7   /\
+IF  ((ST-V.X-LOAN-AMOUNT    (#I1) NE 0)
+    OR  (#ACC-INT              (#I1) NE 0))
+  RESET #WOFF-AMT                                /* DW12
+  MOVE TRUE TO #PAYOFF-LOAN
+  ADD 1 TO #I2
+  MOVE 'FIX'                    TO #POL-FIX-VAR     (#I2)
+  MOVE ST-V.ISSUE-DATE  (#I1)   TO #POL-ISS-DT      (#I2)
+  MOVE ST-V.X-LOAN-DATE (#I1)   TO #POL-LOAN-ISS-DT (#I2)
+  MOVE ST-V.X-LOAN-AMOUNT (#I1) TO #POL-LOAN-PRIN   (#I2)
+  MOVE #ACC-INT           (#I1) TO #POL-LOAN-INT    (#I2)
+*
+  MOVE EDITED X-LOAN-DATE (#I1) (EM=9999/99/99) TO #TRAN-LN-ISS-DT
+*
+  IF #POL-LOAN-PRIN (#I2) NE 0
+    MOVE 'PADF' TO #TRAN-CODE #POL-LOAN-PRIN-TR (#I2)
+    ADD  #POL-LOAN-PRIN (#I2) TO #POL-TOT-PRIN
+    ADD  #POL-LOAN-PRIN (#I2) TO #WOFF-AMT               /* DW12
+    MOVE #POL-LOAN-PRIN (#I2) TO #TRAN-AMT
+    PERFORM ACCT-TRANS
+  END-IF
+*
+  IF #POL-LOAN-INT (#I2) NE 0
+    MOVE 'AIAF' TO #TRAN-CODE #POL-LOAN-INT-TR (#I2)
+    MOVE #POL-LOAN-INT (#I2) TO #TRAN-AMT
+    ADD  #POL-LOAN-INT (#I2) TO #WOFF-AMT               /* DW12
+    ADD  #POL-LOAN-INT (#I2) TO #POL-TOT-INT
+
+    PERFORM ACCT-TRANS
+  END-IF
+*
+  MOVE 'FLNF' TO #TRAN-CODE #POL-LOAN-FLNP-TR (#I2)
+  RESET #TRAN-AMT
+  PERFORM ACCT-TRANS
+*
+  fl. find loan with id-number = st-v.id-number            /* vt13  \/
+    if no
+      escape bottom (fl.)
+    end-norec                                              /* vt13  /\
+/*   Change the status to Lapsed   NG4
+    RESET #LOAN
+    #LOAN.LOAN-STATUS := 'L'
+    #LOAN.ID-NUMBER := ST-V.ID-NUMBER
+    CALLNAT 'CAPN0001'
+      #UPDATE
+      #LOAN
+      #RETURN-MSG
+  end-find                                                 /* vt13
+*
+  IF #CMBX = 'CMB5'                        /* DW15
+    PERFORM LOAN-COLLECTIONS
+  END-IF
+*
+  IF   (ST-V.CONV-DURATION (#I1) = 999)                        /* DW3
+    MOVE #DATN TO ST-V.X-LOAN-DATE (#I1) /* save payoff date   /* YK2
+    RESET CAP-BILL-DATE                                                    /* DW10
+    PERFORM PROCESS-1099C                                       /* PM8
+  ELSE
+    RESET X-LOAN-DATE (#I1)
+  END-IF
+*
+*   MOVE 12.000 TO X-INTEREST-RATE (#I1)    /* Removed 3/10/2008   /* DW11
+  RESET X-LOAN-AMOUNT          (#I1)
+  RESET X-ACCUM-INTEREST       (#I1)
+  RESET X-NXT-YR-ACCUM-INT     (#I1)
+  RESET X-OLD-LOAN-AMT         (#I1)
+  RESET X-CAP-AMT              (#I1)
+  RESET X-BILL-INTEREST-AMT    (#I1)
+  RESET X-INTEREST-RECEIVED    (#I1)
+  RESET X-ALT-LP-IND           (#I1)
+  RESET X-ALT-LP-AMT           (#I1)
+  RESET X-PRINCIPAL-CHG-CODE   (#I1)
+END-IF
+*
+IF ((ST-V.X-LOAN-AMOUNT-2    (#I1) NE 0)
+    OR (#ACC-INT-2              (#I1) NE 0))
+    AND (#CMBX NE 'CMB5')        /*   CMB5 is not for Variable Loan
+  RESET #WOFF-AMT                                /* DW12
+  MOVE TRUE TO #PAYOFF-LOAN
+  ADD 1 TO #I2
+  MOVE 'VAR'                      TO #POL-FIX-VAR     (#I2)
+  MOVE ST-V.ISSUE-DATE      (#I1) TO #POL-ISS-DT      (#I2)
+  MOVE ST-V.X-LOAN-DATE-2   (#I1) TO #POL-LOAN-ISS-DT (#I2)
+  MOVE ST-V.X-LOAN-AMOUNT-2 (#I1) TO #POL-LOAN-PRIN   (#I2)
+  MOVE #ACC-INT-2           (#I1) TO #POL-LOAN-INT    (#I2)
+*
+  MOVE EDITED X-LOAN-DATE-2 (#I1) (EM=9999/99/99) TO #TRAN-LN-ISS-DT
+  IF #POL-LOAN-PRIN (#I2) NE 0
+    MOVE 'PADV' TO #TRAN-CODE #POL-LOAN-PRIN-TR (#I2)
+    ADD  #POL-LOAN-PRIN (#I2) TO #POL-TOT-PRIN
+    ADD  #POL-LOAN-PRIN (#I2) TO #WOFF-AMT               /* DW12
+    MOVE #POL-LOAN-PRIN (#I2) TO #TRAN-AMT
+    PERFORM ACCT-TRANS
+  END-IF
+*
+  IF #POL-LOAN-INT (#I2) NE 0
+    MOVE 'AIAV' TO #TRAN-CODE #POL-LOAN-INT-TR (#I2)
+    ADD  #POL-LOAN-INT (#I2) TO #POL-TOT-INT
+    ADD  #POL-LOAN-INT (#I2) TO #WOFF-AMT               /* DW12
+    MOVE #POL-LOAN-INT (#I2) TO #TRAN-AMT
+    PERFORM ACCT-TRANS
+  END-IF
+*
+  MOVE 'FLNV' TO #TRAN-CODE #POL-LOAN-FLNP-TR (#I2)
+  RESET #TRAN-AMT
+  PERFORM ACCT-TRANS
+*
+  RESET X-LOAN-DATE-2          (#I1)
+  RESET X-LOAN-AMOUNT-2        (#I1)
+  RESET X-ACCUM-INTEREST-2     (#I1)
+  RESET X-NXT-YR-ACCUM-INT-2   (#I1)
+  RESET X-OLD-LOAN-AMT-2       (#I1)
+  RESET X-CAP-AMT-2            (#I1)
+  RESET X-BILL-INTEREST-AMT-2  (#I1)
+  RESET X-INTEREST-RECEIVED-2  (#I1)
+  RESET X-ALT-LP-IND-2         (#I1)
+  RESET X-ALT-LP-AMT-2         (#I1)
+END-IF
+*
+IF #CMBX = 'CMB5'                           /* DW15
+  MOVE 'LWOF' TO #TRAN-CODE     /* loan Writeoff
+  MOVE #WOFF-AMT TO #TRAN-AMT
+  PERFORM ACCT-TRANS
+else
+  if #amt-overloaned-cap gt 0                                     /* vt2 \/
+    move 'LWOF' to #TRAN-CODE  /* Cap Loan Writeoff
+    move #amt-overloaned-cap to #tran-amt
+    perform ACCT-TRANS
+    MOVE 'CVAL' TO #TRAN-CODE     /* CASH VALU at time of Lapse Overloan
+    MOVE #CSV (#I1) TO #TRAN-AMT
+    PERFORM ACCT-TRANS
+  end-if
+  if #amt-overloaned-var gt 0
+    move 'LWOV' to #TRAN-CODE  /* Cap Loan Writeoff
+    move #amt-overloaned-var to #tran-amt
+    perform ACCT-TRANS
+  else                                                             /* vt2 /\
+    IF #AMT-OVERLOANED GT 0
+      MOVE 'LWOF' TO #TRAN-CODE     /* loan Writeoff
+      MOVE #AMT-OVERLOANED TO #TRAN-AMT
+      PERFORM ACCT-TRANS
+*
+      MOVE 'CVAL' TO #TRAN-CODE     /* CASH VALU at time of Lapse Overloan
+      MOVE #CSV (#I1) TO #TRAN-AMT
+      PERFORM ACCT-TRANS
+    ELSE
+      IF #RPU-WITH-LOANS                                          /* DW17
+        MOVE 'CVAL' TO #TRAN-CODE   /* CASH VALU at time of Termination  /* DW14
+        MOVE #AMT-RPU-CSV TO #TRAN-AMT
+        PERFORM ACCT-TRANS
+      ELSE
+        MOVE 'CVAL' TO #TRAN-CODE   /* CASH VALU at time of Termination  /* DW14
+        MOVE #CSV (#I1) TO #TRAN-AMT
+        PERFORM ACCT-TRANS
+      END-IF
+    END-IF
+  end-if                                                        /* vt2
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CREATE-CVAL-TRANS                  /* DW16
+* * * * * * * * * * * * * * * *
+*
+* FOR #I3 1 TO 9                                     /* YK3
+FOR #I3 1 TO C*ACTIVE-SEGMENTS                       /* YK3
+  IF  (#SCR-TRAN (#I3) = 'RPU') /* Trans which  DW19
+      OR (#SCR-TRAN (#I3) = MASK ('LAP'))     /* use no TPP in CSV
+    MOVE 'NTP' TO #SUFFIX
+  ELSE                           /* In case multiple trans are done
+    RESET #SUFFIX
+  END-IF
+*
+  CALLNAT 'CVALUSXX'
+    ST-V.ID-NUMBER
+    #SUFFIX
+    #AS-OF-DT
+    #LOAN-BAL   (1:9)
+    #LOAN-BAL-2 (1:9)
+    #ACC-INT    (1:9)
+    #ACC-INT-2  (1:9)
+    #CSV        (1:9)
+    #CVALUE     (1:9)
+    #LVALUE     (1:9)
+    #MCSV       (1:9)
+    #DB         (1:9)
+    #ANN-PREMIUM  (1:9)
+    #FACE-AMT   (1:9)
+    #TPP        (1:9)
+*
+  RESET #FOUND-SPLIT
+  MOVE #FILE-MATCHING-INDX (#I3) TO #I1
+*
+
+  IF ((#SCR-TRAN (#I3) = 'CSV' OR = 'ANNU'
+      OR = 'CVEX' OR = 'CVEI' OR = 'RSGN')
+      OR (#SCR-TRAN (#I3) = MASK ('LAP')))
+      AND (STATUS (#I1) = 'D')                    /* Must be split
+*   FOR #I4 1 TO 9                      /* Check-for-splits       /* YK3
+    FOR #I4 1 TO C*ACTIVE-SEGMENTS                                /* YK3
+      MOVE PLAN (#I4) TO #PLAN
+*
+      IF   (ISSUE-DATE (#I4) = ISSUE-DATE (#I1))
+          AND (#I4 NE #I1)
+*         AND (NOT #PLAN = 'RT' OR = 'LT') /* not LT / RT          /* YK1
+*         AND ((#PLAN-A1 LT 'U') OR (#PLAN-A1 GT 'Z')) /* not LT2  /* YK1
+          AND (NOT FUNCTION-TERM-POLICY(<#PLAN>))                  /* YK1
+          AND (STATUS (#I4) = 'E')   /* just split
+        MOVE TRUE TO #FOUND-SPLIT
+        MOVE #I4 TO #I1
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF #FOUND-SPLIT
+      AND (CI-V.ID-NUMBER = ST-V.ID-NUMBER)
+    PERFORM DO-CVAL-TRANS
+  ELSE
+    IF  (#SCR-TRAN (#I3) NE ' ')   /* A CI tran was done for this line
+        AND (CI-V.ID-NUMBER = ST-V.ID-NUMBER)
+        AND (#SCR-TRAN (#I3) NE 'RPU')  /* no TR needed for RPU w no loan /* DW16
+      MOVE #FILE-MATCHING-INDX (#I3) TO #I1
+      PERFORM DO-CVAL-TRANS
+    END-IF
+  END-IF
+END-FOR
+*
+IF NOT (#POL-REMAIN)                  /* YK3
+  PERFORM CLEAR-DEBIT-CREDIT          /* YK3
+END-IF                                /* YK3
+END TRANSACTION
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DO-CVAL-TRANS
+* * * * * * * * * * * * * * * *
+*
+MOVE TRUE TO #CI-TRANSACTION
+MOVE 'CVAL' TO #TRAN-CODE     /* CASH VALU at time of Termination
+MOVE #CSV (#I1) TO #TRAN-AMT
+CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1 /* build POL-#  /* DW6
+PERFORM ACCT-TRANS
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE LOAN-COLLECTIONS          /* DW15
+* * * * * * * * * * * * * * * *
+*
+MOVE ST-V.ID-NUMBER TO #CN
+MOVE ST-V.ISSUE-DATE (#I1) TO #YYYYMMDD
+move st-v.issue-date (#i1) to #issue-date                  /* vt4
+COMPRESS #MM-A #DD-A #YYYY-A INTO #ISS-DT-X WITH '/'
+*
+MOVE ST-V.X-LOAN-DATE (#I1) TO #YYYYMMDD #ISS-DT
+COMPRESS #MM-A #DD-A #YYYY-A INTO #LOAN-DT-X WITH '/'
+MOVE EDITED ST-V.X-LOAN-AMOUNT (#I1) (EM=ZZZZ.99) TO #LOAN-AMT-X
+*
+IF #CGA-CLERK = 'ELB' or = 'KHB'   or = 'VXT'   /* vt1
+  MOVE 'Y' TO #YES-NO
+ELSE
+  MOVE 'N' TO #YES-NO
+END-IF
+*
+if *device ne 'BATCH'           /* vt1
+
+  IF #CMBX = 'CMB5'                                 /* PM21
+    INPUT MARK *#YES-NO USING MAP 'C2316MC2'        /* PM21
+  ELSE                                              /* PM21
+    INPUT MARK *#YES-NO USING MAP 'CPADJMAM'        /* DW5
+  END-IF                                            /* PM21
+*
+  IF NOT #YES-NO = 'Y' OR ='N'
+    REINPUT 'Response must be (Y)es or (N)o'
+      MARK *#YES-NO
+  END-IF
+*
+  IF #YES-NO = 'Y'
+* MOVE 'COLL' TO #CMBX      /* Cannot be here
+    IF #CMBX = 'CMB5'                               /* PM21
+      ST-V.TERM-LOAN-PRIN := #POL-LOAN-PRIN (#I2)   /* PM21
+      ST-V.TERM-ACC-INT   := #POL-LOAN-INT  (#I2)   /* PM21
+    END-IF                                          /* PM21
+*
+    RESET #NOTE-TEXT (*)
+    MOVE 1 TO #INT
+    COMPRESS '* POL ISS' #ISS-DT-X
+      'CAP LOAN SENT TO COLLECTIONS' INTO #NOTE-TEXT (#INT)
+*
+    CALLNAT 'E4205SDM' #CN #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+    RESET MBRSHIP-MTD-DET-V
+    COMPUTE MBRSHIP-MTD-DET-V.ENTRY-DATE = 99999999 - #DATN  /* YK2
+* MOVE #HOLD-ISN        TO MBRSHIP-MTD-DET-V.REC-ISN
+    MOVE #CN         TO MBRSHIP-MTD-DET-V.ID-NUMBER
+    MOVE 'V' TO MBRSHIP-MTD-DET-V.CODE
+*    MOVE #ISS-DT TO MBRSHIP-MTD-DET-V.ISSUE-DATE           /* vt4
+    move #issue-date to mbrship-mtd-det-v.issue-date        /* vt4
+    RESET MBRSHIP-MTD-DET-V.NUM-MBRSHIPS
+    STORE MBRSHIP-MTD-DET-V
+*
+    MOVE *PROGRAM TO #PROGRAM
+    CALLNAT 'MSSNL003'           /* NG3
+      MBRSHIP-MTD-DET-V.ID-NUMBER
+      MBRSHIP-MTD-DET-V.CODE
+      #CGA-USER-COMPANY
+      MBRSHIP-MTD-DET-V.ISSUE-DATE
+      #PROGRAM
+      #USE-TIMX
+  END-IF
+end-if                      /* vt1
+*
+END-SUBROUTINE
+
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE ACCT-TRANS
+* * * * * * * * * * * * * * *
+*
+RESET ACCT-REG-V
+MOVE ST-V.ID-NUMBER        TO ACCT-REG-V.ID-NUMBER
+MOVE #SAVE-TIMN            TO ACCT-REG-V.TRANSACTION-TIMN   /* DW16
+MOVE *INIT-ID              TO ACCT-REG-V.TERMINAL-ID
+MOVE #CGA-CLERK            TO ACCT-REG-V.CLERK-ID
+MOVE ST-V.NAME             TO ACCT-REG-V.NAME
+MOVE #DATN                 TO ACCT-REG-V.ACCT-DATE /* Was Issue-date  DW15   YK2
+MOVE #POL-NUM              TO ACCT-REG-V.POLICY-NUMBER    /* DW12
+*
+IF ST-V.CONV-DURATION (#I1) = 999                           /* DW3
+    AND NOT #LAPO                                                             /* DW12
+  MOVE 'CAP MBR' TO ACCT-REG-V.DESCRIPTION
+END-IF
+*
+MOVE ST-V.ISSUE-DATE (#I1) TO #YYYYMMDD                     /* DW4
+COMPRESS #MM-A #DD-A #YYYY-A INTO #MMDDYYYY LEAVING NO      /* DW4
+* COMPRESS ACCT-REG-V.DESCRIPTION #TRAN-LN-ISS-DT           /* DW4
+COMPRESS ACCT-REG-V.DESCRIPTION #MMDDYYYY                   /* DW4
+  INTO ACCT-REG-V.DESCRIPTION
+*
+IF   (ST-V.CONV-DURATION (#I1) NE 999)                      /* DW7
+    AND (ST-V.X-INTEREST-RATE (#I1) NE 0)
+    AND (#TRAN-CODE = MASK (...'F'))   /* Only Fixed loans
+    AND (NOT #TRAN-CODE = 'LWOF' OR = 'CVAL')                      /* DW12
+  MOVE EDITED ST-V.X-INTEREST-RATE (#I1) (EM=ZZ.99) TO #RATE-DISP
+  COMPRESS #RATE-DISP '%' INTO #RATE-DISP LEAVING NO        /* DW7
+  COMPRESS ACCT-REG-V.DESCRIPTION #RATE-DISP INTO ACCT-REG-V.DESCRIPTION
+END-IF
+*
+IF ACCT-REG-V.TRANSACTION-DATN = 0
+  MOVE #DATN TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE               /* YK2
+ELSE
+  MOVE ACCT-REG-V.TRANSACTION-DATN TO ACCT-REG-V.DATE-LAST-ACCT-UPDATE
+END-IF
+*
+MOVE #DATN TO ACCT-REG-V.TRANSACTION-DATN                       /* YK2
+*
+IF #TRAN-CODE  = 'AIAF' OR = 'AIAV'
+  MOVE 190 TO ACCT-REG-V.TXN-ACCT-NUMBER
+END-IF
+*
+IF #TRAN-CODE  = 'FLNF' OR = 'FLNV'
+  MOVE 410 TO ACCT-REG-V.TXN-ACCT-NUMBER
+END-IF
+*
+IF #TRAN-CODE = 'PADF' OR = 'PADV'
+  MOVE 115 TO ACCT-REG-V.TXN-ACCT-NUMBER
+END-IF
+*
+if #lapo                                                            /* vt7   \/
+  MOVE 'Lapse Overloan' TO ACCT-REG-V.DESCRIPTION
+  if #tran-code = 'BADJ'
+    if  #adjust-to-receive-from ne 0
+      MOVE #adjust-to-receive-from TO ACCT-REG-V.credit-AMOUNT
+    end-if
+    if #adjust-to-give-back ne 0
+      move #adjust-to-give-back to acct-reg-v.debit-amount
+    end-if
+  end-if
+end-if                                                              /* vt7   /\
+*
+IF #TRAN-CODE = 'LWOF' or = 'LWOV'                       /* DW12/DW13  /*vt2
+  MOVE #TRAN-AMT TO ACCT-REG-V.DEBIT-AMOUNT
+*
+  IF #LAPO
+    MOVE 'Lapse Overloan' TO ACCT-REG-V.DESCRIPTION
+  ELSE
+    IF   (ST-V.CONV-DURATION (#I1) = 999)                        /* DW14
+      IF  #CMBX = 'CMB5'                 /* DW15
+        MOVE 'CAP Loan Writeoff' TO ACCT-REG-V.DESCRIPTION
+      ELSE
+        MOVE 'CAP Loan Payoff' TO ACCT-REG-V.DESCRIPTION
+      END-IF
+    ELSE
+      MOVE 'CI Loan Payoff' TO ACCT-REG-V.DESCRIPTION
+    END-IF
+  END-IF
+ELSE
+  IF #TRAN-CODE = 'CVAL'                                 /* DW12
+    IF #DID-REIN                               /* DW18
+      MOVE #TRAN-AMT TO ACCT-REG-V.CREDIT-AMOUNT
+      MOVE 'Reinstatement' TO ACCT-REG-V.DESCRIPTION
+    ELSE
+      MOVE #TRAN-AMT TO ACCT-REG-V.DEBIT-AMOUNT
+      IF #LAPO
+        MOVE 'Lapse Overloan' TO ACCT-REG-V.DESCRIPTION
+      ELSE
+        IF #RPU-WITH-LOANS                                              /* DW17
+          MOVE 'CI RPU' TO ACCT-REG-V.DESCRIPTION
+        ELSE
+          IF #CI-TRANSACTION
+            MOVE 'CI termination' TO ACCT-REG-V.DESCRIPTION
+          ELSE
+            MOVE 'CSV with Loan' TO ACCT-REG-V.DESCRIPTION
+            MOVE TRUE TO #CVAL
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  ELSE
+    MOVE #TRAN-AMT TO ACCT-REG-V.CREDIT-AMOUNT
+  END-IF
+END-IF
+*
+IF   (ST-V.CONV-DURATION (#I1) = 999)                        /* DW3
+    AND (#TRAN-AMT NE 0)
+    AND (#TRAN-CODE = 'PADF' OR = 'AIAF' OR = 'FLNF' OR = 'LWOF'
+    or = 'LWOV' )                                           /* DW13        /* vt2
+  MOVE 'CP' TO SG-CATEGORY-1  (1)
+  MOVE '**' TO SG-CATEGORY-2  (1)
+  MOVE #TRAN-AMT TO SG-AMOUNT (1)
+*  MOVE TRUE TO #LOAN                                 /* vt5
+END-IF
+*
+MOVE #TRAN-CODE TO ACCT-REG-V.TXN-CODE
+*
+IF #AMT-OVERLOANED GT 0
+    OR #AMT-OVERLOANED-CAP GT 0                        /* vt2
+    OR #AMT-OVERLOANED-VAR GT 0                        /* vt2
+    OR #DID-REIN                                        /* DW18
+    OR #DID-COLL                                       /* vt1
+    or #lapo                                                   /* vt9
+  IF #AMT-OVERLOANED-CAP > 0                    /*  bz OI-3078
+    MOVE 'Q' TO ACCT-REG-V.CASH-CODE           /*  bz OI-3078 - LAPC
+  ELSE                                          /*  bz OI-3078
+    MOVE 'O' TO ACCT-REG-V.CASH-CODE           /*  bz OI-3078 - LAPO was 'A' before Q and O were introduced
+  END-IF                                        /*  bz OI-3078
+  IF #DID-COLL                                     /* vt1  \/
+    MOVE 'T' TO ACCT-REG-V.CASH-CODE
+  END-IF                                           /* vt1  /\
+  IF #CVAL                                                             /* vt5 \/
+    MOVE 'B' TO ACCT-REG-V.CASH-CODE
+  END-IF
+  IF #DEAD
+    MOVE 'D' TO ACCT-REG-V.CASH-CODE
+  END-IF                                                            /* vt5 /\
+ELSE
+  IF #CI-TRANSACTION OR #LAPO OR #CVAL                              /* vt5 \/
+    MOVE 'B' TO ACCT-REG-V.CASH-CODE
+  ELSE
+    IF #DEAD
+      MOVE 'D' TO ACCT-REG-V.CASH-CODE
+    ELSE
+      MOVE 'P' TO ACCT-REG-V.CASH-CODE                      /* vt3
+    END-IF
+  END-IF                                                      /* vt5
+*  MOVE '$' TO ACCT-REG-V.CASH-CODE                        /* DW14  vt3
+END-IF
+IF #CVAL                                                /* vt5 \/
+  MOVE 'B' TO ACCT-REG-V.CASH-CODE
+END-IF
+* IF #DEAD
+IF #DID-DEAD                                            /* YK7
+  MOVE 'D' TO ACCT-REG-V.CASH-CODE
+END-IF                                                  /* vt5 /\
+* Skip zero transactions                                              /* YK3
+IF ACCT-REG-V.DEBIT-AMOUNT = 0 AND ACCT-REG-V.CREDIT-AMOUNT = 0       /* YK3
+    AND ACCT-REG-V.TXN-CODE = 'CVAL'                                  /* YK3
+  IGNORE                                                              /* YK3
+ELSE                                                                  /* YK3
+  STORE ACCT-REG-V
+END-IF                                                                /* YK3
+*
+IF #DID-REIN                        /* DW18
+  RESET ACCT-REG-V.CREDIT-AMOUNT
+  MOVE #TRAN-AMT TO ACCT-REG-V.DEBIT-AMOUNT
+  MOVE 'SUSP' TO ACCT-REG-V.TXN-CODE
+  STORE ACCT-REG-V
+END-IF
+*
+IF #DID-COLL                                           /* YK6
+  ESCAPE ROUTINE                                       /* YK6
+END-IF                                                 /* YK6
+* YK3 Start
+* Use ST-V.X-BILL-DOLLAR field to pass premium refund to this program
+* calculate and reset immediately
+* #SCR-TRAN (#I3) (#SCR-TRAN (#I1)
+IF (ST-V.STATUS (#I1) = 'E' AND #SCR-TRAN (*) = 'RSGN') OR
+    (#DID-DEAD AND ST-V.X-BILL-DOLLAR(#I1) <> 0)
+*   CALLNAT 'GPLNMSXX' #POL-NUM ST-V.ID-NUMBER #I1
+*   ACCT-REG-V.POLICY-NUMBER := #POL-NUM
+  #ISSUE-DATE := FUNCTION-DATE(<ST-V.ISSUE-DATE(#I1)>)
+  #TRAN-AMT := ST-V.X-BILL-DOLLAR(#I1)
+  #TOTAL := #TOTAL + ST-V.X-BILL-DOLLAR(#I1) + ST-V.X-BILL-ADJUST(#I1)
+* Check for possible write-off for Term policies
+  IF NOT #POL-REMAIN
+    FOR #II = 1 TO C*OUT-TERM-REF-GROUP
+      #TERM-REFUND := #TERM-REFUND + ST-V.OUT-TERM-REF-AMOUNT(#II)
+    END-FOR
+    #TOTAL := #TOTAL + ST-V.DEBIT-CREDIT-AMT + #TERM-REFUND * (-1)
+    RESET #TERM-REFUND
+  END-IF
+*
+  #1Y-AGO      := #DATN                   /* YK4
+  #1Y-AGO-YYYY := #1Y-AGO-YYYY - 1        /* YK4
+  IF ST-V.ISSUE-DATE(#I1) GT #1Y-AGO      /* YK4
+    MOVE '1Y' TO SG-CATEGORY-1 (1)
+  ELSE
+    MOVE 'RN' TO SG-CATEGORY-1 (1)
+  END-IF
+  SG-AMOUNT(1) := ABS(#TRAN-AMT)
+  IF #TRAN-AMT < 0
+    #TRAN-CODE := 'PRER'
+    PERFORM WRITE-TRAN
+  ELSE
+    #TRAN-CODE := 'PREP'
+    PERFORM WRITE-TRAN
+  END-IF
+  IF #POL-REMAIN AND #TOTAL > 0
+    MOVE 'RDCR' TO #TRAN-CODE
+    ST-V.DEBIT-CREDIT-AMT := ST-V.DEBIT-CREDIT-AMT + #TRAN-AMT + ST-V.X-BILL-ADJUST(#I1)
+    #TRAN-AMT := #TOTAL * (-1)
+    PERFORM WRITE-TRAN
+  END-IF
+END-IF
+RESET ST-V.X-BILL-DOLLAR(#I1) ST-V.X-BILL-ADJUST(#I1)
+UPDATE (0302)
+* YK3 End
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE CLEAR-DEBIT-CREDIT   /* YK3
+************************************
+* YK3 Start
+* Calculate full refund transaction (refund check)
+* if there are active policies left calculate only
+* premium refund if any...
+* Include Debit/Credit + Term Refund bucket if no active policies left
+*
+RESET #TRAN-AMT #TRAN-CODE ACCT-REG-V.DESCRIPTION
+* #YYYYMMDD := *DATN
+*
+* Include Debit/Credit refund check
+* if no active policies left
+RESET ACCT-REG-V.POLICY-NUMBER ACCT-REG-V.DESCRIPTION
+IF ST-V.DEBIT-CREDIT-AMT <> 0
+  #TRAN-AMT := ST-V.DEBIT-CREDIT-AMT
+  RESET ST-V.DEBIT-CREDIT-AMT
+  IF #TRAN-AMT < 0
+    #TRAN-CODE := 'RDCR'
+    PERFORM WRITE-TRAN
+  ELSE
+    #TRAN-CODE := 'ADCR'
+    PERFORM WRITE-TRAN
+  END-IF
+END-IF
+* Include Term Refund into refund check
+FOR #II = 1 TO C*OUT-TERM-REF-GROUP
+  #TERM-REFUND := #TERM-REFUND + ST-V.OUT-TERM-REF-AMOUNT(#II)
+END-FOR
+#TRAN-AMT := #TERM-REFUND * (-1)
+RESET ST-V.OUT-TERM-REF-GROUP(*)
+IF #TRAN-AMT <> 0
+  #TRAN-CODE := 'RTRC'
+  PERFORM WRITE-TRAN
+END-IF
+IF #TOTAL > 0 AND (NOT #DID-DEAD)
+  #TRAN-CODE := 'PWOF'
+  #TRAN-AMT := #TOTAL * (-1)
+  PERFORM WRITE-TRAN
+END-IF
+*
+UPDATE (0302)
+* YK3
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE WRITE-TRAN       /* YK3
+*****************************************
+*
+IF (#TRAN-CODE = 'PREP' AND #POL-REMAIN AND #TOTAL > 0) OR
+    (#TRAN-CODE = 'PRER' AND #POL-REMAIN AND #TOTAL > 0) OR
+    (#TOTAL > 0 AND NOT #POL-REMAIN)
+  ACCT-REG-V.CASH-CODE := 'A'
+END-IF
+*
+RESET ACCT-REG-V.DESCRIPTION
+DECIDE FOR FIRST CONDITION
+  WHEN #DID-DEAD
+    ACCT-REG-V.CASH-CODE := 'D'
+  WHEN #TRAN-CODE = 'ADCR' OR = 'RDCR' AND #ISSUE-DATE <> 0
+    COMPRESS FULL #ISSUE-DATE 'CSV/RSG ADJ' INTO ACCT-REG-V.DESCRIPTION
+  WHEN #TRAN-CODE = 'ADCR' OR = 'RDCR' AND #ISSUE-DATE = 0
+    if  #lapo                                                   /* vt7 \/
+      acct-reg-v.description := 'Lapse Overloan'
+    else                                                        /* vt7 /\
+      RESET ACCT-REG-V.DESCRIPTION
+    end-if                                                      /* vt7
+  WHEN #TRAN-CODE = 'RTRC'
+    ACCT-REG-V.DESCRIPTION := 'Term Refund credit'
+    ACCT-REG-V.POLICY-NUMBER := ST-V.ID-NUMBER
+  WHEN #TRAN-CODE = 'PWOF'
+    ACCT-REG-V.DESCRIPTION := 'Premium Write Off'
+    ACCT-REG-V.POLICY-NUMBER := ST-V.ID-NUMBER
+  WHEN NONE
+    ACCT-REG-V.DESCRIPTION := 'CSV/RSG ADJ'
+END-DECIDE
+*
+IF #TRAN-AMT < 0
+  RESET ACCT-REG-V.CREDIT-AMOUNT
+  ACCT-REG-V.DEBIT-AMOUNT := #TRAN-AMT * (-1)
+  ACCT-REG-V.TXN-CODE := #TRAN-CODE
+ELSE
+  RESET ACCT-REG-V.DEBIT-AMOUNT
+  ACCT-REG-V.CREDIT-AMOUNT := #TRAN-AMT
+  ACCT-REG-V.TXN-CODE := #TRAN-CODE
+END-IF
+STORE ACCT-REG-V
+RESET SUNGARD-INFO(*)
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-1099C                                   /* PM8
+************************************************************************
+*
+#RELATED-ID-NUMBER  := ST-V.ID-NUMBER
+#policy-number      := st-v.policy-id (#i1)                                    /* vt10 \/
+#insured-contact-id := st-v.member-contact-id
+#owner-cn           := get-policy-owner(<st-v.policy-id(#i1)>)
+find(1) stat with id-number = #owner-cn
+  #owner-contact-id   := stat.member-contact-id
+  #owner-ssn          := stat.ssn
+end-find                                                                       /* vt10 /\
+#INDEX              := #I1
+#TYPE-1099          := 'C'
+#AMOUNT             := #POL-LOAN-PRIN (#I1) + #POL-LOAN-INT (#I1)
+#GROSS-AMOUNT       := #POL-LOAN-INT (#I1)
+*
+CALLNAT 'G1099SXC'
+  #PDA-1099
+*
+END-SUBROUTINE
+*
+END

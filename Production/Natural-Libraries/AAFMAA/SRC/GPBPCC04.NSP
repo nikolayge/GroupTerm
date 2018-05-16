@@ -1,0 +1,1379 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM GPBPCC04 - Credit Card processing (Restructured ATHPCCRD)
+* Part II - apply credit card transactions in IAS and
+*          create applied transactions report for users
+**********************************************************************
+* work file 1 - detail transactions file created in GPBPCC01 (sorted by CN)
+* work file 2 - response file from SAGE (sorted by CN)
+* work file 3 - applied transactions
+* work file 4 - rejected transactions
+* work file 5 - error report from apply transaction process
+*               (money will be applied to ADCR)
+**********************************************************************
+* MODIFICATION LOG
+* USER   DATE      TAG     REASON
+**********************************************************************                                                                      *
+* YAK    09012008          Create program/restructure ATHPCCRD
+*                          (split program in two steps)
+**********************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG     REASON
+*
+* DRW    10052004  DW0     Create program
+* DRW    01172005  DW2     Add Auto Loan payments based on SALP 8
+* DRW    01202005  DW3     Combine multiple CC trans into 1
+* DRW    01312005  DW4     Fix Matching when there multiple
+* DRW    04062005  DW7     Split CC prin & Int applied by CAP & POLICY
+* DRW    05122005  DW9     Add #CMBX to pass Combo code
+* DRW    05122005  DW10    Use Cash-Code of 'C' for Credit Card trans
+* DRW    07112005  DW13    Only Chg to Q for 1 pol at a time if CC exprd
+* DRW    08172005  DW14    Add tot amt to Rej Rpt & breakout other tots
+* DRW    09012005  DW16    Use Mode Prior to updates for CC test
+* DRW    10012005  DW17    Put out all rejects
+* DRW    11022005  DW18    Reject Caps with CIP and Mode A/S/Q
+* DRW    12012005  DW19    reset CIP on EXPIRE-DATE mode changes
+* DRW    01032006  DW20    Use Alp Ind prior to updates for CC test
+* DRW    08042006  DW25    Enlarge Counter for Accepted & Rejected
+* DRW    11202006  DW26    Check for valid status to set #LX
+* DRW    03302007  DW31    Fix Prem Oberflow to 999,999.99
+* DRW    10262007  DW33    Only make mode M if there is a CIP ir MIP
+* YAK    12052007  YK1     Remove hardcording for interest rates
+*                          (Read GEN-TABLE through OBJNGENT)
+* YAK    02052008  YK2     Change code to use FUNCTION-INT-RATE
+*                          to get rate from GEN-TABLE
+* PAM    04302008  PM34    Set #LX for rider policies
+* DRW  07/14/2008  DW36    Create Applied CC file for MEWEBTRANS file
+* PAM  02/26/2009  PM38    Added credit card CAP
+* PAM  03/26/2009  PM41    Use universal TIMN and DATN for transactions
+* YAK  04/17/2009  YK4     Additional changes for Payware process:
+*                          1. Add future CAP transactions report for testing run
+*                          2. Create applied/rejected reports in tab delimited
+*                             format with address verification
+* YAK  04/29/2009  YK5     Fix error processing for BATCH
+* PAM  05/06/2009  PM6     Expand total fields
+* YAK  05/21/2009  YK6     Use functions to get credit Card Info from the new file
+* PAM  05/28/2009  PM42    Include FPF/Rider FPF/and past due PREMS/DUES on
+*                          credit card payments
+* YAK  05/27/2009  YK7     Add Totals for future CAP and rejected to the applied
+*                          report. Check Run Date before running the process.
+* YAK  05/27/2009  YK8     Apply approved credit card transactions rejected
+*                          by IAS as ADCR transactions (Add Credit)
+* YAK  05/28/2009  YK9     Separate RIDP from other premium payments
+* PAM  06/23/2009  PM10    Reset outstanding DUES BALANCE if paying via credit card (handles balance in arreras)
+* PAM  07/27/2009  PM43    Adjust pay status for premium payments
+* YAK  12/21/2009  YK10    Separate logic to process approved transactions for
+*                          non-matching credit card numbers
+* YAK  12/22/2009  YK11    Add parameter to differentiate this process from WebCharge
+*                          when calling subprogram CPREPSAM
+* YAK  12/22/2009  YK12    Populate info to write reject message for pending policies
+* YAK  02/12/2010  YK13    Change logic to retrieve request date from GEN-TABLE
+*                          (Caused by User Interface screen changes)
+* YAK  02/12/2010  YK14    Write report for Loan Balances to be written off
+*                          (if after payment Loan Balnace is less than $5)
+* YAK  04/20/2010  YK15    Adjust number of parameters (add CAP-LOAN to match CPREPSAM)
+* VXT  11/03/2011  vt1     Update Mode with the regular payment modes when the CC is rejected or expired.
+* YAK  02/28/2012  YK16    Premier Services changes
+* YAK  03/15/2012  YK17    Write expiration message
+* YAK  02/18/2014  YK18    Remove use of Rider balance field
+* YAK  03/03/2014  YK19    Add Survivor Assistance Services
+* TMT  06/12/2014  TT1     Contact Normalization - Gender and DOB
+* vxt  07/11/2014  vt2     /Ticket 2891/
+* vxt  04/28/2015  vt3     /Ticket 2973/
+* vxt  03/21/2016  vt4     /Ticket 4332/
+* vxt  04/04/2016  vt5     /Ticket 4397/
+* YAK  05/23/2016  YK20    Remove unused reports
+*                          Use Policy Number from input to determine policy index
+* vxt  03/07/2017  vt6     /Ticket 3014/
+* YAK  07/01/2017  YK21    Changes for Payer project
+* TMT  08/28/2017  TT2     Multiple Cap project
+* YAK  11/08/2017  YK22    Add Policy Number/Payer CN to Reject report (add emails to Payer)
+*************************************************************************************
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING C2500AAM
+LOCAL USING OBJLSTAT
+LOCAL USING SVCA0003                        /* YK16
+LOCAL
+*
+1 #CURR-VAR-INT-RATE  (P2.3)                /* YK1
+1 #PARM-YYYYMMDD  (N8)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYYMMDD-A  (A8)
+1 REDEFINE #PARM-YYYYMMDD
+  2 #PARM-YYYYMM      (N6)
+1 #PARM-MMDDYYYY     (N8)  /* PM38
+1 REDEFINE #PARM-MMDDYYYY  /* PM38
+  2 #PARM-MMDDYYYY-A  (A8) /* PM38
+*
+1 #TAB       (A1) INIT <H'09'>
+1 #CC-REC-APP-REJ (A68)    /* File of Approved/Rejected CC Trans from SAGE Response
+1 REDEFINE #CC-REC-APP-REJ
+  2 #CC-AR-APP-REJ  (A3)   /* APP or REJ
+  2 #CC-AR-CN       (N6)
+  2 #CC-AR-PAYER-CN (N6)
+  2 #CC-AR-AMT      (N5.2)
+  2 #CC-AR-REJ-DESC (A25)
+  2 #CC-AV-CODE     (A1)
+  2 #CC-AR-CC-NUM   (A16)
+  2 #CC-AR-EXP-DATE (A4)
+  2 REDEFINE #CC-AR-EXP-DATE
+    3 #CC-EXP-YEAR  (A2)
+    3 #CC-EXP-MONTH (A2)
+* YK21 >
+1 #CC-REC     (A50)    /* Transactions detail record layout
+1 REDEFINE #CC-REC
+  2 #INP-CN       (N6)
+  2 #INP-PAYER-CN (N6)
+  2 #INP-TR-CD    (A4)
+  2 #INP-POL-NUM  (A16)
+  2 #INP-AMT      (N5.2)
+  2 #INP-ISS-DT   (A8)
+  2 #INP-PLAN     (A3)
+* > YK21
+1 #TOT-REJ-INP-AMT   (P7.2) /* DW14
+1 #GND-TOTS          (P7.2) /* DW14
+1 #SAVE-TR-CD     (A4)
+*
+1 #LAST-CN     (N6)         /* DW16
+1 #LAST-PNC    (N6)
+1 #ORIG-MODE   (A1/9)       /* DW16
+1 #ORIG-LP-IND   (A1/9)     /* DW20
+1 #ORIG-LP-IND-2 (A1/9)     /* DW20
+1 #PREM-PMT    (L)
+1 #P-I-PMT     (L)           /* DW2
+*
+1 #TOT-PREM          (N7.2)  /* includes RIDP - separate RIDP YK9
+1 #TOT-DUES          (N7.2)
+1 #TOT-PRIN          (N7.2)
+1 #TOT-PRIN-CAP      (N7.2)  /* DW7
+1 #TOT-PRIN-POL      (N7.2)  /* DW7
+1 #TOT-INT           (N7.2)
+1 #TOT-INT-CAP       (N7.2)  /* DW7
+1 #TOT-INT-POL       (N7.2)  /* DW7
+1 #TOT-DREV          (N7.2)  /* PM38
+1 #TOT-CAP-HOLD-TRAN (N7.2)  /* YK4
+1 #TOT-ADCR-TRAN     (N7.2)  /* YK5
+1 #TOT-RIDP          (N7.2)  /* YK9
+1 #HOLD-PAY-STATUS   (A2)    /* PM43
+*
+1 #CC-X       (I2)
+1 #ILN1       (I2)
+1 #ILN2       (I2)
+1 #UPDATE-MODE (L)
+1 #LX       (I2)
+*
+* #LINKAGE TO C2520SAM below
+1 #CLERK         (A3)
+1 #DATE-OF-UPDATE    (N8)
+1 #TIME-OF-UPDATE    (N7)
+1 #HOLD-CUR-ACCT-UPDT (N8)
+1 #EXTRA-STOP         (L)
+1 #BANKRUPT           (L)
+*
+1 #SG-TBL (15)
+  2 #SG-CAT1 (A2)
+  2 #SG-CAT2 (A2)
+  2 #SG-AMT  (N6.2)
+1 #CMBX   (A4)                                 /* DW4
+* #LINKAGE TO C2520SAM ABOVE
+*
+1 #ST-ISN   (P8)
+1 #ST-NOT-FOUND   (L)
+1 #INP-DT-APPLIED-N (N8)
+1 #INP-DT-APPLIED-MMDDYYYY (A8)
+1 #INP-DEFER  (A1)                        /* PM38
+*
+1 #ERR-MSG  (A60)
+1 #REJ-MSG  (A60)
+*
+1 TR-REG-V VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER
+  2 PROCESS-IND
+  2 NAME
+  2 DATE-LAST-UPDATE
+  2 TERMINAL-ID
+  2 CLERK-ID
+  2 TRANSACTION-DATN
+  2 TRANSACTION-TIMN
+  2 OLD-DATA               (1)
+  2 NEW-DATA               (1)
+*
+1 #CNT-3            (N5)
+1 #CNT-4            (N5)
+1 #CNT-CAP          (N5)
+1 #I1               (I2)
+* 1 #I2               (I2)
+*
+1 #YYYYMMDD        (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM        (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY          (N4)
+    3 #MM            (N2)
+  2 #DD            (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A        (A4)
+  2 #MM-A          (A2)
+  2 #DD-A          (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A   (A8)                          /* YK6
+*
+1 #TIMN               (N7)            /* PM41
+1 #RUN-TYPE           (A5)            /* YK4
+1 #MASK-CC-NUM        (A) DYNAMIC     /* YK4
+1 #REPORT-OUTPUT      (A1000)         /* YK4
+1 #AMOUNT             (A10)           /* YK4
+1 #AVC-DESCRIPTION    (A) DYNAMIC     /* YK4
+1 #PARM-DATE          (N8)            /* YK4
+1 #N                  (N2)            /* YK4
+1 #ERROR-MESSAGE      (A75)           /* YK5
+1 #CC-EXP-CENTURY     (A2)  INIT <'20'>   /* YK6
+1 #CC-EXP-DAY         (A2)  INIT <'01'>   /* YK6
+1 #TT-EFF-DATE        (P8)                /* YK8
+1 #TERM               (L)                 /* PM42
+1 #WEB-CHARGE         (A1)  INIT <'N'>    /* YK11
+1 #CAP-POLICY         (L)                 /* YK15
+1 #SERVICE-PLAN       (A/2) DYNAMIC CONST <'PSM','SAS'>     /* YK19
+1 #APPLY-PAYMENT      (A) DYNAMIC CONST <'APPLY'>  /* YK16
+1 #CC-BATCH           (A) DYNAMIC CONST <'EDS'>    /* YK16
+1 #CREDIT-CARD        (A) DYNAMIC CONST <'C'>      /* YK16
+1 #MSG                (A) DYNAMIC                  /* YK16
+1 #TR-NAME            (A) DYNAMIC                  /* YK16
+1 #DATE-OF-BIRTH      (N8.0)                       /* TT1
+*
+1 #ACTIVITY-TYPE         (A3)           /* vt3
+1 #STATUS-TYPE           (A2)           /* vt3
+1 #LX-PASS               (I2)           /* vt3  05/13/2015
+1 #POLICY-NUMBER         (A16)          /* vt4  03/21/2016
+1 #SOURCE-PROG            (A8)          /* vt   04/04/2016
+*
+1 #LOOK-UP-KEY      (A7) CONST <'CODEAVC'>
+1 #LOOK-UP-VALUE    (A)  DYNAMIC
+1 #END-FILE         (L)
+1 #NEW-RECORD       (L)
+1 #RECURRING-CC-MODE(A1/4) CONST <'0','1','2','4'>
+1 #DONE-RESET-CIP   (L)                 /* vt6
+1 #MATCH-CN         (L)
+*
+END-DEFINE
+***************************************
+* DEFINE WORK FILE 1 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_DETAIL_SORT.TXT"
+* DEFINE WORK FILE 2 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_SAGE_TRAN.TXT"
+* DEFINE WORK FILE 3 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_APPLIED.TXT"
+* DEFINE WORK FILE 4 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_REJECTED.TXT"
+* DEFINE WORK FILE 5 "/usr/SAG/AAFMAA/batch/workfiles/PTEST/CC_APPLY_ERROR.TXT"
+*
+INPUT #RUN-TYPE
+#N := 2                                           /* YK13
+  FUNCTION-RUN-DATE(<#PARM-DATE,'R',#N>)
+WRITE #PARM-DATE
+IF #PARM-DATE = 0                                 /* YK7
+  TERMINATE 150                                   /* YK7
+END-IF                                            /* YK7
+*
+#CURR-VAR-INT-RATE := FUNCTION-INT-RATE(<'RATE5AB'>)  /* YK2
+*
+* Apply CC Trans
+* Tab delimited format applied transactions    /* YK4
+COMPRESS '#N' #TAB 'CN ' #TAB 'Policy Number' #TAB 'Post Date' #TAB 'Tran Code'
+  #TAB  'Issue Date'  #TAB  'Plan' #TAB 'Amount' #TAB 'Name'
+  #TAB  'Credit Card Number' #TAB 'Expiration Date'
+  #TAB  'Address Verification'
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK 3 #REPORT-OUTPUT               /* YK4 temporary removed!!!!
+* Tab delimited format rejected transactions   /* YK4
+COMPRESS '#N' #TAB 'CN ' #TAB 'Payer CN ' #TAB 'Policy Number' #TAB 'Tran Code' #TAB 'Issue Date'  /* YK22
+  #TAB 'Plan' #TAB 'Amount' #TAB 'Credit Card Number'
+  #TAB 'Expiration Date' #TAB 'Rej Description'
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 4 #REPORT-OUTPUT          /* YK4
+*
+MOVE *DATN TO #INP-DT-APPLIED-N
+#TIMN := *TIMN                          /* PM41
+*
+READ WORK 1 RECORD #CC-REC              /* Read Transaction detail file created in GPBPCC01
+*
+  IF (#INP-CN > #CC-AR-CN) OR (#INP-CN = #CC-AR-CN AND #INP-PAYER-CN <> #CC-AR-PAYER-CN)
+    PERFORM READ-SUMMARY-RECORD
+  END-IF
+  IF #END-FILE
+    COMPRESS 'No SAGE records for CN' #INP-CN INTO #REJ-MSG
+    PERFORM WRITE-REJECT
+    ESCAPE TOP
+  END-IF
+  IF #ST-NOT-FOUND
+    MOVE 'CN not found' TO #REJ-MSG   /* DW17
+    PERFORM WRITE-REJECT
+    ESCAPE TOP
+  END-IF
+  IF NOT #MATCH-CN                                                      /* YK21
+    MOVE 'Transaction / detail CN not matching' TO #REJ-MSG   /* DW17   /* YK21
+    PERFORM WRITE-REJECT                                                /* YK21
+    ESCAPE TOP                                                          /* YK21
+  END-IF                                                                /* YK21
+*
+  RESET #PREM-PMT #P-I-PMT
+  IF #INP-TR-CD = 'PREP' OR = 'DUEP' OR = 'RIDP'
+      OR = 'FPFP' OR = 'FPRP'            /* PM42
+    MOVE TRUE TO #PREM-PMT
+  END-IF
+*
+  IF #INP-TR-CD = 'INPF' OR = 'INPV'     /* DW2
+      OR = 'PRNF' OR = 'PRNV'            /* DW2
+    MOVE TRUE TO #P-I-PMT
+  END-IF
+*
+  IF NOT (#P-I-PMT OR #PREM-PMT)
+    MOVE 'Invalid Tran Code' TO #REJ-MSG   /* DW17
+    PERFORM WRITE-REJECT
+    ESCAPE TOP
+  END-IF
+*
+  G1.  GET ST-V #ST-ISN                                     /* YK21
+  IF #INP-PLAN = #SERVICE-PLAN(*)          /* YK16 /* YK19
+    IGNORE                                 /* YK16
+    COMPRESS #INP-CN '-1' INTO #POLICY-NUMBER LEAVING NO     /* vt4 03/21/2016    ????
+  ELSE                                     /* YK16
+    RESET #CC-X
+*****************
+    FOR #I1 = 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.POLICY-ID(#I1) = #INP-POL-NUM AND ST-V.STATUS(#I1) = 'D'
+        #CC-X := #I1
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+*****************
+*
+    IF #CC-X = 0
+      IF #CC-AR-APP-REJ = 'APP'                                /* YK8
+        IF #P-I-PMT                                /* DW2
+          MOVE 'No Pol fnd w ALP-IND of "8"' TO #ERROR-MESSAGE    /* YK8
+        END-IF
+*
+        IF #PREM-PMT                               /* DW2
+          MOVE 'No PP Pol fnd w Mode "0/1/2/4"' TO #ERROR-MESSAGE    /* YK8
+        END-IF
+        PERFORM PROCESS-ERROR
+      ELSE
+        #REJ-MSG := #CC-AR-REJ-DESC                                /* YK12
+        PERFORM WRITE-REJECT
+      END-IF
+*
+      ESCAPE TOP
+    END-IF
+    #POLICY-NUMBER := POLICY-ID(#CC-X)
+  END-IF                                                             /* YK16
+*
+*  G1.  GET ST-V #ST-ISN
+  #TR-NAME := FUNCTION-CONTACT-NAME-2(<ST-V.MEMBER-CONTACT-ID>)      /* YK16
+* Reject process
+**>>>>>>>>>>>>>>
+  IF  (#CC-AR-APP-REJ = 'REJ')     /* Rejected by AAFMAA CC system
+    MOVE #CC-AR-REJ-DESC TO #REJ-MSG
+*
+    PERFORM WRITE-REJECT
+*
+****************************
+* Create Letter process - will be replaced with SSRS letter
+* BELOW MUST MATCH G3500PAD
+    DECIDE FOR FIRST CONDITION
+      WHEN #REJ-MSG = MASK ('DECLINE')
+        MOVE 'PN1' TO #CGA-SCR-SUFFIX
+      WHEN #REJ-MSG = MASK ('INVALID ACCT')
+        MOVE 'PN2' TO #CGA-SCR-SUFFIX
+      WHEN #REJ-MSG = MASK ('INVALID CARD')
+        MOVE 'PN3' TO #CGA-SCR-SUFFIX
+      WHEN #REJ-MSG = MASK ('Invalid Expiration')
+        MOVE 'PN4' TO #CGA-SCR-SUFFIX
+      WHEN #REJ-MSG = MASK ('HOLD CARD')
+        MOVE 'PN5' TO #CGA-SCR-SUFFIX
+      WHEN #REJ-MSG = MASK ('OVER LIMIT')
+        MOVE 'PN6' TO #CGA-SCR-SUFFIX
+      WHEN #REJ-MSG = MASK ('Duplicate Trans')  /* Should never
+        MOVE 'PN7' TO #CGA-SCR-SUFFIX           /* Happen
+      WHEN #REJ-MSG = MASK ('CC Rcd not rtd by AAFMAA') /* Should
+        MOVE 'PN9' TO #CGA-SCR-SUFFIX             /* Never happen
+      WHEN NONE MOVE 'PNC' TO #CGA-SCR-SUFFIX  /* Generic
+    END-DECIDE
+    MOVE #CGA-SCR-SUFFIX TO #CGA-ORIG-SUFFIX
+*
+    IF #INP-CN NE #LAST-PNC
+      MOVE 'AD' TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+      MOVE ST-V.ID-NUMBER TO #CGA-SCR-ID #CGA-ORIG-ID
+      MOVE 'EDS' TO #CGA-CLERK
+      MOVE #ST-ISN TO #CGA-ISN
+      MOVE #POLICY-NUMBER TO #CGA-POLICY-NUMBER      /* vt4 03/21/2016
+      FETCH RETURN 'G3500PAD'     /* Must preceed Mode CHG & CIP Chg
+    END-IF
+
+    MOVE #INP-CN TO #LAST-PNC
+*****************************
+*
+    IF #INP-TR-CD = 'PREP'                       /* DW2
+      PERFORM CHANGE-TO-Q
+      UPDATE (G1.)
+      END TRANSACTION
+    END-IF
+    RESET #DONE-RESET-CIP                                    /* vt6
+    IF #INP-TR-CD = MASK ('INP') /* Always INP optional PRN  /* DW18
+      PERFORM RESET-CIP   /* DW19
+      move true to #done-reset-cip                           /* vt6
+      UPDATE (G1.)
+      END TRANSACTION
+    END-IF
+*
+    if not #done-reset-cip and #inp-tr-cd = mask ('PRN')      /* vt6 \/
+      perform RESET-CIP
+      update (G1.)
+      end transaction
+    end-if                                                    /* vt6 /\
+
+    ESCAPE TOP
+  END-IF
+**<<<<<<<<<<<<<<
+* Approved - apply transactions
+**>>>>>>>>>>>>>>
+  MOVE ST-V.DATE-ACCT-UPDATE TO #HOLD-CUR-ACCT-UPDT
+  MOVE #INP-DT-APPLIED-N TO ST-V.DATE-ACCT-UPDATE
+  MOVE *DATN TO ST-V.DTS-DATN
+  MOVE *TIMN TO ST-V.DTS-TIMN
+*
+  IF #INP-TR-CD = 'FPFP'              /* PM42
+    RESET #SG-TBL (*) #ERROR-MESSAGE  /* PM42
+    PERFORM APPLY-FPFP                /* PM42
+    IF #ERROR-MESSAGE NE ' '          /* PM42
+      PERFORM PROCESS-ERROR           /* PM42
+      ESCAPE TOP                      /* PM42
+    END-IF                            /* PM42
+    ADD #INP-AMT TO #TOT-PREM         /* PM42
+    PERFORM ACCT-REG                  /* PM42
+  END-IF                              /* PM42
+*
+  IF #INP-TR-CD = 'FPRP'              /* PM42
+    RESET #SG-TBL (*) #ERROR-MESSAGE  /* PM42
+    PERFORM APPLY-FPRP                /* PM42
+    IF #ERROR-MESSAGE NE ' '          /* PM42
+      PERFORM PROCESS-ERROR           /* PM42
+      ESCAPE TOP                      /* PM42
+    END-IF                            /* PM42
+    ADD #INP-AMT TO #TOT-PREM         /* PM42
+    PERFORM ACCT-REG                  /* PM42
+  END-IF                              /* PM42
+*
+  IF #INP-TR-CD = 'PREP'
+    RESET #SG-TBL (*) #ERROR-MESSAGE  /* RESET SUNGARD-TABLE
+    PERFORM APPLY-PREP
+    IF #ERROR-MESSAGE NE ' '          /* YK5
+      PERFORM PROCESS-ERROR           /* YK5
+      ESCAPE TOP                      /* YK5
+    END-IF                            /* YK5
+    ADD #INP-AMT TO #TOT-PREM
+    MOVE PAID-TO-DATE (#CC-X) TO BILL-TO-DATE (#CC-X)
+    PERFORM ACCT-REG
+  END-IF
+*
+*
+* YK16 Start
+  IF #INP-TR-CD = 'DUEP'                                  /* YK16
+    IF #INP-PLAN = #SERVICE-PLAN(*)                       /* YK16  /* YK19
+      PERFORM APPLY-SERVICE-PAYMENT                       /* YK16
+    ELSE                                                  /* YK16
+*  IF #INP-TR-CD = 'DUEP'                                 /* YK16
+      RESET #SG-TBL (*)  #ERROR-MESSAGE /* RESET SUNGARD-TABLE
+      ADD #INP-AMT TO DUES-BALANCE      /* TO RESET BALANCE
+      PERFORM APPLY-DUEP
+      IF #ERROR-MESSAGE NE ' '          /* YK5
+        PERFORM PROCESS-ERROR           /* YK5
+        ESCAPE TOP                      /* YK5
+      END-IF                            /* YK5
+      ADD #INP-AMT TO #TOT-DUES
+      PERFORM ACCT-REG
+      IF DUES-BALANCE NE 0              /* PM10
+        PERFORM RESET-DUES-BALANCE      /* PM10
+      END-IF                            /* PM10
+    END-IF
+  END-IF
+* YK16 End
+*
+  IF #INP-TR-CD = 'RIDP'
+    RESET #SG-TBL (*)  #ERROR-MESSAGE /* RESET SUNGARD-TABLE
+    PERFORM APPLY-RIDP
+    IF #ERROR-MESSAGE NE ' '          /* YK5
+      PERFORM PROCESS-ERROR           /* YK5
+      ESCAPE TOP                      /* YK5
+    END-IF                            /* YK5
+*   ADD #INP-AMT TO #TOT-PREM         /* rider is included in prep total
+    ADD #INP-AMT TO #TOT-RIDP            /* YK9
+*   ADD #INP-AMT TO X-RID-BALANCE (#I1)  /* TO RESET BALANCE     /* YK18
+    PERFORM ACCT-REG
+*
+*   MOVE PAID-TO-DATE (#I1) TO RID-PD-TO (#I1)
+    MOVE PAID-TO-DATE (#CC-X) TO RID-PD-TO (#CC-X)
+  END-IF
+*
+  IF #INP-TR-CD = 'INPF' OR = 'INPV'        /* DW2
+    RESET #SG-TBL (*)  #ERROR-MESSAGE /* RESET SUNGARD-TABLE
+    PERFORM APPLY-INPP
+    IF #ERROR-MESSAGE NE ' '          /* YK5
+      PERFORM PROCESS-ERROR           /* YK5
+      ESCAPE TOP                      /* YK5
+    END-IF                            /* YK5
+*
+    IF CONV-DURATION (#CC-X) = 999
+      ADD #INP-AMT TO #TOT-INT-CAP
+    ELSE
+      ADD #INP-AMT TO #TOT-INT-POL
+    END-IF
+*
+    ADD #INP-AMT TO #TOT-INT
+    PERFORM ACCT-REG
+  END-IF
+*
+  IF #INP-TR-CD = 'PRNF' OR = 'PRNV'  /* DW2
+    RESET #SG-TBL (*)  #ERROR-MESSAGE /* RESET SUNGARD-TABLE
+    PERFORM APPLY-PRNP
+    IF #ERROR-MESSAGE NE ' '          /* YK5
+      PERFORM PROCESS-ERROR           /* YK5
+      ESCAPE TOP                      /* YK5
+    END-IF                            /* YK5
+    IF CONV-DURATION (#CC-X) = 999
+      ADD #INP-AMT TO #TOT-PRIN-CAP
+    ELSE
+      ADD #INP-AMT TO #TOT-PRIN-POL
+    END-IF
+*
+    ADD #INP-AMT TO #TOT-PRIN
+    PERFORM ACCT-REG
+* Create report of Loan transactions
+    WRITE(1) ST-V.ID-NUMBER #INP-TR-CD X-LOAN-AMOUNT(#CC-X) X-LOAN-AMOUNT-2(#CC-X)
+  END-IF
+*
+  PERFORM WRITE-APPLY                 /* YK4
+*
+  IF  ((#INP-TR-CD = 'PRNF') AND (X-LOAN-AMOUNT   (#CC-X) LE 0))
+      OR ((#INP-TR-CD = 'PRNV') AND (X-LOAN-AMOUNT-2 (#CC-X) LE 0))
+    MOVE #INP-TR-CD TO #SAVE-TR-CD
+    IF #INP-TR-CD = 'PRNF'
+      RESET X-ALT-LP-IND (#CC-X)
+      RESET X-ALT-LP-AMT (#CC-X)
+      MOVE 'FLNF'     TO #INP-TR-CD
+    ELSE
+      RESET X-ALT-LP-IND-2 (#CC-X)
+      RESET X-ALT-LP-AMT-2 (#CC-X)
+      MOVE 'FLNV'     TO #INP-TR-CD
+    END-IF
+*
+    RESET #SG-TBL (*)  #ERROR-MESSAGE /* RESET SUNGARD-TABLE
+    PERFORM APPLY-FLNP
+    IF #ERROR-MESSAGE NE ' '          /* YK5
+      PERFORM PROCESS-ERROR           /* YK5
+      ESCAPE TOP                      /* YK5
+    END-IF                            /* YK5
+    PERFORM ACCT-REG
+    MOVE #SAVE-TR-CD TO #INP-TR-CD
+  END-IF
+*
+*   MOVE CC-EXP-DT TO #YYYYMMDD                                   /* YK6
+* Create expiration date in the YYYYMMDD format for editing       /* YK6
+
+  COMPRESS #CC-EXP-CENTURY #CC-EXP-YEAR #CC-EXP-MONTH
+    #CC-EXP-DAY INTO #YYYYMMDD-A LEAVING NO        /* YK6
+*
+*  IF #YYYYMM LE #PARM-YYYYMM   /* Will expire next month
+  IF #YYYYMM < #PARM-YYYYMM     /* Expiring current month
+* YK17
+    COMPRESS 'CC is expiring this month on policy ' #INP-POL-NUM
+      INTO #REJ-MSG
+*
+    IF  #PREM-PMT
+      WRITE ST-V.ID-NUMBER #CC-AR-EXP-DATE
+        'CC will expire - made mode "Q/S/A" on policy ' #INP-POL-NUM
+*
+      PERFORM CHANGE-TO-Q
+    END-IF
+*
+    IF #INP-TR-CD = MASK ('INP')      /*  DW19
+      PERFORM RESET-CIP
+    END-IF
+  END-IF
+*
+  UPDATE (G1.)
+  END TRANSACTION
+END-WORK
+*
+PERFORM WRITE-REPORT-TOTALS
+*
+***************************************
+DEFINE SUBROUTINE APPLY-SERVICE-PAYMENT   /* YK16 Start
+***************************************
+*
+RESET PARM-SVC
+PARM-SVC.ACTION         := #APPLY-PAYMENT
+PARM-SVC.USER           := #CC-BATCH
+PARM-SVC.SVC-MEMBER-ID  := #INP-CN
+PARM-SVC.SVC-PLAN       := #INP-PLAN
+PARM-SVC.CASH-MODE      := #CREDIT-CARD
+PARM-SVC.SVC-PAY-AMOUNT := #INP-AMT
+PARM-SVC.SVC-TRAN-TYPE  := 'CCME'            /* vt2
+CALLNAT 'SVCN0003' PARM-SVC #MSG 1X ST-V.DEBIT-CREDIT-AMT
+ADD #INP-AMT TO #TOT-DUES
+*
+END-SUBROUTINE                              /* YK16 End
+*
+**********************************************************************
+DEFINE SUBROUTINE RESET-DUES-BALANCE    /* PM10
+**********************************************************************
+*
+#HOLD-CUR-ACCT-UPDT        := ST-V.DATE-ACCT-UPDATE
+ST-V.DATE-ACCT-UPDATE      := #INP-DT-APPLIED-N
+ST-V.DTS-DATN              := *DATN
+ST-V.DTS-TIMN              := *TIMN
+*
+RESET TR-REG-V
+TR-REG-V.ID-NUMBER         := ST-V.ID-NUMBER
+TR-REG-V.PROCESS-IND       := ST-V.PROCESS-IND
+* TR-REG-V.NAME            := #NAME                     /* YK16
+TR-REG-V.NAME              := #TR-NAME                  /* YK16
+TR-REG-V.DATE-LAST-UPDATE  := #HOLD-CUR-ACCT-UPDT
+TR-REG-V.TERMINAL-ID       := *INIT-ID
+TR-REG-V.CLERK-ID          := 'EDS'
+TR-REG-V.TRANSACTION-DATN  := *DATN
+TR-REG-V.TRANSACTION-TIMN  := *TIMN
+*
+MOVE EDITED DUES-BALANCE (EM=-Z,ZZZ,ZZ9.99) TO TR-REG-V.OLD-DATA (1)
+COMPRESS 'CC-DUES BALANCE:' TR-REG-V.OLD-DATA (1) ' -- reset -- credit card paying'
+  INTO TR-REG-V.OLD-DATA (1)
+*
+RESET DUES-BALANCE
+*
+MOVE EDITED DUES-BALANCE (EM=-Z,ZZZ,ZZ9.99) TO TR-REG-V.NEW-DATA (1)
+COMPRESS 'CC-DUES BALANCE:' TR-REG-V.NEW-DATA (1) ' -- reset -- credit card paying'
+  INTO TR-REG-V.NEW-DATA (1)
+*
+STORE TR-REG-V
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE RESET-CIP             /* DW19
+**********************************************************************
+*
+MOVE ST-V.DATE-ACCT-UPDATE TO #HOLD-CUR-ACCT-UPDT
+MOVE #INP-DT-APPLIED-N TO ST-V.DATE-ACCT-UPDATE
+MOVE *DATN TO ST-V.DTS-DATN
+MOVE *TIMN TO ST-V.DTS-TIMN
+*
+RESET TR-REG-V
+MOVE #REJ-MSG TO TR-REG-V.OLD-DATA (1)
+MOVE 'CC-Cr card CIP Removed or chged to MIP due to Rejection/Expire'
+  TO TR-REG-V.NEW-DATA (1)
+*
+MOVE ST-V.ID-NUMBER   TO TR-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND TO TR-REG-V.PROCESS-IND
+* MOVE #NAME          TO TR-REG-V.NAME                  /* YK16
+MOVE #TR-NAME         TO TR-REG-V.NAME                  /* YK16
+MOVE #HOLD-CUR-ACCT-UPDT TO TR-REG-V.DATE-LAST-UPDATE
+MOVE *INIT-ID         TO TR-REG-V.TERMINAL-ID
+MOVE 'EDS'            TO TR-REG-V.CLERK-ID
+MOVE *DATN            TO TR-REG-V.TRANSACTION-DATN
+MOVE *TIMN            TO TR-REG-V.TRANSACTION-TIMN
+STORE TR-REG-V
+*
+IF X-ALT-LP-IND (#CC-X) = '8'
+  IF   (CONV-DURATION (#CC-X) = 999)    /* DW18
+      AND (X-LOAN-AMOUNT (#CC-X) GT 5.00)
+    WRITE ST-V.ID-NUMBER 'chgd CIP to MIP'
+    MOVE '6' TO X-ALT-LP-IND (#CC-X)
+  ELSE
+    RESET X-ALT-LP-IND (#CC-X)
+    RESET X-ALT-LP-AMT (#CC-X)
+  END-IF
+END-IF
+*
+IF X-ALT-LP-IND-2 (#CC-X) = '8'
+  RESET X-ALT-LP-IND-2 (#CC-X)
+  RESET X-ALT-LP-AMT-2 (#CC-X)
+END-IF
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-PREP
+**********************************************************************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+IF #INP-DEFER = 'D'                           /* PM38
+  #SCR-EFF-DT (1) := #PARM-MMDDYYYY-A         /* PM38
+ELSE                                          /* PM38
+  #SCR-EFF-DT (1) := #INP-DT-APPLIED-MMDDYYYY
+END-IF                                        /* PM38
+
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+MOVE 'C'            TO #SCR-CASH-CODE (1)     /* DW10
+*
+#HOLD-PAY-STATUS  := ST-V.PAY-STATUS (#LX)    /* PM43
+IF ST-V.PAY-STATUS (#LX) = '12'               /* PM43
+  ST-V.PAY-STATUS (#LX) := '22'               /* PM43
+END-IF                                        /* PM43
+*
+RESET #DATE-OF-BIRTH
+#DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<ST-V.MEMBER-CONTACT-ID>)           /* TT1
+*
+MOVE 'GPBPCC04' TO #SOURCE-PROG               /* vt5
+*
+CALLNAT 'CPREPSAM' #SCR-LINES
+  #DATE-OF-BIRTH
+  ST-V.STATUS            (#LX)
+  ST-V.PAY-STATUS        (#LX)
+  ST-V.MODE              (#LX)
+  ST-V.PLAN              (#LX)
+  ST-V.ISSUE-DATE        (#LX)
+  ST-V.PAID-TO-DATE      (#LX)
+  ST-V.PAID-UP-DATE      (#LX)
+  ST-V.ANNUAL-PREM       (#LX)
+  ST-V.MTD-ACV-PREM-ADJ  (1:9)
+  ST-V.MONTH-ALLOC-AMT   (#LX)
+  ST-V.X-BILL-ADJUST     (#LX)
+  ST-V.X-BILL-DOLLAR     (#LX)
+  ST-V.OWNERSHIP-FLAG    (#LX)
+  ST-V.DUES-ALL-PAID-IND
+  ST-V.DUES-BALANCE
+  ST-V.DUES-FPF
+  ST-V.DUES-TOT-PAID
+  ST-V.INTRO-FLAG
+  ST-V.RID-PLAN          (#LX)
+  ST-V.RID-EFF-DT        (#LX)
+  ST-V.RID-PD-TO         (#LX)
+*
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  #LX
+  #CAP-POLICY            /* YK15
+  #ERROR-MESSAGE         /* YK5
+  #WEB-CHARGE            /* YK11
+  #SOURCE-PROG                                /* vt 04/04/2016
+*
+ST-V.PAY-STATUS (#LX) := #HOLD-PAY-STATUS     /* PM43
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-DUEP
+**********************************************************************
+*
+MOVE 1 TO #ILN1
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+MOVE #INP-DT-APPLIED-MMDDYYYY TO #SCR-EFF-DT (1)
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+MOVE 'C'            TO #SCR-CASH-CODE (1)     /* DW10
+*
+CALLNAT 'CDUESSAM' #SCR-LINES
+  ST-V.DUES-FPF
+  ST-V.DUES-BALANCE
+  ST-V.DUES-TOT-PAID
+*
+  #ILN1
+  #ILN2
+  #SG-TBL (1:15)
+  #ERROR-MESSAGE         /* YK5
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-RIDP
+**********************************************************************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX                             /* PM34
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+MOVE #INP-DT-APPLIED-MMDDYYYY TO #SCR-EFF-DT (1)
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+MOVE 'C'            TO #SCR-CASH-CODE (1)     /* DW10
+*
+CALLNAT 'CRIDRSAM' #SCR-LINES
+  ST-V.X-RID-FPF     (1:9)
+  ST-V.X-RID-BALANCE (1:9)
+  ST-V.RID-TOT-PAID
+  ST-V.RID-PLAN      (1:9)
+  ST-V.RID-EFF-DT    (1:9)
+  ST-V.RID-PD-TO     (1:9)
+  #ORIG-MODE          (1:9)    /* DW16
+*
+  #ILN1
+  #ILN2
+  #SG-TBL (1:15)
+  #LX
+  #ERROR-MESSAGE         /* YK5
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-INPP   /* DW2
+**********************************************************************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+MOVE #INP-DT-APPLIED-MMDDYYYY TO #SCR-EFF-DT (1)
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+MOVE 'C'            TO #SCR-CASH-CODE (1)     /* DW10
+*
+CALLNAT 'CINTPSAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE (#LX)
+  ST-V.X-LOAN-DATE (#LX)
+  ST-V.X-LOAN-AMOUNT (#LX)
+  ST-V.X-ACCUM-INTEREST (#LX)
+  ST-V.X-CAP-AMT (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT (#LX)
+  ST-V.X-INTEREST-RECEIVED (#LX)
+  ST-V.X-LOAN-DATE-2 (#LX)
+  ST-V.X-LOAN-AMOUNT-2 (#LX)
+  ST-V.X-ACCUM-INTEREST-2 (#LX)
+  ST-V.X-CAP-AMT-2 (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT-2 (#LX)
+  ST-V.X-INTEREST-RECEIVED-2 (#LX)
+  ST-V.INTRO-FLAG
+  ST-V.X-LPO-PMT-RCVD (#LX)
+  ST-V.X-LPO-PMT-RCVD-2 (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT-2 (#LX)
+  ST-V.X-BILL-SW (#LX)
+  ST-V.X-BILL-SW-2 (#LX)
+  ST-V.X-BILL-INTEREST-AMT (#LX)
+  ST-V.X-BILL-INTEREST-AMT-2 (#LX)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  #ERROR-MESSAGE         /* YK5
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-PRNP          /* DW2
+**********************************************************************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+IF #INP-DEFER = 'D'                           /* PM38
+  #SCR-EFF-DT (1) := #PARM-MMDDYYYY-A         /* PM38
+ELSE                                          /* PM38
+  #SCR-EFF-DT (1) := #INP-DT-APPLIED-MMDDYYYY
+END-IF                                        /* PM38
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+MOVE 'C'            TO #SCR-CASH-CODE (1)     /* DW10
+*
+CALLNAT 'CPRNPSAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE (#LX)
+  ST-V.X-LOAN-DATE (#LX)
+  ST-V.X-LOAN-AMOUNT (#LX)
+  ST-V.X-ACCUM-INTEREST (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT (#LX)
+  ST-V.X-OLD-LOAN-AMT (#LX)
+  ST-V.X-CAP-AMT (#LX)
+  #ORIG-MODE (#LX)                  /* DW16
+  ST-V.X-BILL-INTEREST-AMT (#LX)
+  ST-V.X-INTEREST-RECEIVED (#LX)
+  ST-V.X-PRINCIPAL-CHG-CODE (#LX)
+  ST-V.X-BILL-DOLLAR (#LX)
+  ST-V.APL-CNT
+  ST-V.X-LOAN-DATE-2 (#LX)
+  ST-V.X-LOAN-AMOUNT-2 (#LX)
+  ST-V.X-ACCUM-INTEREST-2 (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT-2 (#LX)
+  ST-V.X-OLD-LOAN-AMT-2 (#LX)
+  ST-V.X-CAP-AMT-2 (#LX)
+  ST-V.X-BILL-INTEREST-AMT-2 (#LX)
+  ST-V.X-INTEREST-RECEIVED-2 (#LX)
+  ST-V.INTRO-FLAG
+  ST-V.X-LPO-PMT-RCVD (#LX)
+  ST-V.X-LPO-PMT-RCVD-2 (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT-2 (#LX)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  ST-V.CAP-BILL-DATE    /* DW33
+  ST-V.PROCESS-IND      /* DW33
+  ST-V.NAME             /* DW33
+  #CGA-CLERK            /* DW33
+  #ERROR-MESSAGE         /* YK5
+*
+IF   (#INP-TR-CD = 'PRNF')
+    AND (X-LOAN-AMOUNT (#CC-X) LE 0)
+  WRITE ST-V.ID-NUMBER ISSUE-DATE (#CC-X) 'Fixed Loan has been paid off'
+END-IF
+*
+IF   (#INP-TR-CD = 'PRNV')
+    AND (X-LOAN-AMOUNT-2 (#CC-X) LE 0)
+  WRITE ST-V.ID-NUMBER ISSUE-DATE (#CC-X) 'VAR Loan has been paid off'
+END-IF
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-FLNP     /* DW2
+**********************************************************************
+*
+MOVE 1 TO #ILN1
+MOVE #CC-X TO #LX
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN    (1)
+MOVE #INP-DT-APPLIED-MMDDYYYY TO #SCR-EFF-DT (1)
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+RESET                  #SCR-TRAN-AMT  (1)
+MOVE 'C'            TO #SCR-CASH-CODE (1)     /* DW10
+*
+CALLNAT 'CFLNPSAM' #SCR-LINES
+  #CURR-VAR-INT-RATE
+  ST-V.X-INTEREST-RATE (#LX)
+  ST-V.X-LOAN-DATE (#LX)
+  ST-V.X-LOAN-AMOUNT (#LX)
+  ST-V.X-ACCUM-INTEREST (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT (#LX)
+  ST-V.X-OLD-LOAN-AMT (#LX)
+  ST-V.X-CAP-AMT (#LX)
+  ST-V.X-BILL-INTEREST-AMT (#LX)
+  ST-V.X-INTEREST-RECEIVED (#LX)
+  ST-V.X-PRINCIPAL-CHG-CODE (#LX)
+  ST-V.X-LOAN-DATE-2 (#LX)
+  ST-V.X-LOAN-AMOUNT-2 (#LX)
+  ST-V.X-ACCUM-INTEREST-2 (#LX)
+  ST-V.X-NXT-YR-ACCUM-INT-2 (#LX)
+  ST-V.X-OLD-LOAN-AMT-2 (#LX)
+  ST-V.X-CAP-AMT-2 (#LX)
+  ST-V.X-BILL-INTEREST-AMT-2 (#LX)
+  ST-V.X-INTEREST-RECEIVED-2 (#LX)
+  ST-V.INTRO-FLAG
+  ST-V.X-ALT-LP-IND (#LX)
+  ST-V.X-ALT-LP-AMT (#LX)
+  ST-V.X-ALT-LP-IND-2 (#LX)
+  ST-V.X-ALT-LP-AMT-2 (#LX)
+  ST-V.X-LPO-PMT-RCVD (#LX)
+  ST-V.X-LPO-PMT-RCVD-2 (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL (#LX)
+  ST-V.X-LPO-PRIOR-LOAN-BAL-2 (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT (#LX)
+  ST-V.X-LPO-PRIOR-ACC-INT-2 (#LX)
+  ST-V.DATE-ACCT-UPDATE
+  ST-V.DTS-TIMN
+  ST-V.POLICY-ID(#LX)        /* TT2
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #ERROR-MESSAGE         /* YK5
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-FPFP                  /* PM42
+**********************************************************************
+*
+MOVE ST-V.ISSUE-DATE (#CC-X) TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-ISS-DT (1) LEAVING NO
+*
+#TERM := FUNCTION-TERM-POLICY (<ST-V.PLAN (#CC-X)>)
+*
+IF #TERM
+  #SCR-ALP-CODE (1):= 'T'
+ELSE
+  #SCR-ALP-CODE (1):= 'W'
+END-IF
+*
+#ILN1              := 1
+#LX                := #CC-X
+#SCR-ID-SSN (1)    := ST-V.ID-NUMBER
+*
+IF #INP-DEFER = 'D'
+  #SCR-EFF-DT (1)  := #PARM-MMDDYYYY-A
+ELSE
+  #SCR-EFF-DT (1)  := #INP-DT-APPLIED-MMDDYYYY
+END-IF
+*
+#SCR-TRAN-CODE (1) := #INP-TR-CD
+#SCR-TRAN-AMT  (1) := #INP-AMT
+#SCR-CASH-CODE (1) := 'C'
+*
+CALLNAT 'CFPFPSAM' #SCR-LINES
+  ST-V.STATUS       (1:9)
+  ST-V.PAY-STATUS   (1:9)
+  ST-V.MODE         (1:9)
+  ST-V.PLAN         (1:9)
+  ST-V.ISSUE-DATE   (1:9)
+  ST-V.PAID-TO-DATE (1:9)
+  ST-V.PAID-UP-DATE (1:9)
+  ST-V.ANNUAL-PREM  (1:9)
+  ST-V.MTD-ACV-PREM-ADJ (1:9)
+  ST-V.X-FIRST-PLACE-FEE (1:9)
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL (1:15)
+  #LX
+  #ERROR-MESSAGE         /* YK5
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-FPRP                  /* PM42
+**********************************************************************
+*
+#ILN1              := 1
+#LX                := #CC-X
+#SCR-ID-SSN (1)    := ST-V.ID-NUMBER
+*
+IF #INP-DEFER = 'D'
+  #SCR-EFF-DT (1)  := #PARM-MMDDYYYY-A
+ELSE
+  #SCR-EFF-DT (1)  := #INP-DT-APPLIED-MMDDYYYY
+END-IF
+*
+#SCR-TRAN-CODE (1) := #INP-TR-CD
+#SCR-TRAN-AMT  (1) := #INP-AMT
+#SCR-CASH-CODE (1) := 'C'
+*
+CALLNAT 'CRIDRSAM' #SCR-LINES
+  ST-V.X-RID-FPF  (1:9)
+  ST-V.X-RID-BALANCE (1:9)
+  ST-V.RID-TOT-PAID
+  ST-V.RID-PLAN    (1:9)
+  ST-V.RID-EFF-DT  (1:9)
+  ST-V.RID-PD-TO   (1:9)
+  ST-V.MODE        (1:9)
+  #ILN1
+  #ILN2
+  #SG-TBL (1:15)
+  #LX
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE APPLY-ADCR     /* YK8
+**********************************************************************
+*
+#ILN1              := 1
+#SCR-ID-SSN (1)    := ST-V.ID-NUMBER
+#SCR-EFF-DT (1)    := #INP-DT-APPLIED-MMDDYYYY
+#SCR-TRAN-CODE (1) := #INP-TR-CD
+#SCR-TRAN-AMT  (1) := #INP-AMT
+#SCR-CASH-CODE (1) := 'C'
+*
+CALLNAT 'CADCRSAM' #SCR-LINES
+  ST-V.STATUS                (1:9)
+  ST-V.PAY-STATUS            (1:9)
+  ST-V.MODE                  (1:9)
+  ST-V.PLAN                  (1:9)
+  ST-V.ISSUE-DATE            (1:9)
+  ST-V.PAID-TO-DATE          (1:9)
+  ST-V.PAID-UP-DATE          (1:9)
+  ST-V.ANNUAL-PREM           (1:9)
+  ST-V.MTD-ACV-PREM-ADJ      (1:9)
+  ST-V.ALOT-AMT
+  ST-V.ALOT-SW
+  ST-V.STOP-DATE
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.AUX-DEBIT-CREDIT-AMT
+  ST-V.ALT-LP-AMT
+  ST-V.PAD-CODE
+  #ILN1
+  #ILN2
+  #UPDATE-MODE
+  #TT-EFF-DATE
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE ACCT-REG
+**********************************************************************
+*
+MOVE 1 TO #ILN1
+RESET #SCR-ADJ (#ILN1)                        /* PM38
+MOVE ST-V.ID-NUMBER TO #SCR-ID-SSN(1)
+#SCR-EFF-DT (1) := #INP-DT-APPLIED-MMDDYYYY
+#DATE-OF-UPDATE := #INP-DT-APPLIED-N
+#TIME-OF-UPDATE := #TIMN                    /* PM41
+*
+IF #INP-TR-CD = 'ADCR'
+  #SCR-ISS-DT (1) := 0
+ELSE
+  MOVE ST-V.ISSUE-DATE (#CC-X) TO #YYYYMMDD
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-ISS-DT (#CC-X) LEAVING NO
+END-IF
+MOVE #INP-TR-CD     TO #SCR-TRAN-CODE (1)
+*
+IF #INP-TR-CD = MASK ('FLN')
+  RESET #SCR-TRAN-AMT (1)
+ELSE
+  MOVE #INP-AMT       TO #SCR-TRAN-AMT  (1)
+END-IF
+*
+MOVE 'C'            TO #SCR-CASH-CODE (1)  /* to indicate CC in desc
+MOVE 'EDS'          TO #CLERK
+*
+CALLNAT 'C2520SAM' #SCR-LINES
+  ST-V.ID-NUMBER
+  ST-V.PROCESS-IND
+  ST-V.INTRO-FLAG
+  ST-V.NAME
+  ST-V.PLAN   (1:9)
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.DATE-ACCT-UPDATE
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #ILN1
+  #HOLD-CUR-ACCT-UPDT
+  #CLERK
+  #EXTRA-STOP
+  #SG-TBL (1:15)
+  #CMBX           /* DW9
+  2X
+  #CC-X
+* #ACTIVITY-TYPE            /* vt3 \/
+* #STATUS-TYPE
+* #lx-pass                  /* vt3 /\
+*
+RESET #EXTRA-STOP
+*
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE CHANGE-TO-Q
+**********************************************************************
+*
+IF MODE (#CC-X) = #RECURRING-CC-MODE(*)
+  IF   (CONV-DURATION (#CC-X) = 999)
+      AND (X-LOAN-AMOUNT (#CC-X) GT 5.00)
+      AND (X-ALT-LP-IND (#CC-X) = '6' OR = '8')
+    MOVE 'M' TO MODE (#CC-X)
+  ELSE
+    DECIDE ON FIRST VALUE ST-V.MODE(#CC-X)
+      VALUE '1'
+        ST-V.MODE(#CC-X) := 'A'
+      VALUE '2'
+        ST-V.MODE(#CC-X) := 'S'
+      VALUE '0','4'
+        ST-V.MODE(#CC-X) := 'Q'
+      NONE VALUE
+        IGNORE
+    END-DECIDE
+  END-IF
+END-IF
+*
+RESET TR-REG-V
+MOVE ST-V.DATE-ACCT-UPDATE TO TR-REG-V.DATE-LAST-UPDATE
+MOVE *DATN TO ST-V.DATE-ACCT-UPDATE
+MOVE *DATN TO ST-V.DTS-DATN
+MOVE *TIMN TO ST-V.DTS-TIMN
+*
+MOVE #REJ-MSG                             TO TR-REG-V.OLD-DATA (1)
+MOVE 'Credit card mode(s) changed to A/S/Q/M' TO TR-REG-V.NEW-DATA (1)
+*
+MOVE ST-V.ID-NUMBER   TO TR-REG-V.ID-NUMBER
+MOVE ST-V.PROCESS-IND TO TR-REG-V.PROCESS-IND
+* MOVE #NAME          TO TR-REG-V.NAME               /* YK16
+MOVE #TR-NAME         TO TR-REG-V.NAME               /* YK16
+MOVE *INIT-ID         TO TR-REG-V.TERMINAL-ID
+MOVE 'EDS'            TO TR-REG-V.CLERK-ID
+MOVE *DATN            TO TR-REG-V.TRANSACTION-DATN
+MOVE *TIMN            TO TR-REG-V.TRANSACTION-TIMN
+STORE TR-REG-V
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE READ-SUMMARY-RECORD
+*************************************
+* YK21 >
+RESET #MATCH-CN  #AVC-DESCRIPTION     /* DW3  /* YK4
+IF #INP-CN > #CC-AR-CN
+  RESET #NEW-RECORD
+END-IF
+* < YK21
+READ WORK 2 ONCE RECORD #CC-REC-APP-REJ
+AT END
+  #END-FILE := TRUE
+  ESCAPE ROUTINE
+END-ENDFILE
+*
+IF NOT #NEW-RECORD
+  RESET #ST-NOT-FOUND
+  FIND(1) ST-V WITH ID-NUMBER = #CC-AR-CN
+    IF NO RECORD FOUND
+      MOVE TRUE TO #ST-NOT-FOUND
+      ESCAPE BOTTOM
+    END-NOREC
+    MOVE *ISN TO #ST-ISN
+    #NEW-RECORD := TRUE
+  END-FIND
+END-IF
+*
+#LOOK-UP-VALUE := #CC-AV-CODE
+#AVC-DESCRIPTION := F-LOOK-UP-TABLE(<#LOOK-UP-KEY,#LOOK-UP-VALUE>)
+*
+IF #CC-AR-CN LT #INP-CN
+  COMPRESS 'Summ-cc but no Det CC #cc =' #CC-AR-CC-NUM #CC-AR-CN INTO #REPORT-OUTPUT
+  WRITE WORK FILE 5 #REPORT-OUTPUT
+END-IF
+*
+IF #CC-AR-CN = #INP-CN
+  MOVE TRUE TO #MATCH-CN
+  MOVE *DATN TO #YYYYMMDD
+  COMPRESS #MM-A #DD-A #YYYY-A INTO #INP-DT-APPLIED-MMDDYYYY LEAVING NO
+END-IF
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE WRITE-APPLY              /* YK4
+**********************************************************************
+*
+ADD 1 TO #CNT-3
+* Tab delimited format             /* YK4
+#MASK-CC-NUM := #CC-AR-CC-NUM
+MOVE EDITED #INP-AMT (EM=ZZZZZZ.99) TO #AMOUNT     /* DW36
+* COMPRESS #CNT-3 #TAB ST-V.ID-NUMBER #TAB #POL-NUM #TAB #INP-DT-APPLIED-N #TAB
+COMPRESS #CNT-3 #TAB ST-V.ID-NUMBER #TAB #INP-POL-NUM #TAB #INP-DT-APPLIED-N #TAB
+  #INP-TR-CD #TAB #INP-ISS-DT #TAB #INP-PLAN #TAB #AMOUNT #TAB
+* ST-V.NAME #TAB #MASK-CC-NUM #TAB #CC-EXP-DT #TAB #AVC-DESCRIPTION      /* YK5
+  ST-V.NAME #TAB #MASK-CC-NUM #TAB #CC-AR-EXP-DATE #TAB #AVC-DESCRIPTION
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+*
+END-SUBROUTINE
+**********************************************************************
+DEFINE SUBROUTINE WRITE-REJECT
+**********************************************************************
+*
+ADD 1 TO #CNT-4
+ADD #INP-AMT TO #TOT-REJ-INP-AMT   /* DW14
+*
+* Tab delimited format             /* YK4
+#MASK-CC-NUM := #CC-AR-CC-NUM
+MOVE EDITED #INP-AMT (EM=ZZZZZZ.99) TO #AMOUNT
+COMPRESS #CNT-4 #TAB ST-V.ID-NUMBER #TAB #INP-PAYER-CN #TAB #INP-POL-NUM #TAB #INP-TR-CD #TAB          /* YK22
+  #INP-ISS-DT #TAB #INP-PLAN #TAB #AMOUNT #TAB
+* #MASK-CC-NUM #TAB #CC-EXP-DT #TAB #REJ-MSG
+  #MASK-CC-NUM #TAB #CC-AR-EXP-DATE #TAB #REJ-MSG
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 4 #REPORT-OUTPUT
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE WRITE-REPORT-TOTALS
+**********************************************************************
+*
+COMPUTE #GND-TOTS = #TOT-PREM + #TOT-INT + #TOT-PRIN        /* DW14
+  + #TOT-DUES + #TOT-ADCR-TRAN + #TOT-RIDP  /* YK8  /* YK9
+*
+* New Reports Totals                                              /* YK4
+* approved transactions report
+MOVE EDITED #TOT-PREM  (EM=ZZZ,ZZZ.99) TO #AMOUNT               /* PM6
+COMPRESS 'Total Premium' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT #TAB
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-RIDP  (EM=ZZZ,ZZZ.99) TO #AMOUNT               /* YK9
+COMPRESS 'Total RIDP'  #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-INT-CAP (EM=ZZZ,ZZZ.99) TO #AMOUNT             /* PM6
+COMPRESS 'Total CAP Interest' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-INT-POL (EM=ZZZ,ZZZ.99) TO #AMOUNT             /* PM6
+COMPRESS 'Total POL Interest' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-INT   (EM=ZZZ,ZZZ.99) TO #AMOUNT               /* PM6
+COMPRESS 'Total Interest' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-PRIN-CAP (EM=ZZZ,ZZZ.99) TO #AMOUNT            /* PM6
+COMPRESS 'Total CAP Principal' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-PRIN-POL (EM=ZZZ,ZZZ.99) TO #AMOUNT            /* PM6
+COMPRESS 'Total POL Principal' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-PRIN  (EM=ZZZ,ZZZ.99) TO #AMOUNT               /* PM6
+COMPRESS 'Total Principal' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-DUES  (EM=ZZZ,ZZZ.99) TO #AMOUNT               /* PM6
+COMPRESS 'Total Dues'  #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #TOT-ADCR-TRAN (EM=ZZZ,ZZZ.99) TO #AMOUNT           /* YK7
+COMPRESS 'Total applied to ADCR' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+MOVE EDITED #GND-TOTS  (EM=ZZZ,ZZZ.99) TO #AMOUNT
+COMPRESS 'Grand Total' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+* applied to ADCR report file                                     /* YK7
+MOVE EDITED #TOT-ADCR-TRAN (EM=ZZZ,ZZZ.99) TO #AMOUNT
+COMPRESS 'Total transactions applied to ADCR' #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 5 #REPORT-OUTPUT
+* rejected transactions report
+MOVE EDITED #TOT-REJ-INP-AMT (EM=ZZZ,ZZZ.99) TO #AMOUNT
+COMPRESS 'Total Rejected Trans' #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 4 #REPORT-OUTPUT
+* Write Total for rejected transactions to the approved report     /* YK7
+COMPRESS 'Total Rejected Trans' #TAB #TAB #TAB #TAB #TAB #TAB #TAB #AMOUNT
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 3 #REPORT-OUTPUT
+END-SUBROUTINE
+*
+**********************************************************************
+DEFINE SUBROUTINE PROCESS-ERROR
+**********************************************************************
+*
+#INP-TR-CD := 'ADCR'                           /* YK8
+RESET #SG-TBL (*)                              /* YK8
+G2. GET ST-V #ST-ISN                           /* YK8
+PERFORM APPLY-ADCR                             /* YK8
+#TOT-ADCR-TRAN := #TOT-ADCR-TRAN + #INP-AMT
+PERFORM ACCT-REG                               /* YK8
+UPDATE (G2.)                                   /* YK8
+END TRANSACTION
+MOVE EDITED #INP-AMT (EM=ZZZ,ZZZ.99) TO #AMOUNT
+COMPRESS ST-V.ID-NUMBER #TAB #INP-TR-CD #TAB #AMOUNT #TAB #ERROR-MESSAGE
+  INTO #REPORT-OUTPUT LEAVING NO
+WRITE WORK FILE 5 #REPORT-OUTPUT
+PERFORM WRITE-APPLY                            /* YK8
+*
+END-SUBROUTINE
+END

@@ -1,0 +1,166 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PMD-RES Process PMD responces 
+*         1. Ftp responces
+* 
+DEFINE DATA LOCAL
+1 AT-V VIEW OF A-APPL-TRACKING
+ 2 SSN
+ 2 ID-NUMBER
+ 2 MEMBER-CN
+ 2 AT-STATUS
+ 2 NEXT-ACTION-DATE
+ 2 ACTION-DATE
+ 2 C*NOTES
+ 2 NOTES      (A75/40)
+ 2 REDEFINE NOTES
+  3 NOTES-TBL  (40)
+   4 NOTES-75   (A75)
+   4 REDEFINE NOTES-75
+    5 NOTES-AST  (A1)
+    5 NOTES-USER (A3)
+    5 NOTES-DASH (A1)
+    5 NOTES-DATE (A10)
+    5 NOTES-REST (A60)
+* MedExam  
+  2 PM-VENDOR    (A10)
+  2 PM-STATUS    (A25)
+  2 C*PORTAMEDIC-REQUEST
+  2 PORTAMEDIC-REQUEST(4)
+    3 PM-CODE      (A3)
+    3 PM-REMARK    (A130)
+*
+1 ftp_GET   (A) DYNAMIC INIT  <'/usr/SAG/APPS/AT/PMDwrk/PMD_RES @@ENV >/dev/null 2>/dev/null'>
+1 f_In      (A) DYNAMIC INIT  <'/usr/SAG/APPS/AT/PMDwrk/PMD_RES.TXT'>
+1 f_error   (A) DYNAMIC INIT  <'/usr/SAG/APPS/AT/PMDwrk/*.error'>
+1 f_AT      (A) DYNAMIC INIT  <'/usr/SAG/APPS/AT/PMDwrk/PMD_Response.log'>
+1 f_Report  (A) DYNAMIC INIT  <'/usr/SAG/APPS/AT/PMDwrk/PMD_Report.TXT'>
+1 cmd_mailx (A) DYNAMIC INIT  <'cat @REPORT | mailx -s "@SUBJ" -r "PMD_noreply@aafmaa.com" "@TO"'>
+1 v_TO      (A) DYNAMIC INIT  <'bzaslavskiy@aafmaa.com'>
+1 v_A      (A) DYNAMIC 
+1 v_Res    (A) DYNAMIC 
+1 v_STATUS (A) DYNAMIC 
+1 v_RC     (N4)
+1 A1000     (A1000)
+1 #i       (I2)
+1 #in      (I2)
+1 v_CN     (N6)
+1 v_Env    (A4)
+1 c_OK     (N2)
+1 c_Pend   (N2)
+1 c_Err    (N2)
+1 v_Header (A60)
+END-DEFINE
+ON ERROR
+  PRINT  *PROGRAM "Err-ln:" *ERROR-LINE "Err:" *ERROR-NR
+  /* copy f_In to "restart" file and notify 
+  IF *ERROR-NR = 3045
+     IGNORE  /* notify ...  about v_CN on hold 
+             /* do not delete? copy to "3045" file ? continue req id for reqord ?
+  END-IF   
+END-ERROR
+/* if 3045 file exist do not delete etc...  
+  MOVE EDITED f-IS-DEV(<>) (EM=Prod/Test) TO v_Env
+  EXAMINE ftp_GET FOR '@@ENV' REPLACE v_Env
+  PRINT *PROGRAM *DATE *TIMX  'Executed in' v_Env GET_DBN(<>) (EM=999)
+  CALL 'shcmd' ftp_GET 
+  v_RC :=  RET('shcmd')
+  DEFINE WORK FILE 1 f_In
+  DEFINE WORK FILE 2 f_AT ATTRIBUTES 'APPEND'
+  DEFINE WORK FILE 3 f_Report TYPE 'ASCII-COMPRESSED'
+  COMPRESS v_Env *DAT4U *TIME INTO v_Header
+  WRITE WORK FILE 3 VARIABLE '-- PMD Report --' v_Header
+  READ WORK 1 A1000
+    #in := #in + 1
+    v_A := A1000
+*    PRINT #in(AD=I EM=z9'.') v_A                       /*  --db
+    DECIDE FOR FIRST CONDITION
+       WHEN  v_A = SCAN('Pending')
+         PERFORM sbr_PARSE   
+         v_Res := ' Portamedic: Pending duplicate order'
+         v_STATUS := 'Pending'
+         c_Pend := c_Pend + 1
+         PERFORM sbr_Notes
+         WRITE WORK FILE 2 VARIABLE v_CN ' Duplicate'
+         WRITE WORK FILE 3 VARIABLE v_CN ' Duplicate'
+       WHEN  v_A = SCAN('>Success<')
+         PERFORM sbr_PARSE   
+         v_Res := ' Portamedic: Confirmed'
+         v_STATUS := 'Confirmed'
+         c_OK := c_OK + 1
+         PERFORM sbr_Notes         
+         WRITE WORK FILE 2 VARIABLE v_CN ' Success'
+         WRITE WORK FILE 3 VARIABLE v_CN ' Success'         
+      WHEN NONE IGNORE                                 /* ???    Why there? 
+    END-DECIDE   
+    END-WORK
+    PERFORM sbr_Errors
+    CLOSE WORK FILE 2
+    CLOSE WORK FILE 3
+    PERFORM sbr_Report
+    IF v_RC <> 0 TERMINATE 4 END-IF
+* ------------------------------------------------------------------------------
+DEFINE SUBROUTINE sbr_Notes
+  FIND(1) AT-V WITH ID-NUMBER = v_CN
+         IF NO RECORD FOUND
+            IGNORE                                     /* ???  Err 2
+            ESCAPE BOTTOM
+         END-NOREC
+    FOR #i = 1 TO 40 IF NOTES(#i) = ' ' ESCAPE BOTTOM END-IF END-FOR
+    IF #i = 41   
+       NOTES(1 : 39) := NOTES(2 : 40)
+       RESET NOTES(40)
+       #i := 40
+    END-IF
+*    PRINT *PROGRAM 'First empty note:' #i 
+    MOVE EDITED *DATX (EM=MM/DD/YYYY) TO NOTES(#i)
+    COMPRESS '*' 'EDS' '-' NOTES(#i) v_Res  INTO NOTES(#i) LEAVING NO SPACE
+    PM-STATUS := v_STATUS
+    PRINT '--' 'CN:' ID-NUMBER 'Nt:' NOTES(#i) 'St:' PM-STATUS         /* --db
+    UPDATE
+    END TRANSACTION       
+  END-FIND
+END-SUBROUTINE
+* ------------------------------------------------------------------------------
+DEFINE sbr_PARSE
+         EXAMINE v_A FOR '<PolNumber>'  DELETE POSITION #i 
+         #i := #i + 2
+         v_A := SUBSTR(v_A,#i,6)
+         IF v_A is (N6)
+           v_CN := VAL(v_A)   
+         ELSE
+           IGNORE                                       /*  ???  Err 1
+         END-IF     
+END-SUBROUTINE
+* ------------------------------------------------------------------------------
+DEFINE sbr_Errors
+   IF FN_Exist(<f_error>)
+     PRINT 'Process errors'
+     WRITE WORK FILE 3 VARIABLE 'Error. Call support'
+     c_Err := c_Err + 1
+   ELSE
+      PRINT 'No errors'
+   END-IF      
+END-SUBROUTINE
+* ------------------------------------------------------------------------------
+DEFINE sbr_Report
+    IF #In = 0 AND c_Err = 0
+       COMPRESS 'Portamedic response.' v_ENV '-'  'No Responses' *DAT4U INTO v_A
+    ELSE
+       COMPRESS 'Success: [' c_OK ']'  ' Duplicate [' c_Pend ']' ' Error [' c_Err ']' INTO v_A LEAVING NO SPACE
+       COMPRESS 'Portamedic response.' v_ENV '-'  v_A INTO v_A
+    END-IF
+    EXAMINE cmd_mailx FOR '@SUBJ' REPLACE v_A
+    EXAMINE cmd_mailx FOR '@TO'   REPLACE v_TO 
+    EXAMINE cmd_mailx FOR '@REPORT'   REPLACE f_Report
+    CALL 'shcmd' cmd_mailx 
+    v_RC :=  RET('shcmd')
+    IF v_RC <> 0
+      PRINT 'Error sending mail'
+    END-IF
+END-SUBROUTINE
+* ------------------------------------------------------------------------------    
+END

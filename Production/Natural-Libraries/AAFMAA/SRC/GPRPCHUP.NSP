@@ -1,0 +1,268 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*************************************************************************************************
+* NAME         : GPRPCHUP                                                                       *
+* DESCRIPTION  : Upload data from the input file to  Debit/credit or Term refund buckets in IAS *
+*************************************************************************************************
+*                            MODIFICATION LOG                                                        *
+* USER   DATE        TAG     REASON                                                             *
+* YAK    09/20/2013          Initial creation                                                   *
+*************************************************************************************************
+*
+DEFINE DATA
+LOCAL USING P_PARMS
+LOCAL USING GPRA0003
+LOCAL USING GPRL0EML      /* PDA to send notification email
+LOCAL
+1 #CNT                      (N7)
+1 #INPUT                    (A200)
+1 #RECORD-IN
+  2 CN                     (A) DYNAMIC
+  2 CHECK-NUMBER           (A) DYNAMIC
+  2 CHECK-DATE             (A) DYNAMIC
+  2 CHECK-AMOUNT           (A) DYNAMIC
+*
+1 #AMT                      (N7.2)
+1 #TAB                      (A1) INIT <H'09'>
+1 #FULL-ACCESS              (L)
+1 #ADMIN-ACCESS             (L)
+1 #PROCESS-FILE             (L)
+1 #TEXT                     (A78)
+1 #FUNCTION-ATTRIBUTES      (A68)
+1 REDEFINE #FUNCTION-ATTRIBUTES
+  2 #PROGRAM                (A8)
+  2 #SEPARATOR              (A1)
+  2 #FUNCTION-PARM          (A7)
+  2 #HEADER-1               (A50)
+  2 #SECURITY-CODE          (N2)
+*
+1 #HEADER                    (A) DYNAMIC
+1 #RUN-PARM                  (A5)
+1 #ALL_UC                    (A) DYNAMIC CONST <'ALL'>
+1 #TMRF                      (A) DYNAMIC CONST <'TMRF'>
+1 #NO-FILES    (A78) CONST <'No files found for processing'>
+1 #UNIX-DIR (A) DYNAMIC CONST <'/usr/SAG/tmp/UI/'>
+1 #LINE-CNT (N4)
+1 #DATA-ARRAY (A/*) DYNAMIC
+1 #WIN-LENGTH (N2) INIT <50>
+1 #WIN-ROW    (N2) INIT <12>
+1 #VERT       (N2) INIT <9>
+1 #HOR        (N2) INIT <7>
+1 #TOTAL-AMT    (N9.2)
+1 #UPLOAD       (A1) INIT <'N'>
+1 #REPORT-ONLY  (A1) INIT <'Y'>
+* Define for Get DIR Content / Get File scripts
+1 v_SCRIPT     (A) DYNAMIC INIT<'/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/FTP_GET_RDIR'>
+1 WIN_DIR      (A50)  INIT <'/ftp/UncashedChecks'>
+1 WIN_DIR_TEST (A50)  INIT <'/ftp/UncashedChecks/Test'>
+1 WIN_DIR_WC   (A50)  INIT <'"*.*"'>
+1 UNIX_DIR     (A) DYNAMIC  INIT <'/usr/SAG/tmp/UI'>
+1 UNIX_FN      (A) DYNAMIC  INIT <'dir.txt'>
+1 v_shcmd      (A)  DYNAMIC
+1 v_rc           (N3)
+* Define for Get DIR Content END
+* parameters to call ftp subroutine
+1 #GET-SCRIPT-NAME   (A) DYNAMIC INIT<'/usr/SAG/AAFMAA/batch/workfiles/PROD/PGM/FTP_GET_FILE'>
+1 WIN_FN      (A) DYNAMIC
+* error log for monitoring program execution
+1 f_9     (A80) INIT <"/usr/SAG/tmp/UI/process.log">
+1 LOG-MESSAGE (A80)
+*
+END-DEFINE
+*
+DEFINE WORK FILE 9 f_9 TYPE 'ASCII-COMPRESSED'
+ON ERROR
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  ERROR-PROGRAM := *PROGRAM
+  ERROR-OBJECT  := P_ERROR_PROGRAM
+  ERROR-LINE    := P_ERROR_LINE
+  ERROR-NUMBER  := P_ERROR_NUM
+  RESET LOG-MESSAGE
+  COMPRESS ERROR-NUMBER ERROR-LINE ERROR-PROGRAM ERROR-OBJECT *DATN *TIME INTO ERROR-MESSAGE
+  P_TO     := 'ykegeles@aafmaa.com'
+  P_SUBJ   := '"Uncashed Checks UI Error"'
+  P_MSG(1) := 'Error reading Uncashed Checks file'
+  P_MSG(2) := ERROR-MESSAGE
+  CALLNAT 'GPRS0EML' p_EMAIL
+  WRITE WORK FILE 9 LOG-MESSAGE
+  CLOSE WORK FILE 9
+  DECIDE ON FIRST VALUE ERROR-NUMBER
+    VALUE '1599'
+      #TEXT := ' This file is opened in EXCEL. Please wait or contact the user...'
+      PERFORM RETURN-TO-MENU
+    VALUE '1316'
+      #TEXT := ' Please, select one of the available options'
+      PERFORM RETURN-TO-MENU
+    NONE
+      SET WINDOW OFF
+      ESCAPE ROUTINE
+  END-DECIDE
+END-ERROR
+*
+IF F-IS-DEV(<>)
+  WIN_DIR := WIN_DIR_TEST
+END-IF
+DEFINE WINDOW HELPWINDOW
+  SIZE #WIN-ROW*#WIN-LENGTH
+  BASE #VERT / #HOR
+  TITLE WIN_FN
+  FRAMED ON
+*
+SET KEY PF12 NAMED 'Quit'
+SET KEY PF3 NAMED 'Retrn'
+*
+IF *DATA NE 0
+  INPUT #FUNCTION-ATTRIBUTES
+END-IF
+*
+RESET #ADMIN-ACCESS #FULL-ACCESS
+IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'A'
+  #ADMIN-ACCESS  := #FULL-ACCESS := TRUE
+ELSE
+  IF FUNCTION-ACCESS(<*USER,#SECURITY-CODE>) = 'U'
+    #FULL-ACCESS := TRUE
+  END-IF
+END-IF
+*
+IF NOT #FULL-ACCESS
+  #TEXT := 'User not authorized to perform this function.'
+  PERFORM RETURN-TO-MENU
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #FUNCTION-PARM = 'A'
+    #RUN-PARM := #ALL_UC
+    MOVE 'All NON-Term Refund uncashed checks' TO #HEADER
+  WHEN #FUNCTION-PARM = 'B'
+    #RUN-PARM := #TMRF
+    MOVE 'Term Refund' TO #HEADER
+  WHEN NONE
+    IGNORE
+END-DECIDE
+PERFORM GET-DIR-CONTENT
+IF #LINE-CNT = 0
+  #TEXT := #NO-FILES
+  PERFORM RETURN-TO-MENU
+END-IF
+PERFORM LOAD-FTP-FILE
+*
+IF #PROCESS-FILE
+  FETCH RETURN 'GPBPCHUP' #RUN-PARM #UPLOAD WIN_FN
+END-IF
+*
+RESET #TEXT
+PERFORM RETURN-TO-MENU
+*
+********************************
+DEFINE SUBROUTINE RETURN-TO-MENU
+********************************
+*
+#FUNCTION-PARM := 'UCHP   '
+#PROGRAM       := 'G1000PUI'
+STACK TOP DATA #FUNCTION-ATTRIBUTES #TEXT
+FETCH #PROGRAM
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-DIR-CONTENT
+*********************************
+*
+/* Get Dir content
+COMPRESS UNIX_DIR '/' UNIX_FN INTO UNIX_FN LEAVE NO SPACE
+COMPRESS v_SCRIPT WIN_DIR WIN_DIR_WC UNIX_FN INTO v_shcmd
+* PRINT v_shcmd
+CALL 'shcmd' v_shcmd
+v_rc:=  RET('shcmd')
+IF v_rc <> 0
+  #TEXT := 'Error in script'
+  ESCAPE ROUTINE
+END-IF
+/* Get Dir content END
+/* Read Dir content
+DEFINE WORK FILE 1 UNIX_FN TYPE 'ASCII-COMPRESSED'
+RESET #LINE-CNT
+READ WORK FILE 1 #INPUT
+  #LINE-CNT := #LINE-CNT + 1
+  RESIZE ARRAY #DATA-ARRAY TO (*:#LINE-CNT)
+  #DATA-ARRAY(#LINE-CNT) := #INPUT
+END-WORK
+IF #LINE-CNT = 0
+  #TEXT := #NO-FILES
+END-IF
+*
+END-SUBROUTINE
+*
+***********************************************************************
+DEFINE SUBROUTINE LOAD-FTP-FILE
+***********************************************************************
+*
+CALLNAT 'GPRNDD02' #DATA-ARRAY(*) #HEADER WIN_FN WIN_DIR
+*
+IF WIN_FN <> ' '
+  COMPRESS #UNIX-DIR WIN_FN INTO UNIX_FN LEAVING NO
+* EXAMINE UNIX_FN FOR '#' DELETE
+  DEFINE WORK FILE 1 UNIX_FN
+*
+**===============================================
+  COMPRESS #GET-SCRIPT-NAME WIN_DIR WIN_FN UNIX_FN INTO v_shcmd
+  CALL 'shcmd' v_shcmd
+  v_rc:=  RET('shcmd')
+  IF v_rc <> 0
+    #TEXT := 'Error in script'
+    ESCAPE ROUTINE
+  END-IF
+**===============================================
+  RESET #CNT #TOTAL-AMT
+  READ WORK 1 #INPUT
+    SEPARATE #INPUT INTO
+      CN
+      CHECK-NUMBER
+      CHECK-DATE
+      CHECK-AMOUNT
+    IGNORE WITH DELIMITER #TAB
+    IF CN = ' '                            /* end of file
+      ESCAPE BOTTOM  
+    END-IF  
+    #CNT := #CNT + 1
+* data validation
+    IF CN IS (N6) IGNORE
+    ELSE
+      #TEXT := ' Incorrect CN in the file'
+      PERFORM RETURN-TO-MENU
+    END-IF
+    EXAMINE CHECK-AMOUNT FOR '$' DELETE
+    IF CHECK-AMOUNT IS (N7.2)
+      #AMT := VAL(CHECK-AMOUNT)
+      #TOTAL-AMT := #TOTAL-AMT + #AMT
+    ELSE
+      #TEXT := 'Incorrect amount field in the file'
+      PERFORM RETURN-TO-MENU
+    END-IF
+  END-WORK
+  CLOSE WORK FILE 1
+*
+  #HEADER := WIN_FN
+  RESET #UPLOAD #REPORT-ONLY #PROCESS-FILE
+  IF #CNT <> 0
+    SET WINDOW 'HELPWINDOW'
+    INPUT WINDOW = 'HELPWINDOW' WITH TEXT #TEXT          /
+      'Records to process:      '  #CNT (AD=YLOFHT'_')   /
+      'Total Amount             '  #TOTAL-AMT (AD=YLOFHT'_') /
+      'Run Report               '  #REPORT-ONLY (AD=YLMFHT'_') /
+      'Upload                   '  #UPLOAD (AD=YLMFHT'_')  ///
+      'Enter - Submit       F3 - Cancel'
+  ELSE
+    #TEXT := 'No records for processing'
+  END-IF
+  IF *PF-KEY = 'ENTR'
+    #PROCESS-FILE := TRUE
+  ELSE
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+END-SUBROUTINE
+*
+END

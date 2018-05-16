@@ -1,0 +1,165 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM GPBPCC06 - CREDIT CARD processing
+* Part I (program 3) - extract credit card information from IAS and
+*                      create CC transactions to send to CC Process
+*******************************************************************
+* work file 1 - Read extracted CN, policy segment number and
+*               expiration date from credit card file for policies
+*               where CC will expire whithin 2 months
+* work file 2 - Add owner CN, formar policy number and expiration date.
+*               Sort by insured CN creating one letter per insured,
+*               Add owner name, address.
+*
+* report number 1 - expiration letters
+*
+*******************************************************************
+*                       MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG     REASON
+* YAK    08242011          Create program
+* VXT    01042012  VT1     Add Mode to the input expiration letter
+*                          extract file
+* bz-Name-C 07/07/2017     Fine Names. Keep all capital    
+*******************************************************************
+DEFINE DATA
+LOCAL USING ADDA0001
+LOCAL
+1 PolicyNumber           (A) DYNAMIC
+1 IdNumber               (A) DYNAMIC
+1 PolSegment             (A) DYNAMIC
+1 ExpDate                (A) DYNAMIC
+1 OwnerIdNumber          (A) DYNAMIC
+1 Mode                   (a) DYNAMIC                 /* vt1 
+1 #I                     (I2)
+1 #EXP-LETTER-DATA       (A100)
+1 #TAB                   (A1) CONST <H'09'>
+1 #OUTPUT        (A500)
+1 PolicyNumberLine (A) DYNAMIC
+*
+* Form fields
+1 #SORT-DATA
+  2 #ID-NUMBER        (A6)
+  2 REDEFINE #ID-NUMBER
+    3 #ID-NUMBER-N    (N6)
+  2 #OWNER-ID         (A6)
+  2 REDEFINE #OWNER-ID
+    3 #OWNER-ID-N     (N6)
+  2 #POLICY-NUMBER    (A16)
+  2 #CC-EXP-DT-X      (A15)
+  2 #mode-x           (a12)                 /* vt1 
+*
+1 #EXP-DT-X              (A15)
+1 #CC-EXPIRATION-DATE    (A8)
+1 REDEFINE #CC-EXPIRATION-DATE
+  2 #YYYY-A (A4)
+1 REDEFINE #CC-EXPIRATION-DATE
+  2 #CC-EXP-DATE-N (N8)
+*
+1 #CGA-SCR-SUFFIX   (A3)  CONST <'CCE'> /* Indicate Credit Card Expiration for DAL
+1 #DAT4U            (A10)
+1 #LETTER-OWNER-CN  (A8)
+1 #LETTER-ID-NUMBER (A6)
+1 #LETTER-POLICY-NUMBER (A76)
+1 #FORMATTED-NAME   (A45)
+1 #SCR-ZIP-BAR-CODE (A14)
+1 #FIRST-ADDRESS    (A70)
+1 #SECOND-ADDRESS   (A70)
+1 #THIRD-ADDRESS    (A70)
+1 #MONTH            (A20)
+1 #DAL-POLICY-NUMBER (A16)
+1 #NUM-EXP-LTRS-BY-INSURED  (N5)
+1 #CN               (N6)
+1 #Dynamic_Name     (A) DYNAMIC
+* Commented out piece is needed for executing online
+* 1 f_1     (A80) INIT <"/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/CCEXPIR_INS.TXT">
+* 1 v_PN    (I1)
+* 1 v_RC    (N3)
+*
+1 #mode              (a12)                    /* vt1
+1 #line              (a75)                    /* vt1
+*
+END-DEFINE
+*
+* v_PN := 1
+* v_RC := PRT_FN_PUT(<v_PN, f_1>)
+* IF v_RC <> 0
+*   PRINT (0)  'Error in print file assigment'
+*   ESCAPE ROUTINE
+* END-IF
+* DEFINE WORK FILE 3 f_1
+*
+* DEFINE WORK FILE 1 "/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/EXPIR_DATA.TXT"
+* DEFINE WORK FILE 2 "/usr/SAG/AAFMAA/batch/workfiles/PERMDA/COM/EXPIR_LETTER.TXT"
+*
+#DAT4U := *DAT4U
+READ WORK FILE 1 #EXP-LETTER-DATA
+*  SEPARATE #EXP-LETTER-DATA INTO IdNumber PolSegment ExpDate WITH DELIMITER #TAB
+  separate #exp-letter-data          /* vt1 \/
+    into IdNumber
+    PolSegment
+    ExpDate
+    Mode
+    with delimiter #TAB              /* vt1 /\
+*
+  RESET #SORT-DATA
+  #ID-NUMBER-N  := VAL(IdNumber)
+  #I            := VAL(PolSegment)
+  #mode-x       := Mode             /* vt1
+  CALLNAT 'GPLNMSXX' #POLICY-NUMBER #ID-NUMBER-N #I
+  OwnerIdNumber := F-OWNER-CN(<PolicyNumber,IdNumber,PolSegment>)
+  #OWNER-ID-N   := VAL(OwnerIdNumber)
+  IF #OWNER-ID-N <> #ID-NUMBER-N
+    WRITE 'OWNER IS NOT INSURED ' #OWNER-ID-N #ID-NUMBER-N
+  END-IF
+  #CC-EXPIRATION-DATE := ExpDate
+  #MONTH := FUNCTION-CALENDAR(<#CC-EXP-DATE-N,'M'>)
+  COMPRESS #MONTH #YYYY-A INTO #CC-EXP-DT-X
+  COMPRESS #CC-EXP-DT-X '.' INTO #CC-EXP-DT-X LEAVING NO
+*
+  WRITE WORK FILE 2 #SORT-DATA
+END-WORK
+CLOSE WORK FILE 2
+*
+READ WORK FILE 2 #SORT-DATA
+END-ALL
+SORT BY #ID-NUMBER USING #OWNER-ID #POLICY-NUMBER #CC-EXP-DT-X
+#MODE-x                              /* vt1
+  COMPRESS PolicyNumberLine #POLICY-NUMBER INTO PolicyNumberLine
+  AT BREAK OF #ID-NUMBER
+    #CN := OLD(#OWNER-ID-N)
+    #LETTER-ID-NUMBER := OLD(#ID-NUMBER)
+    RESET #PDA-ADDRESS
+    #ADD-CONTACT-ID := F-GET-CONTACT-ID(<#CN>)
+    #ADD-TYPE       := 'P'                           /* Primary
+    CALLNAT 'ADDN0001' #PDA-ADDRESS
+    #FIRST-ADDRESS   := #ADD-LINE-1
+    #SECOND-ADDRESS  := #ADD-LINE-2
+    #THIRD-ADDRESS   := #ADD-LINE-3
+*
+    #Dynamic_Name := '!L'
+    CALLNAT 'GPRS0CNT' #ADD-CONTACT-ID #Dynamic_Name  /* bz-Name-C
+    #FORMATTED-NAME := #Dynamic_Name
+    #LETTER-OWNER-CN := #CN
+    COMPRESS 'CN' #LETTER-OWNER-CN INTO #LETTER-OWNER-CN LEAVING NO
+    COMPRESS 'Ref Policy: ' PolicyNumberLine INTO #LETTER-POLICY-NUMBER
+    IF COUNT(#ID-NUMBER) = 1
+      #DAL-POLICY-NUMBER := OLD(#POLICY-NUMBER) /* PolicyNumberLine
+    END-IF
+    #EXP-DT-X := OLD(#CC-EXP-DT-X)
+    #mode     := old(#mode-x)                          /* vt1 
+    compress 'you' #mode 'bill. If we do not receive payment or an authorization'
+    into #line 
+    ADD 1 TO #NUM-EXP-LTRS-BY-INSURED
+    NEWPAGE (1)
+    WRITE (1) NOTITLE USING FORM 'ATHFCCRD'
+    RESET PolicyNumberLine #DAL-POLICY-NUMBER
+  END-BREAK
+END-SORT
+*
+WRITE 'EXPIRATION LETTERS BY INSURED   '  #NUM-EXP-LTRS-BY-INSURED
+*
+END

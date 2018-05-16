@@ -1,0 +1,259 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Subprogram - MBCNEC51
+* Member Center Online / Payment Center/Member Center
+* Get/Update ECheckInfo - called from GetPayments/ApplyPayments
+* Can be used as a direct eCheck Add/Update module if needed
+* being called from "ECheckInfo" function via MBCNEC50 interface
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    08012014       Initial Creation
+* YAK    08302016  YK1  Changes for EB&P II
+* YAK    05082017  YK2  Changes for EB&P III
+************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEC50
+PARAMETER
+1 #ErrorCode  (A3)
+1 #LINKED_CN  (N6/*) OPTIONAL
+LOCAL USING OBJABA01
+LOCAL USING ERROR_L
+LOCAL
+1 #GET-BY-ISN      (A) DYNAMIC CONST <'GET-BY-ISN'>
+1 #GET-ST          (A) DYNAMIC CONST <'GET-ST'>
+1 #GET-EZPAY       (A) DYNAMIC CONST <'GET-EZPAY'>
+1 #GET-LINKED      (A) DYNAMIC CONST <'GET-LINKED'>
+1 #GET-ALL         (A) DYNAMIC CONST <'GET-ALL'>
+1 #Checking        (A) DYNAMIC CONST <'Checking'>
+1 #Saving          (A) DYNAMIC CONST <'Saving'>
+1 #DDA             (A) DYNAMIC CONST <'DDA'>
+1 #SAV             (A) DYNAMIC CONST <'SAV'>
+1 #ECheck          (A) DYNAMIC CONST <'eCheck'>
+1 #EZPay           (A) DYNAMIC CONST <'EZ-Pay'>
+1 #CheckType       (A) DYNAMIC
+1 #DATN            (N8)
+1 #TIMN            (N7)
+1 #I               (I2)
+1 #I1              (I2)
+1 #II              (I2)
+1 #K               (I2)
+1 #ACCOUNT-ARRAY   (P9/*)
+*
+* YK1>
+1 #EZ-MODE         (A1)   CONST <'E'>
+1 #EZ-LOAN-MODE    (A1/2) CONST <'3','4'>
+1 #ACTIVE          (A1)   CONST <'D'>
+1 #SERV-PAYABLE    (A3/2) CONST <'PSM','SAS'>
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 PAD-CODE
+  2 C*ACTIVE-SEGMENTS
+  2 MODE (9)
+  2 STATUS (9)
+  2 PAY-STATUS (9)
+  2 X-ALT-LP-IND (9)
+  2 X-LOAN-AMOUNT(9)
+  2 X-ALT-LP-IND-2 (9)
+  2 X-LOAN-AMOUNT-2 (9)
+  2 X-ALT-LP-AMT (9)
+  2 OWNERSHIP-FLAG (9)
+*  
+1 SVC-MEMBER-V VIEW OF A-SVC-MEMBER
+  2 SVC-ID-NUMBER
+  2 SVC-PLAN
+  2 SVC-STATUS
+  2 SVC-MODE
+* > YK1
+1 p_Parms
+  2 p_RN   (A9)
+  2 p_Name (A)  DYNAMIC
+  2 p_RC   (I4)
+*
+END-DEFINE
+*
+DECIDE ON FIRST VALUE BankAccounts.ActionType
+  VALUE #GET-ST
+    PERFORM GET-EZ-PAY-ACCOUNT
+  VALUE #GET-ALL
+    PERFORM GET-EZ-PAY-ACCOUNT
+    PERFORM GET-BANK-ACCOUNT-ARRAY
+    BankAccounts.ActionType := #GET-LINKED
+    PERFORM GET-LINKED-ACCOUNTS
+  VALUE #GET-LINKED    
+    PERFORM GET-LINKED-ACCOUNTS
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+************************************
+DEFINE SUBROUTINE GET-EZ-PAY-ACCOUNT
+************************************
+*
+IF BankAccounts.ActionType <> #GET-LINKED
+  RESET PARM-BA-DATA PARM-BA-INFO
+  PARM-BA-DATA.#PARM-ID-NUMBER := BankAccounts.ViewCN
+END-IF
+#ACTION         := #GET-ST
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+IF PARM-BA-DATA.#ERROR-MESSAGE = ' '                /* YK1
+  IF #ISN <> 0
+    #CheckType := #EZPay
+    PERFORM POPULATE-PARAMETER    
+  END-IF
+END-IF                                              /* YK1
+*
+END-SUBROUTINE
+*
+****************************************
+DEFINE SUBROUTINE GET-BANK-ACCOUNT-ARRAY
+****************************************
+*
+* #PARM-ID-NUMBER := BankAccounts.OwnerCN
+#ACTION         := #GET-ALL
+EXPAND ARRAY #ACCOUNT-ARRAY TO (*:1)
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO #ACCOUNT-ARRAY(*)
+IF #NUMBER-OF-RECORDS <> 0
+  FOR #I1 = 1 TO *OCCURRENCE(#ACCOUNT-ARRAY)        /* YK1
+    #CheckType := #ECheck
+    RESET PARM-BA-INFO PARM-BA-DATA
+    #ISN := #ACCOUNT-ARRAY(#I1)
+    PERFORM GET-ECHECK-DATA
+  END-FOR
+END-IF
+*
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE GET-LINKED-ACCOUNTS
+*************************************
+*
+#I := C@Account
+IF #LINKED_CN SPECIFIED
+  FOR #K = 1 TO *OCCURRENCE(#LINKED_CN)
+    RESET PARM-BA-INFO PARM-BA-DATA
+    PARM-BA-DATA.#PARM-ID-NUMBER := #LINKED_CN(#K)
+    PERFORM GET-EZ-PAY-ACCOUNT
+    PERFORM GET-BANK-ACCOUNT-ARRAY
+  END-FOR
+END-IF
+*
+END-SUBROUTINE
+*
+*********************************
+DEFINE SUBROUTINE GET-ECHECK-DATA
+*********************************
+* Check eCheck account
+#ACTION := #GET-BY-ISN
+CALLNAT 'OBJNBA01' PARM-BA-DATA PARM-BA-INFO
+* Check if the same account already added to the array as EZPay
+EXAMINE BankAccounts.AccountNumber(*) FOR PARM-BA-INFO.ACCOUNT-NUMBER INDEX #II
+IF #II <> 0
+  IF BankAccounts.RoutingNumber(#II) = PARM-BA-INFO.ROUTING-NUMBER AND BankAccounts.AccountCN(#II) = PARM-BA-INFO.ID-NUMBER
+* Duplicate found
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+PERFORM POPULATE-PARAMETER
+*
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE POPULATE-PARAMETER
+************************************
+*
+FOR #II = 1 TO BankAccounts.C@Account
+  IF BankAccounts.RoutingNumber(#II) = PARM-BA-INFO.ROUTING-NUMBER AND
+      BankAccounts.AccountNumber(#II) = PARM-BA-INFO.ACCOUNT-NUMBER AND
+      BankAccounts.AccountCN(#II) = PARM-BA-INFO.ID-NUMBER
+    ESCAPE ROUTINE
+  END-IF
+END-FOR
+*
+#I := #I + 1
+EXPAND ARRAY Account TO (*:#I)
+BankAccounts.CheckType(#I)       := #CheckType
+BankAccounts.AccountCN(#I)       := PARM-BA-INFO.ID-NUMBER
+BankAccounts.CheckId(#I)         := PARM-BA-INFO.CHECK-ID
+BankAccounts.RoutingNumber(#I)   := PARM-BA-INFO.ROUTING-NUMBER
+BankAccounts.AccountNumber(#I)   := PARM-BA-INFO.ACCOUNT-NUMBER
+BankAccounts.AccountType(#I)     := PARM-BA-INFO.ACCOUNT-TYPE
+BankAccounts.AccountType(#I)     := PARM-BA-INFO.ACCOUNT-TYPE
+BankAccounts.AccountStreet(#I)   := PARM-BA-INFO.ACCOUNT-STREET
+BankAccounts.AccountCity(#I)     := PARM-BA-INFO.ACCOUNT-CITY
+BankAccounts.AccountState(#I)    := PARM-BA-INFO.ACCOUNT-STATE
+RESET BankAccounts.AccountZipCode(#I)
+IF PARM-BA-INFO.ACCOUNT-ZIP-CODE <> 0
+  MOVE EDITED PARM-BA-INFO.ACCOUNT-ZIP-CODE5 (EM=99999) TO BankAccounts.AccountZipCode(#I)
+END-IF
+BankAccounts.AccountHolderFirstName(#I) := PARM-BA-INFO.ACCOUNT-HOLDER-FIRST-NAME
+BankAccounts.AccountHolderLastName(#I)  := PARM-BA-INFO.ACCOUNT-HOLDER-LAST-NAME
+PERFORM GET-BANK-NAME
+* YK2 >
+BankAccounts.LastUpdatedDate(#I) := PARM-BA-INFO.LAST-UPDATE-DATE
+BankAccounts.LastUpdatedTime(#I) := PARM-BA-INFO.LAST-UPDATE-TIME
+BankAccounts.LastUpdatedUser(#I) := PARM-BA-INFO.LAST-UPDATE-USER
+* < YK2
+*
+* Check if has EZ-Pay payments and mark recurring account
+BankAccounts.Recurring(#I) := 'false'
+BankAccounts.Modifiable(#I):= 'true'
+IF BankAccounts.CheckType(#I) = #EZPay
+  PERFORM CHECK-RECURRING-PAYMENTS
+END-IF
+BankAccounts.C@Account := #I
+*
+END-SUBROUTINE
+*
+******************************************
+DEFINE SUBROUTINE CHECK-RECURRING-PAYMENTS
+******************************************
+*
+* FIND(1) ST-V WITH ID-NUMBER = BankAccounts.AccountCN(#I)
+*   FOR #II = 1 TO C*ACTIVE-SEGMENTS
+*     IF ((MODE(#II) = #EZ-MODE OR MODE(#II) = 'Q' AND PAD-CODE = 'P'
+*         OR MODE(#II) = 'Q' AND PAD-CODE = 'D' AND OWNERSHIP-FLAG(#II) = 'D') 
+*         AND PAY-STATUS (#II) < '40' AND STATUS(#II) = #ACTIVE)
+*         OR  (X-ALT-LP-IND(#II) = #EZ-LOAN-MODE(*) AND X-LOAN-AMOUNT(#II) NE 0)
+*         OR  (X-ALT-LP-IND-2(#II) = #EZ-LOAN-MODE(*) AND X-LOAN-AMOUNT-2(#II) NE 0)
+*       BankAccounts.Recurring(#I) := 'true'
+*       IF NOT (F-PS-MODIFIABLE(<BankAccounts.AccountCN(#I)>)(2))
+*         BankAccounts.Modifiable(#I) := 'false'
+*       END-IF
+*       ESCAPE ROUTINE
+*     END-IF
+*   END-FOR
+* END-FIND
+*
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = BankAccounts.ViewCN
+  ACCEPT IF SVC-MEMBER-V.SVC-PLAN = #SERV-PAYABLE(*)
+  IF (SVC-STATUS = 'A' OR SVC-PLAN = 'SAS' AND SVC-STATUS = 'P')
+      AND SVC-MEMBER-V.SVC-MODE = #EZ-MODE
+    BankAccounts.Recurring(#I) := 'true'
+  END-IF
+END-FIND
+END-SUBROUTINE
+*
+*******************************
+DEFINE SUBROUTINE GET-BANK-NAME
+*******************************
+*
+*  p_RN  - ABA Routing Number
+*  p_Name - Bank Name (blank if not found)
+*  p_Mod  - "C": Invoke confirmation (A1)
+*  p_RC   - 1: Access error, 2: Wrong ABA  3: Not confirmed 0: Returns Bank name
+*
+RESET p_Parms
+p_RN := BankAccounts.RoutingNumber(#I)
+CALLNAT 'GPRN0ABA' p_RN p_Name p_RC
+BankAccounts.BankName(#I) := p_Name
+*
+END-SUBROUTINE
+*
+END

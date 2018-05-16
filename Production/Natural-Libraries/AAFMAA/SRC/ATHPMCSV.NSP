@@ -1,0 +1,680 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* *************************************************
+* PROGRAM-ID: ATHPMCSV calculate npr & mon csv for 1997 policies
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE     TAG  REASON                                            *
+* PAM  05272005 PM1  Adjust AVL-TDIV for 124156 per RLB                *
+* SAG  10282005 RH1 AB - Replace CALL to Cobol with CALLCAT to Natural
+************************************************************************
+DEFINE DATA
+* GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX    /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+LOCAL USING GC2V5LXX
+LOCAL
+1 ST-V VIEW OF A-STATUS
+ 2 ONLINE-ACTION-GN
+ 2 C*ACTIVE-SEGMENTS
+ 2 ONLINE-ACTION         (9)
+ 2 PAID-TO-DATE          (9)
+ 2 REDEFINE PAID-TO-DATE
+  3 PAID-TO-DATE-OCC   (9)
+   4 PTD-YYYYMM    (N6)
+   4 PTD-DD        (N2)
+ 2 FACE-AMOUNT           (9)
+ 2 ACC-CASH-VALUE        (9)
+ 2 DEATH-BENEFIT         (9)
+ 2 NXT-MON-DEATH-BENEFIT (9)
+ 2 PAY-STATUS            (9)
+ 2 CASH-VALUE            (9)
+ 2 NXT-MON-CASH-VALUE    (9)
+ 2 TOT-PREMIUMS-PAID     (9)
+ 2 NET-PR-RATIO          (N2.5/9)
+ 2 MIN-CASH-VALUE        (9)
+ 2 NXT-YR-MIN-CASH-VALUE (9)
+ 2 MONTH-ALLOC-AMT       (9)
+ 2 PREM-DEFICIENCY       (9)
+ 2 BEG-CASH-VALUE        (9)
+ 2 MTD-ACV-PREM-ADJ      (9)
+ 2 MTD-ACV-INT-ADJ       (9)
+*
+1 VA-V VIEW OF A-VA-HISTORY
+ 2 RECORD-KEY          (N15)
+ 2 ACCUM-CASH-VALUE-M   (P7.2/13)
+ 2 CASH-VALUE-M         (P7.2/13)
+ 2 YEAR-MONTH-M         (P7/13)
+ 2 PREMIUM-M            (P7.2/13)    /* NG99
+ 2 COST-OF-INSURANCE-M  (P7.2/13)    /* NG99
+ 2 INTEREST-M           (P5.2/13)
+ 2 PRORAT-LOAN-BAL-M    (P5.2/13)
+ 2 PRORAT-LN-ACC-INT-M  (P5.2/13)
+*
+1 #RECORD-KEY   (N15)
+1 REDEFINE #RECORD-KEY
+ 2 #VA-ID-NUMBER (N6)
+ 2 #VA-ISS-DATE  (N8)
+ 2 #VA-SPL-IND   (N1)
+*
+1 #WYYYYMMDD-N  (N8)
+1 REDEFINE #WYYYYMMDD-N
+  2 #WYYYY (N4)
+  2 REDEFINE #WYYYY
+   3 #WCENT (N2)
+   3 #WYY   (N2)
+  2 #WMM   (N2)
+  2 #WDD   (N2)
+1 REDEFINE #WYYYYMMDD-N
+  2 #WYYYY-A (A4)
+  2 #WMM-A (A2)
+  2 #WDD-A (A2)
+*
+1 #I1       (I2)
+1 #I2       (I2)
+1 #I3       (I2)
+1 #IDX      (I2)
+1 #UPDATE   (L)
+1 #CNT-1    (P5)
+1 #CNT-2    (P5)
+1 #CNT-3    (P5)
+1 #CNT-6    (P5)
+1 #ACV   (N7.2)
+1 #CSV   (N7.2)
+1 #DB-W-TDIV  (N7.2)
+1 #HOLD-CSV   (N7.2)
+1 #HOLD-ACV   (N7.2)
+1 #HOLD-ACQ   (N7.2)
+1 #HOLD-CF    (N7.2)
+1 #DOB        (A10)
+1 #ISS        (A10)
+1 #NPR        (N2.5)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY      (A4)
+ 2 #MM        (A2)
+ 2 #DD        (A2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM    (N6)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY-N    (N4)
+ 2 #MM-N      (N2)
+ 2 #DD-N      (N2)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYYMM-N  (N6)
+1 #TOT-PD-PREM   (P5.2)
+1 #TOT-VA-PREM   (P5.2)
+1 #NUM-PREM-MONS (P3)
+1 #NUM-INT-MONS  (P3)
+1 #ACV-PREM-ADJ   (P5.2)
+1 #ACV-INT-ADJ    (P5.5)
+1 #MON-PRM        (P5.2)
+1 #VA-ISN         (P8)
+1 #NO-VA-HIST     (L)
+1 #AVAIL-TDIV     (P5.2)
+1 #NEW-CV         (P7.2)
+1 #ACCUM-ACV      (P9.2)
+1 #PREV-ACV       (P9.2)
+1 #NEW-ACV        (P9.2)
+1 #ACV-DIFFF      (P9.2)
+1 #REAL-PREM      (P9.2)
+1 #AMT-7-2        (N7.2)
+1 REDEFINE #AMT-7-2
+ 2 #AMT-4         (N4)
+ 2 #AMT-3-2       (N3.2)
+1 #AVL-TDIV     (P7.2)
+*
+END-DEFINE
+*
+FORMAT  LS=133 PS=76
+WRITE   TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     'Re-calculate ACV/CSV/NRR/min csv/ and other fields'
+                        5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+FORMAT (2) LS=133 PS=76
+WRITE  (2) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     'PAID-UP POLICIES (PUSP/PUAP)'
+                         5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+FORMAT (3) LS=133 PS=76
+WRITE  (3) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     '***** Not Used ********           '
+                         5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+FORMAT (4) LS=133 PS=76
+WRITE  (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     'STATUS FILE AMTS UPDATED'
+                         5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+FORMAT (5) LS=133 PS=76
+WRITE  (5) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     'V/A History BEFORE and AFTER'
+                         5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+FORMAT (6) LS=133 PS=76
+WRITE  (6) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+     'SO POLICIES'
+                         5X 'DATE: ' *DATN 5X 'TIME: ' *TIMX
+*
+MOVE *DATN TO #WYYYYMMDD-N
+COMPRESS #WMM-A #WDD-A #WYYYY-A INTO #PARM-DATE WITH '/'
+*
+READ ST-V BY MEMBER-KEY FROM '001900'
+* READ ST-V BY MEMBER-KEY FROM '072479'
+*
+  GET #PROJECTION-VIEW *ISN
+*
+* IF ID-NUMBER GT 100001
+*   ESCAPE BOTTOM
+* END-IF
+* below reset the cash-value to be cash-sur-val on 1/8/1998
+* RESET #UPDATE
+* FOR #IDX 1 TO 9
+*   IF   (ISSUE-DATE (#IDX) GE 19970101)
+*    AND (ST-V.MONTH-ALLOC-AMT (#IDX) NE 999.99)
+*    AND (NOT PLAN (#IDX) = 'LT' OR = 'RT')
+*     MOVE TRUE TO #UPDATE
+*     COMPUTE #AVAIL-TDIV =
+*         ST-V.BEG-CASH-VALUE (#IDX) - ST-V.MONTH-ALLOC-AMT (#IDX)
+*     IF #AVAIL-TDIV LT 0
+*       RESET #AVAIL-TDIV
+*     END-IF
+*
+*     COMPUTE #NEW-CV =
+*      ST-V.ACC-CASH-VALUE (#IDX) - ST-V.BEG-CASH-VALUE (#IDX)
+*       + #AVAIL-TDIV
+*     ADD 1 TO #CNT-2
+*     DISPLAY (2) #CNT-2 'CN' ID-NUMBER 'Pay/STAT' PAY-STATUS (#IDX)
+*                    PLAN (#IDX)
+*         'ACV' ST-V.ACC-CASH-VALUE (#IDX)
+*         'CONT/FUND' ST-V.BEG-CASH-VALUE  (#IDX)
+*         'CUR-ACQ'   ST-V.MONTH-ALLOC-AMT (#IDX)
+*         'AVAIL/TDIV' #AVAIL-TDIV
+*         'NEW-CSV'  #NEW-CV
+*         'CURR-CV' ST-V.CASH-VALUE (#IDX)
+*     MOVE #NEW-CV TO ST-V.CASH-VALUE (#IDX)
+*     MOVE #NEW-CV TO ST-V.NXT-MON-CASH-VALUE (#IDX)
+*   END-IF
+* END-FOR
+*
+* IF #UPDATE
+*   UPDATE (0161)
+* END-IF
+*
+* END TRANSACTION
+*
+* ESCAPE TOP
+*
+  RESET #UPDATE
+  FOR #IDX 1 TO 9
+    IF   (ISSUE-DATE (#IDX)  GE 19970101)
+*    AND (ISSUE-DATE (#IDX)  LT 19971101)
+     AND (MONTH-ALLOC-AMT (#IDX) NE 999.99)
+     AND (PAY-STATUS (#IDX) = '47' OR = '48')
+* * * * * * * * * * * * below used to reset nxt-mon-csv & db
+     AND (NOT PLAN (#IDX) = 'LT' OR = 'RT')
+     AND ((PLAN-1A (#IDX) LT 'U') OR (PLAN-1A (#IDX) GT 'Z'))
+      ADD 1 TO #CNT-2
+      DISPLAY (2) #CNT-2 ID-NUMBER PLAN (#IDX)
+       'ISS-DT' ISSUE-DATE     (#IDX)
+       'MIN/MCV' ST-V.MIN-CASH-VALUE (#IDX)
+       'NXT-YR/MCV' ST-V.NXT-YR-MIN-CASH-VALUE (#IDX)
+       'PAT/STATUS' ST-V.PAY-STATUS (#IDX)
+*      'CV' ST-V.CASH-VALUE(#IDX)
+       'FACE' ST-V.FACE-AMOUNT (#IDX)
+*     'DB' ST-V.DEATH-BENEFIT (#IDX)
+*     ST-V.NXT-MON-DEATH-BENEFIT (#IDX)
+*     MOVE TRUE TO #UPDATE
+    END-IF
+*
+    ESCAPE TOP
+  END-FOR
+*
+* IF #UPDATE
+*   UPDATE (0160)
+* END-IF
+*
+* END TRANSACTION
+  ESCAPE TOP
+* * * * * * * * * *
+  FOR #IDX 1 TO 9
+    IF   (ISSUE-DATE (#IDX)  GE 19970101)
+*    AND (ISSUE-DATE (#IDX)  LT 19971101)
+     AND (MONTH-ALLOC-AMT (#IDX) NE 999.99)
+     AND (NOT PLAN (#IDX) = 'LT' OR = 'RT')
+     AND ((PLAN-1A (#IDX) LT 'U') OR (PLAN-1A (#IDX) GT 'Z'))
+*    AND (PAY-STATUS (#IDX) = '47')
+*     DISPLAY (2) ID-NUMBER PLAN (#IDX)
+*      'Iss-dt' ISSUE-DATE     (#IDX)
+*      'Min/MCV' ST-V.MIN-CASH-VALUE (#IDX)
+*      'Nxt-Yr/MCV' ST-V.NXT-YR-MIN-CASH-VALUE (#IDX)
+*      'CV' ST-V.CASH-VALUE(#IDX)
+*      'Face' ST-V.FACE-AMOUNT (#IDX)
+*      'DB' ST-V.DEATH-BENEFIT (#IDX)
+*     MOVE ID-NUMBER TO #VA-ID-NUMBER
+*     MOVE ISSUE-DATE (#IDX) TO #VA-ISS-DATE
+*     RESET                    #VA-SPL-IND
+*     RESET #NO-VA-HIST
+*     FIND (1) VA-V WITH RECORD-KEY = #RECORD-KEY
+*       IF NO RECORD FOUND
+*         WRITE ID-NUMBER ISSUE-DATE (#IDX) 'NO V/A HISTORY FOUND'
+*         MOVE TRUE TO #NO-VA-HIST
+*         ESCAPE BOTTOM
+*       END-NOREC
+*
+*       MOVE *ISN TO #VA-ISN
+*     END-FIND
+*
+*     IF #NO-VA-HIST
+*       ESCAPE TOP
+*     END-IF
+*
+      PERFORM BLD-PMT-TBL-FROM-VA-HIST      /* EITHER USE THIS OR NEXT
+*     PERFORM BLD-PMT-TBL-USING-ASSUMPTIONS
+*
+      MOVE 1 TO #PROJECTION-VIEW.ONLINE-ACTION (#IDX)
+      MOVE 'D' TO #PROJECTION-VIEW.STATUS (#IDX) /* IN CASE IT'S PURGED
+      MOVE #PROJECTION-VIEW.BEG-CASH-VALUE  (#IDX) TO #HOLD-CF
+      MOVE #PROJECTION-VIEW.ACC-CASH-VALUE  (#IDX) TO #HOLD-ACV
+      MOVE #PROJECTION-VIEW.CASH-VALUE      (#IDX) TO #HOLD-CSV
+      MOVE #PROJECTION-VIEW.MONTH-ALLOC-AMT (#IDX) TO #HOLD-ACQ
+      RESET     #PROJECTION-VIEW.BEG-CASH-VALUE (#IDX)
+      RESET     #PROJECTION-VIEW.ACC-CASH-VALUE (#IDX)
+      RESET     #PROJECTION-VIEW.CASH-VALUE     (#IDX)
+      RESET     #PROJECTION-VIEW.MONTH-ALLOC-AMT(#IDX)
+*
+      IF (#PROJECTION-VIEW.PAY-STATUS (#IDX) = '47')
+        MOVE ST-V.TOT-PREMIUMS-PAID (#IDX)
+           TO #PROJECTION-VIEW.ACC-CASH-VALUE (#IDX)
+              #PROJECTION-VIEW.CASH-VALUE (#IDX)
+      END-IF
+*
+      MOVE ST-V.C*ACTIVE-SEGMENTS TO #L-ACTIVE-SEG
+      MOVE #IDX       TO #L-SEGNO
+      MOVE ST-V.PAID-TO-DATE (#IDX) TO #L-PAID-THRU
+*
+      FOR #I1 1 TO 9
+        IF STATUS (#I1) = 'D'
+          MOVE ISSUE-DATE (#I1) TO #L-ISS-DT (#I1)
+        END-IF
+      END-FOR
+*
+      MOVE 08250              TO #L-GROWTH-RATE
+      RESET                      #L-MONTHLY-SW
+      MOVE 1986               TO #L-MNTHLY-START-YR
+*     MOVE 'MCSV'             TO #L-REIN-CODE
+*     MOVE 'REDO'             TO #L-REIN-CODE
+      MOVE ISSUE-DATE (#IDX)  TO #YYYYMMDD
+      MOVE #YYYYMM            TO #L-REIN-BEGIN-YYYYMM
+      MOVE 05                 TO #L-NUM-PROJ-YRS
+      MOVE 'N'                TO #L-DISPLAY-CALCS
+      MOVE 'N'                TO #L-SHOW-LOAN-REPAID
+*
+      IF *DEVICE = 'BATCH'
+*       WRITE 'GOING TO AOCX2V5B'
+** SAG RH1 10282005 AB START
+**      CALL 'AOCX2V5B' #PROJECTION-VIEW.ID-NUMBER
+**                      #L-ACTIVE-SEG
+**                      #L-NUM-DTLS
+        CALLNAT 'AOCX2V5B'  #PROJECTION-VIEW  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+      ELSE
+*       WRITE 'GOING TO AOCX2V5A'
+** SAG RH1 10282005 AB START
+**      CALL 'AOCX2V5A' #PROJECTION-VIEW.ID-NUMBER
+**                      #L-ACTIVE-SEG
+**                      #L-NUM-DTLS
+        CALLNAT 'AOCX2V5A'  #PROJECTION-VIEW  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+      END-IF
+      DISPLAY (4) ID-NUMBER
+         #L-CALC-MO-IND (1:5)
+         #L-CALC-AMT2   (1:5)
+      ESCAPE TOP
+*
+      MOVE TRUE TO #UPDATE
+      MOVE ROUNDED #L-CALC-AMT (1) TO #NPR
+*     DISPLAY (4) ID-NUMBER
+*        'NPR'          #npr (EM=ZZ.999999)
+*        'New/MCSV'     #L-CALC-AMT2 (1)
+*        'New/NX-MCSV ' #L-CALC-AMT2 (2)
+*                       PLAN (#IDX)
+*        'Iss-dt' ISSUE-DATE     (#IDX)
+*        'Pay/Stat' PAY-STATUS   (#IDX)
+*        'Face' ST-V.FACE-AMOUNT (#IDX)
+*        'Old/MCSV'     MIN-CASH-VALUE (#IDX)
+*        'Old/NXT-MCSV' NXT-YR-MIN-CASH-VALUE (#IDX)
+*
+      IF #NPR NE NET-PR-RATIO (#IDX)
+        WRITE (4) '        NPR non-match file =' NET-PR-RATIO (#IDX)
+                 ' calc NPR =' #NPR
+      END-IF
+*
+      MOVE #NPR             TO ST-V.NET-PR-RATIO   (#IDX)
+      MOVE #L-CALC-AMT2 (1) TO ST-V.MIN-CASH-VALUE (#IDX)
+      MOVE #L-CALC-AMT2 (2) TO ST-V.NXT-YR-MIN-CASH-VALUE (#IDX)
+      ESCAPE TOP
+*
+*     GET VA-V #VA-ISN
+*     FOR #I1 1 TO 12
+*       COMPUTE #I2 = 10 + (#I1 * 5) - 4
+*
+*       IF #L-CALC-MO-IND (#I2 + 0) = 0    /* no info
+*         ESCAPE TOP
+*       END-IF
+*
+*       FOR #I3 1 TO 13
+*         IF YEAR-MONTH-M (#I3) = 0
+*           ESCAPE TOP
+*         END-IF
+*
+*         MOVE YEAR-MONTH-M (#I3) TO #YYYYMM
+*         IF #MM-N = #L-CALC-MO-IND (#I2 + 0)
+*           ESCAPE BOTTOM
+*         END-IF
+*       END-FOR
+*
+*       DISPLAY (5) 'ID' ID-NUMBER
+*         #I1
+*         'DATE' YEAR-MONTH-M       (#I3)
+*         'New/PREM' #L-CALC-AMT2   (#I2 + 0) (EM=ZZ,ZZZ.99)
+*         'New/COI'  #L-CALC-AMT2   (#I2 + 1) (EM=ZZZ.99)
+*         'New/INT'  #L-CALC-AMT2 (#I2 + 2)   (EM=ZZZ.99)
+*         'New/ACQ'  #L-CALC-AMT2 (#I2 + 3)   (EM=ZZZ.99)
+*         'New/EXP'  #L-CALC-AMT2 (#I2 + 4)   (EM=ZZZ.99)
+*         'NEW/ACV'   #L-CALC-AMT   (#I2 + 0) (EM=ZZZ,ZZZ.99-)
+*         'NEW/CSV'   #L-CALC-AMT   (#I2 + 1) (EM=ZZZ,ZZZ.99-)
+*         'Old/PREM' PREMIUM-M           (#I3) (EM=ZZ,ZZZ.99)
+*         'Old/COI'  COST-OF-INSURANCE-M (#I3) (EM=ZZZ.99)
+*         'Old/INT'  INTEREST-M          (#I3)  (EM=ZZZ.99)
+*         'Old/ACQ'  PRORAT-LOAN-BAL-M   (#I3) (EM=ZZZ.99)
+*         'Old/EXP'  PRORAT-LN-ACC-INT-M (#I3) (EM=ZZZ.99)
+*         'OLD/ACV'  ACCUM-CASH-VALUE-M  (#I3) (EM=ZZZ,ZZZ.99-)
+*         'OLD/CSV'  CASH-VALUE-M        (#I3) (EM=ZZZ,ZZZ.99-)
+*       MOVE #L-CALC-AMT2 (#I2 + 0) TO #AMT-7-2
+*       MOVE #AMT-3-2               TO PREMIUM-M           (#I3)
+*       MOVE #L-CALC-AMT2 (#I2 + 1) TO COST-OF-INSURANCE-M (#I3)
+*       MOVE #L-CALC-AMT2 (#I2 + 2) TO INTEREST-M          (#I3)
+*       MOVE #L-CALC-AMT2 (#I2 + 3) TO PRORAT-LOAN-BAL-M   (#I3)
+*       MOVE #L-CALC-AMT2 (#I2 + 4) TO PRORAT-LN-ACC-INT-M (#I3)
+*       MOVE #L-CALC-AMT  (#I2 + 0) TO ACCUM-CASH-VALUE-M  (#I3)
+*       MOVE #L-CALC-AMT  (#I2 + 1) TO CASH-VALUE-M        (#I3)
+*     END-FOR
+*
+*     WRITE (5) ' '   /*  skip a line
+*     UPDATE (0356)         /* <<<<<<<<<<<<<<<********
+*
+*     MOVE PAID-TO-DATE (#IDX) TO #WYYYYMMDD-N
+*     IF #WYYYY GT 1997
+*       ADD 12 TO #WMM
+*     END-IF
+*
+*     SUBTRACT ISSUE-DATE-MM (#IDX) FROM #WMM
+*     MOVE #WMM TO #NUM-PREM-MONS
+*     COMPUTE #TOT-PD-PREM = (ANNUAL-PREM (#IDX) / 12) * #NUM-PREM-MONS
+*
+*     RESET #TOT-VA-PREM
+*     FOR #I2 1 TO 13
+*         ADD PREMIUM-M (#I2) TO #TOT-VA-PREM
+*     END-FOR
+*
+*     COMPUTE #ACV-PREM-ADJ = #TOT-PD-PREM - #TOT-VA-PREM
+*     IF MTD-ACV-PREM-ADJ (#IDX) NE 9999999.99
+*       SUBTRACT MTD-ACV-PREM-ADJ (#IDX) FROM #ACV-PREM-ADJ
+*     END-IF
+*
+*     MOVE *DATN TO #WYYYYMMDD-N
+*     SUBTRACT ISSUE-DATE-MM (#IDX) FROM #WMM
+*     MOVE #WMM TO #NUM-INT-MONS
+*     COMPUTE #ACV-INT-ADJ = ((#ACV-PREM-ADJ * .0825) / 12)
+*        * #NUM-INT-MONS
+*
+*     ADD 1 TO #CNT-6
+*     DISPLAY (6) 'CNT' #CNT-6 (EM=ZZ9) 'ID' ID-NUMBER 'MD' MODE (#IDX)
+*      'ISS/DATE' ISSUE-DATE (#IDX)
+*      'PD-TO/DATE' PAID-TO-DATE (#IDX)
+*      'VA/PREM'  #TOT-VA-PREM 'PD-TO/PREM' #TOT-PD-PREM
+*      'PREM/MONS' #NUM-PREM-MONS
+*      'INTM/MONS' #NUM-INT-MONS
+*      'ADJ/PREM' #ACV-PREM-ADJ 'ADJ/INT' #ACV-INT-ADJ
+*      'STAT' PAY-STATUS (#IDX)
+*      'PRIOR/ACV/ADJ' MTD-ACV-PREM-ADJ (#IDX)
+*      'PRIOR/INT/ADJ' MTD-ACV-INT-ADJ (#IDX)
+*
+*     COMPUTE #CSV = #L-CALC-AMT2 (6)  - #L-CALC-AMT2 (5)
+*     COMPUTE #DB-W-TDIV = DEATH-BENEFIT (#IDX) + BEG-CASH-VALUE (#IDX)
+*                                               - MONTH-ALLOC-AMT(#IDX)
+*     MOVE DATE-OF-BIRTH TO #YYYYMMDD
+*     COMPRESS #MM #DD #YYYY INTO #DOB WITH '/'
+*     MOVE ISSUE-DATE (#IDX) TO #YYYYMMDD
+*     COMPRESS #MM #DD #YYYY INTO #ISS WITH '/'
+*     ADD 1 TO #CNT-2
+*     DISPLAY (2) 'CNT' #CNT-2 (EM=ZZZ9)
+*                 'CN' ID-NUMBER
+*      'STAT' PAY-STATUS (#IDX)
+*      'DOB/ISS-DATE' #DOB
+*      'NET PRM RT' NET-PR-RATIO (#IDX)        (EM=99.9999999)
+*      'MCSV'     MIN-CASH-VALUE (#IDX)        (EM=ZZZ,ZZZ.99-)
+*      'NXT-MSCV' NXT-YR-MIN-CASH-VALUE (#IDX) (EM=ZZZ,ZZZ.99-)
+*      'CURR/ACQ' #HOLD-ACQ                    (EM=ZZZ.99)
+*      'MON/ACQ' PREM-DEFICIENCY (#IDX)        (EM=ZZZ.99)
+*      'CONT/FUND' #HOLD-CF                    (EM=Z,ZZZ.99)
+*      'ACV'       #HOLD-ACV                   (EM=ZZZ,ZZZ.99-)
+*      'CSV'       #HOLD-CSV                   (EM=ZZZ,ZZZ.99-)
+*      'DB'        DEATH-BENEFIT (#IDX)        (EM=ZZZ,ZZZ.99)
+*      'ILL/DB'    #DB-W-TDIV                  (EM=ZZZ,ZZZ.99)
+*      'PLAN/SMK'  PLAN (#IDX)
+*
+*     WRITE (2)  'NEW   ' FACE-AMOUNT (#IDX) (EM=ZZZ,ZZZ.99)
+*                          #ISS
+*                    #L-CALC-AMT  (1)  (EM=99.9999999)
+*                    #L-CALC-AMT2 (1)  (EM=ZZZ,ZZZ.99-)
+*                    #L-CALC-AMT2 (2)  (EM=ZZZ,ZZZ.99-)
+*                    #L-CALC-AMT2 (3)  (EM=ZZZ.99)
+*                    #L-CALC-AMT2 (4)  (EM=ZZZ.99)
+*                    #L-CALC-AMT2 (5)  (EM=Z,ZZZ.99)
+*                    #L-CALC-AMT2 (6)  (EM=ZZZ,ZZZ.99-)
+*                    #CSV              (EM=ZZZ,ZZZ.99-)
+*                    #L-CALC-AMT2 (7)  (EM=ZZZ,ZZZ.99)
+*                    #L-CALC-AMT2 (8)  (EM=ZZZ,ZZZ.99)
+*                    SMOKER-FLAG (#IDX) /
+*
+*     MOVE TRUE TO #UPDATE
+*     DISPLAY (4) ID-NUMBER
+*        'NPR'       #L-CALC-AMT (1)
+*        'MCSV'      #L-CALC-AMT2 (1)
+*        'NX-MCSV ' #L-CALC-AMT2 (2)
+*        'ACQ'      #L-CALC-AMT2 (3)
+*        'MNT'      #L-CALC-AMT2 (4)
+*        'C-F'      #L-CALC-AMT2 (5)
+*        'ACV'      #L-CALC-AMT2 (6)
+*        'CSV'      #CSV
+*        'DB '      #L-CALC-AMT2 (7)
+*
+      IF (ISSUE-DATE (#IDX) GE 19980101)
+       OR (ST-V.ONLINE-ACTION (#IDX) = '1')
+       OR (ST-V.ONLINE-ACTION-GN     = '2')
+        WRITE (2) 'nothing updated on above'
+      ELSE
+*       IF #L-CALC-AMT2 (2) NE ST-V.NXT-YR-MIN-CASH-VALUE(#IDX)
+*         WRITE (2) 'MISMATCHED NXT MCV'
+*       END-IF
+*
+        IF ISSUE-DATE (#IDX) GT 19971201
+          WRITE (2) 'only NPR updated on above'
+          MOVE ROUNDED #L-CALC-AMT  (1) TO ST-V.NET-PR-RATIO (#IDX)
+        ELSE
+          MOVE ROUNDED #L-CALC-AMT  (1) TO ST-V.NET-PR-RATIO (#IDX)
+          MOVE ROUNDED #L-CALC-AMT2 (1) TO ST-V.MIN-CASH-VALUE (#IDX)
+       MOVE ROUNDED #L-CALC-AMT2 (2) TO ST-V.NXT-YR-MIN-CASH-VALUE(#IDX)
+          MOVE ROUNDED #L-CALC-AMT2 (3) TO ST-V.MONTH-ALLOC-AMT(#IDX)
+          MOVE ROUNDED #L-CALC-AMT2 (4) TO ST-V.PREM-DEFICIENCY(#IDX)
+          MOVE ROUNDED #L-CALC-AMT2 (5) TO ST-V.BEG-CASH-VALUE (#IDX)
+          MOVE ROUNDED #L-CALC-AMT2 (6) TO ST-V.ACC-CASH-VALUE (#IDX)
+          MOVE #CSV                     TO ST-V.CASH-VALUE     (#IDX)
+          MOVE #CSV                     TO ST-V.NXT-MON-CASH-VALUE(#IDX)
+          MOVE ROUNDED #L-CALC-AMT2 (7) TO ST-V.DEATH-BENEFIT  (#IDX)
+          MOVE ROUNDED #L-CALC-AMT2 (7)
+                                    TO ST-V.NXT-MON-DEATH-BENEFIT(#IDX)
+*
+          IF   (ISSUE-DATE (#IDX) GE 19970101)
+           AND (MONTH-ALLOC-AMT (#IDX) NE 999.99)
+            COMPUTE #AVL-TDIV = ST-V.BEG-CASH-VALUE  (#IDX)
+                              - ST-V.PREM-DEFICIENCY (#IDX)
+            IF #AVL-TDIV LT 0
+              RESET #AVL-TDIV
+            END-IF
+*
+            IF ID-NUMBER = 124156                                 /* PM1
+             AND ISSUE-DATE (#IDX) = 20040413                     /* PM1
+             AND ST-V.DEATH-BENEFIT (#IDX) = 226000               /* PM1
+               MOVE 10150.58 TO #AVL-TDIV                         /* PM1
+            END-IF                                                /* PM1
+*
+            COMPUTE ST-V.CASH-VALUE (#IDX) = ACC-CASH-VALUE (#IDX)
+                   - ST-V.BEG-CASH-VALUE (#IDX) + #AVL-TDIV
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-FOR
+*
+  IF #UPDATE
+    UPDATE (0160)
+  END-IF
+*
+  END TRANSACTION
+END-READ
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE BLD-PMT-TBL-FROM-VA-HIST
+* * * * * * * * * * * * * * * * * * *
+*
+IF MTD-ACV-PREM-ADJ (#IDX) NE 0
+  DISPLAY ID-NUMBER MTD-ACV-PREM-ADJ (#IDX)
+END-IF
+*
+RESET #L-CALC-MO-IND (*)
+RESET #L-CALC-AMT2   (*)
+RESET #I2
+FOR #I1 1 TO 13
+  IF YEAR-MONTH-M (#I1) NE 0
+*               TEST IF PREMIUM IS OFF BY X000.00 DUE TO FIELD LIMIT
+    RESET #ACCUM-ACV
+    IF #I1 GT 1
+      MOVE ACCUM-CASH-VALUE-M (#I1 - 1) TO #PREV-ACV
+    ELSE
+      RESET #PREV-ACV
+    END-IF
+*
+    COMPUTE #NEW-ACV = #PREV-ACV + PREMIUM-M           (#I1)
+                                 + INTEREST-M          (#I1)
+                                 - COST-OF-INSURANCE-M (#I1)
+*
+    IF   (ISSUE-DATE (#IDX) GE 19970101)
+     AND (ST-V.MONTH-ALLOC-AMT (#IDX) NE 999.99)
+      SUBTRACT PRORAT-LOAN-BAL-M   (#I1) FROM #NEW-ACV /* mon acq
+      SUBTRACT PRORAT-LN-ACC-INT-M (#I1) FROM #NEW-ACV /* mon mnt exp
+    END-IF
+*
+    IF #NEW-ACV GT ACCUM-CASH-VALUE-M (#I1)
+      COMPUTE #ACV-DIFFF = #NEW-ACV - ACCUM-CASH-VALUE-M (#I1)
+    ELSE
+      COMPUTE #ACV-DIFFF = ACCUM-CASH-VALUE-M (#I1) - #NEW-ACV
+    END-IF
+*
+    MOVE PREMIUM-M (#I1)  TO #REAL-PREM
+    IF #ACV-DIFFF NE 0
+      PERFORM CALC-REAL-PREM
+    END-IF
+*
+    ADD 1 TO #I2
+    MOVE YEAR-MONTH-M (#I1) TO #YYYYMM
+    MOVE #MM-N           TO #L-CALC-MO-IND (#I2)
+    MOVE #REAL-PREM      TO #L-CALC-AMT2   (#I2)
+   END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE BLD-PMT-TBL-USING-ASSUMPTIONS
+* * * * * * * * * * * * * * * * * * *
+*
+IF ST-V.PAY-STATUS (#IDX) = '12' OR = '20'  /* UPPD/FPWT
+  WRITE ID-NUMBER ISSUE-DATE (#IDX) 'FPD Unpaid - bypassed'
+  ESCAPE TOP
+END-IF
+*
+RESET #L-CALC-MO-IND (*)
+RESET #L-CALC-AMT2   (*)
+MOVE ISSUE-DATE (#IDX) TO #YYYYMMDD
+* if #DD-N = 1  /* removed 10/98
+  SUBTRACT 1 FROM #MM-N
+  IF #MM-N = 0
+    MOVE 12 TO #MM-N
+    SUBTRACT 1 FROM #YYYY-N
+  END-IF
+* END-IF
+*
+MOVE 1 TO #I2
+COMPUTE #MON-PRM = ANNUAL-PREM (#IDX) / 12
+MOVE #MM-N TO #L-CALC-MO-IND (#I2)
+COMPUTE #L-CALC-AMT2 (#I2) = #MON-PRM * 2   /* 2 mon pmt (fpf)
+ADD 2 TO #MM-N
+IF #MM-N GT 12
+  SUBTRACT 12 FROM #MM-N
+  ADD 1 TO #YYYY-N
+END-IF
+*
+FOR #I1 1 TO 12
+  IF #YYYYMM-N GE PTD-YYYYMM (#IDX)
+    ESCAPE BOTTOM
+  END-IF
+*
+  ADD 1 TO #I2
+  MOVE #MM-N TO #L-CALC-MO-IND (#I2)
+  IF MODE (#IDX) = 'G' OR = 'E' OR = 'M' OR = '0'
+    COMPUTE #L-CALC-AMT2 (#I2) = #MON-PRM * 1
+    ADD 1 TO #MM-N
+  ELSE
+    IF MODE (#IDX) = 'Q' OR = '4'
+      COMPUTE #L-CALC-AMT2 (#I2) = #MON-PRM * 3
+      ADD 3 TO #MM-N
+    ELSE
+      IF MODE (#IDX) = 'S' OR = '2'
+        COMPUTE #L-CALC-AMT2 (#I2) = #MON-PRM * 6
+        ADD 6 TO #MM-N
+      ELSE
+        COMPUTE #L-CALC-AMT2 (#I2) = #MON-PRM * 12
+        ADD 12 TO #MM-N
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #MM-N GT 12
+    SUBTRACT 12 FROM #MM-N
+    ADD 1 TO #YYYY-N
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+**********************************
+DEFINE SUBROUTINE CALC-REAL-PREM
+**********************************
+*
+FOR #I3 1 TO 800
+  IF   (#ACV-DIFFF GT ((#I3 * 1000) - 10))
+   AND (#ACV-DIFFF LT ((#I3 * 1000) + 10))
+    IF #NEW-ACV LT ACCUM-CASH-VALUE-M (#I1)
+      ADD (#I3 * 1000) TO #REAL-PREM
+    ELSE
+      SUBTRACT (#I3 * 1000) FROM #REAL-PREM
+    END-IF
+*
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+END

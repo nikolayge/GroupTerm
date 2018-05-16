@@ -1,0 +1,200 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+**************************************
+* Program : KATHIER1
+*
+* Function : Create report of CAP members for which the allotment money were applied to the loan and not paid premiums.
+* vxt 07/25/2013 Initially created
+**************************************
+*
+define data local
+1 ACCOUNT VIEW OF A-ACCOUNTING-REGISTER
+  2 ACCTTX
+    3 ID-NUMBER (N6)
+    3 TRANSACTION-DATN (P9)
+    3 TRANSACTION-TIMN (P7)
+    3 TXN-CODE (A4)
+    3 SEQUENCE-NUM (N1)
+    3 NAME (A25)
+    3 TXN-ACCT-NUMBER (N3)
+    3 ACCT-DATE (N8)
+    3 DATE-LAST-ACCT-UPDATE (N8)
+    3 DEBIT-AMOUNT (P7.2)
+    3 CREDIT-AMOUNT (P7.2)
+    3 DESCRIPTION (A20)
+    3 MESSAGE-CODE (A1)
+    3 AALP-FLAG (A1)
+    3 CLERK-ID (A3)
+    3 TERMINAL-ID (A8)
+  2 month-end
+  2 POLICY-NUMBER  (a16)
+  2 CASH-CODE (A1)
+  2 PROCESS-IND (A1)
+  2 USER-COMPANY (A1)
+  2 c*sungard-info
+  2 SUNGARD-INFO (1:15)
+    3 SG-CATEGORY-1 (A2)
+    3 SG-CATEGORY-2 (A2)
+    3 SG-AMOUNT (N6.2)
+*
+1 TRAN-REG VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER (N6)
+  2 CONTACT-ID (N8)
+  2 DATE-LAST-UPDATE (N8)
+  2 TERMINAL-ID (A8)
+  2 CLERK-ID (A3)
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 OLD-DATA (A125/5)
+  2 redefine old-data
+    3 #old-data  (a23/5)
+  2 NEW-DATA (A125/5)
+  2 redefine new-data
+    3 #new-data (a23/5)
+  2 CLERK-DATE-KEY (A8)
+  2 PROCESS-IND (A1)
+  2 USER-COMPANY (A1)
+  2 SYNC-FIELDS-OCC (1:5)
+    3 SYNC-FLD-NUM (N3)
+    3 SYNC-FLD-OLD-DATA (A60)
+    3 SYNC-FLD-NEW-DATA (A60)
+*
+1 STATUS view of A-status
+  2 id-number
+  2 mode           (9)
+  2 issue-date     (9)
+*
+local
+1 #PARM-DATE              (A10)
+1 REDEFINE #PARM-DATE
+  2 #PARM-MM               (A2)
+  2 #PARM-/                (A1)
+  2 #PARM-DD               (A2)
+  2 #PARM-/-2              (A1)
+  2 #PARM-YYYY             (A4)
+*
+1 #ME-RUN-DATE-N          (N8)
+1 REDEFINE #ME-RUN-DATE-N
+  2 #ME-RUN-DATE-A         (A8)
+1 REDEFINE #ME-RUN-DATE-N
+  2 #ME-RUN-DATE-YYYY      (N4)
+  2 #ME-RUN-DATE-MM        (N2)
+  2 #ME-RUN-DATE-DD        (N2)
+*
+1 #START-DATE             (N8)
+1 #END-DATE               (N8)
+*
+1 #i                      (i2)
+1 #pol-num                (a16)
+1 #loan-bal               (n7.2)
+1 #TAB                    (A1) INIT <H'09'>
+1 #out-file               (a132)
+1 #name                   (a70)
+1 #rank                   (a5)
+1 #default-amt            (n7.2)
+1 #default-date           (a10)
+1 #issue-date             (a10)
+1 #PDA-RANK
+  2 #PASS-COMMAND         (A2)
+  2 #RANK-PASS            (A3)
+  2 #MIL-ID-PASS          (A3)
+  2 #INVALID              (L)
+  2 #RANK-PAY-TBL-DISPL   (P2)
+  2 #RANK-LITERAL-PASS    (A23)
+  2 #RANK-DISPLAY         (A5)
+  2 #CONTACT-ID-R         (N8)
+  2 #RANK-ABBR            (A) DYNAMIC
+  2 #LETTER-ENV           (A) DYNAMIC
+  2 #SALUTATION           (A) DYNAMIC
+  2 #SALUTATION-WITH-NAME (A) DYNAMIC
+1 #cnt-extract            (p7)
+1 #mode                   (a1)
+1 #KEy           (a8)
+1 redefine #key
+  2 #clerk    (a3)
+  2 #date     (p9)
+1 #cnt-new-loan   (n2)
+1 #cnt-prep       (n2)
+1 #cnt-prnf       (n2)
+1 #credit-amount  (n7.2)
+1 #policy-number  (a16)
+end-define
+*
+* define work file 1 '/usr/SAG/AAFMAA/batch/workfiles/ATHLB/PARMRUND.TXT' TYPE 'ASCII'
+* define work file 2 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/PRNF_ONLY.TXT' TYPE 'ASCII'
+*
+READ WORK FILE 1 ONCE #PARM-DATE
+*
+COMPRESS #PARM-YYYY #PARM-MM #PARM-DD INTO #ME-RUN-DATE-A LEAVING NO
+#END-DATE := #ME-RUN-DATE-N
+move #end-date to #date
+#clerk := 'EDS'
+write '=' #end-date  '=' #date
+*
+compress
+  'CN'              #tab
+  'Policy Nbr'      #tab
+  'DFAS Amt'        #tab
+  'ALTM Amt'        #tab
+  'Mode'            #tab
+  'Issue-date'      #tab
+  into #out-file leaving no
+write work 2 #out-file
+*
+write '=' #key
+read tran-reg by CLERK-DATE-KEY starting from #key
+  if tran-reg.TRANSACTION-DATN eq #date
+    if #old-data(1) = 'AM-SALF ALP L ALP AMT 0'
+        and #new-data(1) = 'AM-SALF ALP 2 ALP AMT '
+      reset #cnt-new-loan #cnt-prep #cnt-prnf #credit-amount #policy-number
+      find account with  account.id-number = tran-reg.id-number and  account.transaction-datn eq #end-date
+        if no
+          escape bottom
+        end-norec
+        if account.txn-code = 'NEWL' and account.month-end = 'Y'
+          add 1 to #cnt-new-loan
+        end-if
+        if account.txn-code = 'PREP' and account.month-end = 'Y'
+          add 1 to #cnt-prep
+        end-if
+
+        if account.txn-code = 'PRNF'  and account.Month-end = 'Y'
+          add 1 to  #cnt-prnf
+          move account.credit-amount to #credit-amount
+          move account.policy-number to #policy-number
+        end-if
+      end-find
+      if #cnt-new-loan = 1 and #cnt-prnf = 1 and #cnt-prep lt 1
+        find status with id-number = tran-reg.id-number
+          if no
+            escape bottom
+          end-norec
+          for #i 1 9
+            callnat 'gplnmsxx'  #pol-num status.id-number #i
+            if #pol-num = #policy-number
+
+              compress tran-reg.id-number             #tab
+                #policy-number                        #tab
+                #credit-amount                        #tab
+                #credit-amount                        #tab
+                status.mode(#i)                       #tab
+                status.Issue-date(#i)                 #tab
+                into #out-file leaving no
+              write work 2 #out-file
+              add 1 to #cnt-extract
+            end-if
+          end-for
+        end-find
+      end-if
+    end-if
+  end-if
+*
+  at end of data
+    write ' records extracted : ' #cnt-extract
+  end-enddata
+end-read
+*
+end

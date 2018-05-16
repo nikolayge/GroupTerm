@@ -1,0 +1,155 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+/** New Subprogram MBRATE.
+/**
+/** :author nguentchev
+/* TODO: Enter your code here
+define data
+parameter
+1 XML_PARSER_INPUT    (A) DYNAMIC        /* In
+1 XML_SERIALZE_OUTPUT (A) DYNAMIC        /* Out
+local
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I4)
+LOCAL USING PARSER-X           /* parser internal data - do not change
+LOCAL USING MBRATEA            /* Rates structure
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 #MSG                         (A) DYNAMIC
+1 #ERROR-CODE                  (A2)
+1 #ERROR-DESCRIPTION           (A) DYNAMIC
+1 #len              (i4)
+1 #Timeout          (A2) CONST <'-2'>
+1 #Natural-error    (A2) CONST <'-3'>
+1 #Parse-error      (A2) CONST <'-7'>
+1 #DEL              (A1) CONST <':'>
+1 #ERROR-LOG        (I4) CONST <3>
+1 BLANK             (A1)  CONST <' '>
+*
+1 #CX                          (I4)
+END-DEFINE
+*
+ASSIGN #LEN := *LENGTH (XML_PARSER_INPUT)
+IF #LEN <= 0
+  #ERROR-CODE := #Parse-error
+  #ERROR-DESCRIPTION := 'Empty search data XML'
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-IF
+*
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+DEFINE SUBROUTINE PARSER_ERROR
+/*                ============
+#ERROR-CODE := #Parse-error
+#ERROR-DESCRIPTION := XML_PARSER_ERROR_TEXT
+PERFORM FORMAT-ERROR
+END-SUBROUTINE
+*
+DEFINE SUBROUTINE CALLBACK
+/*                ========
+IF XML_PARSER_CONTENT_IS_EMPTY THEN
+  IF XML_PARSER_XPATH = 'ServiceRates/Service'
+    ADD 1 TO ServiceRates.C@Service
+    #CX := ServiceRates.C@Service
+    EXPAND ARRAY ServiceRates.Service TO (1:#CX)
+  END-IF
+ELSE
+  XML_PARSER_CONTENT := *TRIM (XML_PARSER_CONTENT)
+  MOVE *TRANSLATE(XML_PARSER_CONTENT, UPPER) TO XML_PARSER_CONTENT
+  PERFORM PARSE-DOCUMENT
+END-IF
+END-SUBROUTINE
+/*
+DEFINE PARSE-DOCUMENT
+/*     ==============
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'ServiceRates//'
+    IGNORE
+  VALUE 'ServiceRates'
+    RESET INITIAL ServiceRates
+  VALUE 'ServiceRates/Age//'
+    IGNORE
+  VALUE 'ServiceRates/Age'
+    IGNORE
+  VALUE 'ServiceRates/Age/$'
+    ServiceRates.Age := VAL(XML_PARSER_CONTENT)
+  VALUE 'ServiceRates/Service//'
+    IGNORE
+  VALUE 'ServiceRates/Service'
+    ADD 1 TO ServiceRates.C@Service
+    #CX := ServiceRates.C@Service
+    EXPAND ARRAY ServiceRates.Service TO (1:#CX)
+  VALUE 'ServiceRates/Service/Plan//'
+    IGNORE
+  VALUE 'ServiceRates/Service/Plan'
+    IGNORE
+  VALUE 'ServiceRates/Service/Plan/$'
+    ServiceRates.Plan(#CX) := XML_PARSER_CONTENT
+  VALUE 'ServiceRates/Service/YearlyRate//'
+    IGNORE
+  VALUE 'ServiceRates/Service/YearlyRate'
+    IGNORE
+  VALUE 'ServiceRates/Service/YearlyRate/$'
+    ServiceRates.YearlyRate(#CX) := VAL(XML_PARSER_CONTENT)
+  NONE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+IF ServiceRates.C@Service = 0
+  ADD 1 TO ServiceRates.C@Service
+  #CX := ServiceRates.C@Service
+  EXPAND ARRAY ServiceRates.Service TO (1:#CX)
+  ServiceRates.Plan(#CX) := 'PSM'
+END-IF
+*
+CALLNAT 'MBRATES' XML_SERIALZE_OUTPUT
+  #MSG
+  ServiceRates
+*
+DEFINE FORMAT-ERROR
+/*     ============
+COMPRESS '<?xml version="1.0" encoding="' *CODEPAGE '"?>'
+  INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ServiceRates'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ErrorCode'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC XML_SERIALZE_OUTPUT
+  #ERROR-CODE
+  '</ErrorCode>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '<ErrorText'
+  '>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS NUMERIC XML_SERIALZE_OUTPUT
+  #ERROR-DESCRIPTION
+  '</ErrorText>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+COMPRESS FULL XML_SERIALZE_OUTPUT
+  '</ServiceRates>' INTO XML_SERIALZE_OUTPUT LEAVING NO
+END-SUBROUTINE
+*
+ON ERROR
+  RESET #ERROR-CODE #MSG
+  CALLNAT 'CRMLOG' #ERROR-CODE #ERROR-DESCRIPTION
+    #ERROR-LOG
+    #MSG
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-ERROR
+*
+END

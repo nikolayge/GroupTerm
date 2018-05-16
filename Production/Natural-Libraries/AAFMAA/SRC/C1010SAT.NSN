@@ -1,0 +1,254 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C1010PAT    *** Remove Un-applied Deposits for withdrawn apps
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    06092005  None    Program written.                            *
+* DRW  03/27/2008  DW1    CASH CODE linkage to C2521SAM
+* DRW  03/29/2008  DW2    Make CASh CODE "A"
+************************************************************************
+DEFINE DATA
+*
+PARAMETER
+1 #SSN                            (N9)
+1 #MEMBER-CN                      (A6)
+1 #CLERK-ID                       (A3)
+1 #TEXT                           (A78)
+*
+LOCAL USING C2500AAM
+LOCAL
+*
+1 ST-V VIEW OF A-STATUS
+ 2 ID-NUMBER                      (N6)
+ 2 SSN                            (N9)
+ 2 NAME                           (A25)
+ 2 INTRO-FLAG                     (A1)
+ 2 PROCESS-IND                    (A1)
+ 2 DEBIT-CREDIT-AMT               (P7.2)
+ 2 DATE-ACCT-UPDATE               (N8)
+ 2 ALOT-AMT                       (P5.2)
+ 2 ALOT-SW                        (A1)
+ 2 STOP-DATE                      (N8)
+ 2 AUX-DEBIT-CREDIT-AMT           (P7.2)
+ 2 ALT-LP-AMT                     (P5.2)
+ 2 PAD-CODE                       (A1)
+ 2 STATUS                         (A1/9)
+ 2 ISSUE-DATE                     (N8/9)
+ 2 PLAN                           (A3/9)
+ 2 REDEFINE PLAN
+  3 PLAN-OCC                      (9)
+   4 PLAN-A1                      (A1)
+   4 PLAN-REST                    (A2)
+ 2 PAY-STATUS                     (A2/9)
+ 2 MODE                           (A1/9)
+ 2 PAID-TO-DATE                   (N8/9)
+ 2 PAID-UP-DATE                   (N8/9)
+ 2 LAST-DB-CR-CHECK               (P7.2)
+ 2 PAY-NOW-SWITCH                 (A1)
+ 2 ANNUAL-PREM                    (P5.2/9)
+ 2 MTD-ACV-PREM-ADJ               (P7.2/9)
+*
+1 DP-V VIEW OF A-DEPOSITS
+ 2 SSN                            (P9)
+ 2 DEPOSIT-OCC                    (99)
+  3 AMOUNT                        (P7.2)
+  3 DATE                          (N8)
+  3 SENT-BY                       (A1)
+  3 TYPE                          (A1)
+  3 CHECK-NUM                     (A6)
+  3 SPLIT                         (A1)
+  3 NAME                          (A25)
+  3 ADDR-1                        (A25)
+  3 ADDR-2                        (A25)
+  3 CITY                          (A22)
+  3 STATE                         (A2)
+  3 ZIP-CODE                      (N9)
+  3 APPLIED-DATE                  (N8)
+  3 APPLIED-CN                    (N6)
+*
+1 #I1                             (I2)
+1 #I2                             (I2)
+1 #SCR-LINE                       (I2)
+1 #TOTAL-DEPOSIT                  (N7.2)
+1 #TRAN-TYPE                      (A4) INIT <'APFR'>
+*
+1 #ILN2                           (I2)
+1 #UPDATE-MODE                    (L)  INIT <TRUE>
+1 #EXTRA-STOP                     (L)
+1 #SG-TBL                         (15)
+ 2 #SG-CAT1                       (A2)
+ 2 #SG-CAT2                       (A2)
+ 2 #SG-AMT                        (N6.2)
+1 #CMBX                           (A4) INIT <'APPW'>
+1 #DATE-OF-UPDATE                 (N8)
+1 #TIME-OF-UPDATE                 (N7)
+1 #HOLD-CUR-ACCT-UPDT             (N8)
+1 #TT-EFF-DT                      (P8)
+*
+1 #YYYYMMDD                       (N8)
+1 #FROM-DATE                      (N8)
+1 #MMDDYYYY                       (N8)
+1 #REQUEST                        (A1) INIT <'C'>
+1 #cash-code               (a1)          /* DW1
+*
+END-DEFINE
+************************************************************************
+*
+RESET #TOTAL-DEPOSIT
+MOVE *DATN TO #DATE-OF-UPDATE
+MOVE *DATN TO #TT-EFF-DT
+MOVE *TIMN TO #TIME-OF-UPDATE
+*
+FIND (1) ST-V WITH MEMBER-KEY = #MEMBER-CN
+  IF NO RECORDS FOUND
+    WRITE 'Member' ST-V.ID-NUMBER ' not found'
+    WRITE 'Deposit Reversal not completed'
+    WRITE 'Please contact your EDS representative'
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  FIND DP-V WITH DP-V.SSN = ST-V.SSN
+    IF NO RECORDS
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    FOR #I1 1 TO 99
+      IF DP-V.AMOUNT (#I1) = 0
+       OR DP-V.APPLIED-DATE (#I1) NE 0
+        ESCAPE TOP
+      END-IF
+*
+      ADD DP-V.AMOUNT (#I1) TO #TOTAL-DEPOSIT
+*
+      MOVE #DATE-OF-UPDATE TO DP-V.APPLIED-DATE (#I1)
+      MOVE ST-V.ID-NUMBER  TO DP-V.APPLIED-CN (#I1)
+      MOVE DP-V.SSN        TO #SSN
+      move 'A' to #cash-code                                 /* DW1
+      PERFORM CREATE-REVERSAL-ACCOUNTING
+    END-FOR
+*
+    UPDATE (0115)
+  END-FIND
+*
+  MOVE 1 TO #SCR-LINE
+  MOVE *DATN TO #YYYYMMDD
+  CALLNAT 'GDATESXX'
+    #YYYYMMDD
+    #FROM-DATE
+    #MMDDYYYY
+    #REQUEST
+  MOVE EDITED #MMDDYYYY (EM=99999999)  TO #SCR-EFF-DT (#SCR-LINE)
+*
+  MOVE ST-V.ID-NUMBER                  TO #SCR-ID-SSN (#SCR-LINE)
+  MOVE ST-V.DATE-ACCT-UPDATE           TO #HOLD-CUR-ACCT-UPDT
+  MOVE 'N'                             TO #SCR-ALP-CODE (#SCR-LINE)
+  move 'A'                             to #scr-cash-code (#scr-line)   /* DW2
+*
+  IF #TOTAL-DEPOSIT GT 0
+*
+    MOVE EDITED #TOTAL-DEPOSIT (EM=Z,ZZZ,ZZ9.99) TO #TEXT
+    MOVE LEFT #TEXT TO #TEXT
+    COMPRESS '$' #TEXT INTO #TEXT LEAVING NO
+    COMPRESS 'Credit for' #TEXT 'added to member"s account'
+      INTO #TEXT
+*
+    REPEAT
+      IF #TOTAL-DEPOSIT GE 100000
+        MOVE 99999 TO #SCR-TRAN-AMT (#SCR-LINE)
+      ELSE
+        MOVE #TOTAL-DEPOSIT TO #SCR-TRAN-AMT (#SCR-LINE)
+      END-IF
+*
+      MOVE 'ADCR' TO #SCR-TRAN-CODE (#SCR-LINE)
+      PERFORM PROCESS-ADCR
+      PERFORM PROCESS-ACCOUNTING-REGISTER
+      SUBTRACT #SCR-TRAN-AMT (#SCR-LINE) FROM #TOTAL-DEPOSIT
+*
+      IF #TOTAL-DEPOSIT LE 0
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT
+  END-IF
+*
+  UPDATE (0107)
+END-FIND
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-ADCR
+************************************************************************
+*
+CALLNAT 'CADCRSAM' #SCR-LINES
+  ST-V.STATUS                (1:9)
+  ST-V.PAY-STATUS            (1:9)
+  ST-V.MODE                  (1:9)
+  ST-V.PLAN                  (1:9)
+  ST-V.ISSUE-DATE            (1:9)
+  ST-V.PAID-TO-DATE          (1:9)
+  ST-V.PAID-UP-DATE          (1:9)
+  ST-V.ANNUAL-PREM           (1:9)
+  ST-V.MTD-ACV-PREM-ADJ      (1:9)
+  ST-V.ALOT-AMT
+  ST-V.ALOT-SW
+  ST-V.STOP-DATE
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.AUX-DEBIT-CREDIT-AMT
+  ST-V.ALT-LP-AMT
+  ST-V.PAD-CODE
+  #SCR-LINE
+  #ILN2
+  #UPDATE-MODE
+  #TT-EFF-DT
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-REVERSAL-ACCOUNTING
+************************************************************************
+*
+CALLNAT 'C2521SAM'
+  #SSN
+  #TRAN-TYPE
+  DP-V.AMOUNT                (#I1)
+  #CLERK-ID
+  DP-V.SENT-BY               (#I1)
+  DP-V.TYPE                  (#I1)
+  DP-V.CHECK-NUM             (#I1)
+  #CMBX
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #cash-code                     /* DW1
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-ACCOUNTING-REGISTER
+************************************************************************
+*
+CALLNAT 'C2520SAM' #SCR-LINES
+  ST-V.ID-NUMBER
+  ST-V.PROCESS-IND
+  ST-V.INTRO-FLAG
+  ST-V.NAME
+  ST-V.PLAN                  (1:9)
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.DATE-ACCT-UPDATE
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #SCR-LINE
+  #HOLD-CUR-ACCT-UPDT
+  #CLERK-ID
+  #EXTRA-STOP
+  #SG-TBL                    (1:15)
+  #CMBX
+*
+RESET #EXTRA-STOP
+      #SG-TBL (*)
+*
+END-SUBROUTINE
+*
+END

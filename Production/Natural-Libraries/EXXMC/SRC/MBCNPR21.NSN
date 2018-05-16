@@ -1,0 +1,227 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Member Center Online / Payment Center/Member Center
+* Get/Update Payment Request - called from
+* SchedulePayments function via EntireX
+*
+************************************************************
+*        MODIFICATION LOG
+************************************************************
+* USER   DATE      TAG  REASON
+* YAK    08202014       Initial Creation
+************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAPR02
+PARAMETER
+1 #ActionType (A) DYNAMIC
+1 #ErrorCode  (A3)
+LOCAL USING OBJLPRST
+LOCAL USING GPRATR06
+LOCAL USING ERROR_L
+LOCAL
+1 #MEMBER           (A) DYNAMIC INIT <'MEMBER'>
+1 #MEMBER-CENTER-CLERK  (A) DYNAMIC INIT <'MBR'>
+1 #FULL-NAME       (A) DYNAMIC
+1 #GET             (A) DYNAMIC CONST <'GET'>
+1 #ADD             (A) DYNAMIC CONST <'ADD'>
+1 #UPDATE          (A) DYNAMIC CONST <'UPDATE'>
+1 #DELETE          (A) DYNAMIC CONST <'DELETE'>
+1 #HIST            (A) DYNAMIC CONST <'HIST'>
+1 FUNCTION_CODE    (A) DYNAMIC CONST <'PaymentRequest'>
+1 #Schedule        (A) DYNAMIC CONST <'S'>
+1 #Cancel          (A) DYNAMIC CONST <'X'>
+1 #ServicePlan     (A) DYNAMIC CONST <'Service Plan'>
+1 #WORK-FIELD      (A) DYNAMIC
+1 #TRAN-CN         (N6)
+1 #TRAN-CONTACT-ID (N8)
+1 #DATN            (N8)
+1 #TIMN            (N7)
+1 #ISN             (P9)
+1 #RequestExist    (L)
+1 #I               (I2)
+*
+1 #POLICY-STATUS-KEY  (A17)
+1 REDEFINE #POLICY-STATUS-KEY
+  2 #REQUEST-POLICY   (A16)
+  2 #REQUEST-STATUS   (A1)
+*
+END-DEFINE
+*
+#DATN := *DATN
+#TIMN := *TIMN
+*
+* Data validation / Business logic
+* Input verify
+DECIDE FOR FIRST CONDITION
+  WHEN PayRequest.CN = 0
+    #ErrorCode  := #MISSING-CN
+    ESCAPE MODULE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+* Check if active request exist for CN
+* If function 'GET' - return data to calling module
+PERFORM GET-EXISTING-REQUEST
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #RequestExist AND PayRequest.RequestStatus = #Schedule
+    #ErrorCode  := #ACTIVE-REQ-EXIST
+    ESCAPE MODULE
+  WHEN (NOT #RequestExist) AND PayRequest.RequestStatus = #Cancel
+    #ErrorCode  := #NO-REQ-EXIST
+    ESCAPE MODULE
+  WHEN (NOT #RequestExist) AND PayRequest.RequestStatus = #Schedule
+    RESET BEFORE_IMAGE
+  WHEN #RequestExist AND PayRequest.RequestStatus = #Cancel
+    IGNORE
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF PayRequest.UserId <> ' '
+  #MEMBER-CENTER-CLERK := FUNCTION-WEB-USER(<PayRequest.UserID>)(1)
+  #MEMBER              := FUNCTION-WEB-USER(<PayRequest.UserID>)(2)
+END-IF
+*
+#TRAN-CN         := PayRequest.CN
+#TRAN-CONTACT-ID := F-GET-CONTACT-ID(<#TRAN-CN>)
+IF #TRAN-CONTACT-ID = 0
+  #ErrorCode  := #CN-NOT-FOUND
+  ESCAPE MODULE
+END-IF
+*
+PERFORM SAVE-REQUEST
+PERFORM POPULATE-AFTER-IMAGE
+PERFORM WRITE-TRANSACTION-LOG
+END TRANSACTION
+*
+**************************************
+DEFINE SUBROUTINE GET-EXISTING-REQUEST
+**************************************
+* Check for existing request
+*
+RESET #RequestExist
+EXAMINE PayRequest.PayPolicyNumber FOR 'Policy' DELETE
+PayRequest.PayPolicyNumber := *TRIM(PayRequest.PayPolicyNumber)
+#POLICY-STATUS-KEY.#REQUEST-POLICY := PayRequest.PayPolicyNumber
+#POLICY-STATUS-KEY.#REQUEST-STATUS := #Schedule
+FIND PAY-REQUEST-V WITH POLICY-REQUEST-STATUS = #POLICY-STATUS-KEY
+  ACCEPT IF *TRIM(PAY-REQUEST-V.REQUEST-TYPE) = PayRequest.RequestType
+  IF PAY-REQUEST-V.POLICY-NUMBER = #ServicePlan AND PAY-REQUEST-V.ID-NUMBER <> PayRequest.CN
+    ESCAPE TOP
+  END-IF  
+  #RequestExist := true
+  #ISN := *ISN
+  IF #ActionType = #GET
+    PayRequest.PayPolicyNumber := PAY-REQUEST-V.POLICY-NUMBER
+    IF PayRequest.PayPolicyNumber <> #ServicePlan
+      COMPRESS 'Policy' PayRequest.PayPolicyNumber INTO PayRequest.PayPolicyNumber
+    END-IF
+    PayRequest.RequestorCN     := PAY-REQUEST-V.REQUESTOR-CN
+    PayRequest.RequestType     := PAY-REQUEST-V.REQUEST-TYPE
+    PayRequest.RequestStatus   := PAY-REQUEST-V.REQUEST-STATUS
+    PayRequest.RequestDate     := PAY-REQUEST-V.REQUEST-DATE
+    PayRequest.PaymentDate     := PAY-REQUEST-V.PAYMENT-DATE
+    MOVE EDITED PAY-REQUEST-V.PAYMENT-AMOUNT (EM=ZZZZZZ9.99) TO PayRequest.PaymentAmount
+    PayRequest.PaymentAmount   := *trim(PayRequest.PaymentAmount)
+    COMPRESS '$' PayRequest.PaymentAmount INTO PayRequest.PaymentAmount LEAVING NO
+    PayRequest.ProcessType     := PAY-REQUEST-V.PROCESS-TYPE
+    ESCAPE MODULE
+  ELSE
+    IF PayRequest.RequestStatus = #Cancel
+* Populate BEFORE image
+      BEFORE_IMAGE.REQ-POL-NUMBER   := PAY-REQUEST-V.POLICY-NUMBER
+      BEFORE_IMAGE.REQUEST-TYPE     := PAY-REQUEST-V.REQUEST-TYPE
+      BEFORE_IMAGE.REQUEST-STATUS   := PAY-REQUEST-V.REQUEST-STATUS
+      BEFORE_IMAGE.REQUEST-DATE     := PAY-REQUEST-V.REQUEST-DATE
+      BEFORE_IMAGE.PAYMENT-DATE     := PAY-REQUEST-V.PAYMENT-DATE
+      MOVE EDITED PAY-REQUEST-V.PAYMENT-AMOUNT (EM=ZZZZZZ9.99) TO BEFORE_IMAGE.PAYMENT-AMOUNT
+      BEFORE_IMAGE.PAYMENT-AMOUNT   := *TRIM(BEFORE_IMAGE.PAYMENT-AMOUNT)
+      COMPRESS '$' BEFORE_IMAGE.PAYMENT-AMOUNT INTO BEFORE_IMAGE.PAYMENT-AMOUNT LEAVING NO
+      BEFORE_IMAGE.PROCESS-TYPE     := PAY-REQUEST-V.PROCESS-TYPE
+    END-IF
+  END-IF
+END-FIND
+IF #ActionType = #GET                       /* If 'GET' and got here - #RequestExist is false
+  #ErrorCode := #NO-REQ-EXIST
+  ESCAPE MODULE
+END-IF
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE SAVE-REQUEST
+******************************
+*
+IF #RequestExist
+  GT. GET PAY-REQUEST-V #ISN
+  PAY-REQUEST-V.REQUEST-STATUS := PayRequest.RequestStatus
+  PAY-REQUEST-V.LAST-UPD-USER := #MEMBER
+  PAY-REQUEST-V.LAST-UPD-DATE := #DATN
+  PAY-REQUEST-V.LAST-UPD-TIME := #TIMN
+  UPDATE (GT.)
+  ESCAPE ROUTINE
+END-IF
+*
+PAY-REQUEST-V.ID-NUMBER      := PayRequest.CN
+EXAMINE PayRequest.PayPolicyNumber FOR 'Policy' DELETE
+PayRequest.PayPolicyNumber := *TRIM(PayRequest.PayPolicyNumber)
+PAY-REQUEST-V.POLICY-NUMBER  := PayRequest.PayPolicyNumber
+PAY-REQUEST-V.REQUESTOR-CN   := PayRequest.RequestorCN
+PAY-REQUEST-V.REQUEST-TYPE   := PayRequest.RequestType
+PAY-REQUEST-V.REQUEST-STATUS := PayRequest.RequestStatus
+PAY-REQUEST-V.REQUEST-DATE   := VAL(PayRequest.RequestDate)
+PAY-REQUEST-V.PAYMENT-DATE   := VAL(PayRequest.PaymentDate)
+PAY-REQUEST-V.PAYMENT-AMOUNT := VAL(PayRequest.PaymentAmount)
+PAY-REQUEST-V.PROCESS-TYPE   := PayRequest.ProcessType
+*
+RESET #I
+REPEAT
+  #I := #I + 1
+  PAY-REQUEST-V.REQUEST-LINE(#I) := RequestData
+  IF *LENGTH(RequestData) > 250
+    RequestData := SUBSTR(RequestData,251)
+  ELSE
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+PAY-REQUEST-V.LAST-UPD-USER := #MEMBER
+PAY-REQUEST-V.LAST-UPD-DATE := #DATN
+PAY-REQUEST-V.LAST-UPD-TIME := #TIMN
+*
+STORE PAY-REQUEST-V
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE POPULATE-AFTER-IMAGE
+**************************************
+*
+AFTER_IMAGE.REQ-POL-NUMBER   := PAY-REQUEST-V.POLICY-NUMBER
+AFTER_IMAGE.REQUEST-TYPE     := PAY-REQUEST-V.REQUEST-TYPE
+AFTER_IMAGE.REQUEST-STATUS   := PAY-REQUEST-V.REQUEST-STATUS
+AFTER_IMAGE.REQUEST-DATE     := PAY-REQUEST-V.REQUEST-DATE
+AFTER_IMAGE.PAYMENT-DATE     := PAY-REQUEST-V.PAYMENT-DATE
+MOVE EDITED PAY-REQUEST-V.PAYMENT-AMOUNT (EM=ZZZZZZ9.99) TO AFTER_IMAGE.PAYMENT-AMOUNT
+AFTER_IMAGE.PAYMENT-AMOUNT   := *TRIM(AFTER_IMAGE.PAYMENT-AMOUNT)
+COMPRESS '$' AFTER_IMAGE.PAYMENT-AMOUNT INTO AFTER_IMAGE.PAYMENT-AMOUNT LEAVING NO
+AFTER_IMAGE.PROCESS-TYPE     := PAY-REQUEST-V.PROCESS-TYPE
+*
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+*
+TR_ID_NUMBER  := #TRAN-CN
+TR_NAME       := FUNCTION-CONTACT-NAME(<#TRAN-CONTACT-ID>)
+TR_CLERK      := #MEMBER-CENTER-CLERK
+CALLNAT 'GPRNTR06' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+*
+END

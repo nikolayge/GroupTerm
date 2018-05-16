@@ -1,0 +1,549 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID : CPADJSAM
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER DATE      TAG  REASON                                           *
+* DRW  12272004  DW1  Increase variablw loan to handle 999,999.99.     *
+* DRW  04202005  DW2  Fix adj of ACC INT                               *
+* DRW  07272005  DW3  Fix adj of ACC INT when done on a lon iss this mon
+* DRW  08182005  DW4  CAP Loan Sent to Collection Processing           *
+* DRW  07272005  DW5  Chg MAP fot Loan Collections to instruct Lee     *
+* DRW 12/05/2007 DW6  CAP-BILL-DATE Processing                         *
+* PAM 03/05/2011 PM7  DO not do loan collections map during batch      *
+************************************************************************
+*
+* UPDATER FOR AM PADJ TRAN (PRINCIPAL ADJ - OLD TRAN CODE 436)
+*         AND AM CADJ TRAN (CAP INT ADJ   - OLD TRAN CODE 436)
+*
+DEFINE DATA
+PARAMETER USING C2500AAM
+*
+PARAMETER
+1 #CURR-VAR-INT-RATE      (P2.3)
+1 #ST-V-INTEREST-RATE     (P2.3)
+1 #ST-V-LOAN-DATE         (N8)
+1 REDEFINE #ST-V-LOAN-DATE
+  2 #ST-V-LOAN-DATE-YYYY   (N4)
+  2 #ST-V-LOAN-DATE-MM     (N2)
+  2 #ST-V-LOAN-DATE-DD     (N2)
+1 #ST-V-LOAN-AMOUNT       (P5.2)
+1 #ST-V-ACCUM-INTEREST    (P5.2)
+1 #ST-V-NXT-YR-ACCUM-INT  (P5.2)
+1 #ST-V-OLD-LOAN-AMT      (P5.2)
+1 #ST-V-CAP-AMT           (P5.2)
+1 #ST-V-APL-CNT           (P3.0)
+1 #ST-V-PRINCIPAL-CHG-CODE (A1)
+1 #ST-V-LOAN-DATE-2       (N8)
+1 REDEFINE #ST-V-LOAN-DATE-2
+  2 #ST-V-LOAN-DATE-YYYY-2 (N4)
+  2 #ST-V-LOAN-DATE-MM-2   (N2)
+  2 #ST-V-LOAN-DATE-DD-2   (N2)
+1 #ST-V-LOAN-AMOUNT-2     (P7.2)  /* DW1
+1 #ST-V-ACCUM-INTEREST-2  (P5.2)
+1 #ST-V-NXT-YR-ACCUM-INT-2 (P5.2)
+1 #ST-V-OLD-LOAN-AMT-2    (P7.2)  /* DW1
+1 #ST-V-CAP-AMT-2         (P5.2)
+1 #ST-V-INTRO-FLAG        (A1)
+*
+1 #ILN1       (I2)
+1 #ILN2       (I2)
+1 #UPDATE-MODE (L)
+1 #SG-TBL (15)
+  2 #SG-CAT1 (A2)
+  2 #SG-CAT2 (A2)
+  2 #SG-AMT  (N6.2)
+1 #CGA-CLERK  (A3)     /* DW4
+1 #CMBX       (A4)     /* DW4
+*
+1 #ST-V-CAP-BILL-DATE    (N8)    /* DW6
+1 #ST-V-PROCESS-IND      (A1)
+1 #ST-V-NAME             (A25)
+1 #DATE-OF-UPDATE        (N8)
+1 #TIME-OF-UPDATE        (N7)
+*
+LOCAL
+1 #PROGRAM      (A8)                               /* NG1
+1 #USE-TIMX     (L) INIT <TRUE>                    /* NG1
+1 #DAILY-INT-AMT         (P3.7)
+1 #TODAY-YYYYMMDD
+  2 #TODAY-YYYY           (N4)
+  2 #TODAY-MM             (N2)
+  2 #TODAY-DD             (N2)
+1 REDEFINE #TODAY-YYYYMMDD
+  2 #TODAY-YYYYMMDD-N     (N8)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY   (N4)
+  2 #MM     (N2)
+  2 #DD     (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A (A4)
+  2 #MM-A   (A2)
+  2 #DD-A   (A2)
+*
+1 MBRSHIP-MTD-DET-V VIEW OF A-MBRSHIP-MTD-DETAIL   /* DW4
+  2 ID-NUMBER
+  2 ENTRY-DATE
+  2 REC-ISN
+  2 CODE
+  2 ISSUE-DATE
+  2 USER-COMPANY
+  2 NUM-MBRSHIPS
+*
+1 TRLOG VIEW OF A-TRANSACTION-REGISTER                  /* DW6
+  2 ID-NUMBER        (N6)
+  2 PROCESS-IND      (A1)
+  2 NAME             (A25)
+  2 DATE-LAST-UPDATE (N8)
+  2 TERMINAL-ID      (A8)
+  2 CLERK-ID         (A3)
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 OLD-DATA         (A125/32)
+  2 NEW-DATA         (A125/32)
+  2 REDEFINE NEW-DATA
+    3 NEW-DATA-OCC     (32)
+      4 NEW-DATA-CA      (A3)
+      4 NEW-DATA-REST    (A22)
+*
+1 #W-OLD-NEW-DATA  (A125)                /* DW6
+1 REDEFINE #W-OLD-NEW-DATA
+  2 #W-DESCRIPTION   (A10)
+  2 #W-DATA          (A115)
+
+1 #CN          (N6)   /* DW4
+1 #ISS-DT      (N8)
+1 #ISS-DT-X    (A10)
+1 #LOAN-DT-X   (A10)
+1 #LOAN-AMT-X  (A10)
+1 #NOTE-TEXT   (A60/10)
+1 #INT         (I2)
+1 #YES-NO      (A1)   /* DW4
+*
+1 #WORK-MM               (P2)
+1 #WORK-YYYY             (P4)
+1 #INT-DAYS              (P3)
+1 #TOTAL-AMT-DISP        (A11)
+1 #DISP-MSG              (A75)
+*
+1 #MONTH-TABLE
+  2 #JAN          (N02) INIT <31>
+  2 #FEB          (N02) INIT <28>
+  2 #MAR          (N02) INIT <31>
+  2 #APR          (N02) INIT <30>
+  2 #MAY          (N02) INIT <31>
+  2 #JUN          (N02) INIT <30>
+  2 #JUL          (N02) INIT <31>
+  2 #AUG          (N02) INIT <31>
+  2 #SEP          (N02) INIT <30>
+  2 #OCT          (N02) INIT <31>
+  2 #NOV          (N02) INIT <30>
+  2 #DEC          (N02) INIT <31>
+1 REDEFINE #MONTH-TABLE
+  2 #DAYS-IN-MONTH  (N2/12)
+*
+1 #TR-CD      (A4)
+1 REDEFINE #TR-CD
+  2 #TR-CD-3   (A3)
+  2 #TR-CD-4   (A1)
+*
+END-DEFINE
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+MOVE *DATN TO #TODAY-YYYYMMDD-N
+MOVE #SCR-TRAN-CODE (#ILN1) TO #TR-CD
+*
+MOVE #SCR-ISS-DT-MM (#ILN1) TO #MM                          /* DW4
+MOVE #SCR-ISS-DT-DD (#ILN1) TO #DD
+MOVE #SCR-ISS-DT-YYYY (#ILN1) TO #YYYY
+MOVE #YYYYMMDD TO #ISS-DT
+COMPRESS #MM-A #DD-A #YYYY-A INTO #ISS-DT-X WITH '/'
+*
+MOVE #ST-V-LOAN-DATE-MM TO #MM     /* DW4
+MOVE #ST-V-LOAN-DATE-DD TO #DD     /* DW4
+MOVE #ST-V-LOAN-DATE-YYYY TO #YYYY /* DW4
+COMPRESS #MM-A #DD-A #YYYY-A INTO #LOAN-DT-X WITH '/'
+MOVE EDITED #ST-V-LOAN-AMOUNT (EM=ZZZZ.99) TO #LOAN-AMT-X
+MOVE #SCR-ID-SSN (#ILN1) TO #CN                             /* DW4
+*
+MOVE #SCR-EFF-DT-MM (#ILN1) TO #MM
+MOVE #SCR-EFF-DT-DD (#ILN1) TO #DD
+MOVE #SCR-EFF-DT-YYYY (#ILN1) TO #YYYY
+*
+IF  (#YYYY GT #TODAY-YYYY)         /* FUTURE YEAR
+    OR ((#YYYY = #TODAY-YYYY)           /* SAME YEAR
+    AND (#MM GT #TODAY-MM))      /* FUTURE MONTH
+    OR ((#YYYY = #TODAY-YYYY - 1)       /* PRIOR YEAR
+    AND (#MM LT #TODAY-MM))      /* PRIOR MONTH
+    OR (#YYYY LT (#TODAY-YYYY - 2))     /* PRIOR PRIOR YEAR
+  REINPUT 'TRANS DATE MUST BE WITHIN 1 YEAR OF CURRENT MONTH'
+    MARK *#SCR-EFF-DT (#ILN1)
+END-IF
+*
+IF #SCR-TRAN-CODE (#ILN1) = 'PADV' OR = 'CADV'
+  IF #ST-V-LOAN-DATE-2 = 0
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    REINPUT 'LOAN MUST EXIST - LOAN DATE CANNOT EQUAL ZERO'
+      MARK *#SCR-TRAN-CODE (#ILN1)
+  END-IF
+*
+  IF   (#SCR-ADJ (#ILN1) = '-')
+      AND (#ST-V-LOAN-AMOUNT-2 LT #SCR-TRAN-AMT (#ILN1))
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    MOVE EDITED #ST-V-LOAN-AMOUNT-2 (EM=ZZZZZZ.99) TO #TOTAL-AMT-DISP
+    COMPRESS 'TRAN AMOUNT CANNOT EXCEED LOAN AMOUNT OF '
+      #TOTAL-AMT-DISP INTO #DISP-MSG
+    REINPUT #DISP-MSG
+      MARK *#SCR-TRAN-AMT (#ILN1)
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'CADV'
+    IF   (#SCR-ADJ (#ILN1) = '-')
+        AND (#ST-V-CAP-AMT-2 LT #SCR-TRAN-AMT (#ILN1))
+*
+      IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+        BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+      END-IF                           /* *********************
+*
+      MOVE EDITED #ST-V-CAP-AMT-2 (EM=ZZZZZ.99) TO #TOTAL-AMT-DISP
+      COMPRESS 'TRAN AMOUNT CANNOT EXCEED CAP INT AMOUNT OF '
+        #TOTAL-AMT-DISP INTO #DISP-MSG
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-AMT (#ILN1)
+    ELSE
+      IF   (#SCR-ADJ (#ILN1) = '-')
+        SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-CAP-AMT-2
+      ELSE
+        ADD #SCR-TRAN-AMT (#ILN1) TO #ST-V-CAP-AMT-2
+      END-IF
+    END-IF
+  END-IF
+*
+  COMPUTE ROUNDED #DAILY-INT-AMT =
+    (#SCR-TRAN-AMT (#ILN1) * (#CURR-VAR-INT-RATE / 365)) / 100
+*
+  IF   (#TODAY-YYYY = #SCR-EFF-DT-YYYY (#ILN1))
+      AND (#TODAY-MM = #SCR-EFF-DT-MM (#ILN1))
+*
+    IF   (#SCR-EFF-DT-MM (#ILN1) = #ST-V-LOAN-DATE-MM-2)
+*  below removed 11/19/93 since it made sense
+*    AND (#SCR-EFF-DT-YYyy (#ILN1) = #ST-V-LOAN-DATE-YYyy-2)
+        AND (#SCR-EFF-DT-DD (#ILN1) GT #ST-V-LOAN-DATE-DD-2)
+*    AND (#ST-V-LOAN-AMOUNT-2 NE #SCR-TRAN-AMT (#ILN1)) <<<<<<<<<<<<<<<
+      IF #SCR-ADJ (#ILN1)= '-'
+*       below 2 lines were moved to DW3 chg below
+*       COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+*       + ((#ST-V-LOAN-DATE-DD-2 - 1) * #DAILY-INT-AMT)
+        COMPUTE ROUNDED #ST-V-NXT-YR-ACCUM-INT-2 =
+          #ST-V-NXT-YR-ACCUM-INT-2
+          + ((#SCR-EFF-DT-DD (#ILN1) - #ST-V-LOAN-DATE-DD-2)
+          * #DAILY-INT-AMT)
+        IF #TODAY-YYYY NE #ST-V-LOAN-DATE-YYYY-2     /* DW3
+          COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+            + ((#ST-V-LOAN-DATE-DD-2 - 1) * #DAILY-INT-AMT)
+        END-IF
+      ELSE
+*       below 2 lines were moved to DW3 chg below
+*       COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+*               - ((#ST-V-LOAN-DATE-DD-2 - 1) * #DAILY-INT-AMT)
+        COMPUTE ROUNDED #ST-V-NXT-YR-ACCUM-INT-2 =
+          #ST-V-NXT-YR-ACCUM-INT-2
+          - ((#SCR-EFF-DT-DD (#ILN1) - #ST-V-LOAN-DATE-DD-2)
+          * #DAILY-INT-AMT)
+        IF #TODAY-YYYY NE #ST-V-LOAN-DATE-YYYY-2     /* DW3
+          COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+            - ((#ST-V-LOAN-DATE-DD-2 - 1) * #DAILY-INT-AMT)
+        END-IF
+      END-IF
+*
+      IF #ST-V-OLD-LOAN-AMT-2 = 0
+        MOVE #ST-V-LOAN-AMOUNT-2 TO #ST-V-OLD-LOAN-AMT-2
+      END-IF
+    ELSE
+      IF #SCR-ADJ (#ILN1)= '-'               /* DW2
+        COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+          + ((#SCR-EFF-DT-DD (#ILN1) - 1) * #DAILY-INT-AMT)
+      ELSE
+        COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+          - ((#SCR-EFF-DT-DD (#ILN1) - 1) * #DAILY-INT-AMT)
+      END-IF
+*
+    END-IF /*(0238)
+  ELSE
+    MOVE #TODAY-YYYY TO #WORK-YYYY
+    MOVE #TODAY-MM TO #WORK-MM
+    RESET #INT-DAYS
+*
+    REPEAT
+      SUBTRACT 1 FROM #WORK-MM
+      IF #WORK-MM = 0
+        MOVE 12 TO #WORK-MM
+        SUBTRACT 1 FROM #WORK-YYYY
+      END-IF
+*
+      IF   (#WORK-MM = #SCR-EFF-DT-MM (#ILN1))
+          AND (#WORK-YYYY = #SCR-EFF-DT-YYYY (#ILN1))
+        COMPUTE #INT-DAYS = #INT-DAYS
+          + (#DAYS-IN-MONTH (#WORK-MM) - #SCR-EFF-DT-DD (#ILN1)) + 1
+        ESCAPE BOTTOM /*(0287)
+      END-IF
+*
+      ADD #DAYS-IN-MONTH (#WORK-MM) TO #INT-DAYS
+    END-REPEAT /*(0287)
+*
+    IF #SCR-ADJ (#ILN1) = '-'
+      COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+        + ((#INT-DAYS - 1) * #DAILY-INT-AMT)
+    ELSE
+      COMPUTE ROUNDED #ST-V-ACCUM-INTEREST-2 = #ST-V-ACCUM-INTEREST-2
+        - ((#INT-DAYS - 1) * #DAILY-INT-AMT)
+    END-IF
+  END-IF
+*
+  IF #SCR-ADJ (#ILN1) = '-'
+    SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-LOAN-AMOUNT-2
+  ELSE
+    ADD #SCR-TRAN-AMT (#ILN1) TO #ST-V-LOAN-AMOUNT-2
+  END-IF
+*
+  IF   (#ST-V-LOAN-AMOUNT   = 0)     /* CLEAN UP APL-CNT ON LOAN-PAYOFF
+      AND (#ST-V-LOAN-AMOUNT-2 = 0)
+    RESET #ST-V-APL-CNT
+  END-IF
+ELSE
+  IF #ST-V-LOAN-DATE = 0
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    REINPUT 'LOAN MUST EXIST - LOAN DATE CANNOT EQUAL ZERO'
+      MARK *#SCR-TRAN-CODE (#ILN1)
+  END-IF
+*
+  IF   (#SCR-ADJ (#ILN1) = '-')
+      AND (#ST-V-LOAN-AMOUNT LT #SCR-TRAN-AMT (#ILN1))
+    IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+      BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+    END-IF                           /* *********************
+    MOVE EDITED #ST-V-LOAN-AMOUNT (EM=ZZZZZ.99) TO #TOTAL-AMT-DISP
+    COMPRESS 'TRAN AMOUNT CANNOT EXCEED LOAN AMOUNT OF '
+      #TOTAL-AMT-DISP INTO #DISP-MSG
+    REINPUT #DISP-MSG
+      MARK *#SCR-TRAN-AMT (#ILN1)
+  END-IF
+*
+  IF #SCR-TRAN-CODE (#ILN1) = 'CADF'
+    IF   (#SCR-ADJ (#ILN1) = '-')
+        AND (#ST-V-CAP-AMT LT #SCR-TRAN-AMT (#ILN1))
+*
+      IF #UPDATE-MODE                  /* BACKOUT TRANSACTION *
+        BACKOUT TRANSACTION            /* IF IN UPDATE MODE   *
+      END-IF                           /* *********************
+*
+      MOVE EDITED #ST-V-CAP-AMT (EM=ZZZZZ.99) TO #TOTAL-AMT-DISP
+      COMPRESS 'TRAN AMOUNT CANNOT EXCEED CAP INT AMOUNT OF '
+        #TOTAL-AMT-DISP INTO #DISP-MSG
+      REINPUT #DISP-MSG
+        MARK *#SCR-TRAN-AMT (#ILN1)
+    ELSE
+      IF   (#SCR-ADJ (#ILN1) = '-')
+        SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-CAP-AMT
+      ELSE
+        ADD #SCR-TRAN-AMT (#ILN1) TO #ST-V-CAP-AMT
+      END-IF
+    END-IF
+  END-IF
+*
+  COMPUTE ROUNDED #DAILY-INT-AMT =
+    (#SCR-TRAN-AMT (#ILN1) * (#ST-V-INTEREST-RATE / 365)) / 100
+*
+  IF   (#TODAY-YYYY = #SCR-EFF-DT-YYYY (#ILN1))
+      AND (#TODAY-MM = #SCR-EFF-DT-MM (#ILN1))
+*
+    IF   (#SCR-EFF-DT-MM (#ILN1) = #ST-V-LOAN-DATE-MM)
+*  below removed 11/19/93 since it made sense
+*    AND (#SCR-EFF-DT-YYyy (#ILN1) = #ST-V-LOAN-DATE-YYyy)
+        AND (#SCR-EFF-DT-DD (#ILN1) GT #ST-V-LOAN-DATE-DD)
+*    AND (#ST-V-LOAN-AMOUNT NE #SCR-TRAN-AMT (#ILN1)) <<<<<<<<<<<<<<<<<
+      IF #SCR-ADJ (#ILN1)= '-'
+*       below 2 lines were moved to DW3 chg below
+*       COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+*                     + ((#ST-V-LOAN-DATE-DD - 1) * #DAILY-INT-AMT)
+        COMPUTE ROUNDED #ST-V-NXT-YR-ACCUM-INT = #ST-V-NXT-YR-ACCUM-INT
+          + ((#SCR-EFF-DT-DD (#ILN1) - #ST-V-LOAN-DATE-DD) * #DAILY-INT-AMT)
+        IF #TODAY-YYYY NE #ST-V-LOAN-DATE-YYYY-2     /* DW3
+          COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+            + ((#ST-V-LOAN-DATE-DD - 1) * #DAILY-INT-AMT)
+        END-IF
+      ELSE
+*       below 2 lines were moved to DW3 chg below
+*       COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+*               - ((#ST-V-LOAN-DATE-DD - 1) * #DAILY-INT-AMT)
+        COMPUTE ROUNDED #ST-V-NXT-YR-ACCUM-INT = #ST-V-NXT-YR-ACCUM-INT
+          - ((#SCR-EFF-DT-DD (#ILN1) - #ST-V-LOAN-DATE-DD) * #DAILY-INT-AMT)
+        IF #TODAY-YYYY NE #ST-V-LOAN-DATE-YYYY-2     /* DW3
+          COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+            - ((#ST-V-LOAN-DATE-DD - 1) * #DAILY-INT-AMT)
+        END-IF
+      END-IF
+*
+      IF #ST-V-OLD-LOAN-AMT = 0
+        MOVE #ST-V-LOAN-AMOUNT TO #ST-V-OLD-LOAN-AMT
+      END-IF
+    ELSE
+      MOVE '1' TO #ST-V-PRINCIPAL-CHG-CODE
+      IF #SCR-ADJ (#ILN1)= '-'               /* DW2
+        COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+          + ((#SCR-EFF-DT-DD (#ILN1) - 1) * #DAILY-INT-AMT)
+      ELSE
+        COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+          - ((#SCR-EFF-DT-DD (#ILN1) - 1) * #DAILY-INT-AMT)
+      END-IF
+*
+    END-IF /*(0238)
+  ELSE
+    MOVE #TODAY-YYYY TO #WORK-YYYY
+    MOVE #TODAY-MM TO #WORK-MM
+    RESET #INT-DAYS
+*
+    REPEAT
+      SUBTRACT 1 FROM #WORK-MM
+      IF #WORK-MM = 0
+        MOVE 12 TO #WORK-MM
+        SUBTRACT 1 FROM #WORK-YYYY
+      END-IF
+*
+      IF   (#WORK-MM = #SCR-EFF-DT-MM (#ILN1))
+          AND (#WORK-YYYY = #SCR-EFF-DT-YYYY (#ILN1))
+        COMPUTE #INT-DAYS = #INT-DAYS
+          + (#DAYS-IN-MONTH (#WORK-MM) - #SCR-EFF-DT-DD (#ILN1)) + 1
+        ESCAPE BOTTOM /*(0287)
+      END-IF
+*
+      ADD #DAYS-IN-MONTH (#WORK-MM) TO #INT-DAYS
+    END-REPEAT /*(0287)
+*
+    MOVE '1' TO #ST-V-PRINCIPAL-CHG-CODE
+    IF #SCR-ADJ (#ILN1) = '-'
+      COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+        + ((#INT-DAYS - 1) * #DAILY-INT-AMT)
+    ELSE
+      COMPUTE ROUNDED #ST-V-ACCUM-INTEREST = #ST-V-ACCUM-INTEREST
+        - ((#INT-DAYS - 1) * #DAILY-INT-AMT)
+    END-IF
+  END-IF
+*
+  IF #SCR-ADJ (#ILN1) = '-'
+    SUBTRACT #SCR-TRAN-AMT (#ILN1) FROM #ST-V-LOAN-AMOUNT
+  ELSE
+    ADD #SCR-TRAN-AMT (#ILN1) TO #ST-V-LOAN-AMOUNT
+  END-IF
+*
+  IF   (#ST-V-LOAN-AMOUNT   = 0)     /* CLEAN UP APL-CNT ON LOAN-PAYOFF
+      AND (#ST-V-LOAN-AMOUNT-2 = 0)
+    RESET #ST-V-APL-CNT
+  END-IF
+*
+  IF   (#ST-V-LOAN-AMOUNT = 0)  /* if this is the loan payoff trans
+      AND (#ST-V-INTRO-FLAG = 'C' OR = 'B'   /* ON A CAP LOAN
+      OR = 'P' OR = 'Q')  /* ON A CAP LOAN
+      AND (#SCR-TRAN-CODE (#ILN1) = 'PADF' OR = 'CADF') /* CAP's are fixed
+    PERFORM LOAN-COLLECTIONS                            /* DW4
+    MOVE #YYYYMMDD TO #ST-V-LOAN-DATE   /* save payoff date
+  END-IF
+*
+  IF   (#ST-V-INTRO-FLAG = 'C' OR = 'B'  /* ONLY APPLIES TO FIXED LOANS
+      OR = 'P' OR = 'Q')
+      AND (#SCR-TRAN-CODE (#ILN1) = 'PADF' OR = 'CADF') /* CAP's are fixed
+    MOVE 'CP'          TO #SG-CAT1 (1)
+    MOVE '**'          TO #SG-CAT2 (1)
+    MOVE #SCR-TRAN-AMT (#ILN1) TO #SG-AMT  (1)
+*
+    IF #UPDATE-MODE                                     /* DW6
+        AND (#ST-V-CAP-BILL-DATE  NE 0)
+      MOVE 'CP BIL DT' TO #W-DESCRIPTION
+      MOVE #ST-V-CAP-BILL-DATE TO #W-DATA
+      MOVE #W-OLD-NEW-DATA TO TRLOG.OLD-DATA (1)
+      MOVE '0'    TO #W-DATA
+      MOVE #W-OLD-NEW-DATA TO TRLOG.NEW-DATA (1)
+*
+      MOVE #SCR-ID-SSN (#ILN1) TO TRLOG.ID-NUMBER
+      MOVE #ST-V-PROCESS-IND TO TRLOG.PROCESS-IND /* PM - 06/2000
+      MOVE #ST-V-NAME TO TRLOG.NAME
+      MOVE #DATE-OF-UPDATE TO TRLOG.DATE-LAST-UPDATE  /* Last update not available
+      MOVE #CGA-CLERK TO TRLOG.CLERK-ID
+      MOVE *INIT-ID TO TRLOG.TERMINAL-ID
+      MOVE #DATE-OF-UPDATE TO TRLOG.TRANSACTION-DATN
+      MOVE #TIME-OF-UPDATE TO TRLOG.TRANSACTION-TIMN
+*
+      MOVE 'CA-' TO NEW-DATA-CA (1)
+      STORE TRLOG
+    END-IF
+*
+    RESET #ST-V-CAP-BILL-DATE  /* Clear CAP-BILL-DATE    DW3
+  END-IF
+END-IF
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE LOAN-COLLECTIONS          /* DW4
+* * * * * * * * * * * * * * * *
+*
+IF NOT #UPDATE-MODE
+    OR *DEVICE = 'BATCH'                       /* PM7
+  ESCAPE ROUTINE
+END-IF
+*
+IF #CGA-CLERK = 'ELB'
+  MOVE 'Y' TO #YES-NO
+ELSE
+  MOVE 'N' TO #YES-NO
+END-IF
+*
+INPUT MARK *#YES-NO USING MAP 'CPADJMAM'   /* DW5
+*
+IF NOT #YES-NO = 'Y' OR ='N'
+  REINPUT 'Response must be (Y)es or (N)o'
+    MARK *#YES-NO
+END-IF
+*
+IF #YES-NO = 'Y'
+  MOVE 'COLL' TO #CMBX
+  RESET #NOTE-TEXT (*)
+  MOVE 1 TO #INT
+  COMPRESS '* POL ISS' #ISS-DT-X
+    'CAP LOAN SENT TO COLLECTIONS' INTO #NOTE-TEXT (#INT)
+*
+  CALLNAT 'E4205SDM' #CN #INT #CGA-CLERK #NOTE-TEXT (1:10)
+*
+  RESET MBRSHIP-MTD-DET-V
+  COMPUTE MBRSHIP-MTD-DET-V.ENTRY-DATE
+    = 99999999 - #TODAY-YYYYMMDD-N
+* MOVE #HOLD-ISN        TO MBRSHIP-MTD-DET-V.REC-ISN
+  MOVE #CN         TO MBRSHIP-MTD-DET-V.ID-NUMBER
+  MOVE 'V' TO MBRSHIP-MTD-DET-V.CODE
+  MOVE #ISS-DT TO MBRSHIP-MTD-DET-V.ISSUE-DATE
+  RESET MBRSHIP-MTD-DET-V.NUM-MBRSHIPS
+  STORE MBRSHIP-MTD-DET-V
+*
+  MOVE *PROGRAM TO #PROGRAM
+  CALLNAT 'MSSNL003'
+    MBRSHIP-MTD-DET-V.ID-NUMBER
+    MBRSHIP-MTD-DET-V.CODE
+    MBRSHIP-MTD-DET-V.USER-COMPANY
+    MBRSHIP-MTD-DET-V.ISSUE-DATE
+    #PROGRAM
+    #USE-TIMX
+END-IF
+*
+END-SUBROUTINE
+*
+END
