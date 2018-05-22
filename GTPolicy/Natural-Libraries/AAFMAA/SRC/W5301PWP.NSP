@@ -1,0 +1,1327 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* * * * * * * * * * * * * * * * * *
+* PROGRAM-ID: W5301PWP            *
+* WP  -  WIDOW INSURANCE UPDATE   *
+* * * * * * * * * * * * * * * * * *
+*******************************************
+*                       MODIFICATION LOG
+* USER DATE     TAG  REASON
+* DRW  06282005 DW1  FORCE ENTRY OF A DT SETTLED IF BENE-PAID IS ENTERED
+*                    NOT DONE YET
+* DRW  02172006 DW2  Only use DATN for dt settled if it wasn't entered
+* DRW  04292006 DW3  Add Syncing Processing
+* SAG  20060330 RH1 AS - Character '¦' was lost during move to Unix.
+*                        Manually reapplied value to edit mask variable.
+* DRW 05/22/2008 DW4 Show Death Contestabiity
+* DRW 07/17/2008 DW5 Add Contestable Ind to be able to Un Contestable a Pol
+* DRW 09/22/2008 DW6 Stop using ISN to identify matching PD records
+* DRW 11/25/2008 DW7 Add Linkage to GCONTSXX for #CONTESTABLE-BUT-PAID
+* PAM 03/17/2009 PM8 Replaced RLB with CEB
+* DRW 1030/2009  DW9 AFFL Unification
+* BZ  09/20/2010 bz1 Print death report
+* BZ  10/17/2010 bz2 for print Escape to next policy
+* VXT 08/23/2012 vt1 Replaced PAM with VXT
+* TMT 12/22/2015 TT1 1099 Project
+* vxt 06/07/2017 vt2 Group Term Project
+*******************************************
+*
+* CONTAINS CODE TO ONLY ALLOW EDS (CLERKS DRW AND JAK)
+* TO DELETE AMAA POLICIES
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING GONERLXX    /* WORK FIELDS FOR GONERCXX - ERROR ROUTINE
+LOCAL USING W5301LWP
+LOCAL
+*
+1 #HAS-CONTESTABILITY   (L)                    /* DW4
+1 #NO-LONGER-CONTESTABLE (L)         /* DW5
+1 #CONTESTABLE-BUT-PAID  (L)          /* DW7
+1 #SCR-CONTESTABLE       (A1)
+1 #HOLD-CONTESTABLE      (A1)        /* DW5
+1 #ALOT-SW-UPD   (L)           /* DW3
+1 #ST-ISN     (P8)
+1 #TR-POL-CODE-AREA  (A125)  /* DW3
+1 REDEFINE #TR-POL-CODE-AREA
+  2 #TR-POL-CODE         (A1)
+  2 #TR-POL-CODE-FILL1   (A1)
+  2 #TR-POL-CODE-ISS-DT  (N8)
+  2 #TR-POL-CODE-FILL2   (A1)
+  2 #TR-POL-CODE-SPL-IND (N1)
+  2 #TR-POL-CODE-FILL3   (A1)
+  2 #TR-POL-CODE-PLAN    (A3)
+*
+1 #AAFMAA-1-OF-GR
+  2 #AAFMAA-1         (A2)
+  2 #AAFMAA-OF        (A4) INIT <' OF '>
+  2 #AAFMAA-X         (A2)
+1 REDEFINE #AAFMAA-1-OF-GR
+  2 #AAFMAA-1-OF-X     (A8)
+*
+1 #SFX     (I2)     /* DW4
+1 #PRIOR-DT-SETTLED    (N8)   /* DW2
+1 #FIELD-UPDATED       (L)        INIT<FALSE>
+1 #UPDATE-DATE         (L)        INIT<FALSE>
+1 #DELETE-RECORD       (L)        INIT<FALSE>
+1 #WAS-SETTLED         (L)
+1 #WAS-UNSETTLED       (L)
+1 #NOW-SETTLED         (L)
+1 #NOW-UNSETTLED       (L)
+1 #INVALID             (L)
+1 #ERR-MSG             (A60)
+*
+1 #WORK-ISSUE-DATE     (N8)                                       /* PM1
+1 REDEFINE #WORK-ISSUE-DATE                                       /* PM1
+  2 #ISSUE-DATE-YYYY    (N4)                                       /* PM1
+  2 #ISSUE-DATE-MM      (N2)                                       /* PM1
+  2 #ISSUE-DATE-DD      (N2)                                       /* PM1
+1 REDEFINE #WORK-ISSUE-DATE                                       /* PM1
+  2 #ISSUE-DATE-YYYY-A  (A4)                                       /* PM1
+  2 #ISSUE-DATE-MM-A    (A2)                                       /* PM1
+  2 #ISSUE-DATE-DD-A    (A2)                                       /* PM1
+1 #INT                 (I2)                                       /* PM1
+1 #NOTE-TEXT           (A60/10)                                   /* PM1
+1 #DB-WORK-FIELD       (N7.2)                                     /* PM1
+1 #DISPLAY-DB-FIELD    (A11)                                      /* PM1
+********************************************************************
+*                    SCREEN FIELDS
+********************************************************************
+*
+1 #SCR-MESSAGE    (A75)
+1 #SCR-NAME       (A25)
+1 #SCR-VAR-TITLE  (A9)
+1 #SCR-DOB        (A10)
+1 #SCR-MDOD       (A10)
+1 #SCR-PNAME      (A19)
+1 #SCR-PNAME-CV   (C)
+1 #SCR-PNUM       (A14)
+1 #SCR-PCODE      (A1)
+1 #SCR-W-STATUS   (A1)
+1 #SCR-FACE-AMT   (P7.0)
+1 #SCR-AMT-PD     (P7.2)
+1 #SCR-ISS-DATE   (A8)
+1 REDEFINE #SCR-ISS-DATE                                          /* PM1
+  2 #SCR-ISS-MM    (N2)                                            /* PM1
+  2 #SCR-ISS-DD    (N2)                                            /* PM1
+  2 #SCR-ISS-YYYY  (N4)                                            /* PM1
+1 #SCR-DT-FIL     (A8)
+1 #SCR-DT-SET     (A8)
+1 #SCR-DT-STW     (A8)
+1 #SCR-DT-STW-HDR (A18) INIT <'DATE-SENT-TO-WIDOW'>
+1 #SCR-DT-STW-CV  (C)
+1 #SCR-712        (A1)
+1 #SCR-TYPE       (A4)
+1 REDEFINE #SCR-TYPE                                              /* PM1
+  2 #SCR-PLAN      (A3)                                            /* PM1
+  2 #SCR-REST      (A1)                                            /* PM1
+1 #SCR-MODE       (A1)
+1 #SCR-INSTAL     (P7.2)
+1 #SCR-BENE       (A20)
+1 #SCR-BENE2      (A20)
+1 #SCR-BENE3      (A20)
+1 #SCR-REMARKS    (A21)
+1 #SCR-AAFMAA-M   (A24)  INIT <'AAFMAA INSURANCE SUMMARY'>
+1 #SCR-BEN-PD-M   (A12)  INIT <'BENEFIT PAID'>
+1 #SCR-BEN-PD     (P7.2)
+1 #SCR-CK-NUM-M   (A14) INIT <'CHECK-NUMBER #'>
+1 #SCR-CHECK-NUM  (N6)
+1 #SCR-TOT-M      (A9)  INIT <'TOTAL-INS'>
+1 #SCR-TOT        (P7.2)
+1 #SCR-PD-BY-M    (A7)  INIT <'PAID-BY'>
+1 #SCR-PD-BY      (A4)
+1 #SCR-LST-UPDT   (A10)
+1 #SCR-AAFMAA-CV     (C)
+1 #SCR-AAFMAA-HDR-CV (C)
+*
+1 #HOLD-POL-DATE-CLM-SETTLED       (N8/7)
+1 #HOLD-POL-INSTAL                 (P7.2/7)
+1 #HOLD-POL-BENEFIC-OCC            (7)
+  2 #HOLD-POL-BENEFIC                (A20/3)
+1 #HOLD-POL-REMARKS                (A21/7)
+1 #HOLD-POL-MODE                   (A1)
+1 #HOLD-BENEFIT-PAID               (P7.2)
+1 #HOLD-CHECK-NUMBER               (N6)
+1 #HOLD-PAID-BT                    (A4)
+1 #HOLD-INSTALL                    (P7.2)
+*
+1 #A-X          (I2)
+1 #B-X          (I2)          /* NEW
+1 #I3                  (I2)
+1 #I1                  (I2)
+********************************************************************
+*             TRLOG VIEW OF TRANSACTION-REGISTER FILE
+********************************************************************
+*
+1 TRLOG VIEW OF A-TRANSACTION-REGISTER
+  2 ID-NUMBER        (N6)
+  2 PROCESS-IND      (A1) /* - PM - 06/2000 - SPLIT COMPANIES
+  2 NAME             (A25)
+  2 DATE-LAST-UPDATE (N8)
+  2 TERMINAL-ID      (A8)
+  2 CLERK-ID         (A3)
+  2 TRANSACTION-DATN (P9)
+  2 TRANSACTION-TIMN (P7)
+  2 OLD-DATA         (A125/32)
+  2 NEW-DATA         (A125/32)
+  2 REDEFINE NEW-DATA
+    3 NEW-DATA-OCC    (32)
+      4 NEW-DATA-DP    (A3)
+      4 NEW-DATA-REST  (A122)
+  2 SYNC-FLD-NUM      (60)   /* DW3
+  2 SYNC-FLD-OLD-DATA (60)
+  2 SYNC-FLD-NEW-DATA (60)
+1 #TRX               (I2)
+1 #W-TRLOG-DATA  (A125)
+1 REDEFINE #W-TRLOG-DATA
+  2 #W-DESCRIPTION (A10)
+  2 #W-FILLER      (A5)
+  2 #W-DATA        (A110)
+********************************************************************
+*                    WORK AREA
+********************************************************************
+*
+1 #ST-X              (I2)
+1 #SC-X              (I2)
+1 #NUM-POLS          (I2)
+1 #LST-POLS          (L)
+1 #PASS-ISN          (P8)
+1 #A-AMAA            (P2)
+1 #A-AMAA-1ST        (P2)
+1 #A-AMAA-TOT        (N7.2)
+1 #HOLD-SCR-ID       (N9)
+1 #PASS-DTH-BEN      (N7.2)
+* 1 #CGA-SCR-COMMAND (A2)
+* 1 #CGA-SCR-ID      (N9)
+1 #POL-ISN           (P8)
+1 #HOLD-SCR-COMM     (A2)
+1 #HOLD-X            (I2)
+1 #HOLD-NAME         (A19)
+*
+1 #YYYYMMDD
+  2 #YYYY             (N4)
+  2 #MM               (N2)
+  2 #DD               (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-N       (N8)
+*
+1 #MMDDYYYY
+  2 #MM               (N2)
+  2 #DD               (N2)
+  2 #YYYY             (N4)
+1 REDEFINE #MMDDYYYY
+  2 #MMDDYYYY-A       (A8)
+*
+1 #WYYYYMMDD         (N8)
+1 REDEFINE #WYYYYMMDD
+  2 #WYYYY           (A4)
+  2 #WMM             (A2)
+  2 #WDD             (A2)
+1 REDEFINE #WYYYYMMDD
+  2 #WYYYYMMDD-N     (N8)
+*
+1 #W-AMOUNT          (N7.2)
+1 REDEFINE #W-AMOUNT
+  2 #W-AMT1          (N7)
+  2 #W-AMT2          (N2)
+1 #W-AMOUNT-7        (N5.2)
+1 REDEFINE #W-AMOUNT-7
+  2 #W-AMT-7-1         (N5)
+  2 #W-AMT-7-2         (N2)
+1 #WORK-MMDDYY         (A6)
+1 REDEFINE #WORK-MMDDYY
+  2 #WORK-MM           (A2)
+  2 #WORK-DD           (A2)
+  2 #WORK-YY           (A2)
+1 #WORK-YYMMDD         (A6)
+1 REDEFINE #WORK-YYMMDD
+  2 #WORK-YYMMDD-N     (N6)
+1 #MSK-1               (A1) INIT <'`'>
+1 #MSK-2               (A1) INIT <'#'>
+1 #MSK-3               (A1) INIT <'^'>
+1 #MSK-4               (A1) INIT <'('>
+1 #MSK-5               (A1) INIT <')'>
+1 #MSK-6               (A1) INIT <'_'>
+1 #MSK-7               (A1) INIT <'}'>
+1 #MSK-8               (A1) INIT <'{'>
+1 #MSK-9               (A1) INIT <'\'>
+1 #MSK-10              (A1) INIT <'¦'>           /* SAG 20060330 RH1 AS
+1 J  (I4)
+*
+1 V_CNT                (N2) INIT <0>    /* bz1
+1 #DATE-OF-BIRTH-SP    (N8)
+1 #idx                 (i2)                       /* vt2 06/07/2017
+END-DEFINE
+***********************************************************************
+INCLUDE GONERCXX      /* NATURAL ERROR ROUTINE
+*
+* WRITE "top " *PROGRAM *line     /*   --db
+INPUT #HOLD-SCR-ID #SC-X #PASS-ISN
+  #A-AMAA-TOT #NUM-POLS #A-AMAA #A-AMAA-1ST #LST-POLS
+MOVE EDITED #A-AMAA (EM=Z9) TO #AAFMAA-X
+*
+* WRITE 'Top of' *Program *LINE  #HOLD-SCR-ID #SC-X #A-AMAA   /* --db
+GET STATUS-V #CGA-ISN
+*
+MOVE *ISN TO #ST-ISN   /* DW3
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+MOVE #HOLD-SCR-ID TO #CGA-SCR-ID
+*
+IF #LST-POLS
+  ADD 31 TO #SC-X
+END-IF
+*
+FOR_POLICY.
+FOR #SC-X #SC-X TO #NUM-POLS
+  RESET #FIELD-UPDATED
+  RESET #HAS-CONTESTABILITY #NO-LONGER-CONTESTABLE        /* DW5
+
+  PERFORM HEADER-INFO
+*
+  FIND_ONE.
+  FIND (1) FIRS-V WITH WIDOW-KEY = #CGA-ID-G
+    IF NO RECORDS FOUND
+      MOVE 'NO FIRS RECORD ON FILE' TO #SCR-MESSAGE
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    IF   (PROCESS-IND = 'S')   /* PM - DO NOT SHOW AFSC
+        AND (FIRS-V.POL-NAME (#SC-X) = 'AFSC')
+      ESCAPE TOP
+    END-IF
+*
+    MOVE *ISN TO #POL-ISN
+    PERFORM MOVE-FIRS-TO-SCREEN
+*
+    IF   (#SCR-PNAME = 'AMAA' OR = 'AAFMAA')
+        AND (NOT #CGA-CLERK = 'DRW' OR = 'JAK')  /* ONLY EDS CAN DELETE AMAA
+      MOVE (AD=P) TO #SCR-PNAME-CV
+    ELSE
+      RESET #SCR-PNAME-CV
+    END-IF
+*
+    RESET #SCR-MESSAGE
+    PERFORM CHECK-CONTESTABILITY                              /* DW4
+*
+*  WRITE *Program *LINE "Policy" #SCR-PCODE  /* --db
+    IF #CGA-SCR-SUFFIX = 'P22'                          /* bz1
+      IF #SCR-PNAME = 'AMAA' OR = 'AAFMAA'             /* bz1
+        V_CNT := V_CNT + 1                            /* bz1
+        IF V_CNT > 1 NEWPAGE(22) END-IF               /* bz1
+        WRITE (22) NOTITLE USING MAP 'W5301FWP'       /* bz1
+      END-IF                                           /* bz1
+      ESCAPE BOTTOM ( FIND_ONE.)                         /* bz2
+    ELSE                                                /* bz1
+      INPUT TEXT #SCR-MESSAGE MARK *#SCR-PCODE USING MAP 'W5301MWP'
+    END-IF                                              /* bz1
+    IF #CGA-SCR-COMMAND NE '* '
+      END TRANSACTION             /* 09/15/88
+      FETCH 'G1000PXX'
+    END-IF
+    PERFORM DO-EDITS
+    IF #DELETE-RECORD
+      IGNORE
+    ELSE
+      PERFORM PREPARE-RECORD
+    END-IF
+*
+    PERFORM PROCESS-TRLOG
+*
+* * * * * * * * * * * DETERMINE IF POLICIES UNSETTLED STATUS CHANGED * *
+*
+    RESET #WAS-UNSETTLED
+      #NOW-UNSETTLED
+      #WAS-SETTLED
+      #NOW-SETTLED
+*
+    IF   (OLD-V.POL-DATE-CLM-FILED   (#SC-X) NE 0)  /* WAS UNSETTLED
+        AND (OLD-V.POL-DATE-CLM-SETTLED (#SC-X) =  0)
+      MOVE TRUE TO #WAS-UNSETTLED
+    ELSE
+      MOVE TRUE TO #WAS-SETTLED
+    END-IF
+*
+    IF   (FIRS-V.POL-DATE-CLM-FILED   (#SC-X) NE 0)  /* NOW UNSETTLED
+        AND (FIRS-V.POL-DATE-CLM-SETTLED (#SC-X) =  0)
+      MOVE TRUE TO #NOW-UNSETTLED
+    ELSE
+      MOVE TRUE TO #NOW-SETTLED
+    END-IF
+*
+    IF #WAS-SETTLED AND #NOW-UNSETTLED             /* 1ST TIME UNSETTLED
+      RESET MBRSHIP-MTD-DET-V
+      MOVE FIRS-V.POL-DATE-CLM-FILED (#SC-X)
+        TO MBRSHIP-MTD-DET-V.ENTRY-DATE
+      MOVE #POL-ISN           TO MBRSHIP-MTD-DET-V.REC-ISN
+*
+      IF FIRS-V.POL-NAME (#SC-X) = 'AMAA' OR = 'AAFMAA'
+        MOVE 'A'              TO MBRSHIP-MTD-DET-V.CODE
+      ELSE
+        MOVE 'P'              TO MBRSHIP-MTD-DET-V.CODE
+      END-IF
+*
+      MOVE #CGA-ISN           TO MBRSHIP-MTD-DET-V.ISSUE-DATE
+      MOVE #CGA-ID            TO MBRSHIP-MTD-DET-V.ID-NUMBER
+      STORE MBRSHIP-MTD-DET-V
+    ELSE
+      IF #WAS-UNSETTLED AND #NOW-SETTLED             /* DELETE UNSETTLED
+        MOVE #SC-X TO #I3
+        READ MBRSHIP-MTD-DET-V BY ENTRY-DATE
+            FROM OLD-V.POL-DATE-CLM-FILED (#SC-X)
+            THRU OLD-V.POL-DATE-CLM-FILED (#SC-X)
+*   write 'W5301PWP line 1710 fir isn=' #pol-isn 'PD isn=' rec-isn
+*          'fir cn=' firs-v.id-number 'pd-cn=' mbrship-mtd-det-v.id-number
+*        IF   (REC-ISN = #POL-ISN)                                     /* DW6
+          IF   (MBRSHIP-MTD-DET-V.ID-NUMBER = FIRS-V.ID-NUMBER)          /* DW6
+              AND (((FIRS-V.POL-NAME (#SC-X) = 'AMAA' OR = 'AAFMAA')
+              AND (CODE = 'A'))
+              OR ((NOT (FIRS-V.POL-NAME (#SC-X) = 'AMAA' OR = 'AAFMAA'))
+              AND (CODE = 'P')))
+            DELETE (0373)
+*
+            ADD 1 TO #I3
+            IF   (CODE = 'A')                  /* AAFMAA POLICY
+                AND (FIRS-V.POL-MODE (1) = ' ')   /* LUMP AAFMAA PMT  /* <<<<<< DW99
+                AND (FIRS-V.POL-NAME (#I3) = 'AMAA' OR = 'AAFMAA')
+              MOVE FIRS-V.POL-DATE-CLM-SETTLED (#SC-X)
+                TO FIRS-V.POL-DATE-CLM-SETTLED (#I3)
+              ESCAPE TOP
+            ELSE
+              ESCAPE BOTTOM
+            END-IF
+          END-IF
+        END-READ
+      ELSE
+        IF #WAS-UNSETTLED AND #NOW-UNSETTLED           /* CHG DATE FILED
+            AND (FIRS-V.POL-DATE-CLM-FILED (#SC-X) NE
+            OLD-V.POL-DATE-CLM-FILED (#SC-X))
+          READ MBRSHIP-MTD-DET-V BY ENTRY-DATE
+              FROM OLD-V.POL-DATE-CLM-FILED (#SC-X)
+              THRU OLD-V.POL-DATE-CLM-FILED (#SC-X)
+*          IF   (REC-ISN = #POL-ISN)                                     /* DW6
+            IF   (MBRSHIP-MTD-DET-V.ID-NUMBER = FIRS-V.ID-NUMBER)          /* DW6
+                AND (((FIRS-V.POL-NAME (#SC-X) = 'AMAA' OR = 'AAFMAA')
+                AND (CODE = 'A'))
+                OR ((NOT (FIRS-V.POL-NAME (#SC-X) = 'AMAA' OR = 'AAFMAA'))
+                AND (CODE = 'P')))
+              MOVE FIRS-V.POL-DATE-CLM-FILED (#SC-X) TO ENTRY-DATE
+              UPDATE (0402)
+              ESCAPE BOTTOM
+            END-IF
+          END-READ
+        END-IF
+      END-IF
+    END-IF
+*
+    IF #DELETE-RECORD
+      MOVE #SC-X TO #HOLD-X
+      IF #SC-X = #NUM-POLS
+        IGNORE
+      ELSE
+        PERFORM COMPRESS-FIRS
+      END-IF
+    END-IF
+*
+    IF #FIELD-UPDATED
+      PERFORM WRITE-TRLOG
+      MOVE 'UPDATE SUCCESSFUL' TO #SCR-MESSAGE
+      UPDATE RECORD (0285)
+*
+      IF #ALOT-SW-UPD    /* DW3
+        GET STATUS-V #ST-ISN
+        IF STATUS-V.ALOT-SW NE 'A'
+          MOVE 'I' TO STATUS-V.ALOT-SW
+        END-IF
+        UPDATE (0435)
+      END-IF
+*
+      END TRANSACTION             /* DO NOT REMOVE
+*
+      PERFORM CHECK-CONTESTABILITY
+*
+      INPUT TEXT #SCR-MESSAGE USING MAP 'W5301MWP'
+*
+      IF #CGA-SCR-COMMAND NE '* '
+        END TRANSACTION
+        FETCH 'G1000PXX'
+      END-IF
+    END-IF
+  END-FIND
+END-FOR
+IF #CGA-SCR-SUFFIX = 'P22'
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 'DP' TO #CGA-SCR-COMMAND
+END TRANSACTION             /* 09/15/88
+*
+RESET #SCR-MESSAGE
+PERFORM CHECK-CONTESTABILITY                              /* DW4
+*
+INPUT TEXT #SCR-MESSAGE USING MAP 'W5301MWP'
+FETCH 'G1000PXX'
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CHECK-CONTESTABILITY       /* DW4
+* * * * * * * * * * * * * * * * * * * *
+*
+examine status-v.plan(*) for 'GT1' index #idx                /* vt2 06/07/2017
+if status-v.plan(#idx) ne 'GT1'                              /* vt2 06/07/2017
+  IF FIRS-V.POL-NAME(#SC-X) = 'AMAA' OR = 'AAFMAA'                 /* DW4
+    CALLNAT 'GCONTSXX' FIRS-V.ID-NUMBER #SC-X #HAS-CONTESTABILITY
+      #NO-LONGER-CONTESTABLE #CONTESTABLE-BUT-PAID     /* DW5 DW7
+*
+    IF #NO-LONGER-CONTESTABLE
+      COMPRESS #SCR-MESSAGE 'This Contestable Policy is no longer Contestable'
+        INTO #SCR-MESSAGE                                       /* END DW5
+      MOVE 'N' TO #SCR-CONTESTABLE
+    ELSE
+      IF #HAS-CONTESTABILITY
+        COMPRESS #SCR-MESSAGE 'This is a Contestable Death Policy'
+          INTO #SCR-MESSAGE
+        MOVE 'Y' TO #SCR-CONTESTABLE
+      END-IF
+    END-IF
+  end-if                                                     /* vt2 06/07/2017
+END-IF
+*
+END-SUBROUTINE
+*
+*****************************
+DEFINE SUBROUTINE HEADER-INFO
+*****************************
+*
+#DATE-OF-BIRTH-SP := GET-DATE-OF-BIRTH (< STATUS-V.SPOUSE-CONTACT-ID >)
+MOVE STATUS-V.NAME-SP                 TO #SCR-NAME
+MOVE STATUS-V.STATUS-CODE-SP          TO #SCR-W-STATUS
+MOVE #DATE-OF-BIRTH-SP        TO #WYYYYMMDD
+COMPRESS #WMM #WDD #WYYYY INTO #SCR-DOB WITH '/'
+MOVE STATUS-V.DATE-OF-DEATH           TO #WYYYYMMDD
+COMPRESS #WMM #WDD #WYYYY INTO #SCR-MDOD WITH '/'
+*
+END-SUBROUTINE /* (0495)
+*
+*************************************
+DEFINE SUBROUTINE MOVE-FIRS-TO-SCREEN
+*************************************
+*
+IF   (PROCESS-IND = 'S')   /* PM - DO NOT SHOW AFSC
+    AND (FIRS-V.POL-NAME (#SC-X) = 'AFSC')
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE FIRS-V.CONTESTABLE-IND (#SC-X) TO #SCR-CONTESTABLE    /* DW5
+MOVE #SCR-CONTESTABLE TO #HOLD-CONTESTABLE                 /* DW5
+MOVE (AD=NP)                  TO #SCR-AAFMAA-CV
+MOVE (AD=N)                   TO #SCR-AAFMAA-HDR-CV
+RESET                            #SCR-DT-STW-CV
+MOVE 'DATE-SENT-TO-WIDOW'     TO #SCR-DT-STW-HDR
+MOVE 'AMOUNT-PD'                           TO #SCR-VAR-TITLE
+RESET #HOLD-NAME
+MOVE FIRS-V.POL-NAME(#SC-X)     TO #SCR-PNAME
+MOVE FIRS-V.POL-NAME(#SC-X)     TO #HOLD-NAME
+MOVE FIRS-V.POL-NUMBER(#SC-X)   TO #SCR-PNUM
+MOVE FIRS-V.POL-CODE(#SC-X)     TO #SCR-PCODE
+MOVE FIRS-V.POL-AMOUNT(#SC-X)   TO #SCR-FACE-AMT
+MOVE FIRS-V.POL-AMT-PAID(#SC-X) TO #SCR-AMT-PD
+*
+MOVE FIRS-V.POL-DATE(#SC-X) TO #YYYYMMDD-N
+PERFORM FLIP-DATE-TO-MMDDYYYY
+MOVE #MMDDYYYY-A TO #SCR-ISS-DATE
+*
+MOVE FIRS-V.POL-DATE-CLM-FILED(#SC-X) TO #YYYYMMDD-N
+PERFORM FLIP-DATE-TO-MMDDYYYY
+MOVE #MMDDYYYY-A TO #SCR-DT-FIL
+*
+MOVE FIRS-V.POL-DATE-CLM-SETTLED(#SC-X) TO #YYYYMMDD-N
+PERFORM FLIP-DATE-TO-MMDDYYYY
+MOVE #MMDDYYYY-A TO #SCR-DT-SET
+*
+MOVE FIRS-V.POL-DATE-SENT-TO-WIDOW(#SC-X) TO #YYYYMMDD-N
+PERFORM FLIP-DATE-TO-MMDDYYYY
+MOVE #MMDDYYYY-A TO #SCR-DT-STW
+*
+MOVE FIRS-V.POL-712     (#SC-X)     TO #SCR-712
+MOVE FIRS-V.POL-TYPE    (#SC-X)     TO #SCR-TYPE
+MOVE FIRS-V.POL-MODE    (#SC-X)     TO #SCR-MODE
+MOVE FIRS-V.POL-INSTAL  (#SC-X)     TO #SCR-INSTAL
+MOVE FIRS-V.POL-BENEFIC (#SC-X, 1)  TO #SCR-BENE
+MOVE FIRS-V.POL-BENEFIC (#SC-X, 2)  TO #SCR-BENE2
+MOVE FIRS-V.POL-BENEFIC (#SC-X, 3)  TO #SCR-BENE3
+MOVE FIRS-V.POL-REMARKS (#SC-X)     TO #SCR-REMARKS
+MOVE FIRS-V.INS-LAST-FM-DATE       TO #WYYYYMMDD
+COMPRESS #WMM #WDD #WYYYY INTO #SCR-LST-UPDT WITH '/'
+*
+IF FIRS-V.POL-NAME(#SC-X) = 'AMAA' OR = 'AAFMAA'
+  FOR J 1 TO 9                                       /* TT1 BEGIN
+    IF FIRS-V.POL-DATE(#SC-X) = ISSUE-DATE(J)
+      #SCR-PNUM := POLICY-ID(J)
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR                                            /* TT1 END
+  PERFORM MOVE-AAFMAA-INFO
+END-IF
+*
+END-SUBROUTINE  /* (0509)
+*
+**********************************
+DEFINE SUBROUTINE MOVE-AAFMAA-INFO
+**********************************
+*
+COMPUTE #AAFMAA-1 = (#SC-X - #A-AMAA-1ST) + 1
+RESET #SCR-AAFMAA-CV
+RESET #SCR-AAFMAA-HDR-CV
+RESET #SCR-DT-STW-HDR
+MOVE (AD=I)                   TO #SCR-AAFMAA-HDR-CV
+MOVE (AD=NP)                   TO #SCR-DT-STW-CV
+MOVE 'DEATH BEN'              TO #SCR-VAR-TITLE
+MOVE FIRS-V.CHECK-NUMBER      TO #SCR-CHECK-NUM
+MOVE FIRS-V.PAID-BY           TO #SCR-PD-BY
+MOVE #A-AMAA-TOT              TO #SCR-TOT
+*
+IF FIRS-V.POL-MODE (1) = 'X'   /* 1ST AAFMAA POLICY INDICATES INDIVIDUAL
+  MOVE 'X' TO #SCR-MODE
+END-IF
+*
+IF #SCR-MODE = 'X'
+  MOVE FIRS-V.POL-INSTAL (#SC-X) TO #HOLD-INSTALL
+  MOVE FIRS-V.POL-INSTAL (#SC-X) TO #SCR-BEN-PD  /* USE INDIVIDUAL AMT
+  RESET #SCR-INSTAL
+ELSE
+  MOVE FIRS-V.BENEFIT-PAID       TO #SCR-BEN-PD
+  MOVE FIRS-V.POL-BENEFIC (1, 1) TO #SCR-BENE
+  MOVE FIRS-V.POL-BENEFIC (1, 2) TO #SCR-BENE2
+  MOVE FIRS-V.POL-BENEFIC (1, 3) TO #SCR-BENE3
+  MOVE FIRS-V.POL-REMARKS (1)    TO #SCR-REMARKS
+END-IF
+END-SUBROUTINE   /* (0572)
+*
+***************************
+DEFINE SUBROUTINE DO-EDITS
+***************************
+*
+IF  (#SCR-CONTESTABLE NE #HOLD-CONTESTABLE)    /* DW5
+    AND (NOT #CGA-CLERK = 'BZ' OR = 'VXT' OR = 'YAK'         /* vt1
+    OR = 'CEB' OR = 'BMG' OR = 'KHB' OR = 'SKS' OR = 'MGM' OR = 'CPJ')
+  REINPUT 'Only selected Users can change Contestability'
+    MARK *#SCR-CONTESTABLE
+END-IF
+*
+IF #HAS-CONTESTABILITY OR #NO-LONGER-CONTESTABLE                /* DW5
+  IF NOT #SCR-CONTESTABLE = 'Y' OR = 'N'
+    REINPUT 'Must be "Y" or "N"'
+      MARK *#SCR-CONTESTABLE
+  END-IF
+ELSE
+  IF #SCR-CONTESTABLE NE ' '
+    REINPUT 'NON-Contestable Policies must be blank'
+      MARK *#SCR-CONTESTABLE
+  END-IF
+END-IF                                          /* END DW5
+*
+IF #SCR-PNAME EQ ' '
+  PERFORM RESET-FIRS
+  MOVE TRUE TO #DELETE-RECORD
+  ESCAPE ROUTINE
+ELSE
+  IF #SCR-PNAME = SCAN #MSK-1 OR
+      #SCR-PNAME = SCAN #MSK-2 OR
+      #SCR-PNAME = SCAN #MSK-3 OR
+      #SCR-PNAME = SCAN #MSK-4 OR
+      #SCR-PNAME = SCAN #MSK-5 OR
+      #SCR-PNAME = SCAN #MSK-6 OR
+      #SCR-PNAME = SCAN #MSK-7 OR
+      #SCR-PNAME = SCAN #MSK-8 OR
+      #SCR-PNAME = SCAN #MSK-9 OR
+      #SCR-PNAME = SCAN #MSK-10
+    REINPUT WITH 'COMPANY NAME INVALID'
+      MARK *#SCR-PNAME
+  END-IF
+END-IF
+*
+CALLNAT 'GPLCDSXX' #SCR-PCODE #INVALID #ERR-MSG
+IF #INVALID
+  REINPUT USING HELP
+    MARK *#SCR-PCODE
+END-IF
+*
+IF #SCR-ISS-DATE NE '00000000'
+  IF #SCR-ISS-DATE NE MASK(MMDDYYYY)
+    REINPUT 'Must be (MMDDYYYY) format'
+      MARK *#SCR-ISS-DATE
+  ELSE
+    MOVE #SCR-ISS-DATE TO #MMDDYYYY-A
+    PERFORM FLIP-DATE-TO-YYYYMMDD
+    IF #YYYYMMDD-N GT *DATN
+      REINPUT 'Greater than today"s date'
+        MARK *#SCR-ISS-DATE
+    END-IF
+  END-IF
+END-IF
+*
+IF #SCR-DT-STW NE '00000000'
+  IF #SCR-DT-STW NE MASK(MMDDYYYY)
+    REINPUT 'Must be (MMDDYYYY) format'
+      MARK *#SCR-DT-STW
+  ELSE
+    MOVE #SCR-DT-STW TO #MMDDYYYY-A
+    PERFORM FLIP-DATE-TO-YYYYMMDD
+    IF #YYYYMMDD-N GT *DATN
+      REINPUT WITH 'Greater than today"s date'
+        MARK *#SCR-DT-STW
+    END-IF
+  END-IF
+END-IF
+*
+IF #SCR-DT-SET NE '00000000'
+  IF #SCR-DT-SET NE MASK(MMDDYYYY)
+    REINPUT 'Must be (MMDDYYYY) format'
+      MARK *#SCR-DT-SET
+  ELSE
+    MOVE #SCR-DT-SET TO #MMDDYYYY-A
+    PERFORM FLIP-DATE-TO-YYYYMMDD
+    IF #YYYYMMDD-N GT *DATN
+      REINPUT WITH 'Greater than today"s date'
+        MARK *#SCR-DT-SET
+    END-IF
+  END-IF
+END-IF
+*
+IF #SCR-DT-FIL NE '00000000'
+  IF #SCR-DT-FIL NE MASK(MMDDYYYY)
+    REINPUT 'Must be (MMDDYYYY) format'
+      MARK *#SCR-DT-FIL
+  ELSE
+    MOVE #SCR-DT-FIL TO #MMDDYYYY-A
+    PERFORM FLIP-DATE-TO-YYYYMMDD
+    IF #YYYYMMDD-N GT *DATN
+      REINPUT WITH 'Greater than today"s date'
+        MARK *#SCR-DT-FIL
+    END-IF
+  END-IF
+END-IF
+*
+IF #SCR-712 NE ' ' AND #SCR-712 NE 'Y' AND #SCR-712 NE 'N'
+  REINPUT WITH 'MUST BE Y, N, OR BLANK'
+    MARK *#SCR-712
+END-IF
+*
+IF #SCR-PNAME = 'AMAA' OR = 'AAFMAA'
+  IF #SCR-MODE = ' ' OR = 'A' OR = 'S' OR = 'Q' OR = 'M' OR = 'X'
+    IGNORE
+  ELSE
+    REINPUT USING HELP
+      MARK *#SCR-MODE
+  END-IF
+ELSE
+  IF #SCR-MODE = ' ' OR = 'A' OR = 'S' OR = 'Q' OR = 'M'
+    IGNORE
+  ELSE
+    REINPUT USING HELP
+      MARK *#SCR-MODE
+  END-IF
+END-IF
+*
+IF   (#SCR-PNAME = 'AMAA' OR = 'AAFMAA')
+    AND (#SCR-BEN-PD NE 0)
+  IF #SCR-PD-BY = 'MAIL' OR = 'WIRE' OR = 'HAND'
+    IGNORE
+  ELSE
+    REINPUT USING HELP
+      MARK *#SCR-PD-BY
+  END-IF
+END-IF
+*
+END-SUBROUTINE  /* (0604)
+*
+********************************
+DEFINE SUBROUTINE COMPRESS-FIRS
+********************************
+*
+FOR #SC-X FROM #HOLD-X THRU #NUM-POLS
+  IF #SC-X = #NUM-POLS
+    PERFORM RESET-FIRS
+    ESCAPE ROUTINE
+  END-IF
+*
+  MOVE FIRS-V.POL-NAME (#SC-X + 1)
+    TO FIRS-V.POL-NAME (#SC-X)
+  MOVE FIRS-V.POL-NUMBER (#SC-X + 1)
+    TO FIRS-V.POL-NUMBER (#SC-X)
+  MOVE FIRS-V.POL-AMOUNT (#SC-X + 1)
+    TO FIRS-V.POL-AMOUNT (#SC-X)
+  MOVE FIRS-V.POL-AMT-PAID (#SC-X + 1)
+    TO FIRS-V.POL-AMT-PAID (#SC-X)
+  MOVE FIRS-V.POL-DATE (#SC-X + 1)
+    TO FIRS-V.POL-DATE (#SC-X)
+  MOVE FIRS-V.POL-DATE-CLM-FILED (#SC-X + 1)
+    TO FIRS-V.POL-DATE-CLM-FILED (#SC-X)
+  MOVE FIRS-V.POL-DATE-CLM-SETTLED (#SC-X + 1)
+    TO FIRS-V.POL-DATE-CLM-SETTLED (#SC-X)
+  MOVE FIRS-V.POL-DATE-SENT-TO-WIDOW (#SC-X + 1)
+    TO FIRS-V.POL-DATE-SENT-TO-WIDOW (#SC-X)
+  MOVE FIRS-V.POL-712 (#SC-X + 1)
+    TO FIRS-V.POL-712 (#SC-X)
+  MOVE FIRS-V.POL-TYPE (#SC-X + 1)
+    TO FIRS-V.POL-TYPE (#SC-X)
+  MOVE FIRS-V.POL-MODE (#SC-X + 1)
+    TO FIRS-V.POL-MODE (#SC-X)
+  MOVE FIRS-V.POL-INSTAL (#SC-X + 1)
+    TO FIRS-V.POL-INSTAL (#SC-X)
+  FOR #B-X 1 TO 3
+    MOVE FIRS-V.POL-BENEFIC (#SC-X + 1,#B-X)
+      TO FIRS-V.POL-BENEFIC (#SC-X,#B-X)
+  END-FOR
+  MOVE FIRS-V.POL-REMARKS (#SC-X + 1)
+    TO FIRS-V.POL-REMARKS (#SC-X)
+  MOVE FIRS-V.POL-CODE (#SC-X + 1)
+    TO FIRS-V.POL-CODE (#SC-X)
+  MOVE FIRS-V.CONTESTABLE-IND (#SC-X + 1)     /* DW5
+    TO FIRS-V.CONTESTABLE-IND (#SC-X)
+*
+END-FOR
+*
+END-SUBROUTINE /* (0742)
+*
+****************************
+DEFINE SUBROUTINE RESET-FIRS
+****************************
+*
+RESET FIRS-V.POL-NAME               (#SC-X)
+RESET FIRS-V.POL-NUMBER             (#SC-X)
+RESET FIRS-V.POL-CODE               (#SC-X)
+RESET FIRS-V.POL-AMOUNT             (#SC-X)
+RESET FIRS-V.POL-AMT-PAID           (#SC-X)
+RESET FIRS-V.POL-DATE               (#SC-X)
+RESET FIRS-V.POL-DATE-CLM-FILED     (#SC-X)
+RESET FIRS-V.POL-DATE-CLM-SETTLED   (#SC-X)
+RESET FIRS-V.POL-DATE-SENT-TO-WIDOW (#SC-X)
+RESET FIRS-V.POL-712                (#SC-X)
+RESET FIRS-V.POL-TYPE               (#SC-X)
+RESET FIRS-V.POL-MODE               (#SC-X)
+RESET FIRS-V.POL-INSTAL             (#SC-X)
+RESET FIRS-V.POL-BENEFIC            (#SC-X, 1)
+RESET FIRS-V.POL-BENEFIC            (#SC-X, 2)
+RESET FIRS-V.POL-BENEFIC            (#SC-X, 3)
+RESET FIRS-V.POL-REMARKS            (#SC-X)
+END-SUBROUTINE  /* (0791)
+*
+********************************
+DEFINE SUBROUTINE PREPARE-RECORD
+********************************
+*
+IF FIRS-V.POL-NAME(#SC-X) = 'AMAA' OR = 'AAFMAA'   /* FOR UPDATE CHECK
+  FOR #I1 1 TO 7
+    IF FIRS-V.POL-NAME (#I1) = 'AMAA' OR = 'AAFMAA'
+      MOVE FIRS-V.POL-DATE-CLM-SETTLED (#I1)
+        TO #HOLD-POL-DATE-CLM-SETTLED (#I1)
+      MOVE FIRS-V.POL-INSTAL  (#I1)    TO #HOLD-POL-INSTAL  (#I1)
+      MOVE FIRS-V.POL-BENEFIC (#I1, 1) TO #HOLD-POL-BENEFIC (#I1, 1)
+      MOVE FIRS-V.POL-BENEFIC (#I1, 2) TO #HOLD-POL-BENEFIC (#I1, 2)
+      MOVE FIRS-V.POL-BENEFIC (#I1, 3) TO #HOLD-POL-BENEFIC (#I1, 3)
+      MOVE FIRS-V.POL-REMARKS (#I1)    TO #HOLD-POL-REMARKS (#I1)
+    END-IF
+  END-FOR
+*
+  MOVE FIRS-V.POL-MODE (1)         TO #HOLD-POL-MODE
+  MOVE FIRS-V.BENEFIT-PAID         TO #HOLD-BENEFIT-PAID
+  MOVE FIRS-V.CHECK-NUMBER         TO #HOLD-CHECK-NUMBER
+  MOVE FIRS-V.PAID-BY              TO #HOLD-PAID-BT
+END-IF
+*
+IF #SCR-CONTESTABLE = 'N'                  /* DW5
+  MOVE #SCR-CONTESTABLE TO FIRS-V.CONTESTABLE-IND (#SC-X)
+ELSE
+  IF #SCR-CONTESTABLE = 'Y'
+    RESET FIRS-V.CONTESTABLE-IND (#SC-X)
+  END-IF
+END-IF                                     /* END DW5
+*
+MOVE #SCR-PNAME                            TO FIRS-V.POL-NAME(#SC-X)
+* MOVE #SCR-PNUM                             TO FIRS-V.POL-NUMBER(#SC-X) /* tt1
+MOVE #SCR-PCODE                            TO FIRS-V.POL-CODE(#SC-X)
+MOVE #SCR-FACE-AMT                         TO FIRS-V.POL-AMOUNT(#SC-X)
+MOVE #SCR-AMT-PD                        TO FIRS-V.POL-AMT-PAID(#SC-X)
+*
+IF #SCR-ISS-DATE = '00000000'
+  RESET FIRS-V.POL-DATE(#SC-X)
+ELSE
+  MOVE #SCR-ISS-DATE TO #MMDDYYYY-A
+  PERFORM FLIP-DATE-TO-YYYYMMDD
+  MOVE #YYYYMMDD-N TO FIRS-V.POL-DATE (#SC-X)
+END-IF
+*
+IF #SCR-DT-FIL = '00000000'
+  RESET FIRS-V.POL-DATE-CLM-FILED(#SC-X)
+ELSE
+  MOVE #SCR-DT-FIL TO #MMDDYYYY-A
+  PERFORM FLIP-DATE-TO-YYYYMMDD
+  MOVE #YYYYMMDD-N TO FIRS-V.POL-DATE-CLM-FILED (#SC-X)
+END-IF
+*
+MOVE FIRS-V.POL-DATE-CLM-SETTLED (#SC-X) TO #PRIOR-DT-SETTLED  /* DW2
+IF #SCR-DT-SET = '00000000'
+  RESET FIRS-V.POL-DATE-CLM-SETTLED(#SC-X)
+ELSE
+  MOVE #SCR-DT-SET TO #MMDDYYYY-A
+  PERFORM FLIP-DATE-TO-YYYYMMDD
+  MOVE #YYYYMMDD-N TO FIRS-V.POL-DATE-CLM-SETTLED (#SC-X)
+END-IF
+*
+IF #SCR-DT-STW = '00000000'
+  RESET FIRS-V.POL-DATE-SENT-TO-WIDOW(#SC-X)
+ELSE
+  MOVE #SCR-DT-STW TO #MMDDYYYY-A
+  PERFORM FLIP-DATE-TO-YYYYMMDD
+  MOVE #YYYYMMDD-N TO FIRS-V.POL-DATE-SENT-TO-WIDOW (#SC-X)
+END-IF
+*
+MOVE #SCR-712     TO FIRS-V.POL-712     (#SC-X)
+MOVE #SCR-TYPE    TO FIRS-V.POL-TYPE    (#SC-X)
+MOVE #SCR-MODE    TO FIRS-V.POL-MODE    (#SC-X)
+MOVE #SCR-INSTAL  TO FIRS-V.POL-INSTAL  (#SC-X)
+MOVE #SCR-BENE    TO FIRS-V.POL-BENEFIC (#SC-X, 1)
+MOVE #SCR-BENE2   TO FIRS-V.POL-BENEFIC (#SC-X, 2)
+MOVE #SCR-BENE3   TO FIRS-V.POL-BENEFIC (#SC-X, 3)
+MOVE #SCR-REMARKS TO FIRS-V.POL-REMARKS (#SC-X)
+*
+IF FIRS-V.POL-NAME(#SC-X) = 'AMAA' OR = 'AAFMAA'
+  MOVE #SCR-DT-SET TO #MMDDYYYY-A   /* DW2
+  PERFORM FLIP-DATE-TO-YYYYMMDD
+  IF #SCR-MODE = 'X'
+    MOVE 'X' TO FIRS-V.POL-MODE (1)
+*
+*   IF #SCR-BEN-PD NE FIRS-V.POL-INSTAL (#SC-X) /* removed 6/95 emd
+    IF #SCR-BEN-PD NE #HOLD-INSTALL        /* ORIGINAL INSTALL
+      IF   (#SCR-DT-SET = '00000000')                /* DW2
+          AND (#PRIOR-DT-SETTLED = 0)
+        MOVE *DATN TO FIRS-V.POL-DATE-CLM-SETTLED (#SC-X)
+        MOVE *DATN TO #WYYYYMMDD
+        COMPRESS #WMM #WDD #WYYYY INTO #SCR-DT-SET LEAVING NO SPACE
+      ELSE                                                      /* DW2
+        MOVE #YYYYMMDD-N TO FIRS-V.POL-DATE-CLM-SETTLED (#SC-X) /* DW2
+      END-IF
+    END-IF
+*
+    MOVE #SCR-BEN-PD TO FIRS-V.POL-INSTAL (#SC-X)
+    RESET               FIRS-V.BENEFIT-PAID
+  ELSE
+    IF #SCR-BEN-PD NE FIRS-V.BENEFIT-PAID
+      IF   (#SCR-DT-SET = '00000000')                 /* DW2
+          AND (#PRIOR-DT-SETTLED = 0)
+        MOVE *DATN TO FIRS-V.POL-DATE-CLM-SETTLED (1)
+        MOVE *DATN TO #WYYYYMMDD
+        COMPRESS #WMM #WDD #WYYYY INTO #SCR-DT-SET LEAVING NO SPACE
+      ELSE                                                      /* DW2
+        MOVE #YYYYMMDD-N TO FIRS-V.POL-DATE-CLM-SETTLED (#SC-X) /* DW2
+      END-IF
+    END-IF
+*
+    MOVE #SCR-BEN-PD TO FIRS-V.BENEFIT-PAID
+    MOVE #SCR-BENE    TO FIRS-V.POL-BENEFIC (1, 1)
+    MOVE #SCR-BENE2   TO FIRS-V.POL-BENEFIC (1, 2)
+    MOVE #SCR-BENE3   TO FIRS-V.POL-BENEFIC (1, 3)
+    MOVE #SCR-REMARKS TO FIRS-V.POL-REMARKS (1)
+*
+    IF #SC-X NE 1
+      RESET FIRS-V.POL-BENEFIC (#SC-X, 1)
+      RESET FIRS-V.POL-BENEFIC (#SC-X, 2)
+      RESET FIRS-V.POL-BENEFIC (#SC-X, 3)
+      RESET FIRS-V.POL-REMARKS (#SC-X)
+    END-IF
+  END-IF
+*
+  MOVE #SCR-CHECK-NUM TO FIRS-V.CHECK-NUMBER
+  MOVE #SCR-PD-BY     TO FIRS-V.PAID-BY
+*
+  FOR #I1 1 TO 7
+    IF FIRS-V.POL-NAME (#I1) = 'AMAA' OR = 'AAFMAA'
+      IF  (FIRS-V.POL-DATE-CLM-SETTLED (#I1)
+          NE #HOLD-POL-DATE-CLM-SETTLED (#I1))
+          OR (FIRS-V.POL-INSTAL  (#I1)    NE #HOLD-POL-INSTAL  (#I1))
+          OR (FIRS-V.POL-BENEFIC (#I1, 1) NE #HOLD-POL-BENEFIC (#I1, 1))
+          OR (FIRS-V.POL-BENEFIC (#I1, 2) NE #HOLD-POL-BENEFIC (#I1, 2))
+          OR (FIRS-V.POL-BENEFIC (#I1, 3) NE #HOLD-POL-BENEFIC (#I1, 3))
+          OR (FIRS-V.POL-REMARKS (#I1)    NE #HOLD-POL-REMARKS (#I1))
+        MOVE TRUE TO #FIELD-UPDATED
+        ESCAPE BOTTOM
+      END-IF
+    END-IF
+  END-FOR
+*
+  IF  (FIRS-V.POL-MODE (1) NE #HOLD-POL-MODE)
+      OR (FIRS-V.BENEFIT-PAID NE #HOLD-BENEFIT-PAID)
+      OR (FIRS-V.CHECK-NUMBER NE #HOLD-CHECK-NUMBER)
+      OR (FIRS-V.PAID-BY      NE #HOLD-PAID-BT)
+    MOVE TRUE TO #FIELD-UPDATED
+  END-IF
+END-IF
+*
+END-SUBROUTINE /* (0814)
+*
+********************************
+DEFINE SUBROUTINE PROCESS-TRLOG
+********************************
+*
+GET OLD-V #POL-ISN      /* READ ORIGINAL RECORD BEFORE UPDATE(S)
+*
+ASSIGN #TRX = 1
+RESET #SFX       /* DW3
+RESET TRLOG      /* DW3
+*
+IF OLD-V.POL-CODE(#SC-X) NE FIRS-V.POL-CODE(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+*
+  IF   (OLD-V.POL-NAME (#SC-X) = 'AMAA' OR ='AAFMAA')   /* DW4
+      AND (#SC-X LE 9)
+    ADD 1 TO #SFX
+    COMPUTE SYNC-FLD-NUM (#SFX) = 43 + #SC-X
+    MOVE OLD-V.POL-CODE  (#SC-X) TO #TR-POL-CODE
+    MOVE OLD-V.POL-DATE  (#SC-X) TO #TR-POL-CODE-ISS-DT
+    RESET                           #TR-POL-CODE-SPL-IND
+    MOVE OLD-V.POL-TYPE  (#SC-X) TO #TR-POL-CODE-PLAN
+    MOVE #TR-POL-CODE-AREA       TO SYNC-FLD-OLD-DATA (#SFX)
+    MOVE FIRS-V.POL-CODE (#SC-X) TO #TR-POL-CODE
+    MOVE #TR-POL-CODE-AREA       TO SYNC-FLD-NEW-DATA (#SFX)    /* DW4
+  END-IF
+*
+  MOVE 'POLICY COD'           TO #W-DESCRIPTION
+  MOVE OLD-V.POL-CODE(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA          TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-CODE(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA          TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-NAME(#SC-X) NE FIRS-V.POL-NAME(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'COMPANY'              TO #W-DESCRIPTION
+  MOVE OLD-V.POL-NAME(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA          TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-NAME(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA          TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-NUMBER(#SC-X) NE FIRS-V.POL-NUMBER(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'POLICY NUM'             TO #W-DESCRIPTION
+  MOVE OLD-V.POL-NUMBER(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA            TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-NUMBER(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA            TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-AMOUNT(#SC-X) NE FIRS-V.POL-AMOUNT(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'POLICY AMT'             TO #W-DESCRIPTION
+*
+  MOVE OLD-V.POL-AMOUNT(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA            TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-AMOUNT(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA            TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-AMT-PAID(#SC-X) NE FIRS-V.POL-AMT-PAID(#SC-X)
+*
+  MOVE TRUE TO #ALOT-SW-UPD   /* DW3
+*
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'POL AMT PAID'             TO #W-DESCRIPTION
+  MOVE OLD-V.POL-AMT-PAID(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA              TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-AMT-PAID(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA              TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+*
+  PERFORM CREATE-NOTE-FOR-ADJUSTED-DB                             /* PM1
+END-IF
+*
+IF OLD-V.POL-DATE(#SC-X) NE FIRS-V.POL-DATE(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'ISSUE DATE'             TO #W-DESCRIPTION
+  MOVE OLD-V.POL-DATE(#SC-X)      TO #W-DATA
+  MOVE #W-TRLOG-DATA            TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-DATE(#SC-X)   TO #W-DATA
+  MOVE #W-TRLOG-DATA            TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-DATE-CLM-FILED(#SC-X) NE FIRS-V.POL-DATE-CLM-FILED(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'DATE FILED'                     TO #W-DESCRIPTION
+  MOVE OLD-V.POL-DATE-CLM-FILED(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA                    TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-DATE-CLM-FILED(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA                    TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-DATE-CLM-SETTLED(#SC-X) NE
+    FIRS-V.POL-DATE-CLM-SETTLED(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+*
+  MOVE TRUE TO #ALOT-SW-UPD   /* DW3
+*
+  MOVE 'DATE SETLD'                       TO #W-DESCRIPTION
+  MOVE OLD-V.POL-DATE-CLM-SETTLED(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA                      TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-DATE-CLM-SETTLED(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA                      TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-DATE-SENT-TO-WIDOW(#SC-X) NE
+    FIRS-V.POL-DATE-SENT-TO-WIDOW(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'DATE SENT WID'                      TO #W-DESCRIPTION
+  MOVE OLD-V.POL-DATE-SENT-TO-WIDOW(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA                        TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-DATE-SENT-TO-WIDOW(#SC-X) TO #W-DATA
+  MOVE #W-TRLOG-DATA                        TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-712(#SC-X) NE FIRS-V.POL-712(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE '712 FILED'                 TO #W-DESCRIPTION
+  MOVE OLD-V.POL-712(#SC-X)          TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-712(#SC-X)       TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-TYPE(#SC-X) NE FIRS-V.POL-TYPE(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'TYPE'                      TO #W-DESCRIPTION
+  MOVE OLD-V.POL-TYPE(#SC-X)         TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-TYPE(#SC-X)      TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-MODE(#SC-X) NE FIRS-V.POL-MODE(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'MODE'                      TO #W-DESCRIPTION
+  MOVE OLD-V.POL-MODE(#SC-X)         TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-MODE(#SC-X)      TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-INSTAL(#SC-X) NE FIRS-V.POL-INSTAL(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'INSTAL AMT'                TO #W-DESCRIPTION
+  MOVE OLD-V.POL-INSTAL(#SC-X)       TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-INSTAL(#SC-X)    TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+MOVE 1 TO #B-X
+IF OLD-V.POL-BENEFIC(#SC-X,#B-X) NE FIRS-V.POL-BENEFIC(#SC-X,#B-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'BENEFIC 1'                      TO #W-DESCRIPTION
+  MOVE OLD-V.POL-BENEFIC(#SC-X,#B-X)      TO #W-DATA
+  MOVE #W-TRLOG-DATA                    TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-BENEFIC(#SC-X,#B-X)   TO #W-DATA
+  MOVE #W-TRLOG-DATA                    TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-BENEFIC(#SC-X,#B-X+1) NE FIRS-V.POL-BENEFIC(#SC-X,#B-X+1)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'BENEFIC 2'                        TO #W-DESCRIPTION
+  MOVE OLD-V.POL-BENEFIC(#SC-X,#B-X+1)      TO #W-DATA
+  MOVE #W-TRLOG-DATA                      TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-BENEFIC(#SC-X,#B-X+1)   TO #W-DATA
+  MOVE #W-TRLOG-DATA                      TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-BENEFIC(#SC-X,#B-X+2) NE FIRS-V.POL-BENEFIC(#SC-X,#B-X+2)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'BENEFIC 3'                        TO #W-DESCRIPTION
+  MOVE OLD-V.POL-BENEFIC(#SC-X,#B-X+2)      TO #W-DATA
+  MOVE #W-TRLOG-DATA                      TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-BENEFIC(#SC-X,#B-X+2)   TO #W-DATA
+  MOVE #W-TRLOG-DATA                      TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.POL-REMARKS(#SC-X) NE FIRS-V.POL-REMARKS(#SC-X)
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'REMARKS'                   TO #W-DESCRIPTION
+  MOVE OLD-V.POL-REMARKS(#SC-X)      TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.POL-REMARKS(#SC-X)   TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.CONTESTABLE-IND (#SC-X) NE FIRS-V.CONTESTABLE-IND(#SC-X)  /* DW5
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'Contestability'            TO #W-DESCRIPTION
+  MOVE OLD-V.CONTESTABLE-IND(#SC-X)  TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.CONTESTABLE-IND (#SC-X)   TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.CHECK-NUMBER       NE FIRS-V.CHECK-NUMBER
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'CK NUM'                    TO #W-DESCRIPTION
+  MOVE OLD-V.CHECK-NUMBER            TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.CHECK-NUMBER         TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.BENEFIT-PAID        NE FIRS-V.BENEFIT-PAID
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'BENEFIT PD'                TO #W-DESCRIPTION
+  MOVE OLD-V.BENEFIT-PAID            TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.BENEFIT-PAID         TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF OLD-V.PAID-BY        NE FIRS-V.PAID-BY
+  ASSIGN #FIELD-UPDATED = TRUE
+  ASSIGN #UPDATE-DATE   = TRUE
+  MOVE 'PAID BY'                   TO #W-DESCRIPTION
+  MOVE OLD-V.PAID-BY                 TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.OLD-DATA (#TRX)
+  MOVE FIRS-V.PAID-BY              TO #W-DATA
+  MOVE #W-TRLOG-DATA               TO TRLOG.NEW-DATA (#TRX)
+  ADD 1 TO #TRX
+END-IF
+*
+IF #TRX GT 32
+  PERFORM WRITE-TRLOG
+  RESET TRLOG.OLD-DATA        (1:32)
+  RESET TRLOG.NEW-DATA        (1:32)
+  ASSIGN #TRX = 1
+END-IF
+*
+IF #UPDATE-DATE
+  MOVE *DATN TO FIRS-V.INS-LAST-FM-DATE
+END-IF
+*
+END-SUBROUTINE /* (1141)
+*
+*****************************
+DEFINE SUBROUTINE WRITE-TRLOG
+*****************************
+*
+MOVE STATUS-V.ID-NUMBER    TO TRLOG.ID-NUMBER
+MOVE STATUS-V.PROCESS-IND  TO TRLOG.PROCESS-IND /* PM - 06/2000-SPLIT
+MOVE STATUS-V.NAME-SP      TO TRLOG.NAME
+*
+MOVE OLD-V.INS-LAST-FM-DATE  TO TRLOG.DATE-LAST-UPDATE
+*
+MOVE #CGA-CLERK            TO TRLOG.CLERK-ID
+MOVE *INIT-ID              TO TRLOG.TERMINAL-ID
+MOVE *DATN                 TO TRLOG.TRANSACTION-DATN
+MOVE *TIMN                 TO TRLOG.TRANSACTION-TIMN
+*
+MOVE 'DP-' TO TRLOG.NEW-DATA-DP (1)
+STORE TRLOG
+*
+END-SUBROUTINE /* (1216)
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FLIP-DATE-TO-YYYYMMDD
+* * * * * * * * * * * * * * * * * * * *
+*
+IF #MMDDYYYY-A = '00000000'
+  RESET #YYYYMMDD-N
+ELSE
+  MOVE BY NAME #MMDDYYYY TO #YYYYMMDD
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FLIP-DATE-TO-MMDDYYYY
+* * * * * * * * * * * * * * * * * * * *
+*
+MOVE BY NAME #YYYYMMDD TO #MMDDYYYY
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE CREATE-NOTE-FOR-ADJUSTED-DB                                /* PM1
+* * * * * * * * * * * * * * * * * *
+*
+IF NOT #SCR-PNAME = 'AMAA' OR = 'AAFMAA'
+  ESCAPE ROUTINE
+END-IF
+*
+IF OLD-V.POL-AMT-PAID (#SC-X) > FIRS-V.POL-AMT-PAID (#SC-X)
+  RESET #DB-WORK-FIELD #DISPLAY-DB-FIELD
+  COMPUTE #DB-WORK-FIELD = OLD-V.POL-AMT-PAID (#SC-X) -
+    FIRS-V.POL-AMT-PAID (#SC-X)
+  MOVE EDITED #DB-WORK-FIELD (EM=ZZZ,ZZZ.99) TO #DISPLAY-DB-FIELD
+  COMPRESS '$' #DISPLAY-DB-FIELD INTO #DISPLAY-DB-FIELD LEAVING NO
+ELSE
+  ESCAPE ROUTINE
+END-IF
+*
+FOR #I1 1 TO 9
+  MOVE STATUS-V.ISSUE-DATE (#I1) TO #WORK-ISSUE-DATE
+  IF #SCR-ISS-YYYY = #ISSUE-DATE-YYYY
+      AND #SCR-ISS-MM = #ISSUE-DATE-MM
+      AND #SCR-ISS-DD = #ISSUE-DATE-DD
+      AND #SCR-PLAN   = STATUS-V.PLAN (#I1)
+    IF PAY-STATUS (#I1) = '43'
+      COMPRESS #ISSUE-DATE-MM-A #ISSUE-DATE-DD-A #ISSUE-DATE-YYYY-A
+        INTO #NOTE-TEXT (1) WITH '/'
+      COMPRESS '* POL ISS' #NOTE-TEXT (1) 'LTCSO DB Lowered by'
+        #DISPLAY-DB-FIELD INTO #NOTE-TEXT (1)
+      MOVE 1 TO #INT
+      CALLNAT 'E4205SDM'
+        STATUS-V.ID-NUMBER
+        #INT
+        #CGA-CLERK
+        #NOTE-TEXT (1:10)
+    END-IF
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+END

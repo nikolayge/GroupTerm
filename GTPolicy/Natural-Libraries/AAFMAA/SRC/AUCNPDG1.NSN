@@ -1,0 +1,182 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+****** MODIFICATIONS ***********************************************
+* NAME     DATE   TAG   DESCRIPTION
+* NGG  20170519   NG1   Lettwr writing
+********************************************************************
+DEFINE DATA
+PARAMETER USING AUCAPOLR
+PARAMETER
+1 #XML-OUTPUT     (A) DYNAMIC
+LOCAL USING POSAGET
+LOCAL USING OBJLSTAT
+LOCAL USING AUCAHI01
+LOCAL USING AUCAPOLS
+LOCAL USING AUCADSG2
+LOCAL USING AUCALL01
+LOCAL USING AUCAPXNT
+LOCAL USING ERROR_L
+LOCAL USING POSLROLE
+LOCAL USING LWSLRQST  /* NG1
+LOCAL
+1 #HOLD-XML       (A) DYNAMIC
+1 #POLICY-SEGMENT (I2)
+1 #GET         (I4) CONST <0>
+1 I            (I2)
+1 #BENEFICIARIES (N2/1:3) CONSTANT <5,6,7>
+1 #INSURED-CI    (N8)
+*
+1 #CVALUSXX-PARMS
+  2 #SUFFIX                    (A3)
+  2 #AS-OF-YYYYMMDD            (N8)
+  2 #LOAN-BAL                  (N7.2/9)
+  2 #LOAN-BAL-2                (N7.2/9)
+  2 #ACC-INT                   (N7.2/9)
+  2 #ACC-INT-2                 (N7.2/9)
+  2 #CSV                       (N7.2/9)
+  2 #CVALUE                    (N7.2/9)
+  2 #LVALUE                    (N7.2/9)
+  2 #MCSV                      (N7.2/9)
+  2 #DB                        (N7.2/9)
+  2 #ANN-PREM                  (N7.2/9)
+  2 #FACE-AMT                  (N7.2/9)
+  2 #TPP                       (N7.2/9)
+1 #INSURED-ISN                 (P10)
+/* NG1
+1 #AT-NUMBER                   (N6)
+1 #DSGN-ID                     (N8)
+1 ErrorMsg                     (A) DYNAMIC
+1 #RD-SUCCESS                  (A7) CONST <'Success'>
+/* NG1
+END-DEFINE
+*
+* --------- Main ----------
+
+* Need to add Error checking before anything. For example Policy number
+*     and Contact ID match each other
+
+
+PERFORM FORMAT-OPENING-TAG
+PERFORM GET-POLICY-ROLES
+PERFORM FORMAT-HEADER-INFO
+PERFORM CHECK-CRM-SYNC-STATUS  /* NG1
+IF #INSURED-CI > 0
+  PERFORM GET-POLICY-INFO
+  PERFORM GET-BENE-DESIGNATION
+  PERFORM GET-CONTACT-ROLES
+  PERFORM GET-LOAN-INFORMATION
+END-IF
+PERFORM FORMAT-CLOSING-HEADER
+* ------- End Main --------
+* Part to synch with CRM
+* Option 1 : directly call LWSNSRV
+* Option 2 : put request in Process Request file and start new process
+* Challenge: The synch process can lead to updates
+
+DEFINE CHECK-CRM-SYNC-STATUS
+/*     ----------------------         NG1
+IGNORE
+
+* CALLNAT 'LWSNSYN'
+*   #INSURED-CI
+*   #AT-NUMBER   /* PASS ZERO
+*   POLICYDETAILSREQUEST.PolicyNumber
+*   ErrorMsg
+
+END-SUBROUTINE
+
+DEFINE SUBROUTINE FORMAT-OPENING-TAG
+* -------------------
+COMPRESS '<?xml version="1.0" encoding="' *CODEPAGE '"?>' INTO #XML-OUTPUT LEAVING NO
+COMPRESS  #XML-OUTPUT '<PolicyDetails>' INTO #XML-OUTPUT LEAVING NO
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE FORMAT-HEADER-INFO
+* -------------------
+RESET HeaderInfo #HOLD-XML
+HeaderInfo.ContactID  := #INSURED-CI
+HeaderInfo.ActionType := #GET
+CALLNAT 'AUCNHIM1' HeaderInfo
+CALLNAT 'AUCNHIS1' #HOLD-XML HeaderInfo
+COMPRESS #XML-OUTPUT #HOLD-XML INTO #XML-OUTPUT
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE GET-POLICY-ROLES
+* --------------------------------
+CALLNAT 'POSNCNTS'
+  POLICYDETAILSREQUEST.PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS(*)
+  #ISNS(*)
+  #MSG
+FOR I 1 TO #NUMBER-OF-RELATIONS
+  IF #POLICY-RELATIONS.RELATION(I) = InsuredRole
+    #INSURED-CI  := #POLICY-RELATIONS.CONTACT-ID(I)
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE GET-POLICY-INFO
+* -------------------
+RESET #HOLD-XML
+Policy.PolicyNumber := POLICYDETAILSREQUEST.PolicyNumber
+CALLNAT 'AUCNPOG1' Policy #INSURED-CI #POLICY-SEGMENT #CVALUSXX-PARMS #INSURED-ISN
+CALLNAT 'AUCNPOS1' #HOLD-XML Policy
+COMPRESS #XML-OUTPUT #HOLD-XML INTO #XML-OUTPUT
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE GET-BENE-DESIGNATION
+* -------------------
+RESET #HOLD-XML
+DesignationUpdate.ActionType := #GET
+DesignationUpdate.PolicyNumber := POLICYDETAILSREQUEST.PolicyNumber
+CALLNAT 'AUCNDSM1' DesignationUpdate
+CALLNAT 'AUCNDSS1' #HOLD-XML DesignationUpdate
+COMPRESS #XML-OUTPUT #HOLD-XML INTO #XML-OUTPUT
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE GET-CONTACT-ROLES
+* -------------------
+RESET #HOLD-XML
+PolicyContactsUpdate.ActionType   := #GET
+PolicyContactsUpdate.POLICYNUMBER := POLICYDETAILSREQUEST.PolicyNumber
+PolicyContactsUpdate.InsuredContactID := #INSURED-CI
+PolicyContactsUpdate.User := POLICYDETAILSREQUEST.USER
+CALLNAT 'AUCNPCG1' PolicyContactsUpdate
+CALLNAT 'AUCNPVS1' #HOLD-XML PolicyContactsUpdate
+COMPRESS #XML-OUTPUT #HOLD-XML INTO #XML-OUTPUT
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE GET-LOAN-INFORMATION
+* ------------------------------------
+IF Policy.HasLinkedLoan
+  RESET #HOLD-XML
+CALLNAT 'AUCNLLG1' LinkedLoans #INSURED-CI #POLICY-SEGMENT #CVALUSXX-PARMS #INSURED-ISN
+  CALLNAT 'AUCNLLS1' #HOLD-XML LinkedLoans
+  COMPRESS #XML-OUTPUT #HOLD-XML INTO #XML-OUTPUT
+END-IF
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE FORMAT-CLOSING-HEADER
+* -------------------------------------
+COMPRESS  #XML-OUTPUT  '</PolicyDetails>'   INTO #XML-OUTPUT LEAVING NO
+END-SUBROUTINE
+* ------------
+
+END

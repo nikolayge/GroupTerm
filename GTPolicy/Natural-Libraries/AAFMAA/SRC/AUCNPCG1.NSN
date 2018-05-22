@@ -1,0 +1,462 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+****** MODIFICATIONS ***********************************************
+* NAME     DATE   TAG   DESCRIPTION
+* NGG  20170519 NG1 Lettwr writing
+********************************************************************
+DEFINE DATA
+* PARAMETER USING AUCAPCNT
+PARAMETER USING AUCAPXNT
+LOCAL USING POSL0002
+LOCAL USING POSAGET
+LOCAL USING KXKXNDNF
+LOCAL USING POSALOAD
+LOCAL USING POSLROLE
+LOCAL USING LWSLRQST    /* NG1
+LOCAL
+1 PC-V-2 VIEW OF A-POLICY-CONTACTS
+  2 ADD-USER (A8)
+  2 ADD-DATE (N8.0)
+  2 ADD-TIME (N7.0)
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8.0)
+  2 LAST-UPD-TIME (N7.0)
+  2 POLICY-NUMBER (A16)
+  2 CONTACT-ID (N8.0)
+  2 RELATION (N2.0)
+  2 REFERENCE-NUMBER (N6.0)
+  2 REFERENCE-TYPE (A1)
+  2 NI-OWNER (A1)
+  2 DESIGNATION-ID (N8.0)
+  2 SETTLEMENT-TYPE (A1)
+  2 BENE-FRACTION (A10)
+  2 BENE-PERCENT (F8)
+  2 BENE-RESTRICTED (A1)
+  2 BENE-TYPE (A1)
+  2 BENE-SHARE-TYPE (A1)
+  2 OWNERSHIP-RESTRICT
+  2 OWNERSHIP-RESTRICT-DATE
+1 BLANK       (A1) CONST <' '>
+1 #GET        (I4) CONSTANT <0>
+1 #ADD        (I4) CONSTANT <1>
+1 #UPDATE     (I4) CONSTANT <2>
+1 #DELETE     (I4) CONSTANT <3>
+1 #BENEFICIARY   (N2/1:4)
+1 #OWNERS     (N2/1:3) CONSTANT <4,10> /* NOT PRIMARY OWNERS
+1 #STILL-EXISTS  (L/1:*)
+1 I           (I2)
+1 J           (I2)
+1 K           (I2)
+1 L           (I2)
+1 #VALIDATION-PASSED   (L)
+1 #FUNCTION   (A) DYNAMIC
+1 #ALREADY-EXISTS   (L)
+1 #ISN  (P10)
+1 #TOTAL-ITERATIONS (I4)
+1 #RECORD-PROCESSED (L)
+1 #NUM-CHANGES   (I4)
+1 #HOLD-RESTRICTION (A1)
+1 #INSURED-CN (N6)
+1 #NOTE-MSG   (A) DYNAMIC
+1 #CLERK   (A3)
+1 #DATE    (N8)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 LINKED-CN(30)
+  2 INTRO-FLAG
+*
+1 CONT-REL-V VIEW OF A-CONTACT-RELATIONSHIPS
+  2 CONTACT-1-ID
+  2 ROLE-1-CD
+  2 CONTACT-2-ID
+  2 ROLE-2-CD
+*
+1 #TOTAL-OWNERS (I4)
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER
+1 MEMBER VIEW OF A-STATUS
+  2 LINKED-CN      (N6/30)
+1 #LOG-ROLE-CHANGES    (A) DYNAMIC CONSTANT <2>
+1 #MAX-CO-OWNERS       (I2) CONSTANT <9>
+1 #USER (A8)
+1 #ROLE-CHANGE (N2) CONSTANT <50>
+/* NG1
+1 #AT-NUMBER                   (N6)
+1 #DSGN-ID                     (N8)
+1 ErrorMsg                     (A) DYNAMIC
+1 #RD-SUCCESS                  (A7) CONST <'Success'>
+/* NG1
+END-DEFINE
+*
+#DATE := 0
+#BENEFICIARY  (1) := PrimaryBene
+#BENEFICIARY  (2) := ContingentBene
+#BENEFICIARY  (3) := UnformatedBene
+#BENEFICIARY  (4) := UnformContBene
+* ---------------- MAIN --------------------
+DECIDE ON FIRST VALUE OF PolicyContactsUpdate.ActionType
+  VALUE #GET    PERFORM GET-RECORDS
+  VALUE #ADD    PERFORM ADD-RECORD
+  VALUE #UPDATE PERFORM UPDATE-ROLES
+  VALUE #DELETE PERFORM DELETE-RECORDS
+  NONE VALUE
+    IGNORE
+END-DECIDE
+
+* --------------- End Main --------------------
+
+
+
+DEFINE SUBROUTINE GET-RECORDS
+* --------------------------
+RESET I
+*
+#USER := FUNCTION-WEB-USER(<PolicyContactsUpdate.USER>)(2)
+ReadOnly := READ-ONLY-PERMISSION(<#USER,#ROLE-CHANGE >)
+*
+FIND (1) CNT-V WITH CONTACT-ID = PolicyContactsUpdate.InsuredContactId
+  #INSURED-CN := CNT-V.ID-NUMBER
+END-FIND
+*
+FIND PC-V WITH POLICY-NUMBER = PolicyContactsUpdate.POLICYNUMBER
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+    /*ADD ERROR here
+  END-NOREC
+  REJECT IF PC-V.RELATION = #BENEFICIARY(*)
+ REJECT IF I > 0 AND PC-V.CONTACT-ID = PolicyContactsUpdate.ContactID(*)
+  REJECT IF I > 0 AND
+(PC-V.REFERENCE-NUMBER > 0 AND PC-V.REFERENCE-NUMBER = PolicyContactsUpdate.CN(*))
+
+  ADD 1 TO I
+  EXPAND ARRAY PolicyContactsUpdate.POLICYCONTACT TO (1:I)
+  PolicyContactsUpdate.ContactID(I) := PC-V.CONTACT-ID
+  PolicyContactsUpdate.CN(I)            := PC-V.REFERENCE-NUMBER
+PolicyContactsUpdate.DOB(I)           := GET-DATE-OF-BIRTH(<PC-V.CONTACT-ID>)
+  PolicyContactsUpdate.ContactName(I)   := EDIT_NAME_LOWCASE (<
+    FUNCTION-CONTACT-NAME(<PC-V.CONTACT-ID>) >)
+IF PolicyContactsUpdate.InsuredContactID = PolicyContactsUpdate.ContactID(I)
+    PolicyContactsUpdate.Relationship(I) := 'Self'
+  ELSE
+FIND CONT-REL-V WITH CONTACT-1-ID = PolicyContactsUpdate.InsuredContactID
+        AND CONTACT-2-ID = PolicyContactsUpdate.ContactID (I)
+PolicyContactsUpdate.Relationship(I) := FUNCTION-DISP-RL-DESC(<ROLE-2-CD>)
+PolicyContactsUpdate.Relationship(I) := EDIT_NAME_LOWCASE(<PolicyContactsUpdate.Relationship(I)>)
+
+    END-FIND
+*     IF PolicyContacts.Relationship(I) = BLANK
+*       FIND CONT-REL-V WITH CONTACT-1-ID = ContactID_001 (I)
+*           AND CONTACT-2-ID = PolicyContacts.ContactID
+*         PolicyContacts.Relationship(I) :=
+*           FUNCTION-DISP-RL-DESC(<ROLE-1-CD>)
+*       END-FIND
+*     END-IF
+    IF PolicyContactsUpdate.Relationship(I) = BLANK
+      FIND (1) MEMBER WITH ID-NUMBER = #INSURED-CN
+        FOR L 1 TO 30
+IF MEMBER.LINKED-CN (L) = PolicyContactsUpdate.CN(I) AND PolicyContactsUpdate.CN(I) > 0
+            PolicyContactsUpdate.Relationship(I) := 'Linked CN'
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+      END-FIND
+    END-IF
+    IF PolicyContactsUpdate.Relationship(I) = BLANK
+*       FIND (1) MEMBER WITH ID-NUMBER = PolicyContacts.CN(I)
+*         FOR L 1 TO 30
+*           IF MEMBER.LINKED-CN (L) = #INSURED-CN
+      PolicyContactsUpdate.Relationship(I) := 'No Relation'
+*             ESCAPE BOTTOM
+*           END-IF
+*         END-FOR
+*       END-FIND
+    END-IF
+  END-IF
+
+
+  FIND PC-V-2 WITH PC-V-2.CONTACT-ID = PC-V.CONTACT-ID
+      AND PC-V-2.POLICY-NUMBER = PolicyContactsUpdate.POLICYNUMBER
+    IF NO RECORDS FOUND
+      ESCAPE BOTTOM
+      /*ADD ERROR here
+    END-NOREC
+    REJECT IF PC-V-2.RELATION = #BENEFICIARY(*)
+    ADD 1 TO J
+    EXPAND ARRAY PolicyContactsUpdate.PolicyRole TO (*,1:J)
+    RoleID(I,J)               := PC-V-2.RELATION
+
+    IF RoleID(I,J) = PrimaryOwner
+      OwnershipTransferDate := PC-V-2.ADD-DATE
+      IF PC-V-2.OWNERSHIP-RESTRICT = 'Y'
+        OWNERSHIPRESTRICTED   := TRUE
+      ELSE
+        OWNERSHIPRESTRICTED := FALSE
+      END-IF
+    END-IF
+    RoleName (I,J)            := TRANSLATE-RELATION(<PC-V-2.RELATION>)
+    RoleName (I,J) := EDIT_NAME_LOWCASE(<RoleName(I,J)>)
+    PolicyContactsUpdate.LASTUPDATEDDATE(I,J)  := PC-V-2.LAST-UPD-DATE
+    PolicyContactsUpdate.LASTUPDATEDTIME(I,J)  := PC-V-2.LAST-UPD-TIME
+    PolicyContactsUpdate.LASTUPDATEDUSER(I,J)  := FUNCTION-NAME (<
+      PC-V-2.LAST-UPD-USER >)
+PolicyContactsUpdate.LASTUPDATEDUSER(I,J) := EDIT_NAME_LOWCASE (<PolicyContactsUpdate.LASTUPDATEDUSER(I,J)>)
+  END-FIND
+  PolicyContactsUpdate.C@PolicyRole(I)  := J
+  RESET J
+END-FIND
+PolicyContactsUpdate.C@PolicyContact := I
+
+END-SUBROUTINE
+* ------------
+
+
+
+DEFINE SUBROUTINE UPDATE-ROLES
+* --------------------------
+RESET #NUMBER-OF-RELATIONS #TOTAL-ITERATIONS #STILL-EXISTS(*)
+TR_CLERK           :=  FUNCTION-WEB-USER(<PolicyContactsUpdate.USER>)(1)
+#CLERK             := TR_CLERK
+*
+CALLNAT 'POSNCNTS'
+  PolicyContactsUpdate.PolicyNumber
+  #RELATIONSHIP-TYPE
+  #NUMBER-OF-RELATIONS
+  #POLICY-RELATIONS (*)
+  #ISNS(*)
+  #MSG
+*
+EXPAND ARRAY #STILL-EXISTS TO (1:#NUMBER-OF-RELATIONS)
+*
+IF OWNERSHIPRESTRICTED = TRUE
+  #HOLD-RESTRICTION := 'Y'
+ELSE
+  #HOLD-RESTRICTION := BLANK
+END-IF
+*
+FOR I 1 TO PolicyContactsUpdate.C@PolicyContact
+  FOR J 1 TO PolicyContactsUpdate.C@PolicyRole(I)
+    FOR K 1 TO #NUMBER-OF-RELATIONS
+      DECIDE FOR FIRST CONDITION
+WHEN PolicyContactsUpdate.ContactID(I)    =  #POLICY-RELATIONS.CONTACT-ID(K)
+  AND PolicyContactsUpdate.RoleID(I,J)  =  #POLICY-RELATIONS.RELATION(K)
+          #STILL-EXISTS(K) := TRUE
+          IF PolicyContactsUpdate.RoleID(I,J) = PrimaryOwner
+        AND #POLICY-RELATIONS.OWNERSHIP-RESTRICT(K) <> #HOLD-RESTRICTION
+            PERFORM UPDATE-RECORD
+          END-IF
+PolicyContactsUpdate.LASTUPDATEDDATE(I,J) := #POLICY-RELATIONS.LAST-UPD-DATE(K)
+PolicyContactsUpdate.LASTUPDATEDTIME(I,J) := #POLICY-RELATIONS.LAST-UPD-TIME(K)
+          PolicyContactsUpdate.LASTUPDATEDUSER(I,J) := FUNCTION-NAME (<
+            #POLICY-RELATIONS.LAST-UPD-USER(K) >)
+PolicyContactsUpdate.LASTUPDATEDUSER(I,J) := EDIT_NAME_LOWCASE (<PolicyContactsUpdate.LASTUPDATEDUSER(I,J)>)
+          ESCAPE BOTTOM /* change this to escape bottom
+        WHEN K = #NUMBER-OF-RELATIONS
+          PERFORM ADD-RECORD  /* ADD RECORD
+WHEN PolicyContactsUpdate.ContactID(I)    =  #POLICY-RELATIONS.CONTACT-ID(K)
+  AND PolicyContactsUpdate.RoleID(I,J)  <> #POLICY-RELATIONS.RELATION(K)
+          ESCAPE TOP
+WHEN PolicyContactsUpdate.ContactID(I)    <> #POLICY-RELATIONS.CONTACT-ID(K)
+  AND PolicyContactsUpdate.RoleID(I,J)  =  #POLICY-RELATIONS.RELATION(K)
+          PERFORM ADD-RECORD /* ADD RECORD
+        WHEN NONE
+          IGNORE
+      END-DECIDE
+    END-FOR
+  END-FOR
+END-FOR
+*
+FOR I 1 TO #NUMBER-OF-RELATIONS
+  IF #POLICY-RELATIONS.RELATION(I) = #BENEFICIARY(*)
+    ESCAPE TOP
+  END-IF
+  IF NOT #STILL-EXISTS(I)
+    RESET #POWN
+    MOVE BY NAME #POLICY-RELATIONS(I) TO #POWN
+    PERFORM DELETE-RECORD
+  END-IF
+END-FOR
+
+IF #TOTAL-OWNERS > #MAX-CO-OWNERS
+  ErrorCode           := 808
+  ErrorDescription    := 'Cannot have more then 10 total owners'
+  BACKOUT TRANSACTION
+  ESCAPE ROUTINE
+ELSE
+  PERFORM LOG-ROLE-CHANGE
+  END TRANSACTION
+
+/*                  Synch is from main Policy Details page
+
+*   CALLNAT 'LWSNSYN'   /* NG1
+*     PolicyContactsUpdate.InsuredContactID     
+*     #AT-NUMBER   /* PASS ZERO
+*     PolicyContactsUpdate.PolicyNumber
+*     ErrorMsg
+END-IF
+
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE DELETE-RECORD
+* -----------------------------
+CALLNAT 'POSN0001' #DELETE #MSG #POWN /* Deletes record
+PERFORM ENLARGE-ARRAYS
+BEFORE_IMAGE.ROLE(#NUM-CHANGES)      := TRANSLATE-RELATION(<#POLICY-RELATIONS.RELATION(I)>)
+AFTER_IMAGE.ROLE(#NUM-CHANGES)       :=
+BEFORE_IMAGE.FULL-NAME(#NUM-CHANGES) := FUNCTION-CONTACT-NAME(<#POLICY-RELATIONS.CONTACT-ID(I)>)
+AFTER_IMAGE.FULL-NAME(#NUM-CHANGES)  := BLANK
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE ADD-RECORD
+* --------------------------
+RESET #POWN #NOTE-MSG
+#POWN.POLICY-NUMBER     := PolicyContactsUpdate.PolicyNumber
+#POWN.LAST-UPD-USER     := FUNCTION-WEB-USER(<PolicyContactsUpdate.USER>)(2)
+#POWN.ADD-USER          := FUNCTION-WEB-USER(<PolicyContactsUpdate.USER>)(2)
+#POWN.CONTACT-ID        := PolicyContactsUpdate.ContactID(I)
+#POWN.RELATION          := PolicyContactsUpdate.RoleID(I,J)
+#POWN.REFERENCE-NUMBER  := PolicyContactsUpdate.CN(I)
+PolicyContactsUpdate.LASTUPDATEDDATE(I,J) := *DATN
+PolicyContactsUpdate.LASTUPDATEDTIME(I,J) := *TIMN
+PolicyContactsUpdate.LASTUPDATEDUSER(I,J) := FUNCTION-NAME (<
+  #POWN.ADD-USER >)
+*
+DECIDE ON FIRST VALUE OF PolicyContactsUpdate.RoleID(I,J)
+  VALUE PrimaryOwner
+    #POWN.ADD-DATE := OWNERSHIPTRANSFERDATE
+    IF OWNERSHIPRESTRICTED = TRUE
+      #POWN.OWNERSHIP-RESTRICT := 'Y'
+      COMPRESS '*Ownership Restricted for' PolicyNumber INTO #NOTE-MSG
+      PERFORM CREATE-NOTE
+    ELSE
+      #POWN.OWNERSHIP-RESTRICT := BLANK
+    END-IF
+    PERFORM CREATE-LINKAGE
+
+  VALUE Coowner
+    ADD 1 TO #TOTAL-OWNERS
+    PERFORM CREATE-LINKAGE
+  VALUE PayorRole
+    COMPRESS '*Non-Own Payer' PolicyContactsUpdate.ContactName(I)
+      'added for ' PolicyNumber INTO #NOTE-MSG
+    PERFORM CREATE-NOTE
+  VALUE SuccessorOwner
+   COMPRESS '*Suc Owner' PolicyContactsUpdate.ContactName(I) 'added for'
+      PolicyContactsUpdate.PolicyNumber INTO #NOTE-MSG
+    PERFORM CREATE-NOTE
+  NONE VALUE
+    IGNORE
+END-DECIDE
+
+* IF #POWN.RELATION = PrimaryOwner
+*   #POWN.ADD-DATE := OWNERSHIPTRANSFERDATE
+*   IF OWNERSHIPRESTRICTED = TRUE
+*     #POWN.OWNERSHIP-RESTRICT := 'Y'
+*   ELSE
+*     #POWN.OWNERSHIP-RESTRICT := BLANK
+*   END-IF
+*   PERFORM CREATE-LINKAGE
+* END-IF
+*
+CALLNAT 'POSN0001' #ADD #MSG #POWN /* ADDS RECORD
+*
+PERFORM ENLARGE-ARRAYS
+BEFORE_IMAGE.ROLE(#NUM-CHANGES)      := BLANK
+AFTER_IMAGE.ROLE(#NUM-CHANGES)       := TRANSLATE-RELATION(<PolicyContactsUpdate.RoleID(I,J)>)
+BEFORE_IMAGE.FULL-NAME(#NUM-CHANGES) := BLANK
+AFTER_IMAGE.FULL-NAME(#NUM-CHANGES)  := FUNCTION-CONTACT-NAME(<PolicyContactsUpdate.ContactID(I)>)
+* ------------
+END-SUBROUTINE
+
+DEFINE SUBROUTINE UPDATE-RECORD
+* ---------------------------
+RESET #POWN
+MOVE BY NAME #POLICY-RELATIONS(I) TO #POWN
+#POWN.LAST-UPD-USER           := FUNCTION-WEB-USER(<PolicyContactsUpdate.USER>)(2)
+#POWN.LAST-UPD-DATE           := *DATN
+#POWN.LAST-UPD-TIME           := *TIMN
+#POWN.CONTACT-ID              := PolicyContactsUpdate.ContactID(I)
+#POWN.REFERENCE-NUMBER        := PolicyContactsUpdate.CN(I)
+#POWN.RELATION                := PolicyContactsUpdate.RoleID(I,J)
+#POWN.OWNERSHIP-RESTRICT      := #HOLD-RESTRICTION
+IF #HOLD-RESTRICTION = 'Y'
+  COMPRESS '*Ownership Restricted for' PolicyNumber INTO #NOTE-MSG
+  PERFORM CREATE-NOTE
+END-IF
+#POWN.OWNERSHIP-RESTRICT-DATE := OWNERSHIPRESTRICTEDDATE
+*
+CALLNAT 'POSN0001' #UPDATE #MSG #POWN /* UPDATES RECORD
+*
+PERFORM ENLARGE-ARRAYS
+BEFORE_IMAGE.ROLE(#NUM-CHANGES)      := TRANSLATE-RELATION(<#POLICY-RELATIONS.RELATION(K)>)
+AFTER_IMAGE.ROLE(#NUM-CHANGES)       := TRANSLATE-RELATION(<PolicyContactsUpdate.RoleID(I,J)>)
+BEFORE_IMAGE.FULL-NAME(#NUM-CHANGES) := FUNCTION-CONTACT-NAME(<#POLICY-RELATIONS.CONTACT-ID(K)>)
+AFTER_IMAGE.FULL-NAME(#NUM-CHANGES)  := FUNCTION-CONTACT-NAME(<PolicyContactsUpdate.ContactID(I)>)
+*
+END-SUBROUTINE
+* ------------
+
+
+DEFINE SUBROUTINE CREATE-LINKAGE
+* ------------------------------
+#INSURED-CN := F-GET-CN(<InsuredContactID>)
+IF InsuredContactID <> PolicyContactsUpdate.ContactID(I)
+  FIND ST-V WITH MEMBER-CONTACT-ID = PolicyContactsUpdate.ContactID(I)
+    FOR L 1 TO 30
+      IF #INSURED-CN = ST-V.LINKED-CN(*)
+        ESCAPE ROUTINE
+      END-IF
+      IF ST-V.LINKED-CN(L) = 0
+        ST-V.LINKED-CN(L) := #INSURED-CN
+        UPDATE
+        ESCAPE ROUTINE
+      END-IF
+    END-FOR
+  END-FIND
+END-IF
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE CREATE-NOTE
+* ---------------------------
+#INSURED-CN := F-GET-CN(<InsuredContactID>)
+CALLNAT 'POSN0017'
+  #CLERK
+  #INSURED-CN
+  #DATE
+  #NOTE-MSG
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE ENLARGE-ARRAYS
+* ------------------------------
+ADD 1 TO #NUM-CHANGES
+EXPAND ARRAY BEFORE_IMAGE.ROLL-GROUP TO (1:#NUM-CHANGES)
+EXPAND ARRAY AFTER_IMAGE.ROLL-GROUP TO (1:#NUM-CHANGES)
+*
+END-SUBROUTINE
+* ------------
+
+DEFINE SUBROUTINE LOG-ROLE-CHANGE
+* -------------------------------
+TR_ID_NUMBER := F-GET-CN(<InsuredContactID>)
+TR_NAME      := FUNCTION-CONTACT-NAME(<InsuredContactID>)
+PolicyContactsUpdate.USER := *TRIM(PolicyContactsUpdate.USER)
+#FUNCTION    := #LOG-ROLE-CHANGES
+BEFORE_IMAGE.POLICY-NUMBER := AFTER_IMAGE.POLICY-NUMBER := PolicyContactsUpdate.PolicyNumber
+*
+CALLNAT 'GPRNTR04' #FUNCTION TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+*
+END-SUBROUTINE
+* ------------
+
+
+END

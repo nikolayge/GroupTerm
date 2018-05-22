@@ -1,0 +1,399 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PROGRAM-ID: GPLANSXX   edit plan/face amt/iss age etc
+********************************************************************
+*                       MODIFICATION LOG
+* USER   DATE      TAG     REASON
+*
+* PAM    10122004  PM1  Changed 'CAD' to 'CEB' for maximum face
+*                       amount over-ride.  Use AI command instead
+*                       of NM for Maximum Face.
+* DRW    02212005  DW2  Add plan AL
+* DRW    04222005  DW3  Allow TERM Ins for GEN pols age 18 thru 23
+* DRW    04292005  DW4  Add DOB processing to GMAXSXX
+* PAM    12022005  PM5  Allow age 75 for LTII insurance
+* DRW    12182006  DW6  Show "Too Young Msg if Max = 0"
+* PAM    07242008  PM7  Added MAL insurance limit over-rides
+* DRW  08/04/2008  DW8  Add Gen Plus Editing
+* PAM  12/24/2009  PM9  Added new generational insurance requirements
+* PAM  06/09/2010  PM10 Fixed error for under 6 months
+* PAM  11/21/2011  PM11 Remove age 65 new member age limit
+* YAK  10/03/2012  YK1  Use function to identify Level II Term Plans
+*                       Add rules for new Annual Renewable Plan
+* YAK  11/06/2012  YK2  Add No medical Term plan (EZ)
+* RSE  01/07/2013  RE1  Check that EZ doesn't exceed 50K
+* NGG    20130111  NG1     Ticket 1710
+* NGG    20130509  NG2     Stability Project for $1M Policy
+* TMT  12/16/2013  TT1  GP2 STABILITY PROJECT
+* vxt  03/05/2014  vt1 /ticket 2636/
+* TMT  10/14/2014  TT2  Annuity Life Harmonization
+* vxt  11/26/2014  vt2  Fix error "Exceeds maximum age for entered plan" for AL plan
+* vxt  01/29/2015  vt3  /Ticket 3319 /
+* vxt  04/27/2017  vt4  Group Term Plan - Add new plan code
+********************************************************************
+*
+DEFINE DATA
+PARAMETER
+*
+1 #MEMBER-CN     (A6)
+1 #USER          (A3)
+1 #PLAN          (A3)
+1 REDEFINE #PLAN
+  2 #PLAN-A1      (A1)
+  2 #PLAN-VT-N2   (N2)
+*
+1 #ISS-AGE       (A2)
+1 REDEFINE #ISS-AGE
+  2 #ISS-AGE-N    (N2)
+*
+1 #ISS-AGE-MM    (N2)  /* combiled with iss age ie 0 yrs + 3 mons
+1 #INTRO-FLAG    (A1)
+1 #SMOK-FLAG     (A1)
+1 #FACE-AMT      (N7.2)   /* NG??
+1 REDEFINE #FACE-AMT
+  2 #FACE-AMT-THOUS (N4)
+  2 #FACE-AMT-DOLS  (N3)
+*
+1 #CURR-FACE-AMT (N7.2) /* before adding this face  NG1
+1 #CURR-FACE-AMT-TERM (N7.2)
+1 #NEW-ADDL      (A1)   /* N/A
+1 #ERR-MSG       (A60)
+1 #FLEX-POLICY   (L)
+*
+LOCAL
+*
+1 #DOB    (N8)    /* DW4
+1 #LTII      (L)
+1 #DIVIDEND  (N5.4)
+1 REDEFINE #DIVIDEND
+  2 #DIV-5    (N5)
+  2 #REM      (N4)
+*
+1 #I1        (I2)
+*
+1 #YYYYMMDD   (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY      (N4)
+  2 #MMDD      (N4)
+  2 REDEFINE #MMDD
+    3 #MM       (N2)
+    3 #DD       (N2)
+*
+1 #FAC-AMT        (N6.2)
+1 REDEFINE #FAC-AMT
+  2 #FAC-AMT-UNITS (N3)
+  2 #FAC-AMT-DOLS  (N3)
+  2 #FAC-AMT-CNTS  (N2)
+*
+1 #COMMAND                  (A2)
+1 #MAX-FACE-TOTAL           (P7.2)
+1 #MAX-FACE-TERM            (P7.2)
+1 #OVERRIDE-MAX-FACE-TOTAL  (P7.2)
+1 #OVERRIDE-MAX-FACE-TERM   (P7.2)
+*
+1 #MAX-FACE-ALLOWED (P7.2)
+1 #MAX-FACE-ALLOWED-DISP (A7) /*  xxx,xxx
+1 #MAX-FACE       (P7.2)
+1 #MAX-FACE-ALLOWED-TERM (P7.2)
+1 #EZ-FACES              (N6/5) CONST <10000,25000,50000,75000,100000>
+*
+END-DEFINE
+*
+********************************************************************
+*
+*  WRITE 'top of gplansxx flex=' #FLEX-POLICY 'face=' #FACE-AMT 'plan=' #PLAN
+*
+MOVE 'AI' TO #COMMAND                                             /* PM1
+PERFORM CALL-GMAXSXX  /* load initial face amt values = New Members
+*
+IF #USER = 'BMG' OR = 'RLB' OR = 'GME' OR = 'CEB' OR = 'EAC' OR = 'DRW'
+    OR = 'VXT' OR = 'MAL'                                       /* PM1 PM7 vt was 'PAM'
+  MOVE #OVERRIDE-MAX-FACE-TOTAL TO #MAX-FACE
+  MOVE #OVERRIDE-MAX-FACE-TERM TO #MAX-FACE-TERM
+ELSE
+  MOVE #MAX-FACE-TOTAL TO #MAX-FACE
+  MOVE #MAX-FACE-TERM  TO #MAX-FACE-TERM
+END-IF
+*
+RESET #LTII
+* IF    ((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z')) /* LTII   /* YK1
+IF F-LT2-TRUE(<#PLAN>)                                      /* YK1
+    AND (#PLAN = MASK (.NN))
+  MOVE TRUE TO #LTII
+END-IF
+*
+*   edits below are also in C2151spo/c2000cnm/d3185pba
+*
+IF (NOT #PLAN = 'OL' OR = '30' OR = '20' OR = '7P' OR = 'SP'
+    OR = 'GPL'      /* Gen Plus                                 /* DW8
+    OR = 'GP2'      /* GEN PLUS 2                               /* TT1
+    OR = 'EZ'       /* No medical term                          /* YK2
+    OR = 'GT1'      /* Group Term                               /* vt4  04/27/2017
+    OR = ' ' OR = 'RT' OR = 'LT')                               /* DW2        /* TT2
+    AND (NOT IS-ANNUITY-LIFE(<#PLAN>))                                        /* TT2
+    AND NOT #LTII
+    AND NOT #FLEX-POLICY
+  MOVE 'Invalid plan' TO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+IF #FACE-AMT GT #MAX-FACE
+  MOVE 'Face Amount exceeds maximum' TO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+IF  ((#PLAN = 'RT' OR = 'LT') OR #LTII)
+  IF #FACE-AMT GT #MAX-FACE-TERM
+    IF #MAX-FACE-TERM = 0                                        /* DW6
+      MOVE 'Applicant is too Young' TO #ERR-MSG
+    ELSE
+      MOVE 'Face Amount exceeds maximum for this plan' TO #ERR-MSG
+    END-IF
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF   (#FACE-AMT = 5000)
+    AND (#CURR-FACE-AMT LT (#MAX-FACE - 5000))
+  MOVE 'Face $5K only valid if cur Face = max face minus $5000'
+    TO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+IF  ((#PLAN = 'RT' OR = 'LT') OR #LTII)
+    AND (#FACE-AMT LT 50000)
+  MOVE 'RT/LT minimum is $50,000' TO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+* YK2 Start
+IF  #PLAN = 'EZ'
+  IF #FACE-AMT LT 10000 OR #FACE-AMT GT 100000
+    MOVE 'EZ Term face amount should be between $10000 and $100000' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+  IF NOT F-EZ-FACE-LIMIT(<#MEMBER-CN,#FACE-AMT>)                              /* RE1 START
+    MOVE 'Total face value of EZ Term policies exceeds 100,000' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF                                                                 /* RE1 END
+  IF #INTRO-FLAG = 'K' OR= 'G'
+    MOVE 'EZ Term is not available for kids and grandkids' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+  IF NOT #FACE-AMT EQ #EZ-FACES (*)
+    MOVE 'EZ Term face amounts are $10000,$25000,$50000,$75000,$100000' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+  IF #ISS-AGE-N < 45   /* Age 45 is min age for all aplicants  NG
+    MOVE 'EZ Term Issue Age must be 45 and above' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+*  IF #INTRO-FLAG = 'S' AND #ISS-AGE-N < 45
+*    MOVE 'EZ Term Issue Age must be 45 and above' TO #ERR-MSG
+*    ESCAPE ROUTINE
+*  END-IF
+*  IF #INTRO-FLAG NE 'S' AND #ISS-AGE-N < 50
+*    MOVE 'EZ Term Issue Age must be 50 and above' TO #ERR-MSG
+*    ESCAPE ROUTINE
+*  END-IF
+  IF #ISS-AGE-N > 74
+    MOVE 'EZ Term Issue Age cannot exceed 74' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+* YK2 end
+*
+if #plan = 'GPL' or = 'AL'                          /* vt3 \/
+  move 'plan is not in force since Jan 1st 2015' to #err-msg
+  compress 'The' #plan #err-msg into #err-msg
+  escape routine
+end-if                                              /* vt3 /\
+*
+IF #PLAN = 'GPL'                                /*TT1      /* DW8
+  IF NOT #INTRO-FLAG = 'K' OR = 'G'
+    MOVE 'PLAN GPL only valid for GEN policies' TO #ERR-MSG     /*TT1
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #FACE-AMT = 10000 OR = 15000 OR = 20000 OR = 25000 OR = 30000                  /*TT1
+    IGNORE
+  ELSE
+    MOVE 'For PLAN GPL Face Amount must be 10/15/20/25/30 k' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #ISS-AGE-N GT 12  /* Not quite a tight as the C2000CNM edit          /*TT1
+    MOVE 'For PLAN GPL Issue age must be less than 13' TO #ERR-MSG        /*TT1
+    ESCAPE ROUTINE
+  END-IF
+END-IF                                                          /* END DW8
+*
+IF #PLAN = 'GP2'                                /*TT1      /* DW8
+  IF NOT #INTRO-FLAG = 'K' OR = 'G'
+    MOVE 'PLAN GP2 only valid for GEN policies' TO #ERR-MSG     /*TT1
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #FACE-AMT = 10000 OR = 15000 OR = 20000 OR = 25000 OR = 30000
+      OR = 40000  OR = 50000                                     /*TT1
+    IGNORE
+  ELSE
+    MOVE 'For PLAN GP2 Face Amount must be 10/15/20/25/30/40/50 k' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #ISS-AGE-N GT 14  /* Not quite a tight as the C2000CNM edit          /*TT1
+    MOVE 'For PLAN GP2 Issue age must be less than 15' TO #ERR-MSG        /*TT1
+    ESCAPE ROUTINE
+  END-IF
+END-IF                                                          /* END DW8
+*
+write #plan #face-amt
+if #plan = 'GT1'                                           /* vt4   04/27/2017 \/
+    and #face-amt = 0
+  move 'Enter the face amount for the GT1 plan' to #err-msg
+  escape routine
+end-if                                                     /* vt4   04/27/2017 /\
+*
+IF #LTII
+  IF #ISS-AGE-N LT 18    /* Now same as other term              /* DW3
+    MOVE 'LTII Minium Age is 18' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #PLAN-A1 = 'U' OR = 'V' OR = 'W'
+    IF NOT ( #USER = 'CEB' )
+      #ERR-MSG := 'LT Plan V,U,W can be entered by Manager only. Try S,R,Q'
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+*
+  IF #PLAN-A1 = 'U' OR #PLAN-A1 = 'S'  /* standard              /* YK1
+    IF (#PLAN-VT-N2 LT 5) OR (#PLAN-VT-N2 GT 65)
+      MOVE 'LTII Term must be between 05 and 65' TO #ERR-MSG
+      ESCAPE ROUTINE
+    END-IF
+  ELSE
+    IF #PLAN-A1 = 'X'  /* standard rider
+      IF (#PLAN-VT-N2 LT 11) OR (#PLAN-VT-N2 GT 55)
+        MOVE 'LTII Rider Term must be between 11 and 55' TO #ERR-MSG
+        ESCAPE ROUTINE
+      END-IF
+    ELSE
+      IF #PLAN-A1 = 'V' OR = 'W'  OR = 'R' OR = 'Q' /* SELECT/ SUPER SELECT    /* YK1
+        IF (#PLAN-VT-N2 LT 5) OR (#PLAN-VT-N2 GT 30)  /* was 25
+          MOVE 'LTII Term must be between 05 and 30' TO #ERR-MSG
+          ESCAPE ROUTINE
+        END-IF
+      ELSE                        /* Select/super select rider
+        IF (#PLAN-VT-N2 LT 11) OR (#PLAN-VT-N2 GT 30)  /* was 25
+          MOVE 'LTII Term must be between 11 and 30' TO #ERR-MSG
+          ESCAPE ROUTINE
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #PLAN-A1 = 'U' OR = 'V' OR = 'W'    /* LTII
+      OR = 'S' OR = 'R' OR = 'Q'    /* YK1
+    IF (#ISS-AGE-N + #PLAN-VT-N2) GT 85
+      MOVE 'LTII Iss Age + Term cannot exceed 85' TO #ERR-MSG
+      ESCAPE ROUTINE
+    END-IF
+  ELSE           /* var term RIDER
+    IF (#ISS-AGE-N + #PLAN-VT-N2) GT 75
+      MOVE 'LTII Rider Iss Age + Term cannot exceed 75' TO #ERR-MSG
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+*
+  IF (#PLAN-A1 = 'W' OR = 'Z' OR = 'Q')  /* SUPER SELECT    /* YK1 added Q
+      AND (#SMOK-FLAG = 'S')
+    MOVE 'Super Select invalid for Smokers' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+ELSE   /* all non LTII policies
+  IF NOT #FLEX-POLICY and not (#plan = 'GT1'  )                                               /* vt 05/05/2017
+    COMPUTE #DIVIDEND = #FACE-AMT / 5000
+    IF (#REM NE 0) OR (#FACE-AMT GT #MAX-FACE)
+      MOVE 'Face amount must be multiple of $5k between $5k & Max k'
+        TO #ERR-MSG
+      ESCAPE ROUTINE
+    END-IF
+*
+    IF #FACE-AMT-DOLS NE 0
+      MOVE 'Variable Face Amt only allowed on Flex and LTII Plans'
+        TO #ERR-MSG
+      ESCAPE ROUTINE
+    END-IF
+  END-IF
+END-IF
+*
+IF  (#INTRO-FLAG = 'K' OR = 'G')
+    AND ((#PLAN = 'RT' OR = 'LT') OR #LTII)
+    AND ((#ISS-AGE-N LT 18) OR (#ISS-AGE-N GT 23))                 /* DW3
+*  and (#plan ne 'GPL')                                         /* DW8
+  IF #ISS-AGE-N GT 23                                           /* PM9
+      AND FUNCTION-GEN23-INSURE(<#MEMBER-CN>) = FALSE              /* PM9
+    MOVE 'GEN TERM coverage is for Iss-age 18 thru 23' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF                                                        /* PM9
+END-IF
+*
+IF #ISS-AGE-N NE 0
+  IF (((#PLAN = 'LT') AND (#SMOK-FLAG  = 'S') AND (#ISS-AGE-N GT 49))
+      OR  ((#PLAN = 'LT') AND (#SMOK-FLAG NE 'S') AND (#ISS-AGE-N GT 59))
+* OR  ((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z')) AND (#ISS-AGE-N GT 75))   /* YK1
+      OR  F-LT2-TRUE(<#PLAN>) AND (#ISS-AGE-N GT 75))                     /* YK1
+*                        AND (#ISS-AGE-N GT 70))                /* PM5
+      OR  ((#PLAN = '20' OR = '30' OR = '7P' OR = 'LT' OR = 'RT')
+      AND (#ISS-AGE-N GT 70) AND NOT #FLEX-POLICY)
+      OR  (#PLAN = 'EZ' AND #ISS-AGE-N GE 75)                             /* YK2
+*  OR  ((#NEW-ADDL = 'N')  /* new member                        /* PM11
+*   AND (NOT #INTRO-FLAG = 'S' OR = 'K' OR ='G')                /* PM11
+*   AND (#PLAN NE 'AL')                                         /* DW2 PM11
+*   AND (#ISS-AGE-N GT 65) and (#member-cn ne '179593'))        /* PM11
+      OR  (((#NEW-ADDL = 'A' OR = 'N') OR (#INTRO-FLAG = 'S'))      /* addl mbr or sps/gen PM11
+      AND (#ISS-AGE-N GT 80)  AND NOT IS-ANNUITY-LIFE(<#PLAN>)                    /* DW2   /* vt1 was 79    /* TT2 /* vt2
+      AND (#MEMBER-CN NE '179593'))
+      OR ((IS-ANNUITY-LIFE(<#PLAN>)) AND (#ISS-AGE-N GT 99))                    /* DW2                 /* TT2
+    MOVE 'Exceeds maximum age for entered plan' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+IF  (NOT #INTRO-FLAG = 'K' OR = 'G')
+    AND (#ISS-AGE-N LT 17)
+  MOVE '17 is minimum MEMBER age' TO #ERR-MSG
+  ESCAPE ROUTINE
+END-IF
+*
+IF   (#INTRO-FLAG = 'K' OR = 'G')
+    AND (#PLAN NE 'GPL' AND #PLAN NE 'GP2')        /* TT1                                   /* DW8
+  IF  (#ISS-AGE-N GT 23 AND FUNCTION-GEN23-INSURE(<#MEMBER-CN>) = FALSE) /* PM9 PM10
+      OR ((#ISS-AGE-N = 0) AND (#ISS-AGE-MM LT 6))
+    MOVE 'GEN WL coverage is 6 months thru age 23' TO #ERR-MSG
+    ESCAPE ROUTINE
+  END-IF
+END-IF
+*
+********************************************************************
+DEFINE SUBROUTINE CALL-GMAXSXX
+********************************************************************
+*
+COMPUTE #DOB = *DATN - (#ISS-AGE-N * 10000)                    /* DW4
+CALLNAT 'GMAXSXX'
+  #COMMAND
+  #MAX-FACE-TOTAL
+  #MAX-FACE-TERM
+  #OVERRIDE-MAX-FACE-TOTAL
+  #OVERRIDE-MAX-FACE-TERM
+  #INTRO-FLAG
+  #DOB
+  #PLAN                            /* NG99
+*
+END-SUBROUTINE
+*
+END

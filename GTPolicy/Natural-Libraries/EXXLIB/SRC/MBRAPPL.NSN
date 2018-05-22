@@ -1,0 +1,772 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*
+* CRM Admin interface : Store Application Data Parse request
+************************************************************************
+* NAME         : MBRAPPL                                               *
+* AUTHOR       : Copyright: MetrostarSystems AAFMAA                    *
+* DESCRIPTION  : Return Quotes for Given Product/AmountsBenefits       *
+************************************************************************
+*        MODIFICATION LOG                                              *
+************************************************************************
+* USER   DATE      TAG  REASON
+* NGG    20110501      Initial Creation
+* NGG    20110923   NG1  Rewriten to follow the new XML structure
+* NGG    01/16/2012 NG2 Default Contact Type
+* NGG    01/30/2012 NG3 Premier services
+* NGG    20130218   NG4 STEPCHILD Relation for sponsored application
+* NGG    05/07/2014 NG5  MEMBERSHIP EXPANSION
+* NGG    1/16/2017  NG6 Online App Credit card enhancement
+* NGG    20170516   NG7 Group term : <Products>GT1</Products>
+
+*********************************************************
+* <Customers>
+*  <Customer>
+*    <ContactID>4711</ContactID>
+*    <CN>12359</CN>
+*      ...
+*      <Status></Status>
+*    </Email3>*
+* </Customer>
+* </Customers>
+*
+DEFINE DATA
+PARAMETER
+1 XML_PARSER_INPUT             (A) DYNAMIC
+1 RESPONSE-DATA                (A) DYNAMIC
+1 #APPL-TRACKING
+  2 ID-NUMBER      (N6) 2 REDEFINE ID-NUMBER
+    3 ID-NUMBER-A  (A6)
+  2 CONTACT-ID     (N8)
+  2 DATE-RECEIVED  (N8)
+  2 USER-SOURCE    (A3)
+  2 AT-STATUS      (A2)
+  2 INTRO-FLAG     (A1)
+  2 SMOKER-FLAG    (A1)
+  2 INS-ONLY       (A1)
+  2 MIL-SERVICE    (A3)    /* BRANCH
+  2 NAME           (A25)
+  2 RANK           (A3)    /* RANK-IN-SAS
+  2 MEMBER-CN      (A6) 2 REDEFINE MEMBER-CN
+    3 MEMBER-CN-N  (N6)
+  2 REFERING-ID-NUMBER (N6/1)
+  2 NOTES          (A75/40)
+  2 REDEFINE NOTES
+    3 NOTES-TBL    (40)
+      4 NOTES-75   (A75)
+      4 REDEFINE NOTES-75
+        5 NOTES-AST    (A1)
+        5 NOTES-USER   (A3)
+        5 NOTES-DASH   (A1)
+        5 NOTES-DATE   (A10)
+        5 REDEFINE NOTES-DATE
+          6 NOTES-MM   (A2)
+          6 NOTES--1   (A1)
+          6 NOTES-DD   (A2)
+          6 NOTES--2   (A1)
+          6 NOTES-YYYY (A4)
+        5 NOTES-REST   (A60)
+  2 APPL-SOURCE        (A7)
+  2 CAP-IND            (A1)
+  2 CRM-APPL-ID        (A50)
+  2 PLAN               (A3)
+1 #UPDATED             (L/12)
+PARAMETER USING MBRASVC        /* NG3
+LOCAL USING GOCOA001           /* Contact PDA
+LOCAL USING GOPHA001
+LOCAL USING GOEMA001
+LOCAL USING GOADA001
+LOCAL USING MBR00PDA
+* LOCAL USING GODIA001         /* Death Info PDA
+LOCAL USING GOCRA001           /* Contact relations PDA
+LOCAL USING PARSER-X           /* parser internal data - do not change
+LOCAL
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I4)
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 #TOKENS                      (A/9) DYNAMIC
+1 #ERROR-CODE                  (A2)
+1 #ERROR-DESCRIPTION           (A) DYNAMIC
+1 #REFERING-ID (A6) 1 REDEFINE #REFERING-ID
+  2 #REFERING-ID-N (N6)
+1 #CNT-IDS-N                   (I4)
+1 #CNT-IDS                     (A/64) DYNAMIC
+1 #ADMIN-CI                    (N8/64)
+1 #GEN-APPLICATION             (L)
+1 #CONTACT-EXIST               (L)
+*
+1 #GEN-KEY           (A4)
+1 GEN-TABLE-V VIEW OF A-GEN-TABLE
+  2 GEN-KEY (A4)
+  2 GEN-SUB-KEY (A3)
+  2 GEN-ALPHA-VALUE (A50)
+*
+1 CNT-V VIEW OF A-CONTACTS
+  2 ID-NUMBER (N6)
+*
+1 #DIGIT             (A1)
+1 #DATE              (A8) 1 REDEFINE #DATE
+  2 #DATE-N   (N8)
+1 #-PHONE            (A10) 1 REDEFINE #-PHONE
+  2 #PHONE-N  (N10)
+1 #SSNV              (A9) 1 REDEFINE #SSNV
+  2 #SSN-N    (N9)
+1 #ZIPV              (A10)
+1 REDEFINE #ZIPV /* BEGIN REDEFINE: #ZIPV
+  2 #ZIP-5    (N5)
+1 REDEFINE #ZIPV /* BEGIN REDEFINE: #ZIPV
+  2 #ZIP-N    (N9)
+1 #ZIP-VALUE         (N9)
+1 REDEFINE #ZIP-VALUE /* BEGIN REDEFINE: #ZIP-VALUE
+  2 #ZIP-VALUE-5 (N5)
+1 #NSP                  (I4)  /* Notes stack pointer
+1 #NTL                  (I4)  /* Note text length
+1 #NTLINES              (I4)  /* Note text lines
+*
+1 BLANK             (A1) CONST <' '>
+1 YES               (A1) CONST <'Y'>
+1 #TAB              (A1) CONST <H'09'>
+1 #TRUE             (A4) CONST <'TRUE'>
+1 #Timeout          (A2) CONST <'-2'>
+1 #Natural-error    (A2) CONST <'-3'>
+1 #Duplicate-AT     (A2) CONST <'-4'>
+1 #No-AT#-available (A2) CONST <'-5'>
+1 #No-AT#-found     (A2) CONST <'-6'>
+1 #Parse-error      (A2) CONST <'-7'>
+1 #MESSAGE-LOG      (I4) CONST <2>
+1 #ERROR-LOG        (I4) CONST <3>
+1 #Note-limit       (A20) CONST <'...Please see CRM...'>
+1 #FAILED           (A10) CONST <'Failed....'>
+1 #Succeeded        (A10) CONST <'Succeeded.'>
+1 #X                    (I4)
+1 #J                    (I4)
+1 #K                    (I4)
+1 #L                    (I4)
+1 #N                    (I4)
+1 #LEN                  (I4)
+1 #GT1                  (A3) CONST <'GT1'>
+*
+END-DEFINE
+*
+ASSIGN #LEN := *LENGTH (XML_PARSER_INPUT)
+IF #LEN <= 0
+  #ERROR-CODE := #Parse-error
+  #ERROR-DESCRIPTION := 'Empty Gift of membership XML data'
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+ELSE
+  RESET #LEN
+    #APPL-TRACKING
+    #ADDR-POOL #ADDR-REL
+    #CONTACT
+    #PHONE
+    #EMAIL
+    #UPDATED (*)
+    #GEN-APPLICATION
+  RESPONSE-DATA := #Succeeded
+  ServiceRequest.C@Service := 1
+  EXPAND ARRAY ServiceRequest.Service TO (1:1)
+END-IF
+*
+ASSIGN #NSP = 1   /* If there are notes they will start from line 1
+CALLNAT 'MBRCLERK'
+  XML_PARSER_INPUT
+  #CLERK-ID
+*
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+*     Format response message
+*
+COMPRESS NUMERIC RESPONSE-DATA '<Customers'
+  '>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '<Customer'
+  '>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '<TrackingID>'
+  '@@@@@@' '</TrackingID>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '<Id>'
+  #APPL-TRACKING.CRM-APPL-ID '</Id>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '<CN>'
+  '@----@' '</CN>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '<ContactID>'
+  #APPL-TRACKING.CONTACT-ID '</ContactID>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '<PolicyStatus>PR</PolicyStatus'
+  '>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '</Customer'
+  '>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '<Contacts'
+  '>' INTO RESPONSE-DATA LEAVING NO
+FOR #J 2 TO #CNT-IDS-N
+  COMPRESS NUMERIC RESPONSE-DATA '<Contact'
+    '>' INTO RESPONSE-DATA LEAVING NO
+  COMPRESS NUMERIC RESPONSE-DATA '<ContactID>'
+    #ADMIN-CI ( #J ) '</ContactID>' INTO RESPONSE-DATA LEAVING NO
+  COMPRESS NUMERIC RESPONSE-DATA '<Id>'
+    #CNT-IDS ( #J ) '</Id>' INTO RESPONSE-DATA LEAVING NO
+  FIND (1) CNT-V WITH CONTACT-ID = #ADMIN-CI ( #J )
+    IF CNT-V.ID-NUMBER > 0
+      COMPRESS NUMERIC RESPONSE-DATA '<CN>'
+        CNT-V.ID-NUMBER '</CN>' INTO RESPONSE-DATA LEAVING NO
+    ELSE
+      COMPRESS NUMERIC RESPONSE-DATA '<CN></CN'
+        '>' INTO RESPONSE-DATA LEAVING NO
+    END-IF
+  END-FIND
+  COMPRESS NUMERIC RESPONSE-DATA '</Contact'
+    '>' INTO RESPONSE-DATA LEAVING NO
+END-FOR
+COMPRESS NUMERIC RESPONSE-DATA '</Contacts'
+  '>' INTO RESPONSE-DATA LEAVING NO
+COMPRESS NUMERIC RESPONSE-DATA '</Customers'
+  '>' INTO RESPONSE-DATA LEAVING NO
+*
+DEFINE SUBROUTINE CALLBACK
+/*     ===================
+IF #GEN-APPLICATION   /* For GEN applications skip the rest of XML document
+  ESCAPE ROUTINE
+END-IF
+*
+IF XML_PARSER_CONTENT_IS_EMPTY THEN
+  DECIDE ON FIRST VALUE OF XML_PARSER_XPATH
+    VALUE 'Customers/Customer/Notes/Note//' /* End of Note
+      PERFORM CREATE-NOTES
+    VALUE 'Customers/Customer//'          /* Applicant
+      IF #CNT-IDS-N > 0
+        PERFORM CREATE-APPLICANT
+      END-IF
+      RESET #CONTACT
+      IF INTRO-FLAG = 'S' OR= 'K' OR= 'G'
+        #GEN-APPLICATION := TRUE
+      END-IF
+    VALUE 'Customers/Contacts/Contact//'  /* Related contact
+      IF #CNT-IDS-N > 0
+        PERFORM CREATE-CONTACT
+      END-IF
+      RESET #CONTACT
+    VALUE 'Customers/Relationships/Relationship//'
+      /*  Applicant relations
+      PERFORM CREATE-CONTACT-REL
+      RESET #CONTACT-REL
+    VALUE 'Customers/Customer/PrimaryAddress//',    /* Address
+        'Customers/Contacts/Contact/PrimaryAddress//'
+      #ADDR-REL.ADDR-TYPE-CD := 'P'
+      PERFORM CREATE-ADDRESS
+      RESET  #ADDR-POOL #ADDR-REL
+    VALUE 'Customers/Customer/SecondaryAddress//',  /* Address
+        'Customers/Contacts/Contact/SecondaryAddress//'
+      #ADDR-REL.ADDR-TYPE-CD := 'S'
+      PERFORM CREATE-ADDRESS
+      RESET  #ADDR-POOL #ADDR-REL
+    VALUE 'Customers/Customer/Phone1//',    /* Phone
+        'Customers/Customer/Phone2//',
+        'Customers/Customer/Phone3//',
+        'Customers/Contacts/Contact/Phone1//',
+        'Customers/Contacts/Contact/Phone2//',
+        'Customers/Contacts/Contact/Phone3//'
+      PERFORM CREATE-PHONE
+      RESET  #PHONE
+    VALUE 'Customers/Customer/Email1//',    /* Email
+        'Customers/Customer/Email2//',
+        'Customers/Customer/Email3//',
+        'Customers/Contacts/Contact/Email1//',
+        'Customers/Contacts/Contact/Email2//',
+        'Customers/Contacts/Contact/Email3//'
+      PERFORM CREATE-EMAIL
+      RESET  #EMAIL
+    NONE VALUE IGNORE
+  END-DECIDE
+ELSE
+  PERFORM PARSE-DOCUMENT
+END-IF
+END-SUBROUTINE
+/*
+DEFINE SUBROUTINE PARSER_ERROR
+/*                ============
+#ERROR-CODE := #Parse-error
+#ERROR-DESCRIPTION := XML_PARSER_ERROR_TEXT
+PERFORM FORMAT-ERROR
+ESCAPE ROUTINE
+END-SUBROUTINE
+/*
+DEFINE FORMAT-ERROR
+/*     ============
+BACKOUT TRANSACTION
+RESPONSE-DATA := #FAILED
+COMPRESS RESPONSE-DATA /* NG5
+  #ERROR-CODE #ERROR-DESCRIPTION INTO RESPONSE-DATA WITH DELIMITERS ':'
+END-SUBROUTINE
+/*
+DEFINE PARSE-DOCUMENT
+/*     ==============
+XML_PARSER_CONTENT := *TRIM (XML_PARSER_CONTENT)
+MOVE *TRANSLATE(XML_PARSER_CONTENT, UPPER) TO XML_PARSER_CONTENT
+SEPARATE XML_PARSER_XPATH INTO #TOKENS (*) IGNORE WITH DELIMITERS '/'
+*
+DECIDE ON FIRST VALUE OF #TOKENS (2)
+  VALUE 'Customer'
+    #L := 3
+    PERFORM PARSE-APPLICANT
+  VALUE 'Contacts'
+    #L := 4
+    PERFORM PARSE-CONTACT
+  VALUE 'Relationships'
+    #L := 4
+    PERFORM PARSE-RELATIONS
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+DEFINE PARSE-CONTACT
+/*     ==============
+* PRINT 'PERFORM PARSE-CONTACT' XML_PARSER_XPATH #TOKENS ( #L ) * ESCAPE ROUTINE
+DECIDE ON FIRST VALUE OF #TOKENS ( #L )
+  VALUE 'Id'  /* CRM Contact GUID
+    ADD 1 TO #CNT-IDS-N
+    #CNT-IDS ( #CNT-IDS-N ) := XML_PARSER_CONTENT
+  VALUE 'ContactID'   /* Temporary fix  NG5
+    #X := #L + 1
+    IF #TOKENS ( #X ) = '$'
+      #CONTACT.CONTACT-ID := VAL ( XML_PARSER_CONTENT )
+      #CONTACT-EXIST := TRUE
+    END-IF
+  VALUE 'DateOfBirth'
+    #DATE := XML_PARSER_CONTENT
+    #CONTACT.DATE-OF-BIRTH := #DATE-N
+  VALUE 'CN'
+    IF XML_PARSER_CONTENT NE BLANK
+      EXAMINE XML_PARSER_CONTENT FOR 'P' REPLACE BLANK
+      #CONTACT.ID-NUMBER := VAL ( XML_PARSER_CONTENT )
+    END-IF
+  VALUE 'FirstName'
+    #CONTACT.FIRST-NAME := XML_PARSER_CONTENT
+  VALUE 'MiddleName'
+    #CONTACT.MIDDLE-NAME := XML_PARSER_CONTENT
+  VALUE 'LastName'
+    #CONTACT.LAST-NAME := XML_PARSER_CONTENT
+  VALUE 'Suffix'
+    #CONTACT.SUFFIX := XML_PARSER_CONTENT
+  VALUE 'Prefix'
+    #CONTACT.PREFIX-TITLE := XML_PARSER_CONTENT
+  VALUE 'GovtID'
+    #SSNV := XML_PARSER_CONTENT
+    IF #SSNV IS (N9)  /* NG EMG FIX
+      #CONTACT.SSN := #SSN-N
+    END-IF
+  VALUE 'Gender'
+    #CONTACT.GENDER-CD := XML_PARSER_CONTENT
+  VALUE 'MilitaryRankId'
+    IF XML_PARSER_CONTENT IS (N6)
+      #CONTACT.RANK-ID := VAL ( XML_PARSER_CONTENT )
+    END-IF
+  VALUE 'MilitaryStatus'
+    #CONTACT.MILITARY-STATUS := XML_PARSER_CONTENT
+  VALUE 'IsMember'
+    IGNORE
+  VALUE 'PrimaryAddress','SecondaryAddress'
+    DECIDE ON FIRST VALUE OF #TOKENS ( #L + 1 )
+      VALUE 'City'
+        #ADDR-POOL.CITY := XML_PARSER_CONTENT
+      VALUE 'State'
+        #ADDR-POOL.STATE-CODE := XML_PARSER_CONTENT
+        #ADDR-POOL.INTL-REGION := XML_PARSER_CONTENT
+      VALUE 'Street'
+        IF *LENGTH (XML_PARSER_CONTENT) > 50
+          #ADDR-POOL.STREET := SUBSTR(XML_PARSER_CONTENT,1,25)
+        ELSE
+          #ADDR-POOL.STREET := XML_PARSER_CONTENT
+        END-IF
+      VALUE 'Unit'
+        IF *LENGTH (XML_PARSER_CONTENT) > 25
+          #ADDR-POOL.UNIT := SUBSTR(XML_PARSER_CONTENT,1,25)
+        ELSE
+          #ADDR-POOL.UNIT := XML_PARSER_CONTENT
+        END-IF
+      VALUE 'Zip'
+        #ADDR-POOL.POSTAL-CODE := XML_PARSER_CONTENT
+        #Len := *LENGTH (XML_PARSER_CONTENT)
+        IF #Len <= 9
+          #ZIPV := XML_PARSER_CONTENT
+          IF #ZIPV IS (N9)
+            EXAMINE #ZIPV FOR BLANK REPLACE '0'
+            IF *LENGTH (XML_PARSER_CONTENT) < 9
+              #ZIP-VALUE-5 := #ZIP-5
+            ELSE
+              #ZIP-VALUE := #ZIP-N
+            END-IF
+            #ADDR-POOL.ZIP-CODE := #ZIP-VALUE
+          END-IF
+        END-IF
+      VALUE 'CountryCode'
+        #ADDR-POOL.COUNTRY-CODE := XML_PARSER_CONTENT
+      VALUE 'Certified'
+        IF XML_PARSER_CONTENT = 'TRUE'
+          #ADDR-POOL.ADDR-VALID-IND := 'Y'
+        ELSE
+          #ADDR-POOL.ADDR-VALID-IND := 'F'
+        END-IF
+      VALUE 'Undeliverable'
+        #ADDR-REL.RETURNED-MAIL-IND := XML_PARSER_CONTENT
+      NONE VALUE IGNORE
+    END-DECIDE
+  VALUE 'Phone1','Phone2','Phone3'
+    DECIDE ON FIRST VALUE OF #TOKENS ( #L + 1 )
+      VALUE 'PhoneNumber'
+        #PHONE.INTL-DIAL-NUMBER-A := *TRIM ( XML_PARSER_CONTENT )
+      VALUE 'Extension'
+        RESET #-PHONE
+        #LEN := *LENGTH ( XML_PARSER_CONTENT )
+        FOR #X 1 TO #LEN
+          #DIGIT := SUBSTR(XML_PARSER_CONTENT,#X,1)
+          IF #DIGIT = '+' OR= '-' OR= '.' OR= BLANK
+            ESCAPE TOP
+          END-IF
+          IF #DIGIT IS (N1)
+            COMPRESS #-PHONE #DIGIT INTO #-PHONE LEAVING NO
+          END-IF
+        END-FOR
+        MOVE RIGHT JUSTIFIED #-PHONE TO #-PHONE
+        #PHONE.EXT := #PHONE-N
+      VALUE 'Remarks'
+        #LEN := *LENGTH ( XML_PARSER_CONTENT )
+        #X := 1 RESET #K
+        REPEAT UNTIL #LEN <= 0
+          ADD 1 TO #K
+          #N := #LEN - #X + 1
+          IF #N <= 70
+            MOVE SUBSTR (XML_PARSER_CONTENT,#X) TO #PHONE.REMARKS ( #K )
+          ELSE
+         MOVE SUBSTR (XML_PARSER_CONTENT,#X,70) TO #PHONE.REMARKS ( #K )
+          END-IF
+          ADD 70 TO #X
+          SUBTRACT 70 FROM #LEN
+        END-REPEAT
+      VALUE 'Type'
+        #PHONE.PHONE-TYPE-CODE := XML_PARSER_CONTENT
+      VALUE 'Preferred'
+        IF XML_PARSER_CONTENT = #TRUE
+          #PHONE.PREFERRED-PHONE-IND := YES
+        END-IF
+      VALUE 'International'
+        IF XML_PARSER_CONTENT = #TRUE
+          #PHONE.INTL-ACCESS-CODE := 11
+        END-IF
+      NONE VALUE IGNORE
+    END-DECIDE
+  VALUE 'Email1','Email2','Email3'
+    DECIDE ON FIRST VALUE OF #TOKENS ( #L + 1 )
+      VALUE 'EmailAddress'
+        #EMAIL.EMAIL-ADDRESS := XML_PARSER_CONTENT
+        IF #TOKENS ( #L ) = 'Email1'
+          #EMAIL.EMAIL-PREFERRED-IND := 'Y'
+        END-IF
+      VALUE 'Type'
+        #EMAIL.EMAIL-TYPE := XML_PARSER_CONTENT
+      VALUE 'Status'
+        #EMAIL.STATUS := XML_PARSER_CONTENT
+      NONE VALUE IGNORE
+    END-DECIDE
+  VALUE 'ContactType'
+    #CONTACT.CONTACT-TYPE := XML_PARSER_CONTENT
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+DEFINE PARSE-APPLICANT
+/*     ===============
+* PRINT 'PERFORM PARSE-APPLICANT' XML_PARSER_XPATH #TOKENS ( #L ) * ESCAPE ROUTINE
+PERFORM PARSE-CONTACT
+DECIDE ON FIRST VALUE OF #TOKENS ( #L )
+  VALUE 'BranchOfService'
+    MIL-SERVICE := XML_PARSER_CONTENT
+  VALUE 'MilitaryRank'
+    RANK := XML_PARSER_CONTENT
+  VALUE 'HasCAP'
+    CAP-IND := XML_PARSER_CONTENT
+  VALUE 'PremierService'                   /* NG3
+    ServiceRequest.SERVICE-ID (1) := XML_PARSER_CONTENT
+  VALUE 'PremierServiceId'                 /* NG3
+    ServiceRequest.CRM-SERVICE-ID (1) := XML_PARSER_CONTENT
+  VALUE 'Relationship'
+    IF XML_PARSER_CONTENT = 'STEPCHILD'    /* NG4
+      XML_PARSER_CONTENT := 'CHILD'
+    END-IF
+    INTRO-FLAG := XML_PARSER_CONTENT
+    IF INTRO-FLAG = 'C'
+      ASSIGN INTRO-FLAG = 'K'
+    END-IF
+  VALUE 'Nicotine'
+    SMOKER-FLAG := XML_PARSER_CONTENT
+*  VALUE 'UserCode'                       The update logic requires parsing Clerk ID first
+*    #GEN-KEY := 'WEBU'
+*    FIND GEN-TABLE-V WITH GEN-KEY = #GEN-KEY
+*      ACCEPT IF *TRANSLATE(GEN-ALPHA-VALUE,UPPER)= XML_PARSER_CONTENT
+*      USER-SOURCE := GEN-SUB-KEY
+*      ESCAPE BOTTOM
+*    END-FIND
+  VALUE 'PolicyStatus'
+    AT-STATUS := XML_PARSER_CONTENT
+  VALUE 'Notes'
+    DECIDE ON FIRST VALUE OF #TOKENS ( #L + 2 )
+      VALUE 'Body'
+        #NTL := *LENGTH ( XML_PARSER_CONTENT )
+        RESET #J
+        IF #NTL > 60
+          MOVE SUBSTR (XML_PARSER_CONTENT,1,60) TO NOTES-REST (#NSP)
+          SUBTRACT 60 FROM #NTL
+          #NTLINES := #NSP
+          #X := 61
+          REPEAT UNTIL #NTL <= 0
+            ADD 1 TO #NTLINES
+            ADD 1 TO #J
+            IF #NTLINES > 40
+              ESCAPE BOTTOM
+            END-IF
+            IF #NTL > 75
+              MOVE SUBSTR (XML_PARSER_CONTENT,#X,75) TO NOTES (#NTLINES)
+            ELSE
+            MOVE SUBSTR (XML_PARSER_CONTENT,#X,#NTL) TO NOTES (#NTLINES)
+            END-IF
+            SUBTRACT 75 FROM #NTL
+            ADD 75 TO #X
+            IF #J >= 10
+              MOVE #Note-limit TO SUBSTR(NOTES (#NTLINES),56,20)
+              ESCAPE BOTTOM
+            END-IF
+          END-REPEAT
+        ELSE
+          MOVE SUBSTR (XML_PARSER_CONTENT,1,#NTL) TO NOTES-REST (#NSP)
+          #NTLINES := 1
+        END-IF
+      VALUE 'User'
+        #GEN-KEY := 'WEBU'
+        FIND GEN-TABLE-V WITH GEN-KEY = #GEN-KEY
+         ACCEPT IF *TRANSLATE(GEN-ALPHA-VALUE,UPPER)= XML_PARSER_CONTENT
+          NOTES-USER (#NSP):= GEN-SUB-KEY
+          ESCAPE BOTTOM
+        END-FIND
+      VALUE 'CreateDate'
+        #DATE := XML_PARSER_CONTENT
+        NOTES-DATE (#NSP) := FUNCTION-CALENDAR(<#DATE-N,'D'>)
+      NONE VALUE IGNORE
+    END-DECIDE
+  VALUE 'Source'
+    APPL-SOURCE := XML_PARSER_CONTENT
+  VALUE 'SubmissionDate'
+    #DATE := XML_PARSER_CONTENT
+    DATE-RECEIVED := #DATE-N
+  VALUE 'LinkedCN'
+    #REFERING-ID := XML_PARSER_CONTENT
+    MOVE RIGHT #REFERING-ID TO #REFERING-ID
+    IF #REFERING-ID NE BLANK
+      REFERING-ID-NUMBER (1) := #REFERING-ID-N
+    END-IF
+  VALUE 'ParticipantRole'
+    INS-ONLY := XML_PARSER_CONTENT
+  VALUE 'QuoteId'  /* NG6
+    #APPL-TRACKING.CRM-APPL-ID := XML_PARSER_CONTENT
+  VALUE 'TrackingID'
+    IF *LENGTH (XML_PARSER_CONTENT) > 6
+      ID-NUMBER-A := SUBSTR (XML_PARSER_CONTENT,1,6)
+    ELSE
+      ID-NUMBER-A := XML_PARSER_CONTENT
+      MOVE RIGHT JUSTIFIED ID-NUMBER-A TO ID-NUMBER-A
+    END-IF
+  VALUE 'Products'
+    EXAMINE XML_PARSER_CONTENT FOR #GT1
+      GIVING POSITION #J
+    IF #J > 0
+      #APPL-TRACKING.PLAN := SUBSTR(XML_PARSER_CONTENT,#J,3)
+    END-IF
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+/*
+DEFINE PARSE-RELATIONS
+/*     ==============
+* PRINT 'PERFORM PARSE-RELATIONS' XML_PARSER_XPATH #TOKENS ( #L ) * ESCAPE ROUTINE
+DECIDE ON FIRST VALUE OF #TOKENS ( #L )
+  VALUE 'MemberId'
+    #CONTACT-REL.CONTACT-1-ID := #APPL-TRACKING.CONTACT-ID
+  VALUE 'MemberRole'
+    #CONTACT-REL.ROLE-1-CD := F-ROLECD (<XML_PARSER_CONTENT>)
+  VALUE 'PartnerId'
+    FOR #J 1 TO #CNT-IDS-N
+      IF #CNT-IDS ( #J ) = XML_PARSER_CONTENT
+        #CONTACT-REL.CONTACT-2-ID := #ADMIN-CI ( #J )
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  VALUE 'PartnerRole'
+    #CONTACT-REL.ROLE-2-CD := F-ROLECD (<XML_PARSER_CONTENT>)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+/*
+DEFINE CREATE-EMAIL
+/*     ==============
+IF #CONTACT-EXIST
+  ESCAPE ROUTINE
+END-IF
+IF #EMAIL.EMAIL-ADDRESS NE BLANK
+  RESET #MSG
+  #EMAIL.CONTACT-ID := #CONTACT.CONTACT-ID
+  IF #EMAIL.EMAIL-TYPE = BLANK      /* Default is P NG1
+    #EMAIL.EMAIL-TYPE := 'P'
+  END-IF
+  CALLNAT 'GOEMN001' #EMAIL #CLERK-ID #MSG
+    #UPDATED (7)
+  IF #MSG = BLANK
+    ADD 1 TO #EMAIL-SP
+    #EMAIL-IDS ( #EMAIL-SP ) := #EMAIL.EMAIL-ID
+  ELSE
+    COMPRESS #ERROR-DESCRIPTION #MSG INTO #ERROR-DESCRIPTION
+  END-IF
+END-IF
+END-SUBROUTINE
+/*
+DEFINE CREATE-PHONE
+/*     ==============
+IF #CONTACT-EXIST
+  ESCAPE ROUTINE
+END-IF
+IF #PHONE.INTL-DIAL-NUMBER NE 0
+  #MSG := 'ZERO ACCEPTED'
+  #PHONE.CONTACT-ID := #CONTACT.CONTACT-ID
+  CALLNAT 'GOPHN001' #PHONE #CLERK-ID #MSG
+    #UPDATED (4)
+  IF #MSG = BLANK
+    ADD 1 TO #PHONE-SP
+    #PHONE-IDS ( #PHONE-SP ) := #PHONE.PHONE-ID
+  ELSE
+    COMPRESS #ERROR-DESCRIPTION #MSG INTO #ERROR-DESCRIPTION
+  END-IF
+END-IF
+END-SUBROUTINE
+/*
+DEFINE CREATE-ADDRESS
+/*     ==============
+IF #CONTACT-EXIST
+  ESCAPE ROUTINE
+END-IF
+IF #ADDR-POOL.STREET NE BLANK
+  RESET #MSG
+  #ADDR-REL.CONTACT-ID := #CONTACT.CONTACT-ID
+  IF #ADDR-REL.ADDRESS-SOURCE = BLANK
+    #ADDR-REL.ADDRESS-SOURCE := 'A'
+  END-IF
+  IF #ADDR-POOL.COUNTRY-CODE = BLANK   /* Default is US NG1
+    #ADDR-POOL.COUNTRY-CODE := 'US'
+  END-IF
+  IF #ADDR-POOL.COUNTRY-CODE = 'US' OR= 'PR'
+    RESET #ADDR-POOL.POSTAL-CODE
+  ELSE
+    RESET #ADDR-POOL.ZIP-CODE
+  END-IF
+  CALLNAT 'GOADN001' #ADDR-POOL #ADDR-REL #CLERK-ID #MSG
+    #UPDATED (2)
+  IF #MSG = BLANK
+    ADD 1 TO #ADDRESS-SP
+    #ADDRESS-IDS ( #ADDRESS-SP ) := #ADDR-POOL.ADDRESS-POOL-ID
+  ELSE
+    COMPRESS #ERROR-DESCRIPTION #MSG INTO #ERROR-DESCRIPTION
+  END-IF
+END-IF
+END-SUBROUTINE
+/*
+DEFINE CREATE-CONTACT
+/*     ==============
+* PRINT 'CREATE CONTACT' * ESCAPE ROUTINE
+IF #CONTACT.CONTACT-TYPE = BLANK  /* NG2
+  #CONTACT.CONTACT-TYPE := 'I'
+END-IF
+#CONTACT.CRM-CONTACT-GUI := #CNT-IDS ( #CNT-IDS-N )
+CALLNAT 'GOCON001' #CONTACT #CLERK-ID #MSG
+  #UPDATED (1)
+COMPRESS #ERROR-DESCRIPTION #MSG INTO #ERROR-DESCRIPTION
+#ADMIN-CI ( #CNT-IDS-N ) := #CONTACT.CONTACT-ID
+*
+IF #CONTACT.CONTACT-ID > 0
+    AND #UPDATED (1)   /* New Contact
+  CALLNAT 'MBRAPPL1' #CONTACT.CONTACT-ID
+    #EMAIL-SP
+    #EMAIL-IDS (*)
+    #PHONE-SP
+    #PHONE-IDS (*)
+    #ADDRESS-SP
+    #ADDRESS-IDS (*)
+  RESET #CONTACT-EXIST
+ELSE
+  RESET
+    #EMAIL-SP
+    #EMAIL-IDS (*)
+    #PHONE-SP
+    #PHONE-IDS (*)
+    #ADDRESS-SP
+    #ADDRESS-IDS (*)
+  #CONTACT-EXIST := TRUE
+END-IF
+END-SUBROUTINE
+/*
+DEFINE CREATE-CONTACT-REL
+/*     ==================
+* PRINT 'CREATE RELATIONS' * ESCAPE ROUTINE
+IF #CONTACT-REL.CONTACT-1-ID > 0
+  CALLNAT 'GOCRN001' #CONTACT-REL #MSG #UPDATED (10)
+END-IF
+END-SUBROUTINE
+*
+DEFINE CREATE-APPLICANT
+/*     ================
+* PRINT 'CREATE APPLICANT' * ESCAPE ROUTINE
+#APPL-TRACKING.USER-SOURCE := #CLERK-ID
+PERFORM CREATE-CONTACT
+#APPL-TRACKING.CONTACT-ID  := #CONTACT.CONTACT-ID
+**#APPL-TRACKING.CRM-APPL-ID := #CNT-IDS ( #CNT-IDS-N )  NG6
+IF #CONTACT.ID-NUMBER > 0
+  MOVE EDITED  #CONTACT.ID-NUMBER (EM=9(6)) TO #APPL-TRACKING.MEMBER-CN
+END-IF
+END-SUBROUTINE
+*
+DEFINE CREATE-NOTES
+/*     ============
+* PRINT 'CREATE NOTES #NSP=' #NSP #NTLINES * ESCAPE ROUTINE
+NOTES-AST ( #NSP ) := '*'
+NOTES-DASH ( #NSP ) := '-'
+IF #NTLINES = 1
+  ADD 1 TO #NSP
+ELSE
+  ASSIGN #NSP = #NTLINES + 1
+END-IF
+if #NSP > 40
+  MOVE #Note-limit TO SUBSTR(NOTES (40),56,20)
+end-if
+END-SUBROUTINE
+*
+ON ERROR
+  RESET #ERROR-CODE
+  #MSG := CRM-APPL-ID
+  CALLNAT 'CRMLOG' #ERROR-CODE #ERROR-DESCRIPTION
+    #ERROR-LOG
+    #MSG       /* CRM-APPL-ID
+  #ERROR-CODE :=  #Natural-error    /* NG5
+  PERFORM FORMAT-ERROR
+  ESCAPE ROUTINE
+END-ERROR
+*
+END
