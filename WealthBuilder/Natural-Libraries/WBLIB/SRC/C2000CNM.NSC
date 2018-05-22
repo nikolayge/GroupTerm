@@ -1,0 +1,649 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* COPYBOOK C2000CNM EDITS FOR NM AND AI SCREEN
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+* DRW 08/05/2008 DW1 Add Gen Plus Processing
+* YAK 12/27/2010 YK1 Check Policy status when calculating total GPL amount
+* VXT 06/15/2011 VT1 Remove edit for eff-date for mode=G and remove edits for CONTACT info
+* PAM 11/21/2011 PM1 Remove age 65 new member age limit (Ops# 728)
+* PAM 05/14/2012 PM2 Allow rated policies for 20P, 30P and 7P
+* YAK 09/26/2012 YK2 Use function to identify Level Term II plan
+*                    Add codes for NEW Term II plans
+* YAK 11/13/2012 YK3 Add No Medical Term plan (EZ)
+* NGG 20130108NN NG1 Edits for No Medical Term plan (EZ)
+* RSE 05/06/2013 RE1 Stability Project for $1M Policy - change edit mask
+* bz1  05/23/2013    change Err message
+* vxt  07/30/2013 vt2 Populate the var-term-category for LT2 plans.
+* TMT  12/17/2013 TT1 GP2 POLICY STABILITY PROJECT
+* NGG 20141023    NG1 Annuity life products
+* vxt 05/09/2017 vt3  Group Term Plan Project
+* bz  08/08/2017  bz-HD-5046   Only Mode G for Plan SP (PUSP)
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE STANDARD-EDITS
+* * * * *
+*
+IF (#CGA-ORIG-COMMAND = 'NM') AND (#INSURED NE 'T')
+  CALLNAT 'GIFLGSXX' #INSURED #INVALID #ERR-MSG
+  IF #INVALID
+      OR (#INSURED  = 'I' OR = 'B' OR = 'C' OR = 'P' OR = 'Q')
+    COMPRESS #ERR-MSG 'Invalid Insured code'  INTO #ERR-MSG   /* bz1
+    REINPUT #ERR-MSG /* USING HELP                            /* bz1
+      MARK *#INSURED
+  END-IF
+END-IF
+*
+  IF (#PLAN = 'SP' AND #MODE <> 'G')
+    REINPUT 'Only mode G is allowed on "PUSP"'          /* bz-HD-5046
+      MARK *#MODE
+  END-IF
+
+IF   (#INSURED = 'S' OR = 'K' OR = 'G')
+    AND (#CAP-IND = 'Y')
+  REINPUT 'Sps or Gen Insured cannot be "C.A.P."'
+    MARK *#APPL-SRC
+END-IF
+*
+RESET #VAR-TERM  #VT-YEARS
+* IF  ((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z'))          /* YK2
+* AND (#PLAN = MASK (.NN))                               /* YK2
+IF F-LT2-TRUE(<#PLAN>)                                   /* YK2
+  MOVE TRUE TO #VAR-TERM
+  MOVE #PLAN-VT-N2 TO #VT-YEARS
+*
+  if #var-term                                            /* vt2 \/
+    move 'RG' to #var-term-cat
+  end-if                                                  /* vt2 /\
+  IF NOT #VAR-TERM-CAT = 'CP' OR = 'RG'
+    REINPUT USING HELP
+      MARK *#VAR-TERM-CAT
+  END-IF
+ELSE
+  IF #VAR-TERM-CAT NE ' '
+    REINPUT 'Variable Term Cat must be blank'
+      MARK *#VAR-TERM-CAT
+  END-IF
+*
+END-IF
+*
+COMPUTE #DIVIDEND = (#SCR-FACE * 1000) / 5000
+RESET #FLEX-PLAN
+IF  (#EXCH-1035 NE 0) OR (#LUMP-SUM NE 0)
+    OR (NOT #PLAN = ' ' OR = '7P' OR = '20' OR = '30' OR = 'OL' OR = 'SP'
+    OR = 'GPL' OR  = 'GP2'              /* DW1        /*TT1
+*    OR = '20P' OR = '30P' OR = 'LT' OR = 'RT')
+    OR = '20P' OR = '30P')                            /* YK2
+    OR (((#REM NE 0) OR (#SCR-FACE-DOLS NE 0))
+    AND (#PLAN NE 'GPL' AND #PLAN NE 'GP2'  ))          /*TT1      /* DW1
+* IF NOT #VAR-TERM
+  IF NOT FUNCTION-TERM-POLICY(<#PLAN>)
+*  AND NOT (IS-ANNUITY-LIFE(<#PLAN>))
+    MOVE TRUE TO #FLEX-PLAN
+  END-IF
+END-IF
+
+*
+IF #FLEX-PLAN
+*  IF #PLAN = 'SP' OR = 'AL'
+  IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG1
+    RESET #FLEX-YEARS
+  ELSE
+    IF   (#PLAN = MASK (N'P')) AND (#PLAN-A1 NE '0')
+      MOVE #PLAN-N1 TO #FLEX-YEARS
+    ELSE
+      IF (#PLAN = MASK (NN)) AND (#PLAN NE '00')
+        MOVE #PLAN-N2 TO #FLEX-YEARS
+      ELSE
+        REINPUT USING HELP
+          MARK *#PLAN
+      END-IF
+    END-IF
+  END-IF
+ELSE
+*   IF NOT #PLAN = 'OL' OR = '30' OR = '20' OR = '7P' OR = 'SP'
+*       OR = '30P' OR = '20P' OR = 'AL'                      /* YK2
+*       OR = 'GPL' OR = 'GP2'                       /*TT1   /* Gen Plus                       DW1
+*       AND NOT FUNCTION-TERM-POLICY(<#PLAN>)                  /* YK2
+  IF NOT ( #PLAN ='OL'
+      OR='30'
+      OR='20'
+      OR='7P'
+      OR='SP'
+      OR='30P'
+      OR='20P'
+      OR='GPL'
+      OR='GP2'
+      OR FUNCTION-TERM-POLICY (<#PLAN>)
+      OR IS-ANNUITY-LIFE (< #PLAN >) )
+    REINPUT USING HELP
+      MARK *#PLAN
+  END-IF
+END-IF
+*
+IF #PREM-RATING NE ' '
+  IF NOT #PREM-RATING = '1' OR = '2' OR = '3'
+    REINPUT 'Rating must be 1/2/3'
+      MARK *#PREM-RATING
+  END-IF
+*
+  IF (#PLAN = 'OL' OR = 'SP' OR = '20' OR ='30' OR = '7P')
+      OR (#PLAN-A1 = 'U') OR (#PLAN-A1 = 'S') OR #FLEX-PLAN   /* PM2  YK2
+    IGNORE
+  ELSE
+    REINPUT 'Rated Prem only valid for plans FLEX/OL/SP/U??'
+      MARK *#PLAN
+  END-IF
+END-IF
+*
+IF #EFF-DT NE MASK(MMDDYYYY)
+  REINPUT 'Invalid Eff Date; must be format MMDDYYYY'
+    MARK *#EFF-DT
+END-IF
+*
+COMPRESS #EFF-DT-CENT #EFF-DT-YY #EFF-DT-MM #EFF-DT-DD
+  INTO #EFF-YYYYMMDD-A LEAVING NO
+*
+MOVE #HOLD-TODAY-YYYYMMDD TO #WORK-DATE-YYYYMMDD
+SUBTRACT 4 FROM #WD-MM    /* DW
+*
+IF #WD-MM LT 1
+  ADD 12 TO #WD-MM
+  SUBTRACT 1 FROM #WD-YYYY
+END-IF
+*
+IF (#EFF-YYYYMMDD < #WORK-DATE-YYYYMMDD)
+    AND (#CONTINUE = ' ')
+  SET WINDOW 'EFF-DT-TST'    /* DW
+  RESET #MSG
+  INPUT TEXT #MSG MARK *#CONTINUE USING MAP 'C2012MNM'
+  IF NOT #CONTINUE = 'Y' OR = 'N'
+    MOVE 'Please enter "Y" or "N" to continue' TO #MSG
+    REINPUT #MSG MARK *#CONTINUE
+  END-IF
+  SET WINDOW OFF
+*
+  RESET #MSG
+  IF #CONTINUE = 'N'
+    MOVE 'AT' TO #CGA-SCR-COMMAND
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+MOVE #HOLD-TODAY-YYYYMMDD TO #WORK-DATE-YYYYMMDD
+MOVE 01 TO #WD-DD
+ADD 1 TO #WD-MM
+*
+IF #WD-MM = 13
+  MOVE 1 TO #WD-MM
+  ADD 1 TO #WD-YYYY
+END-IF
+*
+IF #EFF-YYYYMMDD > #WORK-DATE-YYYYMMDD
+  REINPUT 'Date greater than 1st of next month'
+    MARK*#EFF-DT
+END-IF
+*
+MOVE #EFF-YYYYMMDD TO #WORK-DATE-YYYYMMDD
+SUBTRACT #DOB-YYYYMMDD FROM #WORK-DATE-YYYYMMDD
+MOVE #WD-YYYY TO #ISS-AGE
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #PLAN = 'LT' AND #SMOKER EQ 'S' AND #ISS-AGE GT 49
+    IGNORE
+  WHEN #PLAN = 'LT' AND #SMOKER NE 'S' AND #ISS-AGE GT 59
+    IGNORE
+  WHEN #VAR-TERM AND #ISS-AGE GT 75
+    IGNORE
+  WHEN #PLAN = '20' OR = '30' OR = '7P' OR = 'LT' OR = 'RT'
+      AND #ISS-AGE GT 70 AND NOT #FLEX-PLAN
+    IGNORE
+  WHEN #PLAN = 'EZ' AND #ISS-AGE GE 75
+    IGNORE
+  WHEN NOT (#PLAN = 'RT' OR = 'LT')
+      AND #INSURED NE 'S' AND #CGA-ORIG-COMMAND = 'AI' OR = 'NM'
+*      AND #PLAN NE 'AL'
+      AND NOT IS-ANNUITY-LIFE (< #PLAN >) /* NG1
+      AND #ISS-AGE GT 80
+    IGNORE
+  WHEN #PLAN = 'AL' AND #ISS-AGE GT 99
+    IGNORE
+  WHEN #PLAN = 'AL2' AND #ISS-AGE GT 120  /* NG1
+    IGNORE
+*  WHEN #INSURED = 'S' AND #ISS-AGE GT 80 AND #PLAN NE 'AL'
+  WHEN #INSURED = 'S' AND #ISS-AGE GT 80
+      AND NOT IS-ANNUITY-LIFE (< #PLAN >) /* NG1
+    IGNORE
+  WHEN ANY
+    REINPUT 'Exceeds maximum age for this plan'
+      MARK *#DOB
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+IF  (NOT #INSURED = 'K' OR = 'G')
+    AND (#ISS-AGE LT 17)
+  REINPUT '17 is minimum MEMBER age'
+    MARK *#DOB
+END-IF
+*
+MOVE #EFF-YYYYMMDD TO #WORK-DATE-YYYYMMDD
+SUBTRACT 6 FROM #WD-MM
+IF #WD-MM LT 01
+  ADD 12 TO #WD-MM
+  SUBTRACT 1 FROM #WD-YYYY
+END-IF
+*
+IF   (#INSURED =  'K' OR = 'G')
+    AND (#PLAN NE 'GPL' AND #PLAN NE 'GP2')                                 /*TT1         /* DW1
+    AND (((#ISS-AGE GT 23) AND FUNCTION-GEN23-INSURE(<APPL-TRACK-V.MEMBER-CN>) = FALSE)        /* PM99
+    OR (#DOB-YYYYMMDD GE #WORK-DATE-YYYYMMDD))
+  REINPUT 'Gen Ins is for age 6 months thru age 23'
+    MARK *#DOB
+END-IF
+*
+MOVE #EFF-YYYYMMDD TO #WORK-DATE-YYYYMMDD /* Setup 15 days age test   /* DW1
+SUBTRACT 15 FROM #WD-DD
+IF #WD-DD LT 01
+  ADD 30 TO #WD-DD
+  SUBTRACT 1 FROM #WD-MM
+*
+  IF #WD-MM LT 1
+    ADD 12 TO #WD-MM
+    SUBTRACT 1 FROM #WD-YYYY
+  END-IF
+END-IF
+*
+IF #PLAN = 'EZ'
+    AND #INSURED = 'K' OR = 'G'          /* NG1
+  REINPUT 'EZ Term is not available for kids and grandkids'
+    MARK *#PLAN
+END-IF
+*
+IF  #PLAN = 'GPL'                        /* DW1
+  IF  (#ISS-AGE GT 12)
+      OR (#DOB-YYYYMMDD GE #WORK-DATE-YYYYMMDD)
+    REINPUT 'Gen Plus Ins is for age 15 days thru age 12'
+      MARK *#DOB
+  END-IF
+*
+  IF NOT #INSURED = 'K' OR = 'G'
+    REINPUT 'PLAN GPL only valid for GEN policies'
+      MARK *#PLAN
+  END-IF
+*
+  IF   (#SCR-FACE = 10 OR = 15 OR = 20 OR = 25 OR = 30)
+      AND (#SCR-FACE-DOLS = 0)
+    IGNORE
+  ELSE
+    REINPUT 'For PLAN GPL Face Amount must be 10/15/20/25/30 k'
+      MARK *#SCR-FACE
+  END-IF
+END-IF                                                     /* END DW1
+*
+IF  #PLAN = 'GP2'                                          /* TT1 BEGIN
+  IF  (#ISS-AGE GT 14)
+      OR ((#DOB-YYYYMMDD - 1) GE (#WORK-DATE-YYYYMMDD ))   /* TT1 :the -1 accounts for current day
+    REINPUT 'Gen Plus 2 Ins is for age 15 days thru age 14'
+      MARK *#DOB
+  END-IF
+*
+  IF NOT #INSURED = 'K' OR = 'G'
+    REINPUT 'PLAN GP2 only valid for GEN policies'
+      MARK *#PLAN
+  END-IF
+*
+  IF   (#SCR-FACE = 10 OR = 15 OR = 20 OR = 25 OR = 30 OR = 40 OR = 50)
+      AND (#SCR-FACE-DOLS = 0)
+    IGNORE
+  ELSE
+    REINPUT 'For PLAN GPL Face Amount must be 10/15/20/25/30/40/50 k'
+      MARK *#SCR-FACE
+  END-IF
+END-IF                                                     /* TT1 END
+*
+IF #FPF-START NE 0
+  IF #FPF-START NE MASK(MMDDYYYY)
+    REINPUT 'INVALID FPF START DATE; MUST BE FORMAT MMDDYYYY'
+      MARK *#FPF-START
+  END-IF
+*
+  #WORK-FPF-START-YYYY := #FPFS-YYYY-MDY                           /* PM11
+  #WORK-FPF-START-MM   := #FPFS-MM                                 /* PM11
+  #WORK-FPF-START-DD   := #FPFS-DD                                 /* PM11
+*                                                                  /* PM11
+  #WORK-DATE-YYYYMMDD  := #EFF-YYYYMMDD                            /* PM12
+**  IF #CAP-IND = 'Y' AND CAP-TYPE NE 'E'                            /* PM12 PM13
+**    SUBTRACT 1 FROM #WD-MM                                         /* PM12
+**    IF #WD-MM = 0                                                  /* PM12
+**      #WD-MM := 12                                                 /* PM12
+**      SUBTRACT 1 FROM #WD-YYYY                                     /* PM12
+**    END-IF                                                         /* PM12
+** END-IF                                                           /* PM12
+*
+  IF #WORK-FPF-START-YYYYMM NE #WORK-DATE-YYYYMM                   /* PM12
+    REINPUT 'FPF Start date must be the same as Policy Issue Date' /* PM11
+      MARK *#FPF-START                                               /* PM11
+  END-IF                                                           /* PM11
+END-IF
+*
+IF #FPF-END NE 0
+  IF #FPF-END NE MASK(MMDDYYYY)
+    REINPUT 'INVALID FPF END DATE; MUST BE FORMAT MMDDYYYY'
+      MARK *#FPF-END
+  END-IF
+*
+  #WORK-FPF-END-YYYY   := #FPFE-YYYY                               /* PM11
+  #WORK-FPF-END-MM     := #FPFE-MM                                 /* PM11
+  #WORK-FPF-END-DD     := #FPFE-DD                                 /* PM11
+*                                                                  /* PM11
+  IF #WORK-FPF-END-YYYYMM LT #WORK-FPF-START-YYYYMM                /* PM11
+    REINPUT 'FPF End date cannot be prior to FPF Start Date'       /* PM11
+      MARK *#FPF-END                                                 /* PM11
+  END-IF                                                           /* PM11
+*                                                                  /* PM11
+  IF #WORK-FPF-END-YYYYMM GT #EFF-YYYYMM + 000100                  /* PM11
+    SET WINDOW 'EFF-DT-TST'                                        /* PM11
+    RESET #MSG                                                   /* PM11
+    INPUT TEXT #MSG MARK *#CONTINUE USING MAP 'C2013MNM'         /* PM11
+    IF NOT #CONTINUE = 'Y' OR = 'N'                              /* PM11
+      MOVE 'Please enter "Y" or "N" to continue' TO #MSG         /* PM11
+      REINPUT #MSG MARK *#CONTINUE                               /* PM11
+    END-IF                                                      /* PM11
+    SET WINDOW OFF                                                 /* PM11
+*                                                                  /* PM11
+    RESET #MSG                                                     /* PM11
+    IF #CONTINUE = 'N'                                             /* PM11
+      #CGA-SCR-COMMAND := #CGA-ORIG-COMMAND                        /* PM11
+      FETCH 'G1000PXX'                                             /* PM11
+    END-IF                                                         /* PM11
+  END-IF                                                           /* PM11
+END-IF
+*
+IF #CGA-SCR-SUFFIX NE 'OVR'
+    AND #APPL-SRC = ' '
+  REINPUT 'Must have APPL SOURCE'
+    MARK *#APPL-SRC
+END-IF
+*
+IF NOT #SMOKER = 'N' OR = 'S'
+  REINPUT 'Invalid smoker flag; must be N or S'
+    MARK *#SMOKER
+END-IF
+*
+CALLNAT 'GMAXSXX'
+  #CGA-ORIG-COMMAND
+  #HOLD-MAX-FACE
+  #HOLD-MAX-FACE-TERM
+  #MAX-FACE
+  #MAX-FACE-TERM
+  #INSURED
+  #DOB-YYYYMMDD
+*
+MOVE EDITED #HOLD-MAX-FACE (EM=Z,ZZZ,ZZ9) TO #OVER-RIDE-MAX-TEXT             /* RE1 was ZZZ,ZZ9
+MOVE EDITED #HOLD-MAX-FACE-TERM (EM=Z,ZZZ,ZZ9) TO #OVER-RIDE-TERM-TEXT       /* RE1 was ZZZ,ZZ9
+COMPRESS '$' #OVER-RIDE-MAX-TEXT INTO #OVER-RIDE-MAX-TEXT LEAVING NO
+COMPRESS '$' #OVER-RIDE-TERM-TEXT INTO #OVER-RIDE-TERM-TEXT LEAVING NO
+*
+IF #FLEX-PLAN OR #VAR-TERM
+  IF  (#SCR-FACE LT 5)
+    REINPUT 'Face amount must be between $5k & $Max k'
+      MARK *#SCR-FACE
+  END-IF
+ELSE
+  IF #SCR-FACE-DOLS NE 0 and #PLAN ne 'GT1'                      /* vt3
+    REINPUT 'Only Flex-Prem Pols have variable face-amt'
+      MARK #SCR-FACE
+  END-IF
+*
+  if #PLAN ne 'GT1'                                              /* vt3
+    COMPUTE #DIVIDEND = #SCR-FACE / 5
+    IF   ((#REM NE 0) OR (#SCR-FACE LT 5))
+      REINPUT 'Face amount must be multiple of $5k between $5k & $Max k'
+        MARK *#SCR-FACE
+    END-IF
+  end-if                                                         /* vt3
+END-IF
+*   edits below are also in C2151spo/C1000pat/d3185sba
+IF #VAR-TERM
+  IF #ISS-AGE LT 18
+    REINPUT '18 is minimum Iss Age for Variable Term'
+      MARK *#DOB
+  END-IF
+*
+  IF #PLAN-A1 = 'U' OR #PLAN-A1 = 'S' /* standard   YK2
+    IF (#PLAN-VT-N2 LT 5) OR (#PLAN-VT-N2 GT 65)
+      REINPUT 'VAR TERM Term must be between 05 and 65'
+        MARK *#PLAN
+    END-IF
+  ELSE
+    IF #PLAN-A1 = 'X'  /* standard rider
+      IF (#PLAN-VT-N2 LT 11) OR (#PLAN-VT-N2 GT 55)
+        REINPUT 'VAR TERM Rider Term must be between 11 and 55'
+          MARK *#PLAN
+      END-IF
+    ELSE
+      IF #PLAN-A1 = 'V' OR = 'W' OR = 'R' OR = 'Q'  /* SELECT/ SUPER SELECT   YK2
+        IF (#PLAN-VT-N2 LT 5) OR (#PLAN-VT-N2 GT 30)  /* was 25
+          REINPUT 'VAR TERM Term must be between 05 and 30'
+            MARK *#PLAN
+        END-IF
+      ELSE                        /* Select/super select rider
+        IF (#PLAN-VT-N2 LT 11) OR (#PLAN-VT-N2 GT 30)   /* wsa 30
+          REINPUT 'VAR TERM Term must be between 11 and 30'
+            MARK *#PLAN
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #PLAN-A1 = 'U' OR = 'V' OR = 'W' OR = 'S' OR = 'R' OR = 'Q'  /* var term    /* YK2
+    IF (#ISS-AGE + #PLAN-VT-N2 GT 85)
+      REINPUT 'VAR TERM Iss Age + Term cannot exceed 85'
+        MARK *#PLAN
+    END-IF
+  ELSE           /* var term RIDER
+    IF (#ISS-AGE + #PLAN-VT-N2 GT 75)
+      REINPUT 'VAR TERM Rider Iss Age + Term cannot exceed 75'
+        MARK *#PLAN
+    END-IF
+  END-IF
+*
+  IF (#PLAN-A1 = 'W' OR = 'Z' OR = 'Q')  /* super select         /* YK2
+      AND (#SMOKER = 'S')
+    REINPUT 'Super Select invalid for Smokers'
+      MARK *#PLAN
+  END-IF
+END-IF
+*     FACEMAX
+IF #CGA-ORIG-COMMAND = 'AI'
+    AND #APPL-SRC = 'TU'
+  IGNORE
+ELSE
+  IF #TOT-FACE + (#SCR-FACE * 1000) + #SCR-FACE-DOLS GT #HOLD-MAX-FACE
+      AND NOT #OVER-RIDE-MAXIMUM = 'OVER'
+    MOVE TRUE TO #MAXIMUM
+    MOVE 'Exceeds Maximum Insurance of' TO #OVER-RIDE-MESSAGE
+    COMPRESS #OVER-RIDE-MESSAGE #OVER-RIDE-MAX-TEXT
+      '- Please enter your Auth Code to continue' INTO #OVER-RIDE-MESSAGE
+    REINPUT #OVER-RIDE-MESSAGE
+      MARK *#OVER-RIDE-MAXIMUM
+  END-IF
+*
+* IF  (((#PLAN = 'RT' OR = 'LT') OR (#VAR-TERM))              /* YK2
+  IF (FUNCTION-TERM-POLICY(<#PLAN>)                             /* YK2
+      AND #TOT-FACE-TERM + (#SCR-FACE * 1000) + #SCR-FACE-DOLS
+      GT #HOLD-MAX-FACE-TERM)
+    IF #MAXIMUM
+      RESET #OVER-RIDE-MAXIMUM #MAXIMUM
+    END-IF
+*
+    IF NOT #OVER-RIDE-MAXIMUM = 'OVER'
+      MOVE 'Exceeds Max Term Insurance of' TO #OVER-RIDE-MESSAGE
+      COMPRESS #OVER-RIDE-MESSAGE #OVER-RIDE-TERM-TEXT
+        '-Please enter your Auth Code to continue' INTO #OVER-RIDE-MESSAGE
+      REINPUT FULL WITH TEXT #OVER-RIDE-MESSAGE
+        MARK *#OVER-RIDE-MAXIMUM
+    END-IF
+  END-IF
+END-IF
+*
+IF (#TOT-FACE + (#SCR-FACE * 1000) + #SCR-FACE-DOLS GT #MAX-FACE)
+*    AND (#PLAN NE 'AL')  /* a/o 6/22/2006 AL has no max
+    AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* AL has no max NG1
+  RESET #OVER-RIDE-MAXIMUM
+  REINPUT FULL 'Total Face Amount will exceed maximum insurance'
+    MARK *#SCR-FACE
+END-IF
+*
+* IF  (#PLAN = 'RT' OR = 'LT') OR #VAR-TERM                   /* YK2
+IF FUNCTION-TERM-POLICY(<#PLAN>)                              /* YK2
+  IF #TOT-FACE-TERM + (#SCR-FACE * 1000) + #SCR-FACE-DOLS
+      GT #MAX-FACE-TERM
+    RESET #OVER-RIDE-MAXIMUM
+    REINPUT FULL 'Total Face Amount will exceed maximum TERM insurance'
+      MARK *#SCR-FACE
+  END-IF
+END-IF
+*
+IF   (#SCR-FACE = 5)
+    AND (#TOT-FACE LT #MAX-FACE - 5000)
+  REINPUT 'Face $5K only valid if cur Face = $Max minus $5,000'
+    MARK*#SCR-FACE
+END-IF
+*
+IF   (#INSURED = 'K' OR = 'G')
+* AND ((#PLAN = 'RT' OR = 'LT') OR #VAR-TERM)                                    /* YK2
+    AND FUNCTION-TERM-POLICY(<#PLAN>)                                               /* YK2
+    AND ((#ISS-AGE LT 18) OR (#ISS-AGE GT 23))   /* 4/22/2005
+  IF #ISS-AGE GT 23 AND FUNCTION-GEN23-INSURE(<APPL-TRACK-V.MEMBER-CN>) = FALSE  /* PM99
+    REINPUT 'Term only valid for "GENERATION" age 18 thru 23'
+      MARK *#PLAN
+  END-IF                                                                         /* PM99
+END-IF
+*
+IF  ((#PLAN = 'RT' OR = 'LT') OR #VAR-TERM)
+    AND (#SCR-FACE LT 50)
+  REINPUT 'RT/LT minimum is $50,000'
+    MARK *#SCR-FACE
+END-IF
+*
+IF  (#PLAN = 'EZ')                                                               /* YK3
+    AND (#SCR-FACE < 10)                                                         /* YK3
+  REINPUT 'EZ minimum is $10,000'                                                /* YK3
+    MARK *#SCR-FACE                                                              /* YK3
+END-IF                                                                           /* YK3
+*
+IF #CGA-ORIG-COMMAND = 'NM'
+  if #PLAN = 'GT1'                                                      /* vt3  \/
+    if #mode ne 'B'
+      reinput 'Mode must be B'
+        mark *#mode
+    end-if
+  else                                                                  /* vt3  /\
+    IF NOT (#MODE = 'G' OR = 'A' OR = 'S' OR = 'Q' OR = 'M' OR = '1'
+        OR = '2' OR = '4' OR = '0')
+      REINPUT 'Mode must be G,A,S,Q,M,0,1,2 or 4'
+        MARK *#MODE
+    END-IF
+  end-if                                                                /* vt3
+ELSE
+  if #PLAN = 'GT1'                                                      /* vt3  \/
+    if #mode ne 'B'
+      reinput 'Mode must be B'
+        mark *#mode
+    end-if
+  else                                                                  /* vt3  /\
+    IF NOT (#MODE = 'G' OR = 'A' OR = 'S' OR = 'Q' OR = 'E' OR = 'M'
+        OR = '1' OR = '2' OR = '4' OR = '0')
+      REINPUT 'Mode must be G,A,S,Q,M,E,0,1,2 or 4'
+        MARK *#MODE
+    END-IF
+  end-if                                                                /* vt3
+*
+  IF   (#MODE = 'E')
+      AND (#PAD-CODE NE 'E')
+    REINPUT 'Addl pols cannot be mode "E" unless PAD already going'
+      MARK *#MODE
+  END-IF
+END-IF
+*
+IF #CAP-IND = 'Y'
+  IF #SCR-FACE LT 10
+    REINPUT '"CAP"s must be minimum of $10,000 Face'
+      MARK *#SCR-FACE
+  END-IF
+*
+  IF  (#MODE NE 'G' AND CAP-TYPE = 'G')         /* PM13
+    REINPUT '"CAP"s must be mode "G"'
+      MARK *#MODE
+  END-IF
+END-IF
+*
+RESET #TOT-GPL                          /* DW1
+IF #CGA-ORIG-COMMAND = 'AI'
+  FOR #I1 1 TO 9
+    IF NEW-V.PLAN (#I1) = 'GPL' OR = 'GP2'    /* TT1
+        AND NEW-V.STATUS (#I1) = 'D'          /* YK1
+      ADD NEW-V.FACE-AMOUNT (#I1) TO #TOT-GPL
+    END-IF
+  END-FOR
+*
+  IF   (#PLAN = 'GPL')
+      AND (#TOT-GPL + (#SCR-FACE * 1000)) GT 30000
+    REINPUT 'Total GPL Face Amount cannot exceed $30,000'
+      MARK *#SCR-FACE
+  END-IF
+*
+  IF   (#PLAN = 'GP2')                                     /* TT1 BEGIN
+      AND (#TOT-GPL + (#SCR-FACE * 1000)) GT 50000
+    REINPUT 'Total GP2 Face Amount cannot exceed $50,000'
+      MARK *#SCR-FACE
+  END-IF                                                   /* TT1 END
+END-IF                                     /* END DW1
+*
+END-SUBROUTINE
+*
+* * * * *
+DEFINE SUBROUTINE FBR-EDITS
+* * * * *
+*
+IF #HAS-FBR
+  MOVE NEW-V.ID-NUMBER TO #ID
+  COMPUTE #AT-RID-ATTACH-FAC-AMT = #SCR-FACE * 1000
+  MOVE #PLAN TO #AT-RID-ATTACH-PLAN
+*
+  FOR #I1 1 TO 5
+    MOVE #SCR-FBR-PLAN   (#I1) TO #AT-RID-PLAN (#I1)
+    MOVE #SCR-FBR-ATT-POL(#I1) TO #AT-RID-ATTACH-ISS-DT (#I1)
+  END-FOR
+*
+  CALLNAT 'GRIDCSXX' USING
+    #ID
+    #AT-RID-ATTACH-FAC-AMT
+    #AT-RID-ATTACH-PLAN
+    #AT-RID-PLAN            (1:5)
+    #AT-RID-ATTACH-ISS-DT   (1:5)
+    #AT-TOT-FBR-PREM
+    #EX-FBR-PREM-BY-LINE    (1:9)
+    #EX-SPS-DB-BY-LINE      (1:9)
+    #EX-DEP-DB-BY-LINE      (1:9)
+    #EX-EACH-DEP-DB-BY-LINE (1:9)
+    #NUM-ELIG-CHILDREN
+    #NUM-ELIG-CHILDREN-UNDER-6-MON
+    #TOT-CHILD-DB
+    #RID-TEXT
+*
+  FOR #I1 1 TO 5
+    MOVE #AT-RID-PLAN (#I1)          TO #SCR-FBR-PLAN   (#I1)
+    MOVE #AT-RID-ATTACH-ISS-DT (#I1) TO #SCR-FBR-ATT-POL(#I1)
+  END-FOR
+*
+  IF #RID-TEXT NE ' '
+    REINPUT #RID-TEXT
+      MARK *#SCR-FBR-PLAN (1)
+  END-IF
+END-IF
+*
+END-SUBROUTINE

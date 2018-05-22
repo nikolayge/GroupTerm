@@ -1,0 +1,178 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* NAME         : F-PREMS                                               *
+* AUTHOR       : Copyright: Electronic Data Systems - An HP company    *
+* DESCRIPTION  : Return Annual or Monthly Premium Amount               *
+************************************************************************
+*                                                                      *
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE        TAG     REASON                                    *
+* PAM    02/26/2009  None    Program Written                           *
+* YAK    09/26/2012  YK1     Replace with function for Term II plans   *
+* NGG    20130419    NG1     Stability Project for $1M Policy          *
+* TMT    12/17/2013  TT1     GP2 STABILITY PROJECT                     *
+************************************************************************
+*
+DEFINE FUNCTION FUNCTION-PREMIUM RETURNS (N7.2)
+DEFINE DATA
+PARAMETER
+1 #PLAN              (A3)
+1 REDEFINE #PLAN
+ 2 #PLAN-A1          (A1)
+ 2 #PLAN-A2          (A1)
+ 2 #PLAN-A3          (A1)
+1 REDEFINE #PLAN
+ 2 #PLAN-N1          (N1)
+ 2 #PLAN-REST        (A2)
+1 REDEFINE #PLAN
+ 2 #PLAN-N2          (N2)
+ 2 #PLAN-REST-2      (A1)
+1 #FACE-AMOUNT       (N7.2)   /* NG1
+1 #SMOKER-FLAG       (A1)
+1 #DOB               (N8)
+1 #SEX               (A1)
+1 #1035-EXCHANGE     (N7.2)
+1 #LUMP-SUM          (N7.2)
+1 #RATING-CODE       (A1)
+1 #CALC-DATE         (N8)
+1 #CGA-ORIG-COMMAND  (A2)
+1 #FUNCTION-CODE     (A1)
+*
+LOCAL
+1 #FLEX-POLICY       (L)
+1 #PAYS-DUES         (L)
+1 #FACE-9            (N7.2)
+1 #YYYYMMDD          (N8)
+1 REDEFINE #YYYYMMDD
+ 2 #YYYY             (N4)
+ 2 #MMDD             (N4)
+1 #APREM             (N6.2)
+1 #DIVIDEND          (N5.4)
+1 REDEFINE #DIVIDEND
+ 2 #DIV-5            (N5)
+ 2 #REM              (N4)
+1 #FLEX-NUM-YEARS    (N3)
+1 #FLEX-DUES-PMT     (N3.2)
+1 #ISS-AGE           (N2)
+1 #CGA-SCR-ID        (N9)
+1 #CGA-SCR-SUFFIX    (A3)
+1 #CGA-SCR-COMMAND   (A2)
+1 #CGA-CLERK         (A3)
+1 #NAME              (A25)
+*
+END-DEFINE
+********************************************************************************
+*
+PERFORM CALC-ISS-AGE
+*
+IF #SMOKER-FLAG = 'N' OR = ' '
+  MOVE 'N' TO #SMOKER-FLAG
+ELSE
+  MOVE 'S' TO #SMOKER-FLAG
+END-IF
+*
+RESET #FLEX-POLICY #APREM #PAYS-DUES
+COMPUTE #DIVIDEND = #FACE-AMOUNT / 5000
+*
+IF (#1035-EXCHANGE NE 0) OR (#LUMP-SUM NE 0)
+ OR (NOT #PLAN = ' ' OR = '7P' OR = '20' OR = '30' OR = 'OL' OR = 'SP'
+            OR = 'GPL' OR = 'GP2' OR = 'RT' OR = 'LT' OR = 'EZ') /* YK1      /*TT1
+ OR (#REM NE 0)
+* IF (#PLAN-A1 LT 'U') OR (#PLAN-A1 GT 'Z')           /* YK1
+  IF NOT (F-LT2-TRUE(<#PLAN>))                        /* YK1
+    MOVE TRUE TO #FLEX-POLICY
+  END-IF
+END-IF
+*
+IF #FLEX-POLICY
+  PERFORM CALC-FLEX-PREM
+ELSE
+  PERFORM CALC-PREMIUM
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #FUNCTION-CODE = 'A'
+    FUNCTION-PREMIUM   := #APREM
+  WHEN #FUNCTION-CODE = 'M'
+*   IF #PLAN = 'SP' OR = 'AL'
+    IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)
+      FUNCTION-PREMIUM := 0
+    ELSE
+      FUNCTION-PREMIUM := #APREM / 12
+    END-IF
+  WHEN NONE
+    RESET FUNCTION-PREMIUM
+END-DECIDE
+*
+********************************************************************************
+DEFINE SUBROUTINE CALC-FLEX-PREM
+********************************************************************************
+*
+IF #PLAN = 'OL'
+  MOVE 99 TO #FLEX-NUM-YEARS
+ELSE
+* IF #PLAN = 'AL'
+  IF IS-ANNUITY-LIFE (< #PLAN >)
+    MOVE 999 TO #FLEX-NUM-YEARS
+  ELSE
+    IF (#PLAN NE ' ') AND (#PLAN NE 'SP')
+      IF #PLAN-A2 = 'P'
+        MOVE #PLAN-N1 TO #FLEX-NUM-YEARS
+      ELSE
+        MOVE #PLAN-N2 TO #FLEX-NUM-YEARS
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+CALLNAT 'C1602SCO'
+  #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX #CGA-ORIG-COMMAND #CGA-CLERK
+  #PAYS-DUES #NAME #DOB #SMOKER-FLAG #SEX #LUMP-SUM #1035-EXCHANGE #FACE-AMOUNT
+  #FLEX-NUM-YEARS #APREM #FLEX-DUES-PMT #ISS-AGE #FLEX-POLICY #RATING-CODE
+  #PLAN   /* NG99
+*
+END-SUBROUTINE
+*
+********************************************************************************
+DEFINE SUBROUTINE CALC-PREMIUM
+********************************************************************************
+*
+#FACE-9 := #FACE-AMOUNT
+DECIDE FOR FIRST CONDITION
+  WHEN #RATING-CODE = '1'
+    #CGA-SCR-SUFFIX := 'SB1'
+  WHEN #RATING-CODE = '2'
+    #CGA-SCR-SUFFIX := 'SB2'
+  WHEN #RATING-CODE = '3'
+    #CGA-SCR-SUFFIX := 'SB3'
+  WHEN NONE
+    RESET #CGA-SCR-SUFFIX
+END-DECIDE
+*
+CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX
+     #PLAN #ISS-AGE #APREM #CALC-DATE #SMOKER-FLAG #FACE-9 #SEX
+*
+END-SUBROUTINE
+*
+********************************************************************************
+DEFINE SUBROUTINE CALC-ISS-AGE
+********************************************************************************
+*
+RESET #ISS-AGE
+#YYYYMMDD := #CALC-DATE
+SUBTRACT #DOB FROM #YYYYMMDD
+IF #YYYY GT 99
+  #ISS-AGE := 99
+ELSE
+  #ISS-AGE := #YYYY
+END-IF
+*
+END-SUBROUTINE
+*
+END-FUNCTION
+END

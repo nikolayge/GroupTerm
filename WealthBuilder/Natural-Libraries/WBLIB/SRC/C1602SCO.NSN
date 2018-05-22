@@ -1,0 +1,1832 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: C1602SCO    ** PROCESS CALL TO AOCX2V6A to get mort-rate
+*     & calculate a premium for a flexible plan & check MEC limit
+*   CALLNAT'D FROM C2140PPO/C1000PAT/C2000PNM/C2100PAI/C2V12CVP/C2V11CVP
+*                  c2v50pvp and others
+* There a 4 types of calcs for FLEX
+* AAFMAA gives me this and I calc >>>>>>>>> THIS
+* 1. 0 YRS/1035 amt or addl or both         face
+* 2. yrs/1035 amt or addl or both/mon prem  face
+* 3. yrs/face/1035 amt or addl or both      mon prem
+* 4. 0 yrs/face/1035 amt or addl or both    possible addl amt needed
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    04132004  PM1     Changed 1035 exchange and lump sum fields   *
+*                          to 2 decimal places per Rick Browett.       *
+*                                                                      *
+* PAM    05102004  PM2     Changed premium rating calculations for     *
+*                          1035 exch and lump sum pmt policies per     *
+*                          Rick Browett.                               *
+* PAM    06012004  PM3     Added ability to bypass Trade-Up screen     *
+*                          on existing applications per Don Wingert /  *
+*                          Clifton Brown.                              *
+* PAM    09022004  PM4     Increased field size from 5.2 to 6.2.       *
+* PAM    10122004  PM5     Added AT's to trade-up logic for maximum    *
+*                          Face Value.                                 *
+* PAM    02092005  PM6     Expand lump sum payments to 6.2             *
+* DRW    02222005  DW7     ADD AL (ANNUITY LIFE) PROCESSING            *
+* DRW    02224005  DW8     Call GANNUSXX for Annuity Calc              *
+* DRW    03214005  DW9     Fix age Calc for Gannusxx                   *
+* DRW    05152005  DW10    Add face Amt & TPP linkage to CVALUSXX      *
+* DRW    04292005  DW11    Add DOB processing to GMAXSXX to CVALUSXX   *
+* DRW    05032005  DW12    Allow 1035 exch amt in a AL policy          *
+* DRW    05132005  DW13    Use 999 to indicate AL in Num of years      *
+* DRW    05162005  DW14    Add SEX to GPREMSXX linkage                 *
+* DRW    03072006  DW15    Include 1035 exch in Amt to Annuitize       *
+* DRW    04242006  DW16    Allow only OL/AL/PUSP if age 70 to 80       *
+* DRW    08302006  DW17    Add line to FLEX-POLICY Test                *
+* SAG    06062006  RH1     AB - Replace CALL to Cobol with CALLNAT to  *
+*                          Natural                                     *
+* DRW    10172006  DW18    Replace CALLNAT to AOCX2V6A/B with code     *
+* DRW  08/31/2008  DW19    Gen Plus Processing                         *
+* DRW  02/19/2009  DW20    Add new MECC tables for pols issued after   *
+*                          1/1/2009 - never used - didn't want to lose *
+*                          Don's unused logic                          *
+* RSE  10/01/2009  RE1     Change PROCESS-IND logic for Unification    *
+* bz   11/19/2009  bz1     Remove Re1. Unification: Identify SAS Only  *
+* PAM  06/02/2010  PM21    Lock number of years for apps processing AL *
+*                          and removed BZ1                             *
+* NGG  08/08/2012  NG1     Joint and Survivor Annuity Option           *
+* NGG    20130419  NG2     Stability Project for $1M Policy            *
+* JNT  10/30/2013  JT1     1M Policy Support                           *
+* TMT  01/16/2014  TT1     GP2 POLICY SUPPORT                          *
+* NGG  12/08/2014  NG3     Annuity life 2                              *
+* NGG  12/08/2014  NG4     Annutization new 3.5 percent                *
+* NGG  01/14/2016  NG5     VAWL version 4                              *
+* vxt  01/30/2017  vt1     Ticket 2291 - fix for specified rating      *
+************************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 #CGA-SCR-COMMAND    (A2)
+1 #CGA-SCR-ID         (N9)      /* used to tell AI which pols were traded up
+1 REDEFINE #CGA-SCR-ID
+  2 #CGA-SCR-ID-A-1RST (A3)
+  2 #CGA-SCR-ID-A      (A6)
+1 #CGA-SCR-SUFFIX     (A3)
+1 #CGA-ORIG-COMMAND   (A2)
+1 #CGA-CLERK          (A3)
+*
+1 #PAYS-DUES           (L)
+1 #NAME                (A25)
+1 #DOB                 (N8)
+1 #SMOKER-FLAG         (A1)
+1 #SEX                 (A1)     /* DW14
+1 #LUMP-PMT            (N7.2)   /* should not include 1035 amt    /* PM6   /* JT1
+1 #1035-EXCH-AMT       (N7.2)                                              /* JT1
+1 #DESIRED-FACE        (N7.2)   /* NG2
+1 REDEFINE #DESIRED-FACE
+  2 #DES-FACE-1ST-3   (N4)
+  2 #DES-FACE-LST-3   (N3)
+  2 #DES-FACE-CENTS   (N2)
+1 #DESIRED-YEARS       (N3)
+1 REDEFINE #DESIRED-YEARS
+  2 #DESIRED-YEARS-FILL (A1)
+  2 #DESIRED-YEARS-2A   (A2)
+*
+1 #ANN-PREM      (N7.2)         /* also used for tot 1-time pmt            /* JT1
+1 REDEFINE #ANN-PREM
+  2 #ANN-PREM-DOLS  (N7)
+1 #DUES-PMT      (N3.2)
+1 #PREM-AGE      (N2)
+1 #FLEX-POLICY   (L)            /* to indicate if a flex pol
+1 #PREM-RATING   (A1)
+PARAMETER                       /* NG3
+1 #PLAN-CODE (A3) OPTIONAL
+*
+LOCAL USING ATHISMTD            /* DW18
+LOCAL
+1 #SEGMENT          (I2)        /* NG5 Start
+1 #DY-CALCULATED    (N3)
+1 #BEYONDAGE        (N3)
+1 #BA-MESSAGE       (A45) INIT <'Payment period is beyond age'>
+1 #CV-DY            (C)
+1 #VERSION  (A1)
+1 X       (P7.6)
+1 Y       (P7.6)
+1 #VER-DATE        (N8) CONST <20151231>
+1 BLANK            (A1) CONST <' '>
+1 #ADJ-FACE        (N7.2)
+*                               /* NG5 End
+1 LS-DOB            (A8) 1 redefine LS-DOB        /* NG1  Start
+  2 #-MMDD          (N4)
+  2 #-YYYY          (N4)
+1 #LS-DOB           (N8) 1 redefine #LS-DOB
+  2 #LS-YYYY        (N4)
+  2 #MMDD           (N4)
+1 LS-Option         (A1)
+1 Gender            (A1/2)
+1 Age               (N4/2)
+1 Annuity-factor    (N4.5)
+1 Expectancy-amount (N7.2)
+1 #CO-annuitant     (A23)
+*                                                 /* NG1  End
+1 #SM-X       (I2)              /* DW18
+1 #ATT-XX     (I2)
+1 #ISS-X      (I2)
+*
+1 #OL     (L)                   /* DW16
+1 #AMT-TO-ANNUI  (N7.2)         /* NG2
+1 #MEC-PREM   (N7.2)            /* DW12
+1 #AGE      (N4)
+1 #BOP-ANNUITIZE (N7.2)
+1 #BOP-SEX     (A1)
+1 #BOP-BENE-AGE(N4)
+*
+1 #BOP-BENE-A  (N7.2)
+1 #BOP-BENE-B  (N7.2)
+1 #BOP-BENE-C  (N7.2)
+1 #BOP-RESV-AMT-A (N9.2)
+1 #BOP-RESV-AMT-B (N9.2)
+1 #BOP-TAXBL-PCT-A  (N2.7)
+1 #BOP-TAXBL-PCT-B  (N2.7)
+1 #BOP-TAXBL-AMT-A  (N7.2)
+1 #BOP-TAXBL-AMT-B  (N7.2)
+1 #BOP-TAXBL-MON-A  (N7.2)
+1 #BOP-TAXBL-MON-B  (N7.2)
+*
+1 #SVC-FEE-SP (N3.2) INIT <450.00>
+1 #SVC-FEE-2P (N2.2) INIT <18.50>
+1 #SVC-FEE-3P (N2.2) INIT <12.50>
+1 #SVC-FEE-4P (N1.2) INIT <9.50>
+1 #SVC-FEE-5P (N1.2) INIT <7.50>
+1 #SVC-FEE-6P (N1.2) INIT <6.50>
+1 #SVC-FEE-7P (N1.2) INIT <6.00>
+1 #SVC-FEE-10 (N1.2) INIT <4.50>
+1 #SVC-FEE-20 (N1.2) INIT <3.00>
+1 #SVC-FEE-30 (N1.2) INIT <2.50>
+1 #SVC-FEE-OL (N1.2) INIT <2.00>
+1 #SVC-FEE-TM (N1.2) INIT <2.00>
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 APPL-SOURCE
+  2 SSN
+  2 INTRO-FLAG
+  2 CONTACT-ID
+  2 POLICY-VERSION
+  2 SEX
+  2 SMOKER-FLAG
+  2 RATE-DATE  (N8)
+*
+1 OBSOLETE-STATUS-FIELDS     /* NG2
+  2 DATE-OF-BIRTH (N8)
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 PROCESS-IND
+  2 INTRO-FLAG
+  2 C*ACTIVE-SEGMENTS (N2)
+  2 STATUS              (9)
+  2 PLAN                (9)
+  2 REDEFINE PLAN
+    3 #PLAN-OCC   (9)
+      4 PLAN-1A  (A1)
+      4 PLAN-2A  (A2)
+  2 VERSION             (9)
+  2 PAY-STATUS          (9)
+  2 X-FIRST-PLACE-FEE   (9)
+  2 X-BILL-ADJUST       (9)
+  2 MODE                (9)
+  2 TOT-PREMIUMS-PAID   (9)
+  2 FACE-AMOUNT         (9)
+  2 MONTH-ALLOC-AMT     (9)
+  2 ANNUAL-PREM         (9)
+  2 ISSUE-DATE          (9)
+  2 COST-BASIS          (9)
+  2 PAID-UP-DATE        (9)
+  2 PAID-TO-DATE        (9)
+  2 REDEFINE PAID-TO-DATE
+    3 PAID-TO-DATE-OCC       (9)
+      4 PAID-TO-DATE-YYYYMM  (N6)
+      4 REDEFINE PAID-TO-DATE-YYYYMM
+        5 PAID-TO-DATE-YYYY  (N4)
+        5 PAID-TO-DATE-MM    (N2)
+      4 PAID-TO-DATE-DD      (N2)
+*
+1 #TU-POL-SEL         (N9)
+1 REDEFINE #TU-POL-SEL
+  2 #TU-POL-SELECT   (N1/9) /* used to tell AI which pols were traded up
+1 #I1      (I2)
+1 #I2      (I2)
+1 J        (I2)
+1 #AT-TU   (L)
+1 #FOUND-ST (L)
+1 #FOUND-TU-SEL  (L)
+1 #SCR-TU-SEL  (A1/4)
+1 #SCR-TU-POL-SEL  (A1/9)
+1 #SCR-TU-ISS-DT   (A10/9)
+1 #SCR-TU-CSV      (A10/9)
+1 #SCR-TU-ANN-PRM  (A10/9)
+1 #SCR-TU-POL-CV   (C/9)
+1 #LOWEST-X    (N2)
+1 #LOWEST-CSV  (N7.2)
+1 #LOWEST-PREM (N7.2)  /* ng2
+1 #SEL-X       (I2)
+1 #NUM-X       (I2)
+1 #TU-NEW-FACE (N6)
+1 #CSV-TO-USE   (N7.2)
+1 #PREM-TO-USE  (N6.2)
+1 #PREM-TO-USE-MON  (N6.2)
+1 #MONS-LEFT        (N5)
+1 #YRS-LEFT         (N3)
+1 #REMAIN-PREMS (N7.2/9)
+1 #TOT-REMAIN-PREMS (N7.2)
+1 #NUM-MONS-REMAIN (N5)
+*
+1 #AS-OF-DT   (N8)
+1 #LOAN-BAL   (N7.2/9)
+1 #LOAN-BAL-2 (N7.2/9)
+1 #ACC-INT    (N7.2/9)
+1 #ACC-INT-2  (N7.2/9)
+1 #CSV        (N7.2/9)
+1 #CVALUE     (N7.2/9)
+1 #LVALUE     (N7.2/9)
+1 #MCSV       (N7.2/9)
+1 #DB         (N7.2/9)
+1 #ANN-PREMIUM (N7.2/9)
+1 #FACE-AMT    (N7.2/9)  /* DW10
+1 #TPP         (N7.2/9)  /* DW10
+*
+1 #TRADE   (L)
+1 #CURR-DB-DISP  (A12)
+1 #INCR   (N1.3)
+1 #MON-X-12      (P7.2)
+1 #MAX-FACE-TOTAL           (P7.2)
+1 #MAX-FACE-TERM            (P7.2)
+1 #OVERRIDE-MAX-FACE-TOTAL  (P7.2)
+1 #OVERRIDE-MAX-FACE-TERM   (P7.2)
+1 #TEXT                (A78)
+1 #DESIRED-MON-PREM    (N4.2)
+1 #WHOLE-DOLLARS      (N6)
+1 #SCN-FACE           (N7)
+1 #SCN-1035-EXCH      (N7.2)                                      /* NG2
+1 #SCN-LUMP-SUM       (N7.2)                                      /* NG2
+1 #CALC-FAC-AMT-TEXT  (A32)
+1 #HIGH-FACE          (P7.2)                                      /* JT1
+1 #LOW-FACE           (P7.2)                                      /* JT1
+1 #ERR-MSG            (A77)
+1 #PREM-MSG-1         (A77)
+1 #PREM-MSG-2         (A77)
+1 #EXCESS-PMT-MSG     (A77)
+1 #MEC-TEST-MSG       (A77)
+1 #MEC-TEST-MSG-2     (A77)
+1 #1035-PCT           (A7)
+1 #AMT-X1             (A10)
+1 #AMT-X2             (A10)
+1 #AMT-X3             (A10)
+1 #AMT-X4             (A6)
+1 #AMT-X5             (A10)
+1 #AMT-X6             (A10)
+1 #TOT-DUE            (P6.2)
+1 #DUES-DISP-3        (A3)
+1 #DUES-DISP-6        (A6)
+1 #PREM-DISP-7        (A9)                                        /* JT1
+1 #PREM-DISP-10       (A10)
+1 #1035-PRMS-TO-DATE  (P7.6)            /* NG2
+1 #MAX-7-PAY-DIFF     (P7.2)
+1 #MAX-7-PAY          (P7.2)                                           /* PM4
+1 #1035-ADJ           (P0.6)
+1 #AGE-X              (I2)
+1 #TOT-LUMP-PMT       (N7.2)           /* NG2
+1 REDEFINE #TOT-LUMP-PMT
+  2 #TOT-LUMP-PMT-DOLS  (N7)
+1 #ADDL-LUMP-PMT (N7.2)                /* NG2
+1 #MORT-RATE    (P3.2)
+1 #ATT-AGE (P3/101)
+1 #COI     (P2.3/101)
+1 #QX      (P3.7/101)
+1 #LX      (P8/101)
+1 #DX-X    (P8/101)
+1 #DX      (P8/101)
+1 #NX      (P9/101)
+1 #PV      (P9.7)
+1 #INTRO-FLAG (A1)
+1 #AL-CV      (C)            /* PM21
+*
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM    (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY      (N4)
+    3 #MM        (N2)
+  2 #DD        (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A    (A4)
+  2 #MMDD-A    (A4)
+  2 REDEFINE #MMDD-A
+    3 #MM-A     (A2)
+    3 #DD-A     (A2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMMDD-A  (A8)
+*
+1 #SCN-AOD-YYYYMMDD (N8)
+1 #SCN-AS-OF-DT    (A8)
+1 REDEFINE #SCN-AS-OF-DT
+  2 #SCN-AOD-N      (N8)
+1 REDEFINE #SCN-AS-OF-DT
+  2 #SCN-AOD-MMDD   (A4)
+  2 #SCN-AOD-YYYY   (A4)
+*
+1 #SCN-DOB         (A8)
+1 REDEFINE #SCN-DOB
+  2 #SCN-DOB-N      (N8)
+1 REDEFINE #SCN-DOB
+  2 #SCN-DOB-MMDD   (A4)
+  2 #SCN-DOB-YYYY   (A4)
+*
+1 #LST-FAC-AMT (N7.2)
+1 #FAC-AMT  (N7.2)
+1 REDEFINE #FAC-AMT
+  2 #FAC-AMT-7  (N7)
+  2 #FAC-AMT-2  (N2)
+1 #ISS-DATE (N8)
+1 #PLAN     (A3)
+1 #SUFFIX   (A3)
+1 #1ST-10K   (N5.2)
+*
+1 #BASIC-PRM (N5.2)
+1 REDEFINE #BASIC-PRM
+  2 #BASIC-PRM-6 (N6)
+  2 #BASIC-PRM-C (N1) /* cents
+1 #POL-FEE  (N5.2)
+1 REDEFINE #POL-FEE
+  2 #POL-FEE-5 (N6)
+  2 #POL-FEE-C (N1)   /* cents
+*
+1 #PREM-6-6 (N7.6)    /* NG2
+1 #MON-PREM (N7.2)    /* NG2
+1 REDEFINE #MON-PREM
+  2 #MON-PREM-5 (N7)
+  2 #MON-PREM-C (N2)   /* cents
+*
+1 #WORK-X   (P7.7)
+1 #ATT-X    (I2)
+1 #DUR-X    (I2)
+*
+* 1 #MAX-7-PAY-NON-SM    /* also in athpstat
+*   2 #N00 (A48) INIT <'01033-01037-01067-01100-01134-01170-01209-01251-'>
+*   2 #N08 (A48) INIT <'01295-01342-01392-01444-01497-01551-01605-01660-'>
+*   2 #N16 (A48) INIT <'01714-01770-01826-01884-01944-02007-02073-02142-'>
+*   2 #N24 (A48) INIT <'02215-02293-02374-02460-02551-02645-02745-02848-'>
+*   2 #N32 (A48) INIT <'02957-03070-03187-03310-03437-03569-03706-03848-'>
+*   2 #N40 (A48) INIT <'03995-04147-04307-04468-04637-04811-04991-05178-'>
+*   2 #N48 (A48) INIT <'05370-05570-05777-05991-06212-06440-06675-06917-'>
+*   2 #N56 (A48) INIT <'07167-07424-07689-07964-08248-08542-08847-09162-'>
+*   2 #N64 (A48) INIT <'09487-09822-10168-10528-10904-11301-11719-12156-'>
+* 1 REDEFINE #MAX-7-PAY-NON-SM
+*   2 #7-PA-OCC-NS (72)
+*     3 #7-PA-MAX-PRM-NS   (N4.1)
+*     3 #7-PA-MAX-PRM-NS-X (A1)
+*
+* 1 #MAX-7-PAY-SMOKER
+*   2 #S00 (A48) INIT <'01256-01271-01312-01356-01402-01451-01502-01558-'>
+*   2 #S08 (A48) INIT <'01616-01678-01743-01811-01882-01954-02028-02100-'>
+*   2 #S16 (A48) INIT <'02170-02239-02310-02383-02457-02535-02616-02701-'>
+*   2 #S24 (A48) INIT <'02791-02887-02988-03094-03206-03323-03446-03574-'>
+*   2 #S32 (A48) INIT <'03708-03847-03991-04141-04297-04458-04625-04797-'>
+*   2 #S40 (A48) INIT <'04974-05157-05344-05536-05734-05936-06144-06357-'>
+*   2 #S48 (A48) INIT <'06577-06804-07037-07278-07525-07779-08039-08304-'>
+*   2 #S56 (A48) INIT <'08575-08852-09138-09433-09740-10058-10387-10726-'>
+*   2 #S64 (A48) INIT <'11074-11429-11794-12172-12565-12981-13422-13890-'>
+* 1 REDEFINE #MAX-7-PAY-SMOKER
+*   2 #7-PA-OCC-SM (72)
+*     3 #7-PA-MAX-PRM-SM   (N4.1)
+*     3 #7-PA-MAX-PRM-SM-X (A1)
+*
+* 1 #1035-ADJ-NON-SM
+*  2 #N00 (A49) INIT <'163071-162840-162823-162806-162786-162767-162753-'>
+*  2 #N07 (A49) INIT <'162747-162754-162775-162812-162863-162924-162986-'>
+*  2 #N14 (A49) INIT <'163042-163088-163122-163142-163153-163153-163144-'>
+*  2 #N21 (A49) INIT <'163130-163113-163096-163080-163068-163062-163062-'>
+*  2 #N28 (A49) INIT <'163067-163078-163095-163118-163146-163181-163224-'>
+*  2 #N35 (A49) INIT <'163273-163331-163395-163467-163548-163635-163732-'>
+*  2 #N42 (A49) INIT <'163837-163951-164077-164214-164365-164531-164717-'>
+*  2 #N49 (A49) INIT <'164928-165169-165444-165752-166095-166475-166891-'>
+*  2 #N56 (A49) INIT <'167349-167857-168427-169069-169793-170609-171522-'>
+*  2 #N63 (A49) INIT <'172535-173647-174869-176220-177721-179411-181333-'>
+*   2 #N70 (A14) INIT <'183522-185555-'>
+* 1 REDEFINE #1035-ADJ-NON-SM
+*   2 #1035-ADJ-OCC-NS (72)
+*     3 #1035-ADJ-NS   (N0.6)
+*     3 #1035-ADJ-NS-X (A1)
+*
+* 1 #1035-ADJ-SMOKER
+*  2 #N00 (A49) INIT <'163071-162840-162823-162806-162786-162767-162753-'>
+*  2 #N07 (A49) INIT <'162747-162754-162779-162827-162901-162995-163105-'>
+*  2 #N14 (A49) INIT <'163223-163317-163377-163416-163439-163448-163442-'>
+*  2 #N21 (A49) INIT <'163427-163405-163383-163363-163350-163348-163356-'>
+*  2 #N28 (A49) INIT <'163376-163406-163447-163496-163558-163633-163722-'>
+*  2 #N35 (A49) INIT <'163827-163951-164093-164254-164434-164633-164850-'>
+*  2 #N42 (A49) INIT <'165084-165335-165606-165896-166209-166551-166931-'>
+*  2 #N49 (A49) INIT <'167354-167829-168359-168944-169583-170267-170998-'>
+*  2 #N56 (A49) INIT <'171780-172627-173555-174587-175744-177031-178448-'>
+*  2 #N63 (A49) INIT <'179985-181629-183378-185244-187262-189480-191955-'>
+*   2 #N70 (A14) INIT <'194735-196666-'>
+* 1 REDEFINE #1035-ADJ-SMOKER
+*   2 #1035-ADJ-OCC-NS (72)
+*     3 #1035-ADJ-SM   (N0.6)
+*     3 #1035-ADJ-SM-X (A1)
+*
+1 #FINISHED-IND   (A1) INIT <'N'>
+1 #MBR-Y-N        (A1)
+1 #MBR-Y-N-C      (C)
+1 #MBR-Y-N-LBL    (A20)
+1 #NO-ERRORS       (L)
+1 #FACE-AMT-ENTERED  (L)
+1 #ADDL-NEEDED   (P7.2)
+1 #DIVIDEND  (N5.4)
+1 REDEFINE #DIVIDEND
+  2 #DIV-5    (N5)
+  2 #REM      (N4)
+*
+1 #TOT-TPP   (N7.2)
+* BELOW for CALC-PREMS-PAID
+1 #PP-DATE-OF-BIRTH  (N8)
+1 #PP-ANNUAL-PREM    (N5.2)
+1 #PP-PAY-STATUS     (A2)
+1 #PP-TOT-PREMIUMS-PAID (N7.2)
+1 #PP-PAID-TO-DATE   (N8)
+1 #PP-ISSUE-DATE     (N8)
+1 #PP-MODE           (A1)
+1 #PP-PLAN           (A3)
+1 #PP-COST-BASIS      (N7.2)
+1 #PP-MONTH-ALLOC-AMT (N7.2)
+1 #PP-INTRO-FLAG     (A1)
+1 #PP-FIRST-PLACE-FEE (N7.2)
+1 #PREMS-PAID         (P7.2)
+1 #SUB-PREMS-PAID     (P7.2)
+1 #PP-BADJ            (P5.2)
+* ABOVE for CALC-PREMS-PAID
+*
+END-DEFINE
+*
+* * * * * * * * * * * * *
+*
+IF #CGA-SCR-SUFFIX = 'BYP'                                        /* PM3
+  ESCAPE ROUTINE                                                  /* PM3
+END-IF                                                            /* PM3
+*
+RESET #INTRO-FLAG
+IF #CGA-SCR-ID NE 0
+  IF   (#CGA-SCR-ID GT 500000) AND (#CGA-SCR-ID LT 600000)
+    FIND (1) AT-V WITH ID-NUMBER = #CGA-SCR-ID
+      IF NO RECORDS FOUND
+        ESCAPE BOTTOM
+      END-NOREC
+*
+      MOVE AT-V.INTRO-FLAG TO #INTRO-FLAG
+*
+    END-FIND
+  ELSE
+    FIND (1) ST-V WITH MEMBER-KEY = #CGA-SCR-ID-A
+      IF NO RECORDS FOUND
+        ESCAPE BOTTOM
+      END-NOREC
+*     IF PROCESS-IND = 'S' OR = 'C'                RE1
+      IF PROCESS-IND = 'C'                      /* RE1
+        ESCAPE TOP
+      END-IF
+*
+      MOVE ST-V.INTRO-FLAG TO #INTRO-FLAG
+    END-FIND
+  END-IF
+END-IF
+*
+IF   (#CGA-SCR-ID GT 500000) AND (#CGA-SCR-ID LT 600000)
+    AND (#CGA-ORIG-COMMAND = 'AI' OR = 'AT')
+  FIND (1) AT-V WITH ID-NUMBER = #CGA-SCR-ID
+    IF AT-V.APPL-SOURCE = 'TU'
+      MOVE TRUE TO #AT-TU
+      FIND ST-V WITH SSN = AT-V.SSN
+        IF ST-V.PROCESS-IND = 'C'               /* RE1
+          ESCAPE TOP
+        END-IF
+        MOVE TRUE TO #FOUND-ST
+        ESCAPE BOTTOM
+      END-FIND
+      IF #FOUND-ST
+        MOVE *DATN TO #AS-OF-DT
+        MOVE ST-V.INTRO-FLAG TO #INTRO-FLAG
+        MOVE ST-V.FACE-AMOUNT (*) TO #FACE-AMT (*)
+        CALLNAT 'CVALUSXX'
+          ST-V.ID-NUMBER
+          #CGA-SCR-SUFFIX
+          #AS-OF-DT
+          #LOAN-BAL   (1:9)
+          #LOAN-BAL-2 (1:9)
+          #ACC-INT    (1:9)
+          #ACC-INT-2  (1:9)
+          #CSV        (1:9)
+          #CVALUE     (1:9)
+          #LVALUE     (1:9)
+          #MCSV       (1:9)
+          #DB         (1:9)
+          #ANN-PREMIUM (1:9)
+          #FACE-AMT   (1:9)   /* DW10
+          #TPP        (1:9)   /* DW10
+*
+        MOVE (AD=NP) TO #SCR-TU-POL-CV(*)
+        FOR #I1 1 TO 9
+          IF  (STATUS (#I1) NE 'D')
+              OR (PLAN (#I1) = 'RT' OR = 'LT' OR = 'SO')
+              OR ((PLAN-1A (#I1) GE 'U') AND (PLAN-1A (#I1) LE 'Z'))
+            ESCAPE TOP
+          END-IF
+*
+          RESET #SCR-TU-POL-CV (#I1)
+          MOVE ISSUE-DATE (#I1) TO #YYYYMMDD
+          COMPRESS #MM-A #DD-A #YYYY-A INTO #SCR-TU-ISS-DT (#I1)
+          MOVE EDITED #CSV (#I1) (EM=ZZZ,ZZZ.99) TO #SCR-TU-CSV (#I1)
+          MOVE EDITED ANNUAL-PREM (#I1) (EM=ZZZ,ZZZ.99)
+            TO #SCR-TU-ANN-PRM (#I1)
+        END-FOR
+*
+        RESET #SEL-X
+        INPUT MARK *#SCR-TU-SEL (1) USING MAP 'C1680MCO'
+*
+        IF #CGA-SCR-COMMAND NE '*'
+          FETCH 'G1000PXX'
+        END-IF
+*
+        RESET #SEL-X #TU-POL-SEL
+        RESET #FOUND-TU-SEL
+*
+        FOR #I1 1 TO 4
+          IF   (#SCR-TU-SEL (#I1) NE ' ')
+              AND (#SEL-X NE 0)
+            REINPUT 'Only 1 selection is possible'
+              MARK *#SCR-TU-SEL (#I1)
+          END-IF
+*
+          IF #SCR-TU-SEL (#I1) NE ' '
+            MOVE #I1 TO #SEL-X
+          END-IF
+        END-FOR
+*
+        IF #SEL-X = 0
+          REINPUT 'A selection must be made'
+            MARK *#SCR-TU-SEL (1)
+        END-IF
+*
+        IF (#SEL-X = 3) AND (#TU-NEW-FACE = 0)
+          REINPUT 'New Death Benefit must be entered'
+            MARK *#TU-NEW-FACE
+        END-IF
+*
+        IF #SEL-X = 4
+          FOR #I2 1 TO 9
+            IF #SCR-TU-POL-SEL (#I2) NE ' '
+              MOVE TRUE TO #FOUND-TU-SEL
+            END-IF
+          END-FOR
+*
+          IF NOT #FOUND-TU-SEL
+            REINPUT 'At least 1 policy must be selected'
+              MARK *#SCR-TU-SEL (4)
+          END-IF
+        END-IF
+*
+        RESET #REMAIN-PREMS (*)
+        RESET #CSV-TO-USE #PREM-TO-USE
+        RESET #NUM-X #LOWEST-X
+        MOVE 9999999.99 TO #LOWEST-CSV
+*
+        FOR #I1 1 TO 9
+          IF  (STATUS (#I1) NE 'D')
+              OR (PLAN (#I1) = 'RT' OR = 'LT' OR = 'SO')
+              OR ((PLAN-1A (#I1) GE 'U') AND (PLAN-1A (#I1) LE 'Z'))
+            ESCAPE TOP
+          END-IF
+*
+          ADD 1 TO #NUM-X
+*
+          MOVE ST-V.PAID-UP-DATE (#I1) TO #YYYYMMDD
+          IF #YYYYMM GE ST-V.PAID-TO-DATE-YYYYMM (#I1)
+            IF #MM LT ST-V.PAID-TO-DATE-MM (#I1)
+              ADD 12 TO #MM
+              SUBTRACT 1 FROM #YYYY
+            END-IF
+*
+            SUBTRACT ST-V.PAID-TO-DATE-YYYYMM (#I1) FROM #YYYYMM
+            COMPUTE #NUM-MONS-REMAIN = (#YYYY * 12) + #MM
+            COMPUTE #REMAIN-PREMS (#I1) = (ST-V.ANNUAL-PREM (#I1) / 12)
+              * #NUM-MONS-REMAIN
+          END-IF
+*
+          IF   (#SEL-X = 2)   /* chose all-but-1
+              AND (#CSV (#I1) LT #LOWEST-CSV)
+              AND (ISSUE-DATE (#I1) LT 20000701)
+            MOVE #I1 TO #LOWEST-X   /* find lowest csv
+            MOVE #CSV (#I1)         TO #LOWEST-CSV
+            MOVE #ANN-PREMIUM (#I1) TO #LOWEST-PREM
+          END-IF
+        END-FOR
+*
+        FOR #I1 1 TO 9
+          IF  (STATUS (#I1) NE 'D')
+              OR (PLAN (#I1) = 'RT' OR = 'LT' OR = 'SO')
+              OR ((PLAN-1A (#I1) GE 'U') AND (PLAN-1A (#I1) LE 'Z'))
+              OR ((#SEL-X = 4) AND (#SCR-TU-POL-SEL (#I1) = ' '))
+            ESCAPE TOP
+          END-IF
+*
+          IF  (#SEL-X = 4)       /* selected policies
+              OR (#I1 NE #LOWEST-X) /* used for first 3 selections
+            MOVE 1 TO #TU-POL-SELECT (#I1) /* show to AI
+            ADD #CSV (#I1)         TO #CSV-TO-USE
+            ADD #ANN-PREMIUM (#I1) TO #PREM-TO-USE
+            ADD #REMAIN-PREMS (#I1) TO #TOT-REMAIN-PREMS
+            PERFORM CALC-PREMS-PAID-SETUP
+            ADD #PREMS-PAID TO #TOT-TPP
+          END-IF
+        END-FOR
+*
+        COMPUTE #PREM-TO-USE-MON = #PREM-TO-USE / 12
+        COMPUTE #MONS-LEFT = #TOT-REMAIN-PREMS / #PREM-TO-USE-MON
+        COMPUTE #YRS-LEFT = #MONS-LEFT / 12
+*
+        IF #NUM-X = 0
+          REINPUT 'There are no eligible policies'
+            MARK *#SCR-TU-SEL (1)
+        END-IF
+*
+        IF (#NUM-X = 1) AND (#SCR-TU-SEL (2) NE ' ')
+          REINPUT 'There is only 1 elig pol - All but 1 option invalid'
+            MARK *#SCR-TU-SEL (1)
+        END-IF
+      END-IF
+*
+      IF #SEL-X = 1 OR = 2 OR = 4
+        MOVE #YRS-LEFT TO #DESIRED-YEARS
+        RESET #DESIRED-FACE
+        MOVE #CSV-TO-USE TO #1035-EXCH-AMT
+        COMPUTE #DESIRED-MON-PREM = #PREM-TO-USE / 12
+      ELSE
+        MOVE 99 TO #DESIRED-YEARS
+        MOVE #CSV-TO-USE TO #1035-EXCH-AMT
+        MOVE #TU-NEW-FACE TO #DESIRED-FACE
+        RESET #DESIRED-MON-PREM
+      END-IF
+*
+    END-IF
+  END-FIND
+END-IF
+*
+IF #CGA-SCR-SUFFIX = 'TRA'
+  COMPUTE #DESIRED-MON-PREM =  #ANN-PREM / 12
+  MOVE 'Y' TO #FINISHED-IND
+  MOVE TRUE TO #TRADE
+  RESET #CGA-SCR-SUFFIX
+END-IF
+*
+MOVE 'VP' TO #CGA-SCR-COMMAND                                     /* PM5
+IF ST-V.MEMBER-CONTACT-ID > 0
+OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH := GET-DATE-OF-BIRTH (< ST-V.MEMBER-CONTACT-ID >)
+ELSE
+OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH := GET-DATE-OF-BIRTH (< AT-V.CONTACT-ID >)
+END-IF
+*
+CALLNAT 'GMAXSXX'
+  #CGA-SCR-COMMAND
+  #MAX-FACE-TOTAL
+  #MAX-FACE-TERM
+  #OVERRIDE-MAX-FACE-TOTAL
+  #OVERRIDE-MAX-FACE-TERM
+  #INTRO-FLAG
+  OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH   /* DW11
+*
+IF #TRADE OR #AT-TU /* OR (#CGA-CLERK = 'DRW' OR = 'KEC' OR = 'BMG') PM5
+  MOVE #OVERRIDE-MAX-FACE-TOTAL TO #MAX-FACE-TOTAL
+END-IF
+* MOVE (AD=P) TO #MBR-Y-N-C
+MOVE 'Pay Dues? (Y/N)' TO #MBR-Y-N-LBL
+*
+IF #CGA-ORIG-COMMAND = 'NM' OR = 'AI' OR = 'AT'
+  IF #PAYS-DUES
+    MOVE 'Y' TO #MBR-Y-N
+  ELSE
+    MOVE 'N' TO #MBR-Y-N
+  END-IF
+*
+  IF #DESIRED-YEARS = 999   /* PM21
+    MOVE (AD=P) TO #AL-CV   /* PM21
+  END-IF                    /* PM21
+ELSE
+  IF (((#CGA-ORIG-COMMAND = 'PO') AND (#CGA-SCR-ID NE 0))
+      OR (#CGA-ORIG-COMMAND = 'VP'))
+      AND (NOT #PAYS-DUES)
+    MOVE 'N' TO #MBR-Y-N
+  ELSE
+    MOVE 'Y' TO #MBR-Y-N
+  END-IF
+END-IF
+MOVE 'N' TO #MBR-Y-N   /* REPLACED ABOVE 7/12/2000
+*
+IF #SMOKER-FLAG = ' '
+  MOVE 'N' TO #SMOKER-FLAG
+END-IF
+*
+IF #SEX = ' '   /* DW14
+  MOVE 'M' TO #SEX
+END-IF
+*
+*    Premium Calculation Date
+*
+IF AT-V.RATE-DATE = 0
+  MOVE *DATN TO #YYYYMMDD
+ELSE
+  MOVE AT-V.RATE-DATE TO #YYYYMMDD
+END-IF
+#SCN-AOD-YYYYMMDD := #YYYYMMDD
+COMPRESS #MMDD-A #YYYY-A INTO #SCN-AS-OF-DT LEAVING NO
+MOVE OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH TO #DOB
+MOVE #DOB TO #YYYYMMDD
+COMPRESS #MMDD-A #YYYY-A INTO #SCN-DOB LEAVING NO
+*
+REPEAT                         /*<<<<<<<<<<<<<<<<<<<<<<
+  MOVE '*' TO #CGA-SCR-COMMAND
+  MOVE ROUNDED #DESIRED-FACE TO #SCN-FACE
+  MOVE #1035-EXCH-AMT TO #SCN-1035-EXCH                    /* PM1
+  MOVE #LUMP-PMT      TO #SCN-LUMP-SUM                     /* PM1
+*
+  IF  (*DEVICE NE 'BATCH')   /* MR VP ON AN AT FLEX MAY BE HERE
+      AND  (NOT #TRADE)
+    IF #DESIRED-YEARS = 999                 /* DW13
+      IF #SCN-AOD-YYYYMMDD = 0    /* DW9
+        MOVE *DATN TO #YYYYMMDD   /* DW9
+      ELSE
+        MOVE #SCN-AOD-YYYYMMDD TO #YYYYMMDD
+      END-IF
+*
+      SUBTRACT #DOB FROM #YYYYMMDD
+      MOVE #YYYY TO #AGE
+*   MOVE #LUMP-PMT TO #BOP-ANNUITIZE
+      COMPUTE #BOP-ANNUITIZE = #LUMP-PMT + #1035-EXCH-AMT
+      IF #BOP-ANNUITIZE > 0                               /* NG1  start
+        IF LS-Option = 'Y'
+          Age    (1) := #AGE
+          Gender (1) := #SEX
+*
+          IF LS-DOB NE MASK (MMDDYYYY)
+            REINPUT 'DOB must be in format MMDDYYYY'
+              MARK *LS-DOB
+          END-IF
+*
+          IF #LS-DOB GE *DATN
+            REINPUT 'DOB cannot be in the future'
+              MARK *LS-DOB
+          END-IF
+*
+          IF NOT Gender (2) = 'M' OR= 'F'
+            REINPUT 'Please Enter Co-Annuitant Gender'
+              MARK *Gender (2)
+          END-IF
+*
+          #LS-YYYY := #-YYYY ; #MMDD := #-MMDD
+          SUBTRACT *DATN FROM #LS-DOB
+          Age (2) := #LS-YYYY
+          COMPRESS 'Co-Annuitant Age:' Age (2) INTO #CALC-FAC-AMT-TEXT
+*
+          CALLNAT 'ASONLS01'
+            #BOP-ANNUITIZE
+            Gender           (*)
+            Age              (*)
+            #BOP-BENE-A
+            Annuity-factor
+            Expectancy-amount
+            #BOP-TAXBL-PCT-A
+            #BOP-TAXBL-MON-A
+            #BOP-TAXBL-AMT-A
+        ELSE
+          RESET #CALC-FAC-AMT-TEXT
+          MOVE 'M'       TO #BOP-SEX       /* Makes no difference
+          MOVE #AGE      TO #BOP-BENE-AGE
+          MOVE 'CSV'     TO #SUFFIX
+*
+          CALLNAT 'GANNUSXX'    /* DW5
+            #CGA-ORIG-COMMAND
+            #CGA-SCR-ID
+            #SUFFIX
+            #CGA-CLERK
+*
+            #BOP-ANNUITIZE
+            #BOP-SEX
+            #BOP-BENE-AGE
+            #BOP-BENE-A
+            #BOP-BENE-B
+            #BOP-BENE-C
+            #BOP-RESV-AMT-A
+            #BOP-RESV-AMT-B
+            #BOP-TAXBL-PCT-A
+            #BOP-TAXBL-PCT-B
+            #BOP-TAXBL-AMT-A
+            #BOP-TAXBL-AMT-B
+            #BOP-TAXBL-MON-A
+            #BOP-TAXBL-MON-B
+            #SCN-AOD-YYYYMMDD     /* NG4
+        END-IF
+      END-IF
+*
+      COMPUTE #AMT-TO-ANNUI = #1035-EXCH-AMT + #LUMP-PMT    /* DW15
+      MOVE EDITED #AMT-TO-ANNUI (EM=ZZZ,ZZZ.99) TO #PREM-DISP-10
+      MOVE LEFT #PREM-DISP-10 TO #PREM-DISP-10
+      MOVE *DATN TO #YYYYMMDD
+      COMPRESS #MM-A #DD-A #YYYY-A INTO #PREM-MSG-1 WITH '/'
+      COMPRESS 'Annuitizing' #PREM-DISP-10 'as of' #PREM-MSG-1
+        INTO #PREM-MSG-1
+      MOVE EDITED #BOP-BENE-A (EM=ZZZ,ZZZ.99) TO #PREM-DISP-10
+      MOVE LEFT #PREM-DISP-10 TO #PREM-DISP-10
+      COMPRESS #PREM-MSG-1 '=' #PREM-DISP-10 'per month'
+        INTO #PREM-MSG-1
+      MOVE EDITED #BOP-TAXBL-MON-A (EM=ZZZ,ZZZ.99) TO #PREM-DISP-10
+      MOVE LEFT #PREM-DISP-10 TO #PREM-DISP-10
+      COMPRESS '  with' #PREM-DISP-10 'taxable.' INTO #PREM-MSG-2
+    END-IF
+*
+    IF   (#CGA-SCR-ID GE 500000)                        /* DW19
+        AND (#CGA-SCR-ID LT 600000)
+        AND (#DESIRED-FACE = 0)   /* Must be an Inquiry AT
+        AND (#CGA-ORIG-COMMAND = 'VP')
+      MOVE 'Do VP 5XXXXX GPL to force a GPL projection' TO #TEXT
+    END-IF
+*
+    INPUT TEXT #TEXT MARK *#FINISHED-IND USING MAP 'C1602MCO'
+*
+    IF #CGA-SCR-COMMAND NE '*'
+      IF   (#CGA-SCR-SUFFIX = 'GPL' or = 'GP2')         /* TT1
+          AND (#CGA-ORIG-COMMAND = 'VP')
+        ESCAPE ROUTINE    /* To go back to C2V10PVP
+      END-IF
+      FETCH 'G1000PXX'
+    END-IF
+*
+    RESET #TEXT
+    IF #DESIRED-YEARS = 999   /* DW13
+      IF  (#DESIRED-MON-PREM NE 0)   /* DW12
+        REINPUT 'Mon Prem Invalid with plan AL (Yrs 999)'
+          MARK *#SCN-1035-EXCH
+      END-IF
+    END-IF
+  END-IF
+*
+  MOVE #SCN-FACE TO #DESIRED-FACE
+  MOVE #SCN-1035-EXCH TO #1035-EXCH-AMT
+  MOVE #SCN-LUMP-SUM   TO #LUMP-PMT
+*
+  RESET #PAYS-DUES
+  IF #MBR-Y-N = 'Y'
+    MOVE TRUE TO #PAYS-DUES
+  END-IF
+*
+  IF ((#FINISHED-IND = 'Y') AND #NO-ERRORS)
+      OR ((*DEVICE = 'BATCH') AND #NO-ERRORS)
+    IF #CGA-ORIG-COMMAND = 'AT' OR = 'NM' OR = 'AI' OR = 'VP' OR = 'AV'
+      IF ((#CGA-ORIG-COMMAND = 'AT' OR = 'NM' OR = 'AI')
+          OR (#TRADE))
+          AND (#DESIRED-YEARS = 0)
+          AND (#ADDL-NEEDED NE 0)
+          AND ((#DESIRED-FACE NE 0) OR (#DESIRED-MON-PREM = 0)
+          OR (#TOT-LUMP-PMT NE 0))
+        RESET #ANN-PREM
+        MOVE #ADDL-NEEDED TO #LUMP-PMT
+        RESET #ADDL-NEEDED
+      END-IF
+      IF #DESIRED-YEARS = 999   /* DW13
+        RESET #ANN-PREM         /* DW8
+      END-IF
+*
+      IF #CGA-ORIG-COMMAND = 'AI'
+       MOVE #TU-POL-SEL TO #CGA-SCR-ID   /* just for AI TU POL selection
+        COMPUTE #DOB = #TOT-TPP * 100 /*USED BY C2100PAI 4 cost-basis
+      END-IF
+      ESCAPE ROUTINE
+    END-IF
+*
+    IF #TRADE
+      MOVE 'VP' TO #CGA-SCR-COMMAND
+*   MOVE #ADDL-NEEDED TO #ANN-PREM
+      ESCAPE ROUTINE
+    END-IF
+*
+    IF #CGA-ORIG-COMMAND = 'PO'
+      RESET #CGA-SCR-COMMAND
+      FETCH 'G1000PXX'
+    END-IF
+  END-IF
+*
+  IF #CGA-SCR-COMMAND NE '*'
+    END TRANSACTION
+    FETCH 'G1000PXX'
+  END-IF
+*
+  RESET #NO-ERRORS
+  RESET #MEC-TEST-MSG #MEC-TEST-MSG-2 #EXCESS-PMT-MSG
+  RESET #PREM-MSG-1   #PREM-MSG-2
+  RESET #MON-PREM
+  RESET #CALC-FAC-AMT-TEXT #FACE-AMT-ENTERED
+*
+  IF #SCN-AS-OF-DT NE MASK (MMDDYYYY)
+    REINPUT 'As Of Date must be in format MMDDYYYY'
+      MARK *#SCN-AS-OF-DT
+  END-IF
+*
+  COMPRESS #SCN-AOD-YYYY #SCN-AOD-MMDD INTO #YYYYMMDD-A LEAVING NO
+  MOVE #YYYYMMDD TO #SCN-AOD-YYYYMMDD
+*
+  IF #SCN-DOB NE MASK (MMDDYYYY)
+    REINPUT 'DOB must be in format MMDDYYYY'
+      MARK *#SCN-DOB
+  END-IF
+*
+  COMPRESS #SCN-DOB-YYYY #SCN-DOB-MMDD INTO #YYYYMMDD-A LEAVING NO
+  MOVE #YYYYMMDD TO #DOB
+*
+  IF #DOB GE *DATN
+    REINPUT 'DOB cannot be in the future'
+      MARK *#SCN-DOB
+  END-IF
+*
+  IF   ((#DESIRED-FACE GT #MAX-FACE-TOTAL) OR (#DESIRED-FACE LT 10000))
+      AND (#DESIRED-FACE NE 0)
+      AND (#DESIRED-YEARS NE 999)   /* DW99
+    REINPUT 'Face amount must be between $10k & Max or ZERO'
+      MARK *#SCN-FACE
+  END-IF
+*
+  MOVE #SCN-AOD-YYYYMMDD TO #YYYYMMDD
+  SUBTRACT #DOB FROM #YYYYMMDD
+*
+  IF #DESIRED-FACE NE 0
+    COMPUTE #DIVIDEND = #DESIRED-FACE / 5000
+  ELSE
+    COMPUTE #DIVIDEND = #FAC-AMT / 5000
+  END-IF
+* WRITE 'desired-face =' #DESIRED-FACE 'dividend=' #DIVIDEND 'rem=' #REM
+*
+  RESET #FLEX-POLICY
+* DISPLAY '1035' #1035-EXCH-AMT #LUMP-PMT #REM #DESIRED-YEARS
+*   #FAC-AMT #DESIRED-FACE 'des/prem' #DESIRED-MON-PREM
+  IF  (#1035-EXCH-AMT NE 0) OR (#LUMP-PMT NE 0)
+      OR (#REM NE 0)
+  OR (NOT #DESIRED-YEARS = 0 OR = 30 OR = 20 OR = 7 OR = 99)  /* 99 = OL
+*      AND (#DESIRED-YEARS NE (100 - #YYYY))) /* OL TERM
+      OR ((#DESIRED-MON-PREM NE 0) AND (#DESIRED-FACE = 0))  /* DW17
+    MOVE TRUE TO #FLEX-POLICY
+  END-IF
+*
+  IF  (NOT #CGA-ORIG-COMMAND = 'PO' OR = 'VP' OR = 'AT')
+     AND NOT #FLEX-POLICY   /* NON-FLEX POLS are not allowed  on po & vp
+    REINPUT 'This is not a FLEX policy'
+      MARK *#DESIRED-YEARS
+  END-IF
+*
+  IF   (#DESIRED-MON-PREM NE 0)
+      AND (#DESIRED-FACE NE 0)
+    REINPUT 'Desired Face Amt invalid if Mon Prem is entered'
+      MARK *#SCN-FACE
+  END-IF
+*
+  IF   (#DESIRED-YEARS = 999)    /* DW13
+      AND (#SCN-LUMP-SUM NE 0)
+      AND (#DESIRED-FACE NE 0)
+    REINPUT 'Both Desired Face & NSP Invalid on an "AL"'
+      MARK *#SCN-FACE
+  END-IF
+*
+  IF   (#DESIRED-MON-PREM NE 0)
+      AND (#DESIRED-YEARS = 0)
+    REINPUT 'Desired Years must be entered if Mon Prem is entered'
+      MARK *#DESIRED-YEARS
+  END-IF
+*
+  IF   (#DESIRED-YEARS NE 999)     /* DW13
+      AND (#DESIRED-YEARS NE 0)
+      AND (#DESIRED-FACE = 0)
+      AND (#DESIRED-MON-PREM = 0)
+    REINPUT 'If years are entered Mon Prem or Lump Sum must be entered'
+      MARK *#DESIRED-MON-PREM
+  END-IF
+*
+  IF   (#DESIRED-YEARS = 999)     /* DW13
+      AND (#DESIRED-FACE = 0)
+      AND (#SCN-LUMP-SUM = 0)
+      AND (#1035-EXCH-AMT = 0)
+    REINPUT 'Either Face Amt or Lump Sum must be entered'
+      MARK *#SCN-LUMP-SUM
+  END-IF
+*
+  IF NOT #PREM-RATING = ' ' OR = '1' OR = '2' OR = '3'
+    REINPUT 'Premium Rating must be Blank or 1/2/3'
+      MARK *#PREM-RATING
+  END-IF
+*
+  IF #PREM-RATING = '1' OR = '2' OR = '3'    /* DW7
+      AND (#DESIRED-YEARS = 999)
+    REINPUT 'Premium Rating Invalid with "AL"'
+      MARK *#PREM-RATING
+  END-IF
+*
+  IF NOT #SMOKER-FLAG = 'S' OR = 'N'
+    REINPUT 'Smoker indicator must be "S" or "N"'
+      MARK *#SMOKER-FLAG
+  END-IF
+*
+  IF NOT #SEX = 'M' OR = 'F'
+    REINPUT 'Sex must be "M" or "F"'
+      MARK *#SEX
+  END-IF
+*
+  MOVE #SCN-AOD-YYYYMMDD TO #YYYYMMDD
+  SUBTRACT #DOB FROM #YYYYMMDD
+  RESET #OL     /* DW16
+*                                  NG5  Start
+  IF ST-V.MEMBER-CONTACT-ID > 0
+    FOR J 1 TO C*ACTIVE-SEGMENTS
+      IF ST-V.ISSUE-DATE (J) = #SCN-AOD-YYYYMMDD
+        #VERSION := ST-V.VERSION (J)
+        ESCAPE BOTTOM
+      END-IF
+    END-FOR
+  ELSE
+    #VERSION := AT-V.POLICY-VERSION
+  END-IF
+  IF #VERSION = BLANK
+      AND #SCN-AOD-YYYYMMDD > #VER-DATE
+    #VERSION := '4'
+  END-IF
+
+*                                  NG5 End
+  IF (#DESIRED-YEARS = 99) AND (#YYYY GE 1)
+    IF #VERSION = '4'
+      COMPUTE #DY-CALCULATED = 120 - #YYYY
+    ELSE
+      COMPUTE #DY-CALCULATED = 100 - #YYYY
+    END-IF
+    MOVE TRUE TO #OL      /* DW16
+    IF #DY-CALCULATED > 99
+      #DESIRED-YEARS := 99
+      MOVE (AD=I) TO #CV-DY
+    ELSE
+*      #DESIRED-YEARS := #DY-CALCULATED  NG5 fix 20160706
+      MOVE (AD=N) TO #CV-DY
+    END-IF
+  ELSE
+    IF #DESIRED-YEARS = 999              /* DW13
+      PERFORM POPULATE-AL-CODE         /* NG3
+      IF #YYYY GT 99 AND #PLAN = 'AL'
+        REINPUT 'Mbr must be under 100 Years for AL policy'
+          MARK *#DESIRED-YEARS
+      END-IF
+    ELSE
+      IF #VERSION = '4'
+        #BEYONDAGE := 120
+      ELSE
+        #BEYONDAGE := 100
+      END-IF
+      #DY-CALCULATED := #DESIRED-YEARS
+      IF (#YYYY + #DESIRED-YEARS) GT #BEYONDAGE
+        COMPRESS #BA-MESSAGE #BEYONDAGE INTO #BA-MESSAGE
+        REINPUT #BA-MESSAGE MARK *#DESIRED-YEARS
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #YYYY < 100   /* NG3
+    MOVE #YYYY TO #PREM-AGE
+  ELSE
+    #PREM-AGE := 99
+  END-IF
+*
+  IF #PREM-AGE GT 80                        /* DW16
+    IF #DESIRED-YEARS NE 999   /* DW13
+      COMPRESS 'Ineligible due to Prem Age of' #PREM-AGE INTO #ERR-MSG
+      REINPUT #ERR-MSG
+        MARK *#SCN-DOB
+    END-IF
+  ELSE
+    IF #PREM-AGE GT 70                       /* DW16
+      IF  (#DESIRED-YEARS = 0 OR = 999)   /* Allow SP/AL
+          OR #OL                             /* Allow OL
+          OR #TRADE OR #AT-TU                /* OK on a TRA
+        IGNORE
+      ELSE
+        COMPRESS 'Only OL/AL/SP after age 70 - Age=' #PREM-AGE
+          INTO #ERR-MSG
+        REINPUT #ERR-MSG
+          MARK *#SCN-DOB
+      END-IF
+    END-IF
+  END-IF
+*
+  IF (#SMOKER-FLAG = 'S') AND (#PREM-AGE LT 16)
+    REINPUT 'SMOKERS under age 16 invalid'
+      MARK *#SCN-DOB
+  END-IF
+*
+  RESET #DUES-PMT
+  IF #PAYS-DUES
+    DECIDE ON FIRST VALUE #DESIRED-YEARS
+      VALUE 0  MOVE #SVC-FEE-SP TO #DUES-PMT
+      VALUE 2  MOVE #SVC-FEE-2P TO #DUES-PMT
+      VALUE 3  MOVE #SVC-FEE-3P TO #DUES-PMT
+      VALUE 4  MOVE #SVC-FEE-4P TO #DUES-PMT
+      VALUE 5  MOVE #SVC-FEE-5P TO #DUES-PMT
+      VALUE 6  MOVE #SVC-FEE-6P TO #DUES-PMT
+      VALUE 7  MOVE #SVC-FEE-7P TO #DUES-PMT
+      VALUE 8  MOVE #SVC-FEE-7P TO #DUES-PMT
+      VALUE 9  MOVE #SVC-FEE-7P TO #DUES-PMT
+      VALUE 20 MOVE #SVC-FEE-20 TO #DUES-PMT
+      VALUE 30 MOVE #SVC-FEE-30 TO #DUES-PMT
+      NONE        IGNORE
+    END-DECIDE
+*
+    IF #DUES-PMT = 0
+      IF #DESIRED-YEARS LE 19 MOVE #SVC-FEE-10 TO #DUES-PMT ELSE
+        IF #DESIRED-YEARS LE 29 MOVE #SVC-FEE-20 TO #DUES-PMT ELSE
+          IF #DESIRED-YEARS LE 34 MOVE #SVC-FEE-30 TO #DUES-PMT ELSE
+            MOVE #SVC-FEE-OL TO #DUES-PMT
+          END-IF END-IF END-IF END-IF
+  END-IF
+*
+  COMPUTE #TOT-LUMP-PMT = #LUMP-PMT + #1035-EXCH-AMT
+*
+  MOVE #SCN-AOD-YYYYMMDD TO #ISS-DATE
+  MOVE 'SI' TO #PLAN
+
+  IF (#DESIRED-FACE = 0)    AND (#DESIRED-MON-PREM = 0)
+      AND (#DESIRED-YEARS = 0) AND (#TOT-LUMP-PMT NE 0)
+    PERFORM FIND-FACE-AMT-FOR-PUSP
+    MOVE TRUE TO #NO-ERRORS
+    ESCAPE TOP
+  END-IF
+*
+  IF #DESIRED-FACE = 0
+    IF (#DESIRED-MON-PREM NE 0) OR (#DESIRED-YEARS NE 0)
+        OR (#TOT-LUMP-PMT NE 0)
+      PERFORM FIND-FACE-AMT-FOR-PP
+*
+      IF #DESIRED-FACE NE 0
+        COMPUTE #DIVIDEND = #DESIRED-FACE / 5000
+      ELSE
+        COMPUTE #DIVIDEND = #FAC-AMT / 5000
+      END-IF
+*
+      IF #REM NE 0
+        MOVE TRUE TO #FLEX-POLICY
+      END-IF
+*    WRITE 'after find face line 5185' #DIVIDEND #REM #FLEX-POLICY
+    END-IF
+  ELSE
+    MOVE TRUE TO #FACE-AMT-ENTERED
+    PERFORM FIND-ANN-PREM
+  END-IF
+*
+  MOVE TRUE TO #NO-ERRORS
+*
+  PERFORM CALC-MEC-DIFF
+*
+END-REPEAT /*(0753)
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-FACE-AMT-FOR-PUSP
+* * * * * * * * * * * * * * * * * * * * *
+*
+MOVE 'SI' TO #PLAN
+MOVE #MAX-FACE-TOTAL TO #FAC-AMT #HIGH-FACE
+RESET #LOW-FACE
+*
+REPEAT
+  IF #FAC-AMT LE 0
+    ESCAPE BOTTOM
+  END-IF
+*
+  RESET #SUFFIX
+  IF #PREM-RATING NE ' '
+    COMPRESS 'SB' #PREM-RATING INTO #SUFFIX LEAVING NO
+  END-IF
+*
+  CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+    #SUFFIX
+    #PLAN
+    #PREM-AGE
+    #ANN-PREM
+    #ISS-DATE
+    #SMOKER-FLAG
+    #FAC-AMT
+    #SEX
+*
+  MOVE #FAC-AMT TO #LST-FAC-AMT
+*
+  IF #TOT-LUMP-PMT-DOLS GT #ANN-PREM-DOLS
+    IF #FAC-AMT GE #MAX-FACE-TOTAL
+*     AND (NOT #TRADE)
+      REINPUT 'Tot pmt exceeds amt needed for maximum face-amt'
+        MARK *#SCN-1035-EXCH
+    END-IF
+*
+    MOVE #FAC-AMT TO #LOW-FACE
+    COMPUTE #FAC-AMT = #LOW-FACE + ((#HIGH-FACE - #LOW-FACE) / 2)
+  ELSE
+    IF #TOT-LUMP-PMT LT #ANN-PREM
+      MOVE #FAC-AMT TO #HIGH-FACE
+      COMPUTE #FAC-AMT = #LOW-FACE + ((#HIGH-FACE - #LOW-FACE) / 2)
+    ELSE
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+*
+  IF #FAC-AMT = #LST-FAC-AMT
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+IF #FAC-AMT-2 NE 0
+  ADD 1 TO #FAC-AMT-7
+  RESET #FAC-AMT-2
+END-IF
+*
+IF #FAC-AMT LT 10000
+    AND NOT #TRADE
+  COMPRESS 'Calced Face of $' #FAC-AMT-7 'must be at least $10,000'
+    INTO #TEXT
+  REINPUT #TEXT
+    MARK *#SCN-FACE
+END-IF
+RESET #TEXT
+*
+MOVE EDITED #FAC-AMT (EM=Z,ZZZ,ZZ9) TO #PREM-DISP-7
+COMPRESS 'Calculated Face Amt: $' #PREM-DISP-7
+  INTO #CALC-FAC-AMT-TEXT LEAVING NO
+RESET #ANN-PREM
+MOVE #FAC-AMT TO #DESIRED-FACE /* needed for calc-mec-diff
+PERFORM CALC-MEC-DIFF
+* RESET #DESIRED-FACE
+RESET #ANN-PREM
+*
+IF #DUES-PMT NE 0
+  MOVE EDITED #DUES-PMT (EM=ZZZ.99) TO #DUES-DISP-6
+  COMPRESS '                            Additional $' #DUES-DISP-6
+    ' needed for Dues' INTO #PREM-MSG-1 LEAVING NO
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-FACE-AMT-FOR-PP
+* * * * * * * * * * * * * * * * * * * * *
+*
+IF #DESIRED-YEARS = 999                                    /* DW13
+  RESET #SUFFIX
+  RESET #FAC-AMT   /* using given NSP calc face amt
+  COMPUTE #ANN-PREM = #LUMP-PMT + #1035-EXCH-AMT    /* DW12
+  PERFORM POPULATE-AL-CODE  /* NG3
+*
+  CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+    #SUFFIX
+    #PLAN
+    #PREM-AGE
+    #ANN-PREM
+    #ISS-DATE
+    #SMOKER-FLAG
+    #FAC-AMT
+    #SEX
+*
+  IF ((#FAC-AMT GT #MAX-FACE-TOTAL) OR (#FAC-AMT LT 10000))
+      AND (#DESIRED-YEARS NE 999)   /* DW99
+    MOVE EDITED #FAC-AMT (EM=Z,ZZZ,ZZZ.99) TO #TEXT
+    COMPRESS
+      'Calced Face Amount (' #TEXT ') must be between $10k & Max'
+      INTO #TEXT
+    REINPUT #TEXT
+      MARK *#SCN-1035-EXCH
+  END-IF
+*
+  MOVE #FAC-AMT TO #DESIRED-FACE
+  MOVE #ANN-PREM TO #TOT-DUE
+  PERFORM CALC-MEC-DIFF
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE #MAX-FACE-TOTAL TO #FAC-AMT #HIGH-FACE
+RESET #LOW-FACE
+*
+REPEAT
+  IF #FAC-AMT LE 0
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE #FAC-AMT TO #DESIRED-FACE
+  PERFORM FIND-ANN-PREM
+*
+  MOVE #FAC-AMT TO #LST-FAC-AMT
+  IF #DESIRED-MON-PREM GT #TOT-DUE
+    IF (#FAC-AMT GT #MAX-FACE-TOTAL)
+*     AND (NOT #TRADE)
+      REINPUT 'Tot pmt exceeds maximum face-amt'
+        MARK *#DESIRED-MON-PREM
+    END-IF
+*
+    MOVE #FAC-AMT TO #LOW-FACE
+    COMPUTE #FAC-AMT = #LOW-FACE + ((#HIGH-FACE - #LOW-FACE) / 2)
+  ELSE
+    IF #DESIRED-MON-PREM LT #TOT-DUE
+      MOVE #FAC-AMT TO #HIGH-FACE
+      COMPUTE #FAC-AMT = #LOW-FACE + ((#HIGH-FACE - #LOW-FACE) / 2)
+    ELSE
+      ESCAPE BOTTOM
+    END-IF
+  END-IF
+*
+  IF #FAC-AMT = #LST-FAC-AMT
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+IF #FAC-AMT-2 NE 0
+  ADD 1 TO #FAC-AMT-7
+  RESET #FAC-AMT-2
+END-IF
+*
+IF #FAC-AMT LT 10000
+    AND NOT #TRADE
+  COMPRESS 'Calced Face of $' #FAC-AMT-7 'must be at least $10,000'
+    INTO #TEXT
+  REINPUT #TEXT
+    MARK *#SCN-FACE
+END-IF
+RESET #TEXT
+*
+MOVE EDITED #FAC-AMT (EM=Z,ZZZ,ZZ9) TO #PREM-DISP-7
+COMPRESS 'Calculated Face Amt: $' #PREM-DISP-7
+  INTO #CALC-FAC-AMT-TEXT LEAVING NO
+*
+PERFORM CALC-MEC-DIFF
+* WRITE 'calc face =' #FAC-AMT
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-ANN-PREM
+* * * * * * * * * * * * * * * *
+*
+IF #DESIRED-YEARS = 999                                     /* DW13
+  RESET #SUFFIX #ANN-PREM
+  MOVE #DESIRED-FACE TO #FAC-AMT
+  PERFORM POPULATE-AL-CODE  /* NG3
+*
+  CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+    #SUFFIX
+    #PLAN
+    #PREM-AGE
+    #ANN-PREM
+    #ISS-DATE
+    #SMOKER-FLAG
+    #FAC-AMT
+    #SEX
+*
+  COMPUTE #ADDL-NEEDED = #ANN-PREM - #1035-EXCH-AMT   /* DW12
+  MOVE #ADDL-NEEDED TO #LUMP-PMT #SCN-LUMP-SUM
+  PERFORM CALC-MEC-DIFF
+  RESET #ANN-PREM
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE 1 TO #INCR
+IF #PREM-RATING = '1' MOVE 1.125 TO #INCR END-IF
+IF #PREM-RATING = '2' MOVE 1.250 TO #INCR END-IF
+IF #PREM-RATING = '3' MOVE 1.375 TO #INCR END-IF
+*
+MOVE #SCN-AOD-YYYYMMDD TO #YYYYMMDD
+SUBTRACT #DOB FROM #YYYYMMDD
+/*                     Calculate PV factory  NG5
+IF #DESIRED-YEARS = 99
+  #PLAN := 'OL'
+ELSE
+  IF #DESIRED-YEARS = 20 OR = 30
+    COMPRESS #DESIRED-YEARS-2A 'P' INTO #PLAN LEAVING NO
+  ELSE
+    IF #DESIRED-YEARS = 7
+      MOVE '7P' TO #PLAN
+    ELSE
+      MOVE 'SI' TO #PLAN
+    END-IF
+  END-IF
+END-IF
+/*
+IF #DY-CALCULATED NE 0
+  CALLNAT 'RTEN0007'
+    #CGA-SCR-ID
+    #PREM-AGE
+    #SEX
+    #DY-CALCULATED
+    #SMOKER-FLAG
+    #SEGMENT
+    #ISS-DATE
+    #PV       /* OUT
+END-IF
+* IF #DESIRED-YEARS = (100 - #YYYY) /* OL TERM
+*   #PLAN := 'OL'
+* ELSE
+*   IF #DESIRED-YEARS = 20 OR = 30
+*     COMPRESS #DESIRED-YEARS-2A 'P' INTO #PLAN LEAVING NO
+*   ELSE
+*     IF #DESIRED-YEARS = 7
+*       MOVE '7P' TO #PLAN
+*     ELSE
+*       MOVE 'SI' TO #PLAN
+*     END-IF
+*   END-IF
+* END-IF
+
+RESET #SUFFIX
+MOVE #DESIRED-FACE TO #FAC-AMT
+/*     Non Flex Policy
+IF #TOT-LUMP-PMT = 0
+    AND #PLAN NE 'SI'
+  IF #PREM-RATING NE ' '
+    COMPRESS 'SB' #PREM-RATING INTO #SUFFIX LEAVING NO
+  END-IF
+  CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+    #SUFFIX
+    #PLAN
+    #PREM-AGE
+    #ANN-PREM
+    #ISS-DATE
+    #SMOKER-FLAG
+    #FAC-AMT
+    #SEX
+  COMPUTE #MON-PREM = #ANN-PREM / 12
+  COMPUTE #TOT-DUE = #MON-PREM + #DUES-PMT
+ELSE   /* Flex Policy
+  IF #VERSION = '4'
+*     IF #TOT-LUMP-PMT > 0
+*       #PLAN := 'SI'
+*     END-IF
+    CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+      #SUFFIX
+      #PLAN
+      #PREM-AGE
+      #ANN-PREM
+      #ISS-DATE
+      #SMOKER-FLAG
+      #FAC-AMT
+      #SEX
+    if #prem-rating ne ' '  and #plan = 'SI'                /* vt1  \/
+      #ann-prem := #ann-prem * #incr
+    end-if                                                  /* vt1  /\
+    IF #PV > 0 AND #PLAN EQ 'SI'
+      COMPUTE ROUNDED #MON-PREM = (#ANN-PREM - #TOT-LUMP-PMT)
+        / ( #PV * 12 )
+    ELSE
+      IF #PV = 0
+        COMPUTE ROUNDED #MON-PREM = #ANN-PREM - #TOT-LUMP-PMT
+      ELSE
+COMPUTE ROUNDED #MON-PREM = #ANN-PREM / 12 - #TOT-LUMP-PMT / ( #PV * 12 )
+      END-IF
+    END-IF
+    #TOT-DUE := #MON-PREM
+    PERFORM MON-PREM-LT-ZERO
+  ELSE
+    MOVE 'A10' TO #SUFFIX
+    MOVE #DESIRED-FACE TO #FAC-AMT
+    CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+      #SUFFIX
+      #PLAN
+      #PREM-AGE
+      #ANN-PREM
+      #ISS-DATE
+      #SMOKER-FLAG
+      #FAC-AMT
+      #SEX
+/* It is premium for first 10000 version 4
+    MOVE #ANN-PREM TO #BASIC-PRM
+*
+    MOVE 'PFE' TO #SUFFIX
+    CALLNAT 'GPREMSXX' #CGA-SCR-COMMAND #CGA-SCR-ID
+      #SUFFIX
+      #PLAN
+      #PREM-AGE
+      #ANN-PREM
+      #ISS-DATE
+      #SMOKER-FLAG
+      #FAC-AMT
+      #SEX
+    MOVE #ANN-PREM TO #POL-FEE  /* It is 0 for version 4
+*
+* Lump sum = 0
+    IF #TOT-LUMP-PMT = 0
+      IF #DESIRED-YEARS = 0                     /* SP/lump=0
+        COMPUTE #PREM-6-6 = ((#DESIRED-FACE / 10000) * #BASIC-PRM)
+          + #POL-FEE
+        MOVE #PREM-6-6 TO #MON-PREM
+      ELSE                                      /* PP/lump=0
+        COMPUTE #POL-FEE  = #POL-FEE / (#PV * 12)
+        IF #POL-FEE-C NE 0  /* ROUND UP TO NEAREST DIME
+          ADD .10 TO #POL-FEE
+        END-IF
+        RESET #POL-FEE-C
+*
+        COMPUTE #BASIC-PRM = #BASIC-PRM / (#PV * 12)
+        IF #BASIC-PRM-C NE 0
+          ADD .10 TO #BASIC-PRM
+        END-IF
+        RESET #BASIC-PRM-C
+        COMPUTE #PREM-6-6 = ((#DESIRED-FACE / 10000) * #BASIC-PRM)
+          + #POL-FEE
+        MOVE ROUNDED #PREM-6-6 TO #MON-PREM
+      END-IF
+*
+      COMPUTE ROUNDED #MON-PREM = #MON-PREM * #INCR  /* << rating INCR
+      COMPUTE ROUNDED #MON-X-12 = #MON-PREM * 12
+      COMPUTE ROUNDED #MON-PREM = #MON-X-12 / 12
+      COMPUTE #TOT-DUE = #MON-PREM + #DUES-PMT
+/* Lump sum > 0  use single premium rates
+    ELSE
+      IF #DESIRED-YEARS = 0                       /* SP/LUMP
+        COMPUTE #PREM-6-6 = (((#DESIRED-FACE / 10000) * #BASIC-PRM)
+          + #POL-FEE)
+        SUBTRACT #TOT-LUMP-PMT FROM #PREM-6-6
+        COMPUTE #PREM-6-6 = #PREM-6-6 * #INCR   /* Rating Incr
+        MOVE #PREM-6-6 TO #MON-PREM
+        IF #MON-PREM LT 1    /* to account for rounding difference
+          RESET #MON-PREM    /* of 1035 exchange and lump sum totals
+        END-IF
+      ELSE                                        /* PP/LUMP
+        COMPUTE ROUNDED #PREM-6-6 =
+          (((#DESIRED-FACE / 10000)
+          * #BASIC-PRM) + (#POL-FEE)
+          - #TOT-LUMP-PMT) / (#PV * 12)
+        COMPUTE ROUNDED #PREM-6-6 = #PREM-6-6 * #INCR
+        MOVE ROUNDED #PREM-6-6 TO #MON-PREM
+      END-IF
+*
+      PERFORM MON-PREM-LT-ZERO
+*
+      COMPUTE #TOT-DUE = #MON-PREM + #DUES-PMT
+    END-IF
+  END-IF
+END-IF
+*
+* PRINT *PROGRAM 'Version:' #VERSION
+*   / 'PV...................:' #PV
+*   / 'Annual primium.......:' #ANN-PREM
+*   / '[Lump sum][1035 exc].:' #TOT-LUMP-PMT
+*   / 'Monthly premium......:' #MON-PREM
+IF (#DESIRED-YEARS = 0)
+  MOVE #TOT-DUE TO #ANN-PREM   /* store for return to AT/NM/AI/PO etc
+* MOVE EDITED #1035-EXCH-AMT (EM=ZZZ,ZZ9) TO #PREM-DISP-7         /* PM1
+* COMPRESS '1-time Pmt: 1035 Exch Amt $' #PREM-DISP-7             /* PM1
+  MOVE EDITED #1035-EXCH-AMT (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10     /* PM1
+  COMPRESS '1-time Pmt: 1035 Exch Amt $' #PREM-DISP-10            /* PM1
+    INTO #PREM-MSG-1 LEAVING NO
+*
+  RESET #ADDL-NEEDED
+  IF  (#MON-PREM NE 0)
+      OR (#LUMP-PMT NE 0)
+    COMPUTE #ADDL-NEEDED = #MON-PREM + #LUMP-PMT
+*   MOVE EDITED #ADDL-NEEDED (EM=ZZZ,ZZ9) TO #PREM-DISP-7         /* PM1
+*   COMPRESS #PREM-MSG-1 ' + Addl Pmt $' #PREM-DISP-7             /* PM1
+    MOVE EDITED #ADDL-NEEDED (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10     /* PM1
+    COMPRESS #PREM-MSG-1 ' + Addl Pmt $' #PREM-DISP-10            /* PM1
+      INTO #PREM-MSG-1 LEAVING NO
+  END-IF
+*
+  IF #DUES-PMT NE 0
+    MOVE EDITED #DUES-PMT (EM=ZZZ) TO #DUES-DISP-3
+    COMPRESS #PREM-MSG-1 ' + Dues $' #DUES-DISP-3
+      INTO #PREM-MSG-1 LEAVING NO
+  END-IF
+*
+  COMPUTE #TOT-DUE = #1035-EXCH-AMT + #ADDL-NEEDED + #DUES-PMT
+* MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9) TO #PREM-DISP-7               /* PM1
+* COMPRESS #PREM-MSG-1 ' = $' #PREM-DISP-7 INTO #PREM-MSG-1 LEAVING NO
+  MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10           /* PM1
+  COMPRESS #PREM-MSG-1 ' = $' #PREM-DISP-10 INTO #PREM-MSG-1 LEAVING NO
+*
+  COMPUTE #TOT-DUE = #TOT-DUE - #1035-EXCH-AMT
+  COMPUTE #ADDL-LUMP-PMT = #TOT-DUE - #SCN-LUMP-SUM /* OVER ENT LMP SUM
+*
+  IF #SCN-LUMP-SUM GT 0
+*   MOVE EDITED #SCN-LUMP-SUM (EM=ZZZ,ZZ9) TO #PREM-DISP-7        /* PM1
+*   COMPRESS '  Amount due from member: $' #PREM-DISP-7 ' + $'
+*           INTO #PREM-MSG-2 LEAVING NO
+*   MOVE EDITED #ADDL-LUMP-PMT (EM=ZZZ,ZZ9) TO #PREM-DISP-7
+*   COMPRESS #PREM-MSG-2 #PREM-DISP-7 ' = $' INTO #PREM-MSG-2 LEAVING NO
+*   MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9) TO #PREM-DISP-7
+*   COMPRESS #PREM-MSG-2 #PREM-DISP-7 INTO #PREM-MSG-2 LEAVING NO
+    MOVE EDITED #SCN-LUMP-SUM (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10
+    COMPRESS '  Amount due from member: $' #PREM-DISP-10 ' + $'
+      INTO #PREM-MSG-2 LEAVING NO
+    MOVE EDITED #ADDL-LUMP-PMT (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10
+    COMPRESS #PREM-MSG-2 #PREM-DISP-10 ' = $'
+      INTO #PREM-MSG-2 LEAVING NO
+    MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10
+    COMPRESS #PREM-MSG-2 #PREM-DISP-10 INTO #PREM-MSG-2 LEAVING NO
+  ELSE
+*   MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9) TO #PREM-DISP-7            /* PM1
+*   COMPRESS '  Amount due from member: $' #PREM-DISP-7          /* PM1
+*           INTO #PREM-MSG-2 LEAVING NO                          /* PM1
+    MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10        /* PM1
+    COMPRESS '  Amount due from member: $' #PREM-DISP-10
+      INTO #PREM-MSG-2 LEAVING NO
+  END-IF
+ELSE
+  COMPUTE #ANN-PREM = #MON-PREM * 12
+  MOVE EDITED #ANN-PREM (EM=-ZZ,ZZZ.99) TO #PREM-DISP-10
+  COMPRESS 'Annual Premium:  $' #PREM-DISP-10
+    INTO #PREM-MSG-1 LEAVING NO
+*
+  IF #DUES-PMT NE 0
+    MULTIPLY #DUES-PMT BY 12
+    MOVE EDITED #DUES-PMT (EM=ZZZ.99) TO #DUES-DISP-6
+    DIVIDE 12 INTO #DUES-PMT
+    COMPRESS #PREM-MSG-1 ' Plus Dues of $' #DUES-DISP-6
+      INTO #PREM-MSG-1 LEAVING NO
+    MULTIPLY #TOT-DUE BY 12
+    MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10
+    DIVIDE 12 INTO #TOT-DUE
+    COMPRESS #PREM-MSG-1 ' = $' #PREM-DISP-10
+      INTO #PREM-MSG-1 LEAVING NO
+  END-IF
+*
+  MOVE EDITED #MON-PREM (EM=-ZZ,ZZZ.99) TO #PREM-DISP-10
+  COMPRESS 'Monthly Premium: $' #PREM-DISP-10
+    INTO #PREM-MSG-2 LEAVING NO
+*
+  IF #DUES-PMT NE 0
+    MOVE EDITED #DUES-PMT (EM=ZZZ.99) TO #DUES-DISP-6
+    COMPRESS #PREM-MSG-2 ' Plus Dues of $' #DUES-DISP-6
+      INTO #PREM-MSG-2 LEAVING NO
+    MOVE EDITED #TOT-DUE (EM=ZZZ,ZZ9.99) TO #PREM-DISP-10
+    COMPRESS #PREM-MSG-2 ' = $' #PREM-DISP-10
+      INTO #PREM-MSG-2 LEAVING NO
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+DEFINE MON-PREM-LT-ZERO
+/*     ----------------
+IF   (#MON-PREM LT 0)
+    AND (#DESIRED-MON-PREM = 0)
+    AND #FACE-AMT-ENTERED
+  MOVE EDITED #MON-PREM (EM=ZZ,ZZZ.99) TO #AMT-X1
+*
+  IF #LUMP-PMT = 0
+    COMPRESS '1035 amt exceeds amt needed for desired face amt by $'
+      #AMT-X1   INTO #EXCESS-PMT-MSG LEAVING NO
+  ELSE
+    COMPRESS 'Total pmt exceeds amt needed for desired face amt by $'
+      #AMT-X1   INTO #EXCESS-PMT-MSG LEAVING NO
+  END-IF
+*
+  PERFORM CALC-MEC-DIFF
+  RESET #MON-PREM #ANN-PREM
+END-IF
+END-SUBROUTINE
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALC-MEC-DIFF
+* * * * * * * * * * * * * * * * *
+*                                  NG5  Start
+* IF #VERSION NE '4'
+*   #AGE-X := #PREM-AGE + 1
+* ELSE
+*   #AGE-X := #PREM-AGE
+* END-IF
+* *
+* IF #AGE-X GT 72
+*   MOVE 72 TO #AGE-X
+* END-IF
+*
+#AGE-X := #PREM-AGE
+#1035-ADJ := Get1035Adj (< #AGE-X,#SMOKER-FLAG,#SEX,#VERSION>)
+X := Get7Pay (< #AGE-X,#SMOKER-FLAG,#SEX,#VERSION >)
+COMPUTE ROUNDED #MAX-7-PAY = X * (#DESIRED-FACE / 10000)
+*
+* IF #SMOKER-FLAG = 'S'
+*   MOVE  #1035-ADJ-SM (#AGE-X) TO #1035-ADJ
+*   COMPUTE #PREM-6-6 = #7-PA-MAX-PRM-SM(#AGE-X) * (#DESIRED-FACE / 10000)
+*   MOVE ROUNDED #PREM-6-6 TO #MAX-7-PAY
+* ELSE
+*   MOVE  #1035-ADJ-NS (#AGE-X) TO #1035-ADJ
+*   COMPUTE #PREM-6-6 = #7-PA-MAX-PRM-NS(#AGE-X) * (#DESIRED-FACE / 10000)
+*   MOVE ROUNDED #PREM-6-6 TO #MAX-7-PAY
+* END-IF
+*                                  NG5  End
+IF #DESIRED-YEARS = 999                     /* DW13
+  RESET #MEC-PREM
+ELSE
+  MOVE #ANN-PREM TO #MEC-PREM
+END-IF
+*
+IF #DESIRED-YEARS = 999                                     /* DW13
+  COMPUTE #1035-PRMS-TO-DATE = (#1035-EXCH-AMT * #1035-ADJ) + #LUMP-PMT
+ELSE
+  COMPUTE #1035-PRMS-TO-DATE = (#1035-EXCH-AMT * #1035-ADJ) + #MEC-PREM
+END-IF
+*
+IF #DESIRED-YEARS NE 999    /* DW13
+  ADD #LUMP-PMT TO #1035-PRMS-TO-DATE
+END-IF
+*
+COMPUTE #MAX-7-PAY-DIFF = #1035-PRMS-TO-DATE - #MAX-7-PAY
+*
+* PRINT *PROGRAM 'Version:' #VERSION
+*   / 'Get7Pay..............:' X
+*   / 'Get1035Adj...........:' #1035-ADJ
+*   / '1035 Payments to date:' #1035-PRMS-TO-DATE
+*   / 'Maximum 7 Pay........:' #MAX-7-PAY
+*   / 'Max 7 Pay Difference.:' #MAX-7-PAY-DIFF
+*   / '1035 Exchange amount.:' #1035-EXCH-AMT
+*   / 'Lump payment.........:' #LUMP-PMT
+*   / 'MEC Premium..........:' #MEC-PREM
+
+MOVE EDITED #MAX-7-PAY (EM=ZZZ,ZZZ.99) TO #AMT-X3
+MOVE EDITED #MAX-7-PAY-DIFF (EM=ZZZ,ZZZ.99) TO #AMT-X2
+MOVE EDITED #1035-ADJ (EM=.9999999) TO #1035-PCT
+*
+IF #MAX-7-PAY-DIFF LT 0
+  MOVE 'The proposed prems do not exceed the MEC limit' TO #MEC-TEST-MSG
+ELSE
+  COMPRESS 'The proposed prems exceed the MEC limit by $' #AMT-X2
+    INTO #MEC-TEST-MSG LEAVING NO
+END-IF
+*
+IF #CGA-CLERK = 'DRW' OR = 'LCC' OR = 'MBW' OR = 'KHB' OR = 'PAM'
+  MOVE EDITED #1035-EXCH-AMT     (EM=ZZZ,ZZZ.99) TO #AMT-X1       /* PM1
+  MOVE EDITED #LUMP-PMT        (EM=ZZZ,ZZZ.99) TO #AMT-X2       /* PM6
+  MOVE EDITED #MEC-PREM          (EM=ZZZ,ZZZ.99) TO #AMT-X5
+  MOVE EDITED #1035-PRMS-TO-DATE (EM=ZZZ,ZZZ.99) TO #AMT-X6
+  COMPRESS  #1035-PCT '*' #AMT-X1 '+' #AMT-X2 '+' #AMT-X5         /* PM1
+    '=' #AMT-X6 '. MEC limit is' #AMT-X3 INTO #MEC-TEST-MSG-2    /* DW7
+    LEAVING NO                                                    /* PM1
+END-IF
+*
+END-SUBROUTINE
+* * * * *
+DEFINE CALC-PREMS-PAID-SETUP
+* * * * *
+*
+RESET #PREMS-PAID
+MOVE DATE-OF-BIRTH           TO #PP-DATE-OF-BIRTH
+MOVE ANNUAL-PREM (#I1)       TO #PP-ANNUAL-PREM
+MOVE PAY-STATUS (#I1)        TO #PP-PAY-STATUS
+MOVE TOT-PREMIUMS-PAID (#I1) TO #PP-TOT-PREMIUMS-PAID
+MOVE PAID-TO-DATE (#I1)      TO #PP-PAID-TO-DATE
+MOVE ISSUE-DATE (#I1)        TO #PP-ISSUE-DATE
+MOVE MODE (#I1)              TO #PP-MODE
+MOVE PLAN (#I1)              TO #PP-PLAN
+MOVE COST-BASIS (#I1)        TO #PP-COST-BASIS
+MOVE MONTH-ALLOC-AMT (#I1)   TO #PP-MONTH-ALLOC-AMT
+MOVE ST-V.INTRO-FLAG         TO #PP-INTRO-FLAG
+MOVE X-FIRST-PLACE-FEE (#I1) TO #PP-FIRST-PLACE-FEE
+MOVE X-BILL-ADJUST     (#I1) TO #PP-BADJ
+*
+CALLNAT 'GPRPDSCO'
+  #PP-DATE-OF-BIRTH
+  #PP-ANNUAL-PREM
+  #PP-PAY-STATUS
+  #PP-TOT-PREMIUMS-PAID
+  #PP-PAID-TO-DATE
+  #PP-ISSUE-DATE
+  #PP-MODE
+  #PP-PLAN
+  #PP-COST-BASIS
+  #PP-MONTH-ALLOC-AMT
+  #PP-INTRO-FLAG
+  #PP-FIRST-PLACE-FEE
+  #PREMS-PAID
+  #SUB-PREMS-PAID
+  #PP-BADJ
+*
+END-SUBROUTINE
+*
+DEFINE POPULATE-AL-CODE  /* NG3
+/*     ------------------
+
+IF #SCN-AOD-YYYYMMDD = 0
+  #SCN-AOD-YYYYMMDD := *DATN
+END-IF
+
+DECIDE FOR FIRST CONDITION
+  WHEN #SCN-AOD-YYYYMMDD > 20180301
+    MOVE 'AL3' TO #PLAN
+  WHEN #SCN-AOD-YYYYMMDD > 20150101
+    MOVE 'AL2' TO #PLAN
+  WHEN NONE
+    MOVE 'AL' TO #PLAN
+END-DECIDE
+
+IF #PLAN-CODE SPECIFIED
+  MOVE #PLAN TO #PLAN-CODE
+END-IF
+
+END-SUBROUTINE
+END

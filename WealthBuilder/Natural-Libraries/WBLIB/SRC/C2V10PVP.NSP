@@ -1,0 +1,1375 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: C2V10PVP
+***********
+*    MODIFICATION LOG
+* USER DATE     TAG REASON
+* DRW  09282004 DW1 add CREDIT CARD processing
+* DRW  11162004 DW2 add 1 to year if iss mm = curr-mm
+* DRW  12282004 DW3 INCREASE VAR LOAN TO HANDLE 999,999.99
+* DRW  01142005 DW4 fix addl prems paid on VP OVR
+* DRW  02212005 DW5 Add AL (Annuity Life)
+* PAM  05312005 PM6 Adjust AVL-TDIV for 124156 per RLB
+* DRW  08092005 DW7 Show 2 yrs on Monthly Projs
+* SAG  10282005 RH1 AB - Replace CALL to Cobol with CALLNAT to Natural (C2V12CVP)
+* DRW  11142005 DW8 Add Process Ind to GOPTOSXX Linkage
+* DRW  02272006 DW9 Use new procesing for OPT-OUT Processing
+* DRW  03072006 DW10 Only do the oldest policy compare on a VP OPT
+* DRW  04132006 DW11 Disallow flex plans on Blank VP's
+* SAG  04272006 SAG-AB - Change hexadecimal test for plain test for zero.
+* PAM  07072006 PM12 Removed DW11 changes - not sure why they were added
+* DRW  07072006 DW13 Reinstated Dw11 with addl checks
+* PAM  07122006 PM14 Adjusted DW13 to allow OL
+* DRW  08052006 DW15 Don't let decr TDIV make DB Lower (removed 8/21/06)
+* DRW  08102006 DW16 Do Not reset TPP if Flex-pol in C2v11cvp
+* DRW  09132007 DW17 Remove '*' from the Guar 2 Columns for AL pols (part of DW5)
+* YAK  12052007 YK1  Remove hardcording for interest rates
+*                    (Read GEN-TABLE through OBJNGENT)
+* DRW  01302008 DW18 Let RLB as well as DRW see TDIV on Projections
+* YAK  02052008 YK2  Change code to use FUNCTION-INT-RATE
+*                         to get rate from GEN-TABLE
+* DRW 02/22/2008 DW19 Disallow RLB from seeing TDIV on Projections (for customers sake)
+* DRW 08/18/2008 DW21 Gen Plus Processing
+* DRW 09/06/2008 DW22 Adjust Mbr age if dob mon = iss-dt-mon if dob day > iss-day
+* DRW 02/02/2009 DW23 Do not do DW22 if 1st line (Current line)
+* DRW 02/11/2009 DW24 Modify Death benefit Display if TPP exceeds DB
+* DRW 02/13/2009 DW25 Do not add Avl TDIV if REAL AMTS were requested
+* DRW 02/13/2009 DW26 Allow ALB to see Terminal TDIV
+* DRW 03/28/2009 DW27 Modify Death benefit Display if CSV exceeds DB
+* VXT 08/23/2012 vt1  Replaced PAM with VXT
+* NGG  20130204  NG1  Add Nursing Home Pay Status
+* TMT 12/27/2013 TT1  ADDED GP2 POLICY
+* TMT 06/12/2014 TT2  Contact Normalization - Gender and DOB
+* TMT 10/14/2014 TT3  Added new policy type ANNUITYLife 2
+*********************************************************
+INCLUDE C2V10CVP
+INCLUDE GONERCXX
+*
+IF #CGA-SCR-SUFFIX = 'TRA'
+  FETCH 'C2V50PVP'
+END-IF
+*
+IF #CGA-ORIG-COMMAND = 'AV'
+  FETCH 'C2V30PAV'
+END-IF
+*
+IF *DEVICE = 'BATCH'
+    AND (#CGA-SCR-COMMAND NE 'VP')
+  FETCH 'C2V40PVP'
+END-IF
+*
+#CURR-VAR-INT-RATE := FUNCTION-INT-RATE(<'RATE5AB'>)   /* YK2
+#SCR-OVR-GROWTH-RATE := FUNCTION-INT-RATE(<'RATE2AA'>) /* YK2
+*
+INCLUDE C2V12CVP
+*
+INCLUDE C2V11CVP
+*
+* * * * * * * * * * *
+DEFINE SUBROUTINE BUILD-PAGE-1
+* * * * * * * * * * *
+*
+
+IF PAY-STATUS (#IDX) = '43'
+  IF #CGA-CLERK = 'DRW'
+    WRITE 'Only Drw can do VP on PULT' / 'Press enter'
+  ELSE
+    WRITE 'VP on a Long Term Care Pol Invalid' / 'Press Enter'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+IF PAY-STATUS (#IDX) = '73'    /* NG1
+  WRITE 'VP on a Nursing Home Pol Invalid' / 'Press Enter'
+  FETCH 'G1000PXX'
+END-IF
+*
+RESET #PREMS-PAID
+MOVE DATE-OF-BIRTH     TO #PP-DATE-OF-BIRTH
+MOVE #OLD-ANN-PREM     TO #PP-ANNUAL-PREM   /* DW4
+MOVE PAY-STATUS (#IDX) TO #PP-PAY-STATUS
+MOVE TOT-PREMIUMS-PAID (#IDX) TO #PP-TOT-PREMIUMS-PAID
+MOVE PAID-TO-DATE (#IDX)  TO #PP-PAID-TO-DATE
+MOVE ISSUE-DATE (#IDX)    TO #PP-ISSUE-DATE
+MOVE MODE (#IDX)       TO #PP-MODE
+MOVE PLAN (#IDX)       TO #PP-PLAN
+MOVE COST-BASIS (#IDX) TO #PP-COST-BASIS
+MOVE MONTH-ALLOC-AMT (#IDX) TO #PP-MONTH-ALLOC-AMT
+MOVE INTRO-FLAG        TO #PP-INTRO-FLAG
+MOVE X-FIRST-PLACE-FEE (#IDX) TO #PP-FIRST-PLACE-FEE
+MOVE X-BILL-ADJUST (#IDX) TO #PP-BADJ
+*
+CALLNAT 'GPRPDSCO'
+  #PP-DATE-OF-BIRTH
+  #PP-ANNUAL-PREM
+  #PP-PAY-STATUS
+  #PP-TOT-PREMIUMS-PAID
+  #PP-PAID-TO-DATE
+  #PP-ISSUE-DATE
+  #PP-MODE
+  #PP-PLAN
+  #PP-COST-BASIS
+  #PP-MONTH-ALLOC-AMT
+  #PP-INTRO-FLAG
+  #PP-FIRST-PLACE-FEE
+  #PREMS-PAID
+  #SUB-PREMS-PAID
+  #PP-BADJ
+
+*
+FOR #FST-X 1 TO 9
+  IF STATUS (#FST-X) = 'D'
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+IF #FST-X GT 9
+  MOVE 1 TO #FST-X
+END-IF
+*
+RESET #USE-X-CALCS
+IF   (#PR-V.ISSUE-DATE(#IDX) GE 19970101)
+    AND (#PR-V.MONTH-ALLOC-AMT(#IDX) NE 999.99)
+  MOVE TRUE TO #USE-X-CALCS
+END-IF
+*
+RESET #SCR-PROJ-LINE (*)
+*
+RESET #TOT-POLS
+RESET #TOT-FACE
+RESET #TOT-DB
+*
+FOR #I1 1 TO 9
+  IF   (#PR-V.STATUS (#I1) = 'D')
+      AND (#PR-V.OWNERSHIP-FLAG(#I1) =
+      #PR-V.OWNERSHIP-FLAG (#IDX))
+    ADD 1 TO #TOT-POLS
+    ADD #PR-V.FACE-AMOUNT (#I1) TO #TOT-FACE
+*
+    IF  (#PR-V.ONLINE-ACTION-GN    = '2')
+        OR (#PR-V.ONLINE-ACTION (#I1) = '1')
+      ADD #PR-V.FACE-AMOUNT (#I1) TO #TOT-DB
+    ELSE
+      IF #PR-V.CONVERSION-FLAG (#I1) = 'N' OR = 'C'
+        ADD #PR-V.DEATH-BENEFIT (#I1) TO #TOT-DB
+      ELSE
+        COMPUTE #TOT-DB = #TOT-DB
+          + (#PR-V.FACE-AMOUNT (#I1) * 1.8)
+      END-IF
+    END-IF
+  END-IF
+END-FOR
+*
+MOVE *DATN TO #YYYYMMDD
+PERFORM DATE-REFORMAT
+MOVE #W-DATE-EDITED TO #SCR-AS-OF-DATE
+*
+IF #SCR-OVR-MTHLY-VAL = 'Y'
+  COMPRESS 'VALUE ADDED MONTHLY CALCS AS OF' #SCR-AS-OF-DATE
+    INTO #SCR-TOP-LINE
+ELSE
+  IF #PR-V.PLAN (#IDX) = 'GPL' OR = 'GP'                 /* DW21
+    COMPRESS 'GENERATIONS PLUS WHOLE LIFE PROJECTION AS OF' #SCR-AS-OF-DATE
+      INTO #SCR-TOP-LINE
+  ELSE                                                                          /* TT1 BEGIN
+    IF #PR-V.PLAN (#IDX) = 'GP2'
+      COMPRESS 'GENERATIONS PLUS 2 WHOLE LIFE PROJECTION AS OF' #SCR-AS-OF-DATE
+        INTO #SCR-TOP-LINE                                                      /* TT1 END
+    ELSE
+      COMPRESS 'VALUE ADDED LIFE PROJECTION AS OF' #SCR-AS-OF-DATE
+        INTO #SCR-TOP-LINE
+    END-IF
+  END-IF
+END-IF
+*
+IF #PREM-RATING NE ' '
+  COMPRESS #SCR-TOP-LINE 'with Rating' #PREM-RATING INTO #SCR-TOP-LINE
+END-IF
+*
+CALLNAT 'GCKNMSXX' #CGA-CLERK #INVALID #CLERK-NAME
+MOVE #L-SWITCHED-NAME TO #SCR-PROJ-NAME
+MOVE 1 TO #PROJ-IDX
+*
+IF CONV-DURATION (#IDX) = 888
+  COMPRESS 'AAFMAA/' #SCR-PROJ-NAME INTO #SCR-PROJ-NAME LEAVING NO
+END-IF
+COMPRESS '          PREPARED FOR' #SCR-PROJ-NAME
+  INTO #SCR-PROJ-LINE (#PROJ-IDX)
+*
+IF (#CLERK-NAME NE ' ') AND (NOT #INVALID)
+  COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) 'BY' #CLERK-NAME
+    INTO #SCR-PROJ-LINE (#PROJ-IDX)
+END-IF
+MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+*
+CALLNAT 'GPLNMSXX' #SCN-POLICY-NUMBER ID-NUMBER #IDX /* build POL-#
+MOVE #SCN-POLICY-NUMBER TO #SCR-POL-NUM (#ISC)
+*
+ADD 1 TO #PROJ-IDX
+*
+IF *DEVICE = 'BATCH'
+  ADD 1 TO #PROJ-IDX
+END-IF
+MOVE #PROJ-IDX TO #OO-INFO-X
+ADD 1 TO #POL-#
+RESET #OO-TOT-FND (*)
+*
+MOVE #PR-V.ISSUE-DATE (#IDX) TO #YYYYMMDD
+PERFORM DATE-REFORMAT
+MOVE #W-DATE-EDITED TO #SCR-ISSUE-DT
+MOVE #PR-V.ISSUE-AGE (#IDX) TO #SCR-ISSUE-AGE
+MOVE EDITED #PR-V.FACE-AMOUNT (#IDX) (EM=Z,ZZZ,ZZ9.99)
+  TO #SCR-AMT-DISP
+COMPRESS ' CN' #SCR-POL-NUM (#ISC) '($'
+  INTO #SCR-PROJ-LINE (#PROJ-IDX)
+COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) #SCR-AMT-DISP ' FACE AMOUNT)'
+  INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+*
+IF #CGA-ORIG-SUFFIX = 'ADD' OR = 'FLX'
+  COMPRESS  #SCR-PROJ-LINE (#PROJ-IDX) 'IF'
+    INTO #SCR-PROJ-LINE (#PROJ-IDX)
+END-IF
+*
+IF (NOT #USE-X-CALCS)
+    AND (#SCR-OVR-SEX = 'F')
+  ADD 3 TO #SCR-ISSUE-AGE-N
+END-IF
+*
+COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) 'ISSUED' #SCR-ISSUE-DT
+  'AT AGE' #SCR-ISSUE-AGE       INTO #SCR-PROJ-LINE (#PROJ-IDX)
+*
+ADD 1 TO #PROJ-IDX
+*
+MOVE 12 TO #CIX-MODE
+IF #PR-V.PAY-STATUS (#IDX) = '47'
+  MOVE EDITED TOT-PREMIUMS-PAID (#IDX) (EM=ZZZ,ZZ9) TO #SCR-AMT-DISP
+  IF #PR-V.PLAN (#IDX) = 'GPL' OR = 'GP'     /* Gen Plus               DW21
+    COMPRESS '          GENERATION PLUS    --- SINGLE PAYMENT OF $'
+      #SCR-AMT-DISP INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+  ELSE
+    IF #PR-V.PLAN (#IDX) = 'GP2' THEN                                        /* TT1 BEGIN
+      COMPRESS '        GENERATION PLUS 2    --- SINGLE PAYMENT OF $'
+        #SCR-AMT-DISP  INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+    ELSE                                                                     /* TT1 END
+      IF #PR-V.PLAN (#IDX) = 'AL'                             /* DW5                      /* TT3
+        COMPRESS '          ANNUITY LIFE    --- SINGLE PAYMENT OF $'
+          #SCR-AMT-DISP INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+      ELSE
+        IF #PR-V.PLAN (#IDX) = 'AL2'                             /* DW5                   /* TT3
+          COMPRESS '          ANNUITY LIFE 2  --- SINGLE PAYMENT OF $'
+            #SCR-AMT-DISP INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+        ELSE
+          IF  (INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+              OR (#CGA-ORIG-SUFFIX = 'SPS' OR = 'GEN')
+            COMPRESS '        LIFETIME COVERAGE --- SINGLE PAYMENT OF $'
+              #SCR-AMT-DISP INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+          ELSE
+            COMPRESS '          LIFE MEMBERSHIP --- SINGLE PAYMENT OF $'
+              #SCR-AMT-DISP INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+ELSE
+  RESET #SCR-PLN
+  IF #PR-V.PLAN (#IDX) = 'OL'
+    MOVE '  ORDINARY' TO #SCR-PLN
+  ELSE
+    IF #PR-V.PLAN (#IDX) = '20P'
+      MOVE '20-PAY' TO #SCR-PLN-A6
+    ELSE
+      IF #PR-V.PLAN (#IDX) = '30P'
+        MOVE '30-PAY' TO #SCR-PLN-A6
+      ELSE
+        IF #PR-V.PLAN (#IDX) = '7P'
+          MOVE ' 7-PAY' TO #SCR-PLN-A6
+        ELSE
+          IF IS-ANNUITY-LIFE (< #PR-V.PLAN (#IDX) >)  /* DW5        /* TT3
+            MOVE ' ANNUITY' TO #SCR-PLN
+          ELSE
+            IF #PR-V.PLAN (#IDX) = 'GPL' OR = 'GP'  /* Gen Plus          DW21
+              MOVE ' GPL' TO #SCR-PLN-A6
+            ELSE
+              IF #PR-V.PLAN (#IDX) = 'GP2' /* GP2 TT1
+                MOVE ' GP2' TO #SCR-PLN-A6
+              ELSE
+                IF #PR-V.PLAN-2A (#IDX) = 'P'
+                  COMPRESS #PR-V.PLAN-1A (#IDX) '-PAY'
+                    INTO #SCR-PLN-A6 LEAVING NO
+                ELSE
+                  COMPRESS #PR-V.PLAN-2 (#IDX) '-PAY'
+                    INTO #SCR-PLN-A6 LEAVING NO
+                END-IF
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #PR-V.PAY-STATUS (#IDX) = '44'
+    MOVE '(EXTENDED TERM INSURANCE)' TO #SCR-MODE
+  ELSE
+    IF #PR-V.PAY-STATUS (#IDX) GT '40'
+      MOVE '(PAID-UP)' TO #SCR-MODE
+    ELSE
+      IF #PR-V.MODE (#IDX) = 'A' OR = '1'   /* DW1
+        MOVE #PR-V.ANNUAL-PREM (#IDX) TO #MODAL-PREM
+        MOVE 'ANNUALLY)' TO #SCR-MODE-LBL
+        MOVE 1 TO #CIX-MODE
+      ELSE
+        IF #PR-V.MODE (#IDX) = 'S' OR = '2'    /* DW1
+          COMPUTE #MODAL-PREM = #PR-V.ANNUAL-PREM (#IDX) / 2
+          MOVE 'SEMI-ANNUALLY)' TO #SCR-MODE-LBL
+          MOVE 2 TO #CIX-MODE
+        ELSE
+          IF #PR-V.MODE (#IDX) = 'Q' OR = '4'   /* DW1
+            COMPUTE #MODAL-PREM = #PR-V.ANNUAL-PREM(#IDX) / 4
+            MOVE 'QUARTERLY)' TO #SCR-MODE-LBL
+            MOVE 4 TO #CIX-MODE
+          ELSE
+            COMPUTE #MODAL-PREM = #PR-V.ANNUAL-PREM(#IDX) / 12
+            MOVE 'MONTHLY)' TO #SCR-MODE-LBL
+          END-IF
+        END-IF
+      END-IF
+*
+      MOVE EDITED #MODAL-PREM (EM=ZZ,ZZZ.99) TO #SCR-AMT-DISP
+      COMPRESS '$' #SCR-AMT-DISP INTO #SCR-AMT-DISP LEAVING NO
+      COMPRESS '(PAID' #SCR-AMT-DISP INTO #SCR-MODE
+      COMPRESS #SCR-MODE #SCR-MODE-LBL INTO #SCR-MODE
+    END-IF
+  END-IF
+*
+  MOVE EDITED #PR-V.ANNUAL-PREM (#IDX) (EM=ZZ,ZZZ.99)
+    TO #SCR-AMT-DISP
+  COMPRESS '$' #SCR-AMT-DISP INTO #SCR-AMT-DISP LEAVING NO
+*
+  COMPRESS #SCR-PLN 'LIFE WITH ANNUAL PREMIUM OF' #SCR-AMT-DISP
+    #SCR-MODE  INTO #SCR-PROJ-LINE (#PROJ-IDX)
+END-IF
+*
+IF  (#L-SHOW-LOAN-REPAID = 'N')
+    OR (#L-REIN-CODE = 'NC' OR = 'AV')
+    OR (#L-PTY-PR-CSV-NL (1) = 999999)
+  MOVE FALSE TO #SHOW-LOAN-REPAID
+ELSE
+  IF ((#PR-V.LOAN-AMOUNT NE 0)
+      AND ((#PR-V.INTEREST-RATE - .5) LT #SCR-OVR-GROWTH-RATE))
+      OR   ((#PR-V.LOAN-AMOUNT-2 NE 0)
+      AND ((#CURR-VAR-INT-RATE - .5) LT #SCR-OVR-GROWTH-RATE))
+    MOVE TRUE TO #SHOW-LOAN-REPAID
+  ELSE
+    MOVE FALSE TO #SHOW-LOAN-REPAID
+  END-IF
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+*
+IF *DEVICE = 'BATCH'
+  ADD 1 TO #PROJ-IDX
+END-IF
+*
+IF #USE-X-CALCS AND (#CGA-CLERK = 'DRW' OR = 'VXT'           /* vt1
+    OR = 'ALB')                        /* DW26
+*           OR = 'RLB')                                      /* DW18/DW19
+  COMPRESS '  INSURANCE CATEGORY   GUAR'
+    INTO #SCR-PROJ-LINE (#PROJ-IDX)
+ELSE
+  IF   (#PR-V.CONVERSION-FLAG (#IDX) = 'N')
+      AND (#PR-V.ISSUE-DATE (#IDX) GE 19860701)
+    COMPRESS '  INSURANCE CATEGORY    GUARANTEED'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  ELSE
+    COMPRESS '                        GUARANTEED'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  END-IF
+END-IF
+*
+COMPUTE #RATE-CALC = #L-GROWTH-RATE / 1000
+IF #RATE-CALC-1 = 0
+  MOVE EDITED #RATE-CALC (EM=Z9.99) TO #RATE-DISP
+ELSE
+  MOVE EDITED #RATE-CALC (EM=Z9.999) TO #RATE-DISP
+END-IF
+COMPRESS #RATE-DISP '%' INTO #RATE-DISP LEAVING NO
+*
+IF #SHOW-LOAN-REPAID
+  IF #PR-V.RESTRICT-MBR-SW = 'Y'
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '           RESTRICTED MEMBER'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  ELSE
+    IF #PR-V.PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2'            /*TT1             /* DW21
+      COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '                                 '      /* TT1
+        INTO #SCR-PROJ-LINE (#PROJ-IDX)
+    ELSE
+      COMPRESS #SCR-PROJ-LINE (#PROJ-IDX)
+        '    ILLUSTRATED CREDITING RATE' #RATE-DISP
+        INTO #SCR-PROJ-LINE (#PROJ-IDX)
+    END-IF
+  END-IF
+ELSE
+  IF #PR-V.RESTRICT-MBR-SW = 'Y'
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '              RESTRICTED'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  ELSE
+    IF #USE-X-CALCS AND (#CGA-CLERK = 'DRW' OR = 'VXT'           /* vt1
+        OR = 'ALB')                        /* DW26
+*       OR = 'RLB')                          /* DW18/DW19
+      IF #PR-V.PLAN (#IDX) = 'GPL' OR = 'GP'          /*TT1         /* DW21
+        COMPRESS #SCR-PROJ-LINE (#PROJ-IDX)
+          '                   GUARANTEED INTEREST RATE 4.0%'
+          INTO #SCR-PROJ-LINE (#PROJ-IDX)
+      ELSE
+        COMPRESS #SCR-PROJ-LINE (#PROJ-IDX)
+          '                   ILLUSTRATED CREDITING RATE' #RATE-DISP
+          INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+      END-IF
+    ELSE
+      IF #PR-V.PLAN (#IDX)  = 'GP2'          /*TT1      /* DW21
+        COMPRESS #SCR-PROJ-LINE (#PROJ-IDX)
+          '                                        '       /* TT1
+          INTO #SCR-PROJ-LINE (#PROJ-IDX)
+      ELSE
+        COMPRESS #SCR-PROJ-LINE (#PROJ-IDX)
+          '           ILLUSTRATED CREDITING RATE' #RATE-DISP
+          INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+*
+IF #USE-X-CALCS AND (#CGA-CLERK = 'DRW' OR = 'VXT'            /* vt1
+    OR = 'ALB')                        /* DW26
+*      OR = 'RLB')                                          /* DW18/DW19
+    AND (NOT PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2')      /* TT1           /* DW21
+  IF #PR-V.SMOKER-FLAG (#IDX) = 'S'
+    COMPRESS '        SMOKER       MINIMUM  TERMINA-'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  ELSE
+    COMPRESS '      NON-SMOKER     MINIMUM  TERMINA-'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  END-IF
+ELSE
+  IF   (#PR-V.CONVERSION-FLAG (#IDX) = 'N')
+      AND (#PR-V.ISSUE-DATE (#IDX) GE 19860701)
+    IF #PR-V.SMOKER-FLAG (#IDX) = 'S'
+      COMPRESS '        SMOKER        MINIMUM AMOUNTS'
+        INTO #SCR-PROJ-LINE (#PROJ-IDX)
+    ELSE
+      COMPRESS '      NON-SMOKER      MINIMUM AMOUNTS'
+        INTO #SCR-PROJ-LINE (#PROJ-IDX)
+    END-IF
+  ELSE
+    COMPRESS '                      MINIMUM AMOUNTS'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  END-IF
+END-IF
+*
+IF #SHOW-LOAN-REPAID
+  COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '   TOTAL   IF LOAN UNPAID   I'
+    'F LOAN REPAID'     INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+ELSE
+  IF #PR-V.RESTRICT-MBR-SW = 'Y'
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '  TOTAL    MEMBER'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  ELSE
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX)
+      '  TOTAL' INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  END-IF
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+*
+IF INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+  MOVE '         INS  YRS IN   CASH'
+    TO #SCR-PROJ-LINE (#PROJ-IDX)
+ELSE
+  MOVE '         MBR  YRS IN   CASH'
+    TO #SCR-PROJ-LINE (#PROJ-IDX)
+END-IF
+*
+IF #USE-X-CALCS AND (#CGA-CLERK = 'DRW' OR = 'VXT'   /* DW18/DW19 /* vt1
+    OR = 'ALB')                        /* DW26
+    AND (NOT PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2')           /*TT1           /* DW21
+  COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '    TION'
+    TO #SCR-PROJ-LINE (#PROJ-IDX)
+ELSE
+  COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '   DEATH'
+    TO #SCR-PROJ-LINE (#PROJ-IDX)
+END-IF
+*
+IF #SHOW-LOAN-REPAID
+  COMPRESS #SCR-PROJ-LINE (#PROJ-IDX)
+    '    PRMS NET CASH NET DEATH   CASH   DEATH'
+    INTO #SCR-PROJ-LINE(#PROJ-IDX)
+ELSE
+  IF PLAN (#IDX) = 'GPL' OR = 'GP'  OR = 'GP2'       /*TT1        /* DW21
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '    PRMS'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  ELSE
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '    PRMS    CASH    DEATH'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  END-IF
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+IF #USE-X-CALCS
+  IF PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2'         /* TT1               /* DW21
+    MOVE ' MN/YEAR AGE   FORCE   VALUE  BENEFIT    PAID '
+      TO #SCR-PROJ-LINE (#PROJ-IDX)
+  ELSE
+    IF #CGA-CLERK = 'DRW' OR = 'VXT'     /* DW18/DW19          /* vt1
+        OR = 'ALB'                        /* DW26
+      MOVE ' MN/YEAR AGE   FORCE   VALUE  DIVIDEND   PAID   VALUE* BENEFIT*'
+        TO #SCR-PROJ-LINE (#PROJ-IDX)
+    ELSE
+      MOVE ' MN/YEAR AGE   FORCE   VALUE  BENEFIT    PAID   VALUE* BENEFIT*'
+        TO #SCR-PROJ-LINE (#PROJ-IDX)
+    END-IF
+  END-IF
+ELSE
+  MOVE ' MN/YEAR AGE   FORCE   VALUE  BENEFIT    PAID   VALUE   BENEFIT'
+    TO #SCR-PROJ-LINE (#PROJ-IDX)
+END-IF
+*
+IF #SHOW-LOAN-REPAID
+  IF #USE-X-CALCS
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '   VALUE*  BENE*'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+  ELSE
+    COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '   VALUE BENEFIT'
+      INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+  END-IF
+END-IF
+*
+RESET #TOT-FOOTERS
+*
+IF #TOT-POLS GT 1
+  ADD 1 TO #TOT-FOOTERS
+END-IF
+*
+IF #USE-X-CALCS
+  ADD 1 TO #TOT-FOOTERS
+END-IF
+*
+IF   (INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q') AND (#IDX = 1)
+    AND (INTEREST-RATE LT 5.00) AND (LOAN-AMOUNT GT 0)
+  ADD 1 TO #TOT-FOOTERS
+END-IF
+*
+MOVE #PROJ-IDX TO #TOT-TXT-LINES
+*
+ADD  #L-NUM-DTLS TO #TOT-TXT-LINES
+ADD #TOT-FOOTERS TO #TOT-TXT-LINES
+IF *DEVICE = 'BATCH'
+  ADD  #L-NUM-DTLS TO #TOT-TXT-LINES /* doubl spaced
+  ADD #TOT-FOOTERS TO #TOT-TXT-LINES
+END-IF
+IF   (#SCR-OVR-MTHLY-VAL NE 'Y')
+    AND (#TOT-TXT-LINES GT #PAGE-LENGTH)
+  COMPUTE #LINES-TO-DELETE = #TOT-TXT-LINES - #PAGE-LENGTH
+*
+  IF #CGA-SCR-SUFFIX = 'OPT'
+    ADD 1 TO #LINES-TO-DELETE
+    ADD 1 TO #OO-NUM-WL
+  END-IF
+*
+  IF #SCR-OVR-DISP-1ST-10-YRS = 'Y'
+    RESET #LINES-TO-DELETE
+  END-IF
+*
+  IF #LINES-TO-DELETE GT 0
+    FOR #I1 10 TO 2 STEP -1
+      MOVE #L-PTY-MEM-AGE (#I1) TO #MEM-AGE
+      IF NOT (#MEM-AGE-1 = 0 OR = 5)
+          AND (#L-PTY-ANN-PRM (#I1) NE 99999.99)
+        MOVE 99999.99  TO #L-PTY-ANN-PRM (#I1)
+        SUBTRACT 1 FROM #LINES-TO-DELETE
+*
+        IF #LINES-TO-DELETE = 0
+          ESCAPE BOTTOM
+        END-IF
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF #LINES-TO-DELETE GT 0
+    FOR #I1 #L-NUM-DTLS TO 2 STEP -1
+      MOVE #L-PTY-MEM-AGE (#I1) TO #MEM-AGE
+      IF  (#MEM-AGE = 96)
+          OR (#MEM-AGE-1 = 0)
+          AND (#L-PTY-ANN-PRM (#I1) NE 99999.99)
+        IGNORE
+      ELSE
+        IF #L-PTY-ANN-PRM (#I1) NE 99999.99
+          MOVE 99999.99  TO #L-PTY-ANN-PRM (#I1)
+          SUBTRACT 1 FROM #LINES-TO-DELETE
+          IF #LINES-TO-DELETE = 0
+            ESCAPE BOTTOM
+          END-IF
+        END-IF
+      END-IF
+    END-FOR
+  END-IF
+*
+  IF #LINES-TO-DELETE GT 0
+    FOR #I1 #L-NUM-DTLS TO 2 STEP -1
+      IF   (#MEM-AGE NE 96)
+          AND (#L-PTY-ANN-PRM (#I1) NE 99999.99)
+        MOVE 99999.99  TO #L-PTY-ANN-PRM (#I1)
+        SUBTRACT 1 FROM #LINES-TO-DELETE
+        IF #LINES-TO-DELETE = 0
+          ESCAPE BOTTOM
+        END-IF
+      END-IF
+    END-FOR
+  END-IF
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+*
+IF *DEVICE = 'BATCH'
+  ADD  1 TO #PROJ-IDX
+END-IF
+*
+MOVE 1 TO #DTL-IDX
+*
+IF #CURR-YYYY = #SCR-OVR-START-YEAR
+  MOVE *DATN TO #CALC-DATE
+  SUBTRACT 1 FROM #CALC-DATE-MM  /* ok to be 0
+ELSE
+  MOVE #SCR-OVR-START-YEAR TO #CALC-DATE-YYYY
+  MOVE ISSUE-DATE-MM (#IDX) TO #CALC-DATE-MM
+  MOVE ISSUE-DATE-DD (#IDX) TO #CALC-DATE-DD
+END-IF
+*
+PERFORM BUILD-PAGE-COMMON
+*
+END-SUBROUTINE  /* (0327)
+*
+* * * * * * * * * *
+DEFINE SUBROUTINE FORMAT-MTHLY-DTL
+* * * * * * * * * *
+*
+PERFORM FORMAT-YEARLY-DTL
+*
+MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+*
+IF #USE-X-CALCS
+  COMPRESS '   LST ACV + PRM - ACQ/MNT-COI  + INT  = EOM ACV (CF - TDV)'
+    'C-SUR-VL  TOT-DB' INTO #SCR-PROJ-LINE (#PROJ-IDX)
+ELSE
+  COMPRESS '   LST ACV + PRM - PRMDF - COI  + INT  = EOM ACV  - CRED  ='
+    'EOM CSV   EOM-DB' INTO #SCR-PROJ-LINE (#PROJ-IDX)
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+MOVE 11 TO #I1
+*
+FOR #I2 1 TO 2                  /* DW7
+  REPEAT UNTIL #PROJ-IDX GT #PAGE-LENGTH
+      OR #DTL-IDX  GT #L-NUM-DTLS
+      OR (#DTL-IDX GT 27)
+      OR #L-DTL-MNTHLY-IND (#DTL-IDX) NE 'M'
+**                                                  /* SAG-AB 20060427 START
+**  IF #L-PTM-BOM-ACV (#DTL-IDX) = MASK('0404040'.) /* TO BYPASS EMPTY LINE
+**      OR (#L-PTM-BOM-ACV (#DTL-IDX) NE MASK(NNNNNNN.))
+    IF #L-PTM-BOM-ACV (#DTL-IDX) = 0 /* TO BYPASS EMPTY LINE
+        OR (#L-PTM-BOM-ACV (#DTL-IDX) NE MASK(NNNNNNNN))
+**                                                  /* SAG-AB 20060427 end
+      ADD 1 TO #DTL-IDX
+      ESCAPE TOP
+    END-IF
+*
+    IF  (#PR-V.CONV-DURATION (#IDX) = 999)
+        OR (#CGA-SCR-SUFFIX = 'CAP')
+      ADD 1 TO #CALC-DATE-MM
+*
+      IF #CALC-DATE-MM GT 12
+        MOVE 1 TO #CALC-DATE-MM
+        ADD 1 TO #CALC-DATE-YYYY
+      END-IF
+    END-IF
+*
+    MOVE EDITED #L-PTM-BOM-ACV   (#DTL-IDX) (EM=-ZZZZZZ.99) TO #MD-BOM-ACV
+    MOVE EDITED #L-PTM-PREMIUM   (#DTL-IDX) (EM=ZZZ9.99) TO #MD-PREMIUM
+    MOVE EDITED #L-PTM-PR-DEFIC  (#DTL-IDX) (EM=ZZZ.99) TO #MD-PR-DEFIC
+    MOVE EDITED #L-PTM-COI       (#DTL-IDX) (EM=-ZZZ.99) TO #MD-COI
+    MOVE EDITED #L-PTM-INT       (#DTL-IDX) (EM=ZZZ.99) TO #MD-INT
+    MOVE EDITED #L-PTM-EOM-ACV   (#DTL-IDX) (EM=-ZZZZZZ.99) TO #MD-EOM-ACV
+    MOVE EDITED #L-PTM-EOM-CSV   (#DTL-IDX) (EM=-ZZZZZZ.99) TO #MD-EOM-CSV
+    MOVE EDITED #L-PTM-EOM-DB    (#DTL-IDX) (EM=ZZZZZZ.99) TO #MD-EOM-DB
+
+    COMPUTE #W-CRED = #L-PTM-EOM-ACV (#DTL-IDX) - #L-PTM-EOM-CSV (#DTL-IDX)
+    MOVE EDITED #W-CRED (EM=-ZZZZZ.99)        TO #MD-CRED
+*
+    MOVE #MONTHLY-DTL TO #SCR-PROJ-LINE (#PROJ-IDX)
+*
+    IF #SCR-OVR-DISPLAY-CALCS = 'Y'
+      IF #USE-X-CALCS
+        MOVE #L-CALC-MO-IND (#I1 + 5)  TO #MO-IND
+        MOVE #L-CALC-AMT (#I1)     TO #SNG-PREM-CURR
+        MOVE #L-CALC-AMT (#I1 + 1) TO #BACV-A
+        MOVE #L-CALC-AMT (#I1 + 2) TO #INT-DB
+        MOVE #L-CALC-AMT (#I1 + 3) TO #MON-DB-PROC-EXP
+        MOVE #L-CALC-AMT (#I1 + 4) TO #NAR
+        MOVE #L-CALC-AMT (#I1 + 5) TO #RBC
+        MOVE #L-CALC-AMT2 (#I1)     TO #MON-MAINT-EXP
+        MOVE #L-CALC-AMT2 (#I1 + 1) TO #CSV-BOM
+        MOVE #L-CALC-AMT2 (#I1 + 2) TO #NXT-CONT-FUND
+        MOVE #L-CALC-AMT2 (#I1 + 3) TO #CURR-ACQ
+        MOVE #L-CALC-AMT2 (#I1 + 4) TO #AVL-TDIV
+        MOVE #L-CALC-AMT2 (#I1 + 5) TO #EOM-DB
+      ELSE
+        MOVE #L-CALC-MO-IND (#I1 + 5)  TO #MO-IND
+        MOVE #L-CALC-AMT (#I1)     TO #SNG-PREM-CURR
+        MOVE #L-CALC-AMT (#I1 + 1) TO #ZSPPRM-CURR
+        MOVE #L-CALC-AMT (#I1 + 2) TO #ZSPEXP-CURR
+        MOVE #L-CALC-AMT (#I1 + 3) TO #PREM-PAID-YTD
+        MOVE #L-CALC-AMT (#I1 + 4) TO #INT-DB
+        MOVE #L-CALC-AMT (#I1 + 5) TO #NAR
+      END-IF
+      ADD 6 TO #I1
+*
+      MOVE '*' TO #CGA-SCR-COMMAND
+*
+      IF #USE-X-CALCS
+        INPUT TEXT 'MONTHLY INTERNAL CALCS FOR 1ST YEAR SELECTED'
+          USING MAP 'C2V17MVP'
+      ELSE
+        IF #OVR-ISSUE-DATE GT 19860630
+          INPUT TEXT 'MONTHLY INTERNAL CALCS FOR 1ST YEAR SELECTED'
+            USING MAP 'C2V16MVP'
+        ELSE
+          INPUT TEXT 'MONTHLY INTERNAL CALCS FOR 1ST YEAR SELECTED'
+            USING MAP 'C2V15MVP'
+        END-IF
+      END-IF
+*
+      IF #CGA-SCR-COMMAND NE '*'
+        IF #CGA-SCR-COMMAND = 'RF'
+          MOVE TRUE TO #REFRESH
+          ESCAPE ROUTINE
+        ELSE
+          FETCH 'G1000PXX'
+        END-IF
+      END-IF
+    END-IF
+*
+    ADD 1 TO #DTL-IDX
+    ADD 1 TO #PROJ-IDX
+  END-REPEAT  /* (0189)
+*
+  INPUT TEXT #SCR-TEXT USING MAP 'C2V13MVP'  /* DW7
+  MOVE 10 TO #PROJ-IDX
+  ADD 1 TO #DTL-IDX
+END-FOR
+MOVE 'VP' TO #CGA-SCR-COMMAND
+FETCH 'G1000PXX'                      /* DW7
+*
+END-SUBROUTINE  /* (0010)
+*
+* * * * * * * * * * *
+DEFINE SUBROUTINE FORMAT-YEARLY-DTL
+* * * * * * * * * * *
+*
+RESET #LST-CSV #OO-X #OO-TOT-X #LAST-AGE
+ADD 1 TO #1ST-TIM
+REPEAT UNTIL (#PROJ-IDX GT #PAGE-LENGTH)
+    OR (#DTL-IDX  GT #L-NUM-DTLS)
+    OR (#DTL-IDX GT 27)
+    OR (#L-DTL-MNTHLY-IND (#DTL-IDX) = 'M')
+  IF #L-PTY-ANN-PRM (#DTL-IDX) = 99999.99  /* DELETE THIS LINE
+    ADD 1 TO #DTL-IDX
+    ESCAPE TOP
+  END-IF
+*
+  IF   (#DTL-IDX GT 1) /* stop proj when csv/db exceeds 9,999,999.99
+      AND (((#L-PTY-PR-CSV (#DTL-IDX) LT #L-PTY-PR-CSV (#DTL-IDX - 1))
+      AND   (#L-PTY-PR-DB  (#DTL-IDX) LT #L-PTY-PR-DB  (#DTL-IDX - 1))
+      AND   (#L-PTY-PR-DB  (#DTL-IDX - 1) GT 9000000)) /* has overflown
+      OR (#L-PTY-MIN-DB(#DTL-IDX) + #L-PTY-PR-DB(#DTL-IDX) GT 9999999))
+    ESCAPE BOTTOM
+  END-IF
+*
+  MOVE *DATN TO #YYYYMMDD
+  IF  (#L-PTY-YEAR(#DTL-IDX) = 0)
+      OR (#L-PTY-YEAR(#DTL-IDX) LT #YYYY)
+      OR ((#L-PTY-YEAR(#DTL-IDX) = #YYYY)
+      AND (ISSUE-DATE-MM(#IDX) = #MM))
+    IF #USE-X-CALCS  /* CALC CURR AVL-TDIV
+      IF #L-PTY-MIN-DB(#DTL-IDX) = 0
+        COMPUTE #L-PTY-MIN-DB(#DTL-IDX) = BEG-CASH-VALUE (#IDX)
+          - MONTH-ALLOC-AMT(#IDX)
+        IF #L-PTY-MIN-DB(#DTL-IDX) LT 0
+          RESET #L-PTY-MIN-DB(#DTL-IDX)
+        END-IF
+*
+        IF #PR-V.ID-NUMBER = 124156                               /* PM6
+            AND #PR-V.ISSUE-DATE (#IDX) = 20040413                   /* PM6
+            AND #L-PTY-PR-DB (#DTL-IDX) = 226000                     /* PM6
+          MOVE 10150.58 TO #L-PTY-MIN-DB (#DTL-IDX)               /* PM6
+        END-IF                                                    /* PM6
+      END-IF
+*
+      IF #SCR-SHOW-REAL = 'N' /* Do not add TDIV if showing REAL Amts  DW25
+        ADD #L-PTY-MIN-DB(#DTL-IDX) TO #L-PTY-PR-DB(#DTL-IDX)
+      END-IF
+    END-IF
+*
+    COMPUTE #W-AGE = *DATN - DATE-OF-BIRTH                       /* TT2
+    DIVIDE 10000 INTO #W-AGE
+*
+*   MOVE #PR-V.DATE-OF-BIRTH TO #YYYYMMDD    /* DW22  / DW23
+*   IF   (#MM  = #PR-V.ISSUE-DATE-MM (#IDX))
+*    AND (#DD GT #PR-V.ISSUE-DATE-DD (#IDX))
+*     ADD 1 TO #W-AGE
+*   END-IF                                          /* END DW22   / DW23
+*
+    MOVE EDITED #W-AGE (EM=ZZZ) TO #YD-MEM-AGE
+*
+    IF   (#SCR-OVR-MTHLY-VAL NE 'Y')
+        AND ((#L-PTY-YEAR (#DTL-IDX + 1) = #CURR-YYYY)
+        OR (#L-PTY-YEAR (#DTL-IDX) LT #YYYY))
+      MOVE 'CURRENT' TO #YD-YEAR
+    ELSE
+      COMPRESS #CURR-MM-A '/' #CURR-YYYY INTO #YD-YEAR LEAVING NO
+    END-IF
+  ELSE
+    IF #USE-X-CALCS
+      IF #PR-V.ID-NUMBER = 124156                                 /* PM6
+          AND #PR-V.ISSUE-DATE (#IDX) = 20040413                     /* PM6
+          AND #L-PTY-PR-DB (#DTL-IDX) = 226000                       /* PM6
+        MOVE 10150.58 TO #L-PTY-MIN-DB (#DTL-IDX)                 /* PM6
+      END-IF                                                      /* PM6
+*
+*     IF   (#DTL-IDX GT 1)                                       /* DW15
+*      AND (#L-PTY-MIN-DB (#DTL-IDX) + #L-PTY-PR-DB (#DTL-IDX))
+*                                   LT #L-PTY-PR-DB(#DTL-IDX -1)
+*       MOVE #L-PTY-PR-DB (#DTL-IDX -1) TO #L-PTY-PR-DB(#DTL-IDX)
+*       MOVE #L-PTY-PR-DB (#DTL-IDX -1) TO #OO-DB       (#DTL-IDX)
+*     ELSE
+      IF #SCR-SHOW-REAL = 'N' /* Do not add TDIV if showing REAL Amts  DW25
+        ADD #L-PTY-MIN-DB (#DTL-IDX) TO #L-PTY-PR-DB (#DTL-IDX)
+        ADD #L-PTY-MIN-DB (#DTL-IDX) TO #OO-DB       (#DTL-IDX)
+      END-IF
+    END-IF
+*   END-IF
+*
+    IF ISSUE-DATE-MM (#IDX) = #MM    /* DW2
+        AND (#YYYY NE #L-PTY-YEAR (1))
+      ADD 1 TO #L-PTY-YEAR (#DTL-IDX)
+    END-IF
+    MOVE #L-PTY-YEAR (#DTL-IDX) TO #YD-YEAR
+*
+    COMPRESS #L-ISS-DT-MM-A (#IDX) '/' #YD-YEAR
+      INTO #YD-YEAR LEAVING NO
+    IF   (#SEX = 'F')
+        AND (NOT #USE-X-CALCS)
+      ADD 3 TO #L-PTY-MEM-AGE (#DTL-IDX)
+    END-IF
+*
+    MOVE #L-PTY-MEM-AGE (#DTL-IDX) TO #W-AGE      /* DW22
+    MOVE DATE-OF-BIRTH TO #YYYYMMDD               /* TT2
+    IF   (#MM  = #PR-V.ISSUE-DATE-MM (#IDX))
+        AND (#DD GT #PR-V.ISSUE-DATE-DD (#IDX))
+      ADD 1 TO #W-AGE
+    END-IF                                        /* END DW22
+  END-IF
+
+*   MOVE RIGHT #L-PTY-MEM-AGE (#DTL-IDX) TO #YD-MEM-AGE
+  MOVE RIGHT #W-AGE TO #YD-MEM-AGE
+*
+  IF IS-ANNUITY-LIFE (< PLAN(#IDX) >)   /* DW5    /* TT3
+    MOVE FACE-AMOUNT(#IDX) TO #FACE-9
+    IF #L-PTY-POL-AGE(#DTL-IDX) LT 1
+      COMPUTE #FACE-9 = FACE-AMOUNT(#IDX) * 9 / 10
+    END-IF
+*
+    IF #L-PTY-POL-AGE(#DTL-IDX) = 1
+      COMPUTE #FACE-9 = FACE-AMOUNT(#IDX) * 9.5 / 10
+    END-IF
+*
+    IF #FACE-9 GT #L-PTY-PR-DB(#DTL-IDX)
+      MOVE #FACE-9 TO #L-PTY-PR-DB(#DTL-IDX)
+    END-IF
+*
+    IF #L-PTY-PR-CSV(#DTL-IDX) GT #L-PTY-PR-DB(#DTL-IDX)
+      MOVE #L-PTY-PR-CSV(#DTL-IDX) TO #L-PTY-PR-DB(#DTL-IDX)
+    END-IF
+  END-IF
+*
+  IF #USE-X-CALCS
+      AND (VP-S01.TOT-PREMIUMS-PAID (#IDX) GT 0)
+      AND (PAY-STATUS (#IDX) LT '40')
+    IF  (PLAN (#IDX) = 'OL' OR = 'SP' OR = 'GPL' OR = 'GP' OR = 'GP2')       /*TT1    /* DW21
+      MOVE ISSUE-AGE (#IDX) TO #YRS-TO-100-2
+      COMPUTE #PP-YEARS = 100 - #YRS-TO-100
+    ELSE
+      MOVE PLAN (#IDX) TO #PLAN
+      IF #PLAN = MASK (NN)
+        MOVE #PLAN-2  TO #PP-YEARS
+      ELSE
+        MOVE #PLAN-1 TO #PP-YEARS
+      END-IF
+    END-IF
+*
+    COMPUTE ROUNDED #LUMP-PREM-VALUE = VP-S01.TOT-PREMIUMS-PAID (#IDX)
+      * (1 - (#L-PTY-POL-AGE (#DTL-IDX) / #PP-YEARS))
+    IF #LUMP-PREM-VALUE LT 0
+      RESET #LUMP-PREM-VALUE
+    END-IF
+*
+    IF (#LUMP-PREM-VALUE + #L-PTY-MIN-CSV (#DTL-IDX))
+        GT #L-PTY-MIN-CSV (#DTL-IDX)
+      COMPUTE #L-PTY-MIN-CSV (#DTL-IDX) =
+        #LUMP-PREM-VALUE + #L-PTY-MIN-CSV (#DTL-IDX)
+    END-IF
+*
+    IF VP-S01.TOT-PREMIUMS-PAID (#IDX) GT #L-PTY-MIN-CSV (#DTL-IDX)
+      MOVE VP-S01.TOT-PREMIUMS-PAID (#IDX) TO #L-PTY-MIN-CSV (#DTL-IDX)
+    END-IF
+  END-IF
+*
+  MOVE RIGHT #L-PTY-POL-AGE (#DTL-IDX) TO #YD-POL-AGE
+*
+  IF PLAN (#IDX) = 'OL' OR = 'GPL' OR = 'GP' OR = 'GP2'          /* TT1        /* DW21
+    IF #USE-X-CALCS
+      COMPUTE #MAX-YRS = (DOB-YYYY + 100)
+        - #PR-V.ISSUE-DATE-YYYY (#IDX)
+    ELSE
+      COMPUTE #MAX-YRS = (DOB-YYYY + 96)
+        - #PR-V.ISSUE-DATE-YYYY (#IDX)
+    END-IF
+  ELSE
+    RESET #MAX-YRS
+    IF PLAN (#IDX) NE 'SPF'
+      IF PLAN-2A (#IDX) = 'P' OR = 'F'
+        MOVE PLAN-1A (#IDX) TO #MAX-YRS-A1
+      ELSE
+        MOVE PLAN-2 (#IDX) TO #MAX-YRS-A2
+      END-IF
+    END-IF
+  END-IF
+*
+  IF   (#LINK-604-RSV-VA-DIFF NE 0)  /* a vp conv
+      AND (PAY-STATUS (#IDX) NE '47')
+    IF PAY-STATUS (#IDX) = '48'
+      IF #DTL-IDX = 1
+        COMPUTE #DUES-PAID = #LINK-604-RSV-VA-DIFF
+          + TOT-PREMIUMS-PAID (#IDX)
+          + #PREMS-PAID
+      END-IF
+    ELSE
+      IF #DTL-IDX = 1
+        COMPUTE #DUES-PAID = #LINK-604-RSV-VA-DIFF
+          + TOT-PREMIUMS-PAID (#IDX)
+          + (#OLD-ANN-PREM * #L-PTY-POL-AGE (#DTL-IDX))
+        MOVE #DUES-PAID TO #CUR-PREM-PD
+        MOVE #L-PTY-POL-AGE (#DTL-IDX) TO #CUR-POL-AGE
+      ELSE
+        IF #L-PTY-POL-AGE (#DTL-IDX) LE #MAX-YRS
+          COMPUTE #DUES-PAID = #CUR-PREM-PD +
+            (ANNUAL-PREM(#IDX) * (#L-PTY-POL-AGE(#DTL-IDX) - #CUR-POL-AGE))
+        END-IF
+      END-IF
+    END-IF
+  ELSE
+    IF PAY-STATUS (#IDX) = '47' OR = '48' OR = '45'
+      IF   (PAY-STATUS (#IDX) = '47')
+          AND ((ONLINE-ACTION-GN    = '2')
+          OR (ONLINE-ACTION (#IDX) = '1'))
+        IF #L-MNTHLY-START-YR NE #CURR-YYYY
+          MOVE TOT-PREMIUMS-PAID (#IDX) TO #DUES-PAID
+        ELSE
+          MOVE #L-PTY-PR-CSV (1) TO #DUES-PAID
+        END-IF
+      ELSE
+        IF PAY-STATUS (#IDX) = '45'
+          MOVE #L-PAID-THRU-YYYY TO #YYYY
+          MOVE #L-PAID-THRU-MM TO #MM
+*
+          COMPUTE #NUM-MONTHS =
+            (((#YYYY - ISSUE-DATE-YYYY (#IDX)) * 12)
+            + (#MM - ISSUE-DATE-MM (#IDX)))
+          COMPUTE #DUES-PAID = #NUM-MONTHS * (ANNUAL-PREM (#IDX) / 12)
+            + TOT-PREMIUMS-PAID (#IDX)
+        ELSE
+          MOVE TOT-PREMIUMS-PAID (#IDX) TO #DUES-PAID
+        END-IF
+      END-IF
+    ELSE
+      IF #L-PTY-POL-AGE (#DTL-IDX) GT #MAX-YRS
+        COMPUTE #DUES-PAID =       /* DW4
+          (#OLD-ANN-PREM * LAST-DURATION (#IDX))
+          + (ANNUAL-PREM (#IDX) * (#MAX-YRS - LAST-DURATION (#IDX)))
+          + TOT-PREMIUMS-PAID (#IDX)
+      ELSE
+        COMPUTE #DUES-PAID =       /* DW4
+          (#OLD-ANN-PREM * LAST-DURATION (#IDX))
+          + (ANNUAL-PREM (#IDX) *
+          (#L-PTY-POL-AGE (#DTL-IDX) - LAST-DURATION (#IDX)))
+          + TOT-PREMIUMS-PAID (#IDX)
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #PREMS-PAID GT #DUES-PAID  /* added 1/2003 by bmg to never allow
+    MOVE #PREMS-PAID TO #DUES-PAID /* vp tpp to be less than curr tpp
+  END-IF
+*
+*  DISPLAY #DTL-IDX #L-PTY-PR-DB (#DTL-IDX) #PREMS-PAID #DUES-PAID  /* DW24
+*     #L-PTY-PR-CSV (#DTL-IDX)
+*
+  IF   (#DUES-PAID GT #L-PTY-PR-DB (#DTL-IDX))                    /* DW24
+      AND (#SCR-SHOW-REAL = 'N') /* Show real DB
+    MOVE ROUNDED #DUES-PAID TO #L-PTY-PR-DB (#DTL-IDX)
+  END-IF
+*
+  IF   (#L-PTY-PR-CSV (#DTL-IDX) GT #L-PTY-PR-DB (#DTL-IDX))      /* DW27
+      AND (#SCR-SHOW-REAL = 'N') /* Show real DB
+    MOVE ROUNDED #L-PTY-PR-CSV (#DTL-IDX) TO #L-PTY-PR-DB (#DTL-IDX)
+  END-IF
+*
+  MOVE ROUNDED #DUES-PAID TO #DUES-PD-DOLS
+  MOVE RIGHT #DUES-PD-DOLS TO #YD-DUES-PAID
+*
+* below  chges made 12/15/2003 BMG
+  IF   #SCR-SHOW-REAL = 'N' /* apply limits
+    COMPUTE #CSV-W-O-TDIV = #L-PTY-PR-CSV (#DTL-IDX)
+      - #L-PTY-MIN-DB (#DTL-IDX) /* tdiv
+    IF PAY-STATUS (#IDX) NE '45' /* 3/2/2005
+      IF #DUES-PD-DOLS GT #L-PTY-MIN-CSV (#DTL-IDX) /*remvd 12/16/03 BMg
+        MOVE #DUES-PD-DOLS TO #L-PTY-MIN-CSV(#DTL-IDX) /*bac in 3/04 khb
+      END-IF   /* removed again 6/2004 RLB
+* put back in 10/06/2004 RLB & BMG
+*
+      IF #DUES-PD-DOLS GT #L-PTY-PR-CSV (#DTL-IDX)
+        MOVE #DUES-PD-DOLS TO #L-PTY-PR-CSV (#DTL-IDX)
+        MOVE #DUES-PD-DOLS TO #OO-CSV (#DTL-IDX)
+      END-IF
+*
+      IF #DUES-PD-DOLS GT #L-PTY-PR-CSV-NL (#DTL-IDX)
+        MOVE #DUES-PD-DOLS TO #L-PTY-PR-CSV-NL (#DTL-IDX)
+      END-IF
+    END-IF
+*
+    IF  (#L-PTY-MIN-CSV (#DTL-IDX) GT #L-PTY-PR-CSV (#DTL-IDX))
+        OR ((#L-PTY-MIN-CSV (#DTL-IDX) = 0)
+        AND (#PR-V.PAY-STATUS (#IDX) = '47')
+        AND (#DTL-IDX = 1))
+      MOVE #L-PTY-PR-CSV (#DTL-IDX) TO #L-PTY-MIN-CSV (#DTL-IDX)
+    END-IF
+  END-IF
+*
+  IF   (NOT #CGA-CLERK = 'DRW' OR = 'VXT'  /* DW18/DW19      /* vt1
+      OR = 'ALB')                        /* DW26
+      OR   (PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2')           /* TT1           /* DW21
+    MOVE #PR-V.FACE-AMOUNT (#IDX) TO #L-PTY-MIN-DB (#DTL-IDX)
+*
+    IF #PR-V.PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2'           /* TT1              /* DW21
+      MOVE #L-PTY-PR-DB (#DTL-IDX) TO #L-PTY-MIN-DB (#DTL-IDX)
+    END-IF
+*
+    IF IS-ANNUITY-LIFE (< #PR-V.PLAN (#IDX) >) /* pr-db-nl contains MIN DB      /* TT3
+      MOVE #L-PTY-PR-DB-NL (#DTL-IDX) TO #L-PTY-MIN-DB (#DTL-IDX)
+*
+      IF #FACE-9 GT #L-PTY-MIN-DB(#DTL-IDX)
+        MOVE #FACE-9 TO #L-PTY-MIN-DB(#DTL-IDX)
+      END-IF
+*
+      IF #L-PTY-MIN-CSV(#DTL-IDX) GT #L-PTY-MIN-DB(#DTL-IDX)
+        MOVE #L-PTY-MIN-CSV(#DTL-IDX) TO #L-PTY-MIN-DB(#DTL-IDX)
+      END-IF
+    END-IF
+  END-IF
+*
+  IF  (#PR-V.CONV-DURATION (#IDX) = 999)
+      OR (#CGA-SCR-SUFFIX = 'CAP')
+    IF   (#SCR-OVR-MTHLY-VAL NE 'Y')
+*    AND (#L-PTY-YEAR (#DTL-IDX) NE 1)
+        AND (#L-PTY-YEAR (#DTL-IDX) NE 0)
+      MOVE #L-PTY-YEAR (#DTL-IDX) TO #CALC-DATE-YYYY
+      MOVE ISSUE-DATE-MM (#IDX)   TO #CALC-DATE-MM
+      MOVE ISSUE-DATE-DD (#IDX)   TO #CALC-DATE-DD
+    END-IF
+  END-IF
+*
+  IF #CGA-CLERK = 'DRW' OR = 'VXT'              /* vt1
+      OR = 'ALB'                        /* DW26
+    MOVE EDITED #L-PTY-MIN-CSV (#DTL-IDX) (EM=-ZZZZZZ9) TO #YD-MIN-CSV
+  ELSE
+    IF #L-PTY-MIN-CSV (#DTL-IDX) LT 0
+      MOVE '      0' TO #YD-MIN-CSV
+    ELSE
+      MOVE EDITED #L-PTY-MIN-CSV (#DTL-IDX) (EM=ZZZZZZ9) TO #YD-MIN-CSV
+    END-IF
+  END-IF
+  MOVE RIGHT #L-PTY-MIN-DB    (#DTL-IDX) TO #YD-MIN-DB
+*
+  IF   (#L-PTY-PR-CSV (#DTL-IDX) LE 0)
+      OR  ((#PR-V.ISSUE-DATE (#IDX) GE 19910409)
+      AND NOT #USE-X-CALCS
+      AND (#L-PTY-POL-AGE (#DTL-IDX) LT 2)
+      AND (NOT (PAY-STATUS (#IDX) = '47' OR = '48')))
+    MOVE '      0' TO #YD-PR-CSV
+    RESET #L-PTY-PR-CSV (#DTL-IDX) /* for OPT
+    RESET #OO-CSV       (#DTL-IDX) /* for OPT
+  ELSE
+    MOVE RIGHT #L-PTY-PR-CSV (#DTL-IDX) TO #YD-PR-CSV
+  END-IF
+*
+  MOVE RIGHT #L-PTY-PR-DB (#DTL-IDX) TO #YD-PR-DB
+*
+  IF   (#PR-V.ISSUE-DATE (#IDX) GE 19970101)
+      AND (#PR-V.MONTH-ALLOC-AMT (#IDX) NE 999.99)
+      AND (LAST-ANN-CASH-VALUE (#IDX) GT
+      #L-PTY-PR-DB (#DTL-IDX))
+      AND (NOT #CGA-SCR-SUFFIX = 'DRW' OR = 'VXT'   /* DW18/DW19  /* vt1
+      OR = 'ALB')                        /* DW26
+    MOVE LAST-ANN-CASH-VALUE (#IDX) TO #TOT-WORK
+    MOVE RIGHT #TOT-WORK TO #YD-PR-DB
+    MOVE LAST-ANN-CASH-VALUE(#IDX) TO #L-PTY-PR-DB (#DTL-IDX) /*for OPT
+    MOVE LAST-ANN-CASH-VALUE(#IDX) TO #OO-DB       (#DTL-IDX)
+  END-IF
+*
+  MOVE #L-PTY-PR-CSV (#DTL-IDX) TO #LST-CSV
+*
+  IF #L-PTY-PR-CSV-NL (1) LT 999999
+    IF   (#L-PTY-PR-CSV-NL (#DTL-IDX) LE 0)
+        OR  ((#PR-V.ISSUE-DATE (#IDX) GE 19910409)
+        AND NOT #USE-X-CALCS
+        AND (#L-PTY-POL-AGE (#DTL-IDX) LT 2)
+        AND (NOT (PAY-STATUS (#IDX) = '47' OR = '48')))
+      IGNORE
+    ELSE
+      MOVE RIGHT #L-PTY-PR-CSV-NL (#DTL-IDX) TO #YD-PR-CSV-NL
+      MOVE RIGHT #L-PTY-PR-DB-NL  (#DTL-IDX) TO #YD-PR-DB-NL
+*
+      IF   (#PR-V.ISSUE-DATE (#IDX) GE 19970101)
+          AND (#PR-V.MONTH-ALLOC-AMT (#IDX) NE 999.99)
+          AND (LAST-ANN-CASH-VALUE (#IDX) GT
+          #L-PTY-PR-DB-NL (#DTL-IDX))
+          AND (NOT #CGA-SCR-SUFFIX = 'DRW' OR = 'VXT'   /* DW18/DW19  /* vt1
+          OR = 'ALB')                        /* DW26
+        MOVE LAST-ANN-CASH-VALUE (#IDX) TO #TOT-WORK
+        MOVE RIGHT #TOT-WORK TO #YD-PR-DB-NL
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #PR-V.RESTRICT-MBR-SW = 'Y'
+    MOVE RIGHT #L-PTY-MIN-CSV (#DTL-IDX) TO #YD-PR-CSV
+    MOVE #L-PTY-MIN-CSV (#DTL-IDX) TO #L-PTY-PR-CSV (#DTL-IDX)
+  END-IF
+*
+  IF #CGA-SCR-SUFFIX = 'OPT'
+      AND (#OO-X LT 5)
+      AND ((#DTL-IDX = 1)
+      OR (((SEX = 'M')
+      AND (#L-PTY-MEM-AGE (#DTL-IDX) = 60 OR = 70 OR = 80 OR = 90))
+      OR ((SEX = 'F')
+      AND (#L-PTY-MEM-AGE (#DTL-IDX) = 63 OR = 73 OR = 83 OR = 93))))
+    ADD 1 TO #OO-X
+*
+    MOVE #YD-YEAR    TO #OO-DT   (#OO-X)
+    MOVE #YD-MEM-AGE TO #OO-AGE  (#OO-X)
+    MOVE EDITED #L-PTY-PR-CSV (#DTL-IDX) (EM=Z,ZZZ,ZZZ)
+      TO #OO-RET-CSV (#OO-X)
+    COMPRESS '$' #OO-RET-CSV (#OO-X) INTO #OO-RET-CSV (#OO-X) LEAVING NO
+    MOVE EDITED #L-PTY-PR-DB  (#DTL-IDX) (EM=Z,ZZZ,ZZZ)
+      TO #OO-RET-DB (#OO-X)
+    COMPRESS '$' #OO-RET-DB (#OO-X) INTO #OO-RET-DB (#OO-X) LEAVING NO
+    MOVE EDITED #OO-CSV(#DTL-IDX)(EM=Z,ZZZ,ZZZ) TO #OO-OO-CSV(#OO-X)
+    COMPRESS '$' #OO-OO-CSV (#OO-X) INTO #OO-OO-CSV (#OO-X) LEAVING NO
+    MOVE EDITED #OO-DB  (#DTL-IDX)(EM=Z,ZZZ,ZZZ) TO #OO-OO-DB (#OO-X)
+    COMPRESS '$' #OO-OO-DB  (#OO-X) INTO #OO-OO-DB (#OO-X) LEAVING NO
+*
+    IF #YD-YEAR-4 NE #CURR-YYYY-A   /* bypass 2nd line if curr year
+      IF #1ST-TIM = 1
+        IF #OO-TOT-X LT 14
+          ADD 1 TO #OO-TOT-X
+        END-IF
+*
+        IF #YD-YEAR = 'CURRENT'
+          MOVE #YD-YEAR TO #OO-TOT-DT  (#OO-TOT-X)
+        ELSE
+          MOVE #YD-YEAR-4  TO #OO-TOT-DT  (#OO-TOT-X)
+        END-IF
+*
+        MOVE #YD-MEM-AGE TO #OO-TOT-AGE (#OO-TOT-X)
+        ADD #L-PTY-PR-CSV (#DTL-IDX) TO #OO-TOT-RET-CSV (#OO-TOT-X)
+        ADD #L-PTY-PR-DB  (#DTL-IDX) TO #OO-TOT-RET-DB  (#OO-TOT-X)
+        ADD #OO-CSV       (#DTL-IDX) TO #OO-TOT-OO-CSV  (#OO-TOT-X)
+        ADD #OO-DB        (#DTL-IDX) TO #OO-TOT-OO-DB   (#OO-TOT-X)
+      ELSE
+        FOR #I1 1 TO 5
+          IF   (#YD-MEM-AGE = #OO-TOT-AGE (#I1))
+              AND (#YD-MEM-AGE NE #LAST-AGE)
+            MOVE #YD-MEM-AGE TO #LAST-AGE
+            ADD #L-PTY-PR-CSV (#DTL-IDX) TO #OO-TOT-RET-CSV (#I1)
+            ADD #L-PTY-PR-DB  (#DTL-IDX) TO #OO-TOT-RET-DB  (#I1)
+            ADD #OO-CSV       (#DTL-IDX) TO #OO-TOT-OO-CSV  (#I1)
+            ADD #OO-DB        (#DTL-IDX) TO #OO-TOT-OO-DB   (#I1)
+            MOVE 'X' TO #OO-TOT-FND (#I1)
+            ESCAPE BOTTOM
+          END-IF
+        END-FOR
+      END-IF
+    END-IF
+  END-IF
+*
+  IF PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2'       /*TT1            /* DW21
+    RESET #YD-PR-DB #YD-PR-CSV
+  END-IF
+*
+  MOVE #YEARLY-DTL TO #SCR-PROJ-LINE (#PROJ-IDX)
+*
+  ADD 1 TO #DTL-IDX
+  ADD 1 TO #PROJ-IDX
+*
+  IF *DEVICE = 'BATCH'
+    ADD  1 TO #PROJ-IDX
+  END-IF
+END-REPEAT  /* (0788)
+*
+IF   (#CGA-SCR-SUFFIX = 'OPT')
+    AND (#1ST-TIM NE 1)
+  FOR #I1 1 TO 5
+    IF #OO-TOT-FND (#I1) NOT = 'X'
+        AND (#OO-TOT-AGE (#I1) NOT = ' ')
+      MOVE '***' TO #OO-TOT-AGE (#I1)
+    END-IF
+  END-FOR
+END-IF
+*
+IF #SCR-OVR-DISPLAY-CALCS = 'Y'
+  ESCAPE ROUTINE
+END-IF
+*
+CALLNAT 'CCSTXSVP'
+  #CGA-SCR-COMMAND
+  #CGA-ID
+  #CGA-ORIG-SUFFIX
+  #CGA-CLERK
+  FACE-AMOUNT (#IDX)
+  ANNUAL-PREM (#IDX)
+  PAY-STATUS  (#IDX)
+  TOT-PREMIUMS-PAID (#IDX)
+  #MAX-YRS
+  #DUES-PAID
+  #DUES-PD-DOLS
+  #L-CALC-AMT2 (1:20)  /* 20 yrs of death bene
+  #L-CALC-AMT2 (21:24) /* 10 yr min cv/proj csv/20 yr min cv/proj csv
+  #CIX-MODE
+  #CIX-ERROR
+  #CIX-SCR-SC (1:4)
+  #CIX-SCR-NP (1:4)
+*
+END-SUBROUTINE  /* (1149)
+*
+* * * * * * * *
+DEFINE SUBROUTINE BUILD-PAGE-COMMON
+* * * * * * * *
+*
+IF #SCR-OVR-MTHLY-VAL = 'Y'
+  PERFORM FORMAT-MTHLY-DTL
+*
+  IF #REFRESH /* IF 'RF' WAS ENT DURING SHOW CALCS
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #DTL-IDX GT #L-NUM-DTLS
+    MOVE 'RF' TO #CGA-SCR-COMMAND
+  END-IF
+  ESCAPE ROUTINE
+ELSE
+  PERFORM FORMAT-YEARLY-DTL
+END-IF
+*
+IF   (#SCR-OVR-MTHLY-VAL NE 'Y')
+    AND (#TOT-FOOTERS GT 0)
+  IF #USE-X-CALCS
+      AND (NOT #PR-V.PLAN (#IDX) = 'GPL' OR = 'GP' OR = 'GP2')         /*TT1    /* DW21
+    MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+    COMPRESS ' * Includes an estimated termination dividend which is'
+      'not guaranteed.'    INTO #SCR-PROJ-LINE (#PROJ-IDX)
+    ADD 1 TO #PROJ-IDX
+  END-IF
+*
+  IF #TOT-POLS GT 1
+    MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+    COMPRESS ' The above projection is for 1 of your' #TOT-POLS
+      'AAFMAA Certificates.' INTO #SCR-PROJ-LINE (#PROJ-IDX)
+  END-IF
+*
+  IF (INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q') AND (#IDX = 1)
+      AND (INTEREST-RATE LT 5.00) AND (LOAN-AMOUNT GT 0)
+    MOVE 'C.A.P.' TO #CAP
+*
+    MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+    MOVE ROUNDED LOAN-AMOUNT TO #TOT-WORK
+    MOVE EDITED #TOT-WORK (EM=ZZ,ZZZ) TO #TOT-DISP
+    COMPRESS '$' #TOT-DISP '.' INTO #TOT-DISP LEAVING NO
+*
+    IF #TOT-POLS = 1
+      COMPRESS ' The total' #CAP 'loan against this policy is'
+        #TOT-DISP INTO #SCR-PROJ-LINE (#PROJ-IDX)
+    END-IF
+  END-IF
+END-IF
+*
+IF  (#CGA-ORIG-SUFFIX = 'OVR' OR = 'OVP')
+    OR (#CGA-ORIG-SUFFIX = MASK ('IP')) /* INT PROJ
+    OR (#CGA-ORIG-ID = 0)
+  MOVE 'RF'  TO #CGA-SCR-COMMAND
+ELSE
+  MOVE 'VP'  TO #CGA-SCR-COMMAND
+END-IF
+*
+MOVE #CGA-ORIG-ID     TO #CGA-SCR-ID
+MOVE #CGA-ORIG-SUFFIX TO #CGA-SCR-SUFFIX
+*
+END-SUBROUTINE  /* (0613)
+* * * * * * * * *
+DEFINE SUBROUTINE BUILD-PAGE-2
+*
+RESET #SCR-CV (*)
+RESET #SCR-PROJ-LINE (1:22)
+MOVE 1 TO #PROJ-IDX
+*
+MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+MOVE '         MEMBER  YEARS IN    CASH     DEATH      CASH     DEATH'
+  TO #SCR-PROJ-LINE (#PROJ-IDX)
+*
+IF #SHOW-LOAN-REPAID
+  COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '    CASH   DEATH'
+    INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+MOVE (AD=I) TO #SCR-CV (#PROJ-IDX)
+MOVE ' MN/YEAR  AGE     FORCE     VALUE   BENEFIT     VALUE   BENEFIT'
+  TO #SCR-PROJ-LINE (#PROJ-IDX)
+*
+IF #SHOW-LOAN-REPAID
+  COMPRESS #SCR-PROJ-LINE (#PROJ-IDX) '   VALUE BENEFIT'
+    INTO #SCR-PROJ-LINE (#PROJ-IDX) LEAVING NO
+END-IF
+*
+ADD 1 TO #PROJ-IDX
+PERFORM BUILD-PAGE-COMMON
+*
+END-SUBROUTINE  /* (0010)
+*
+END

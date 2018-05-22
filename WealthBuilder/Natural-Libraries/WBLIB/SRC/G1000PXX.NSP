@@ -1,0 +1,1249 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: G1000PXX
+*
+* #CGA-USER-COMPANY is Actual User Security Code (I/S/B) (B=Both) of the
+*         User based on TERMINAL-ID which never changes unless TU is done
+* "I" = Users only allowed to do IAS and General commands
+*                                             (SEC CODE 4/6/8/12/16/20/98)
+* "S" = Users only allowed to do SAS and General commands (SEC CODE 1/2/97)
+* "B" = Users allowed to get into Both Applications (SEC CODE 99)
+*
+* #USER-COMPANY is Application User Security Code (I/S never "B") based on
+*        entry into the SYSTEM whether through 'AAFM' or 'AFSC'. These
+*        subprogram loads the TERMINAL-FILE.USER-COMPANY with I or S.
+*        Can be retrieved in any object by FUNCTION Process-user-company which
+*        reads the TERMINAL file using #CGA-CLERK moving TM-V.USER-COMPANY
+*        to #USER-COMPANY in that program
+*
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+* DRW    11092004  DW1     BYPASS ALL PROCESSING ON FA                 *
+* DRW    03252005  DW2     CG xxxxx NMC search for nxt avail 501-999   *
+* PAM    06032005  PM3     Bypass Sample ID security first time in     *
+*                          system - #CGA-SCR-ID used to indicate # of  *
+*                          NX messages.                                *
+* DRW    06062005  DW4     Allow access to AT-pending with an SSN      *
+* TDM    07182005  TM1     CHG ACCESS FROM SKM TO SLB                  *
+* DRW    10262005  DW5     Disallow Command WB and WO                  *
+* TDM    06152006  TM2     Added access for SRS to see NMCRS SC 501-999*
+* SAG-AB 06152006          Changed STOP to TERMINATE Natural Session   *
+* DRW    08052006  DW6     RESET Suffix SBW to SBS                     *
+* TDM    08222006  TM3     ADD TSS AT 82 FOR SAMPLE SCREENS            *
+* DRW    10042006  DW7     Calc RET PAY on DV as well as DI            *
+* DRW    02092007  DW8     Dis-allow AFSC Commands                     *
+* DRW    03172007  DW9     Allow DD (All Fields have been protected)   *
+* DRW    03212007  DW10    Allow KEC & ALB to do **                    *
+* DRW    04172007  DW11    Remove DW8 since Commands have been removed *
+* DRW    03172008  PM12    On SSN Entry Search for Member SSN first    *
+* DRW  02/20/2009  DW13    Keep stats for Suffix's for AAFMAA          *
+* DRW  04/13/2009  DW14    On DI Assume RET if resv and over age 60    *
+*                            above was DW11 from AFSC                  *
+* DRW  04/13/2009  DW15    Unification Changes                         *
+* DRW  08/24/2009  DW16    Fetch SAS Program if Applicable             *
+* DRW  09/16/2009  DW17    Modify Sec Code (Make ** 999999999 XXX 99   *
+*                          USERS 97                                    *
+* DRW  10/26/2009  DW18    Remove Suffix Counting                      *
+* DRW  10/26/2009  DW19    Fix SSN Searching                           *
+* RSE  11/30/2009  RE1     Prevent SAS users from using UI command     *
+* RSE  12/16/2009  RE2     Enable users to start a new ST when suffix  *
+*                          is SAS or IAS                               *
+* RSE  01/07/2010  RE3     Do not display extra screen when command is *
+*                          'AA' with suffix 'DAT' and no CN entered.   *
+* RSE  03/05/2010  RE4     Allowed CB for SAS/AAFMAA USER              *
+* PAM  05/19/2010  PM20    Added ATTENTION message for over 10 pols    *
+* PAM  05/28/2010  PM21    Added 2nd over 10 policy guy                *
+* RSE  05/28/2010  RE5     Allow Migration Team to access SAS commands *
+*                          (Temporary only)                            *
+* PAM  06/08/2010  PM22    Added 3rd over 10 policy guy                *
+* RSE  06/11/2010  RE6     Allow RL for SAS users                      *
+* PAM  06/24/2010  PM23    Remove Services command limitations         *
+* PAM  06/24/2010  PM24    Added temporary security for AFSC emps      *
+* PAM  07/06/2010  PM25    Removed temporary security for AFSC and     *
+*                          rest of command security                    *
+* bz   07/30/210   bz1     Manage Stage Library                        *
+* RSE  10/04/2010  RE7     Changed typo error - AFCS to AFSC           *
+* PAM  12/02/2010  PM26    Added 4th guy                               *
+* bz   12/03/2010  bz2     Add DQ command                              *
+* bz   12/03/2010  bz3     Add DR command                              *
+* PAM  02/03/2011  PM29    Removed 42923 from double CN                *
+* RSE  05/23/2012  RE8     Disabled CB, CG for AUC Project             *
+* NGG  06/28/2012  NG3     CRM synch (XX) by Contact ID                *
+* RSE  07/31/2012  RE9     Disabled AM, CI for AFA users               *
+* NGG    20121002  NG4     New beneficiary database file to expand     *
+*                          Member IDs up to 500000                     *
+* vxt  10/24/2012  vt5     Added another double CN   /Ticket 1572/     *
+* vxt  11/28/2012  vt6     Added another double CN   /Ticket 1640/     *
+* RSE  12/19/2012  RE10    CN Expansion Project -                      *
+*                          Disabled suffix AWS/AW2                     *
+* TMT  06/12/2014  TT1     CONTACT NORMALIZATION DOB AND SEX           *
+* NGG  07/20/2015  NG5     AZ NEW COMMAND                              *
+* NGG  05/08/2017  NG6     Letter Writing System                       *
+* bz-9+ 03/08/2017 Automate handeling of secondary CNs to Data  HD-3074  
+************************************************************************
+* THIS PROGRAM CONTROLS THE FLOW OF ALL COMMANDS, DOES THE SECURITY
+* CHECKING
+*
+DEFINE DATA
+GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
+LOCAL USING G1000LXX
+LOCAL USING GONERLXX        /* WORK FIELDS FOR 'GONERCXX'
+LOCAL
+1 #PASSWORDS     /*  FOR AAFMAA EMPLOYEES  (jgl is using 103 also)
+  2 #PSW-100 (A35) INIT <'######-######-TIGGER-TEDL  -KEEFER-'>
+  2 #PSW-105 (A35) INIT <'######-######-FRED  -######-MIKIE -'>
+  2 #PSW-110 (A35) INIT <'DDDDD -######-ZETA  -######-######-'>
+  2 #PSW-115 (A35) INIT <'######-######-######-XYZ   -######-'>
+  2 #PSW-120 (A35) INIT <'######-######-DREAM -RETIRE-TELL  -'>
+  2 #PSW-125 (A35) INIT <'######-PELA  -529OER-######-######-'>
+  2 #PSW-130 (A35) INIT <'MONEY -######-3PJS  -######-7494  -'>
+  2 #PSW-135 (A35) INIT <'######-MOM   -######-######-CHASE -'>
+  2 #PSW-140 (A35) INIT <'######-######-TRACY -######-######-'>
+  2 #PSW-145 (A35) INIT <'######-######-######-######-EMP   -'>
+1 REDEFINE #PASSWORDS
+  2 #PSWD-OCC (50)
+    3 #PSWD  (A6)
+    3 #FILL  (A1)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER                     /* PM24
+  2 MEMBER-CONTACT-ID             /* TT1
+  2 NAME
+  2 SSN
+  2 INTRO-FLAG
+*   2 DATE-OF-BIRTH               /* TT1
+*   2 REDEFINE DATE-OF-BIRTH      /* TT1
+*     3 DOB-YYYY   (A4)           /* TT1
+*     3 DOB-MM     (A2)           /* TT1
+*     3 DOB-DD     (A2)           /* TT1
+*
+1 AT-V VIEW OF A-APPL-TRACKING
+  2 ID-NUMBER
+  2 NAME
+  2 SSN
+  2 INTRO-FLAG
+  2 DATE-OF-BIRTH
+  2 REDEFINE DATE-OF-BIRTH
+    3 DOB-YYYY   (A4)
+    3 DOB-MM     (A2)
+    3 DOB-DD     (A2)
+  2 CONTACT-ID   (N8)            /* NG6
+*
+1 TRM-V VIEW OF A-TERMINALS      /*
+  2 CLERK-ID                     /*
+  2 FUNCTIONS  (N2/10)           /*
+*
+1 #COMPANY       (A41)
+1 #SCR-PASSWORD  (A6)
+1 #SCR-PSWD-CV   (C)
+1 #STORE-COMMAND (A3)
+1 #CMND-ISN          (P8)
+1 #TEXT              (A75)
+1 #NUM-NOTES         (A2)
+1 #HOLD-SUFFIX   (A3)
+*
+1 #ID-9    (N9)
+1 REDEFINE #ID-9
+  2 #ID-6    (N6)
+  2 #ID-LST-3 (N3)
+*
+1 #NMCRS        (L)    /* DW2
+1 #BAD-USER      (L)
+1 #GOOD-USER     (A3)
+1 #I1            (I2)
+1 #MBR-SSN       (A11)
+1 #MBR-DOB       (A10)
+1 #LINKED-CN-SEL (A1/30)
+1 #LINKED-CN-CV  (C/30)
+1 #LINKED-NAME   (A25/30)
+1 #LINKED-SSN    (A11/30)
+1 #LINKED-DOB    (A10/30)
+1 #LINKED-TYPE   (A10/30)
+1 #SAVE-COMMAND  (A2)
+1 #START-OVER    (L)
+1 #ERR-MSG       (A75)
+*
+1 #AFSC-WORK-FIELDS     /* PM24
+  2 #INPUT-RECORD      (A6)
+  2 REDEFINE #INPUT-RECORD
+    3 #INPUT-RECORD-N   (N6)
+  2 #AFSC-I            (I4)
+  2 #AFSC-ID           (N6/200)
+  2 #CHECK-ID          (N6)
+  2 #FOUND             (L)
+*
+1 #REQUEST             (A) DYNAMIC    /* NG2
+1 #ID-NUMBER           (N6)           /* NG2
+1 #CONTACT-ID          (N8)           /* RE8
+1 #POLICY-ID           (A16)          /* NG6
+*
+1 #DATE-OF-BIRTH (N8.0)            /* TT1
+1 REDEFINE #DATE-OF-BIRTH          /* TT1
+  2 #DOB-YYYY (A4)                 /* TT1
+  2 #DOB-MM (A2)                   /* TT1
+  2 #DOB-DD (A2)                   /* TT1
+END-DEFINE
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+INCLUDE GONERCXX            /* NATURAL ERROR ROUTINE
+* WRITE 'TOP OF G1000PXX #cga-security-code=' #CGA-SECURITY-CODE
+* DEFINE WORK FILE 1 '/usr/SAG/AAFMAA/batch/workfiles/SYSDA/ATH/AFSC_AUTH_LIST.TXT'  /* PM24 PM25
+*
+REPEAT
+* WRITE 'TOP OF G1000PXX WITHIN A LOOP suffix =' #CGA-SCR-SUFFIX
+*
+  PERFORM SETUP-COMPANY
+*
+  IF #CGA-SCR-COMMAND = 'YY'                         /* bz1
+    FIND (1)  TRM-V WITH CLERK-ID = #CGA-CLERK       /* bz1
+      IF NO RECORD FOUND                             /* bz1
+        ESCAPE BOTTOM                                /* bz1
+      END-NOREC                                      /* bz1
+    END-FIND                                         /* bz1
+    IF  FUNCTIONS(1) = 99                            /* bz1
+      CALLNAT 'G1000S01'                             /* bz1
+      #CGA-SCR-COMMAND := ' '                        /* bz1
+    END-IF                                           /* bz1
+  END-IF                                             /* bz1
+*
+  IF #CGA-SCR-COMMAND = 'XX'                         /* NG2 NG6
+    RESET #CONTACT-ID 
+    #ID-NUMBER := #CGA-SCR-ID
+    #REQUEST   := 'FAMILY'
+    FIND XX-S01-VIEW WITH ID-NUMBER = #CGA-SCR-ID    /* NG3
+      IF NO RECORDS
+        FIND AT-V WITH ID-NUMBER = #CGA-SCR-ID
+          IF NO RECORDS
+            ESCAPE BOTTOM
+          END-NOREC
+        END-FIND
+        ESCAPE BOTTOM
+      END-NOREC
+      #CONTACT-ID := MEMBER-CONTACT-ID
+      CALLNAT 'MBRCRC'  MEMBER-CONTACT-ID     /* CRM SYNC PROCESS
+        #REQUEST
+    END-FIND
+    CALLNAT 'LWSNSYN' #CONTACT-ID #ID-NUMBER  /* CRM POLICY SYNC
+      #POLICY-ID
+      #REQUEST
+    IF #REQUEST = 'Success'
+      MOVE 'Member data have been sync with CRM' TO  #TEXT
+    ELSE
+      MOVE 'Unable to synchronize data. Please contact MSS.' TO  #TEXT
+    END-IF
+    MOVE 'GM'             TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+*    RESET #CGA-SCR-ID     #CGA-ORIG-ID
+    RESET #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+    INPUT TEXT #TEXT USING MAP 'G1001MXX'
+    ESCAPE TOP
+  END-IF
+*
+  IF (#CGA-SCR-COMMAND = '..' OR = '. ')
+    FIND (1) TRMS-V WITH CLERK-ID = #CGA-CLERK
+      MOVE '..' TO LST-CMND
+      MOVE *DATN TO LST-CMND-DT
+      MOVE *TIMN TO LST-CMND-TM
+      RESET LST-CMND-ID
+*
+      UPDATE (0245)
+      END TRANSACTION
+    END-FIND
+*
+    RESET #CGA-SCR-COMMAND #CGA-SCR-ID #CGA-SCR-SUFFIX
+*
+    IF *INIT-PROGRAM = 'AAFM'
+        OR = 'AFSC'   /*  AFA
+      STACK COMMAND 'FIN'
+    END-IF
+*
+    RELEASE VARIABLES
+**STOP                 /* SAG-AB 20060615
+    TERMINATE            /* SAG-AB 20060615
+  END-IF
+*
+*
+*
+  MOVE #CGA-SCR-COMMAND TO #STORE-COMMAND
+  IF   (#CGA-SCR-ID GE 100) AND (#CGA-SCR-ID LT 150)  /* DW11
+      AND (*DEVICE NE 'BATCH')
+ AND (NOT #CGA-SCR-COMMAND = 'GM')                                /* PM3
+* AND (NOT #CGA-SCR-COMMAND = 'AD' OR = 'ST') /* removed 10/95 bjs
+*  AND (NOT #CGA-CLERK = 'DRW' OR = 'JAK')
+    MOVE (AD=N) TO #SCR-PSWD-CV
+    MOVE '*' TO #CGA-SCR-COMMAND
+    INPUT MARK *#SCR-PASSWORD USING MAP 'D3299MFM'
+*
+    IF #CGA-SCR-COMMAND NE '*'
+      ESCAPE TOP
+    END-IF
+*
+    IF #SCR-PASSWORD NE #PSWD (#CGA-SCR-ID - 99)
+      REINPUT 'Invalid Employee Password entered'
+        MARK *#SCR-PASSWORD
+    END-IF
+  END-IF
+*
+  IF   (#CGA-SCR-COMMAND = '**')
+      AND (#CGA-SCR-ID = 999999999)
+IF (#CGA-SECURITY-CODE = 99    /* Has auth for both Companies (NO LONGER) DW15
+        OR = 97 OR = 98 )
+* AND (#CGA-CLERK = 'DRW' OR = 'TDM'                          /* DW15
+*              OR = 'KEC' OR = 'ALB'    /* DW10
+*              OR = 'PAM')
+*             OR = 'PAM' OR = 'KEC')   /* TEMPORARY DUE TO PHONE LINES
+* OR ='KHB' OR = 'RLB' OR = 'ESM')   /* EL removed as per bmg
+*
+      IF #CGA-SCR-SUFFIX = 'SAS' OR = 'SVC'            /* DW15
+        WRITE // 'User changed to a'    #CGA-SCR-SUFFIX 'User'
+        WRITE '#CGA-USER-COMPANY will be S'
+        WRITE '#CGA-SECURITY-CODE is' #CGA-SECURITY-CODE
+        WRITE '#CGA-CLERK-ID is'      #CGA-CLERK          /* DW15
+        WRITE // 'Press ENTER to proceed'
+        FETCH 'AFSC'    /* AFA Setup as as AFSC user      /* RE7
+      ELSE
+        IF #CGA-SCR-SUFFIX = 'IAS' OR = 'INS'          /* DW15
+          WRITE // 'User changed to an'  #CGA-SCR-SUFFIX 'User'
+          WRITE '#CGA-USER-COMPANY will be I'
+          WRITE '#CGA-SECURITY-CODE is' #CGA-SECURITY-CODE
+          WRITE '#CGA-CLERK-ID is'      #CGA-CLERK          /* DW15
+          WRITE // 'Press ENTER to proceed'
+          FETCH 'AAFM'           /* Setup as an AAFM user
+        ELSE
+          FIND (1) TRMS-V WITH CLERK-ID = #CGA-SCR-SUFFIX
+            IF NO RECORDS FOUND
+              WRITE '// User initials not found - try again'
+              WRITE // 'Press ENTER to proceed'
+              RESET #CGA-SCR-COMMAND
+              FETCH 'G1000PXX'
+            END-NOREC
+*
+            MOVE TRMS-V.SECURITY-CODE TO #CGA-SECURITY-CODE
+            MOVE #CGA-SCR-SUFFIX      TO #CGA-CLERK
+*
+            IF #CGA-SECURITY-CODE = 1 OR = 2 OR = 97
+         MOVE 'S' TO #CGA-USER-COMPANY  /* Must be an AFFL User  /* DW17
+                TRMS-V.USER-COMPANY  /* Move to Terminal file  /* DW17
+            ELSE
+              MOVE 'I' TO #CGA-USER-COMPANY
+                TRMS-V.USER-COMPANY  /* Move to Terminal file  /* DW17
+            END-IF
+            UPDATE (0315)                               /* DW17
+            END TRANSACTION
+          END-FIND
+        END-IF
+      END-IF
+*
+      WRITE // 'User changed to'    #CGA-SCR-SUFFIX
+      WRITE  '#CGA-USER-COMPANY will be'  #CGA-USER-COMPANY
+      WRITE  '#CGA-SECURITY-CODE will be' #CGA-SECURITY-CODE
+      WRITE  '#CGA-CLERK-ID will be'      #CGA-CLERK          /* DW15
+      WRITE // 'Press ENTER to proceed'
+      RESET #CGA-SCR-COMMAND
+      RESET #CGA-SCR-ID
+      RESET #CGA-SCR-SUFFIX
+      FETCH 'G1000PXX'
+    ELSE
+MOVE 'This User is not allowed to change his User-Security Code' TO  #TEXT
+      MOVE 'GM'             TO #CGA-SCR-COMMAND #CGA-ORIG-COMMAND
+      RESET #CGA-SCR-ID     #CGA-ORIG-ID
+      RESET #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+      INPUT TEXT #TEXT USING MAP 'G1001MXX'
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  MOVE #STORE-COMMAND TO #CGA-SCR-COMMAND
+*
+  FIND (1) TRMS-V WITH CLERK-ID = #CGA-CLERK
+    IF (#CGA-SCR-COMMAND = 'CC') AND (#CGA-SCR-SUFFIX = 'LST')
+      IGNORE
+    ELSE
+      MOVE #CGA-SCR-COMMAND TO LST-CMND
+      MOVE *DATN TO LST-CMND-DT
+      MOVE *TIMN TO LST-CMND-TM
+*
+      IF #CGA-SCR-ID LE 999999
+        MOVE #CGA-SCR-ID TO LST-CMND-ID
+      ELSE
+        MOVE #CGA-SCR-ID TO #ID-9
+        MOVE #ID-6 TO LST-CMND-ID
+      END-IF
+    END-IF
+*
+    IF MSG-JUST-SENT = 'Y'
+        AND (#CGA-SCR-SUFFIX NE MASK ('NU')) /* no flashes if ci to ad
+        AND (#CGA-CLERK NE 'ACE')   /* TO PREVENT LOOPS
+      READ NT-V BY ID-NUMBER FROM 900000
+        IF NT-V.ID-NUMBER GE 980000
+          ESCAPE BOTTOM
+        END-IF
+*
+        IF   (NOTE-CLERK-ID (3) = 'UNV')
+            AND (NOTE-CLERK-ID (2) = #CGA-CLERK)
+UPDATE (0360)   /* TO UPDATE 'CC LST' COUNTS  /* bz ad hoc  Notes exceeded
+          END TRANSACTION
+*
+         MOVE '*P' TO #CGA-ORIG-COMMAND    /* PROMPT - FOR PROPER RETURN
+          FETCH 'G4090PNX'      /* bz ad hoc  Notes exceeded
+        END-IF
+      END-READ
+*
+      RESET MSG-JUST-SENT   /* all msgs have been viewed
+    END-IF
+*
+    UPDATE (0360)         /* bz ad hoc  Notes exceeded
+    END TRANSACTION
+  END-FIND
+*
+  IF #CGA-SCR-COMMAND = '..' OR = '. '
+    ESCAPE TOP
+  END-IF
+*
+  IF #CGA-SCR-COMMAND = 'GM'
+    IF   (#CGA-ORIG-COMMAND = '  ')    /* 1ST TIME IN
+        AND (*DEVICE NE 'BATCH')          /* ONLY IN ONLINE
+      MOVE '**' TO #CGA-ORIG-COMMAND
+FETCH 'G4090PNX'                            /* bz ad hoc  Notes exceeded
+    ELSE
+      IF #CGA-ORIG-COMMAND = '**'
+        IF #CGA-SCR-ID NE 0
+          MOVE EDITED #CGA-SCR-ID (EM=Z9) TO #NUM-NOTES
+       COMPRESS '******* You have' #NUM-NOTES 'outstanding "NX" message'
+            INTO #TEXT
+          IF #CGA-SCR-ID GT 1
+            COMPRESS #TEXT 's. ******' INTO #TEXT LEAVING NO
+          ELSE
+            COMPRESS #TEXT '. *******' INTO #TEXT LEAVING NO
+          END-IF
+*
+          RESET #CGA-SCR-ID
+          INPUT TEXT #TEXT USING MAP 'G1001MXX'
+          ESCAPE TOP
+        END-IF
+*
+        RESET #CGA-SCR-ID
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #CGA-SCR-COMMAND = ' '
+    MOVE 'GM' TO #CGA-SCR-COMMAND
+  END-IF
+*
+  RESET #NMCRS      /* DW2
+  IF   (#CGA-SCR-COMMAND = 'CG' OR = 'DM' OR = 'FM' OR = 'SC' OR = 'SU'
+      OR = 'NM' OR = 'DP' OR = 'DC' OR = 'UP') /* up added 10/12/2004
+      AND (*DEVICE NE 'BATCH')
+    IF   ((#CGA-SCR-ID GE 1) AND (#CGA-SCR-ID LE 49))
+        AND (#CGA-SECURITY-CODE NE 97)
+      INPUT TEXT
+        'ONLY Authorized User have authority to update CN 1-49'
+        USING MAP 'G1000MXX'
+      FETCH 'G1000PXX'
+    END-IF
+*
+ IF   ((#CGA-SCR-ID GE 326) AND (#CGA-SCR-ID LE 360)) /* aafmaa Retirees
+        AND (NOT #CGA-CLERK = 'WRL' OR = 'TEH' OR = 'BMG')
+        AND (#CGA-SECURITY-CODE NE 97)
+    INPUT TEXT 'Only Tom/Walt/Brady have authority to update CN 326-360'
+        USING MAP 'G1000MXX'
+      FETCH 'G1000PXX'
+    END-IF
+*
+    RESET #BAD-USER
+    DECIDE FOR FIRST CONDITION
+      WHEN (#CGA-SCR-ID GE 50) AND (#CGA-SCR-ID LE 61)
+          AND (#CGA-CLERK NE 'BJS')
+        MOVE 'BJS' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID GE 62) AND (#CGA-SCR-ID LE 65)
+          AND (#CGA-CLERK NE 'WDS')
+        MOVE 'WDS' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID = 78) AND (#CGA-CLERK NE 'MAS')
+        MOVE 'MAS' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID = 80) AND (#CGA-CLERK NE 'DKD')
+        MOVE 'DKD' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID = 81) AND (#CGA-CLERK NE 'JMJ')
+        MOVE 'JMJ' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID = 82) AND (#CGA-CLERK NE 'TSS')    /* TM3
+        MOVE 'TSS' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID = 83) AND (#CGA-CLERK NE 'JAB')
+        MOVE 'JAB' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID = 97) AND (#CGA-CLERK NE 'NLD')
+        MOVE 'NLD' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID GE 150) AND (#CGA-SCR-ID LE 154)
+          AND (#CGA-CLERK NE 'KRM')
+        MOVE 'KRM' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID GE 155) AND (#CGA-SCR-ID LE 159)
+          AND (#CGA-CLERK NE 'EMD')
+        MOVE 'EMD' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID GE 301) AND (#CGA-SCR-ID LE 325)
+          AND (NOT #CGA-CLERK = 'KRM' OR = 'WDS')
+        MOVE '***' TO #GOOD-USER
+        MOVE TRUE TO #BAD-USER
+      WHEN (#CGA-SCR-ID GE 501) AND (#CGA-SCR-ID LE 999) AND
+    (NOT #CGA-CLERK = 'JAB' OR = 'SLB' OR = 'KRM' OR = 'DRW' OR = 'SRS')
+        MOVE TRUE TO #NMCRS
+        MOVE TRUE TO #BAD-USER
+      WHEN NONE IGNORE
+    END-DECIDE
+*
+    IF #CGA-CLERK = 'DRW'
+      RESET #BAD-USER
+    END-IF
+*
+    IF #BAD-USER
+      IF #GOOD-USER = '***'
+        MOVE 'Only KRM/WDS has authority to update this sample'
+          TO #TEXT
+      ELSE
+        IF #NMCRS     /* DW2
+          MOVE
+        'Only JAB/SLB/SRS/KRM has authority to update these NMCRS Temps'
+            TO #TEXT
+        ELSE
+        COMPRESS 'Only' #GOOD-USER 'has authority to update this sample'
+            INTO #TEXT
+        END-IF
+      END-IF
+      INPUT TEXT #TEXT USING MAP 'G1000MXX'
+      FETCH 'G1000PXX'
+    END-IF
+  END-IF
+*
+  IF #CGA-SCR-COMMAND = 'DR'                     /*  bz2
+    FETCH RETURN 'G0000PDR'                      /*  bz2
+    #CGA-SCR-COMMAND := #CGA-ORIG-COMMAND        /*  bz2
+  END-IF
+  IF #CGA-SCR-COMMAND = 'DQ'                          /*  bz3
+    CALLNAT 'G0000SDQ' #CGA-CLERK #CGA-SCR-ID #CGA-SCR-SUFFIX    /*  bz3
+    #CGA-SCR-COMMAND := #CGA-ORIG-COMMAND            /*  bz3
+    #CGA-SCR-SUFFIX   := #CGA-ORIG-SUFFIX            /*  bz3
+  END-IF
+*
+  IF #CGA-SCR-COMMAND = '9+'                         /*  bz-9+
+    CALLNAT 'G10-9PLS' #CGA-SCR-ID                   /*  bz-9+
+    #CGA-SCR-COMMAND := 'GM'                         /*  bz-9+
+  END-IF
+  
+  FIND (1) CM-V WITH COMMAND = #CGA-SCR-COMMAND
+  END-FIND
+*
+* IF #CGA-CLERK = 'DXM' OR = 'JXM' OR = 'RXJ'  /* PM24 PM25
+*   PERFORM AFSC-SECURITY                      /* PM24 PM25
+* END-IF                                       /* PM24 PM25
+*
+
+* IF NOT (#CGA-CLERK = 'BZ' OR = 'RE' OR = 'JC' OR = 'LR' OR = 'SV' OR = 'KEC' OR = 'NG' OR = 'PAM')    /* RE5   PM25
+* IF #CGA-USER-COMPANY = 'I'                     /* IAS USER                                            /* DW15  PM23
+*   IF #CGA-SCR-COMMAND       = 'BA' OR = 'BC' OR = 'BR' OR = 'BS' OR = 'BV'
+*      OR = 'CP' OR = 'DA' OR = 'DC' OR = 'DF' OR = 'DI' OR = 'DM' OR = 'DS'
+*      OR = 'DV' OR = 'ED' OR = 'FD' OR = 'FM' OR = 'FT' OR = 'GT' OR = 'MR'
+*      OR = 'PT'
+*      OR = 'RP' OR = 'SC' OR = 'SO' OR = 'SI' OR = 'SS' OR = 'SU' OR = 'WB'
+*      OR = 'WO'
+*     COMPRESS 'Command' #CGA-SCR-COMMAND 'Invalid for IAS User' INTO #TEXT
+*     MOVE 'GM' TO #CGA-SCR-COMMAND
+*     MOVE 'GM' TO #CGA-SCR-COMMAND
+*     INPUT TEXT #TEXT USING MAP 'G1000MXX'
+*     FETCH 'G1000PXX'
+*   END-IF
+* END-IF                                                                                                /* PM23
+*
+* IF #CGA-USER-COMPANY = 'S'      /* SAS USER              /* DW15
+*   IF #CGA-SCR-COMMAND = 'AI' OR = 'AN' OR = 'AV' OR = 'BD' OR = 'BP'
+*          OR = 'CL' OR = 'CO' OR = 'CU' OR = 'FA' OR = 'IC' OR = 'ID'   /* RE4 'CB'
+*          OR = 'IM' OR = 'IP' OR = 'IR' OR = 'IS' OR = 'LI' OR = 'LM' OR = 'LP'
+*          OR = 'NC' OR = 'PO' OR = 'RC' OR = 'RE' OR = 'TA' OR = 'TB'   /* RE6 'RL'
+*          OR = 'TC' OR = 'TI' OR = 'TS' OR = 'TW' OR = 'VA' OR = 'VB' OR = 'VM'
+*          OR = 'VP' OR = 'VW' OR = 'VY' OR = 'YM'
+*          OR = 'UI'                                      /* RE1
+*     COMPRESS 'Command' #CGA-SCR-COMMAND 'Invalid for SAS User' INTO #TEXT
+*     MOVE 'GM' TO #CGA-SCR-COMMAND
+*     INPUT TEXT #TEXT USING MAP 'G1000MXX'
+*     FETCH 'G1000PXX'
+*   END-IF
+* END-IF
+* END-IF                                               /* END DW15                                      /* PM25
+*
+* If #cga-user-company = 'I'       /* An AAFMAA User     /* DW8 DW11
+* if #cga-clerk ne 'DRW'    /* Removed DD 3/17/2007   /* DW9
+*   IF (#CGA-SCR-COMMAND = 'BA' or = 'BR' or = 'BC' or = 'BS' or = 'BV'
+*      or = 'CP' or = 'DA' or = 'DC' or = 'DF' or = 'DI' or = 'DM'  /* DW9
+*      or = 'DS' or = 'ED' or = 'FD' or = 'FM' or = 'FT' or = 'PT'
+*      or = 'RP' or = 'SC' or = 'SI' or = 'SO' or = 'SS' or = 'SU' or = 'WB'
+*      or = 'WO')   /* DP was removed
+*     COMPRESS '"' #CGA-SCR-COMMAND '" is Invalid for AAFMAA'
+*                                        INTO #TEXT LEAVING NO
+*     MOVE 'GM' TO #CGA-SCR-COMMAND
+*     INPUT TEXT #TEXT USING MAP 'G1000MXX'
+*     ESCAPE TOP
+*   end-if
+* end-if
+*
+  IF *NUMBER (0541) = 0
+OR (#CGA-USER-COMPANY = 'S' AND (#CGA-SCR-COMMAND = 'AM' OR = 'CI'))     /* RE9
+OR ( #CGA-SCR-COMMAND = 'NM' AND #CGA-SCR-SUFFIX = 'CON' )               /* NG3
+COMPRESS '"' #CGA-SCR-COMMAND #CGA-SCR-SUFFIX '"' 'is an invalid command'  /* NG3
+      INTO #TEXT /* LEAVING NO
+    MOVE 'GM' TO #CGA-SCR-COMMAND
+    INPUT TEXT #TEXT USING MAP 'G1000MXX'
+    ESCAPE TOP
+  END-IF
+*
+  IF   (#CGA-SCR-COMMAND = 'TU')
+*  AND (NOT #CGA-CLERK = 'KEC' OR = 'DRW'
+      AND (NOT #CGA-SECURITY-CODE = 97 OR = 98)                /* DW15
+* AND (NOT #CGA-CLERK = 'DRW' OR = 'TDM' OR = 'PAM' OR = 'YAK')
+    MOVE 'USER not authorized for "TU"' TO #TEXT
+    INPUT TEXT #TEXT USING MAP 'G1000MXX'
+    FETCH 'G1000PXX'
+  END-IF
+*
+  ASSIGN #CMND-ISN = *ISN (0541)
+*
+  GET CM-V #CMND-ISN
+  IF #CGA-SCR-COMMAND = 'WB' OR = 'WO'
+    IGNORE
+  ELSE
+    IF #CGA-USER-COMPANY = 'S' /* PM - 06/2000           /* DW15
+      ADD 1 TO NUM-ACCESSES-SVC
+    ELSE
+      ADD 1 TO NUM-ACCESSES     /* COUNT NUMBER OF COMMAND ACCESSES
+    END-IF
+  END-IF
+  UPDATE (0617)
+  END TRANSACTION
+*
+  PERFORM SECURITY-EDIT
+*
+  IF #ERR-MSG NE ' '
+    INPUT TEXT #ERR-MSG USING MAP 'G1000MXX'
+    FETCH 'G1000PXX'
+  END-IF
+*
+IF ((#CGA-SCR-COMMAND = 'DV' OR = 'BA' OR = 'RP' OR = 'SS') AND (#CGA-SCR-SUFFIX = 'AW2' OR = 'AWS')) OR /* RE10 START
+    ((#CGA-SCR-COMMAND = 'BA') AND (#CGA-SCR-SUFFIX = 'AWV' OR = 'AWW'))
+INPUT TEXT 'Suffix has been de-activated. To re-activate, please contact Technical Support.'
+      MARK *#CGA-SCR-ID USING MAP 'G1000MXX'
+    ESCAPE TOP
+END-IF                                                                                                   /* RE10 END
+*
+  IF #CGA-SCR-COMMAND = 'WB' OR = 'WO'  /* DW5
+    INPUT TEXT 'WB/WO Command no longer valid - Use BA/BR'
+      MARK *#CGA-SCR-COMMAND USING MAP 'G1000MXX'
+    FETCH 'G1000PXX'
+  END-IF
+
+  CALLNAT 'G10-9TST' #CGA-SCR-ID                        /* bz-9+
+
+/* many lines removed   /* bz-9+
+*
+  IF #CGA-SCR-COMMAND = 'AT' OR = 'NM' OR = 'TB' OR = 'AA' OR = 'TC'
+   OR = 'TS' OR = 'PO' OR = 'MR' OR = 'ML' OR = 'AN' OR = 'NX' OR = 'AE'
+      OR = 'AI'
+    MOVE TRUE TO MBR-FOUND
+    RESET #CGA-ID
+    IF #CGA-SCR-ID LE 999999
+      MOVE #CGA-SCR-ID TO #CGA-ID
+    END-IF
+*
+    IF   (#CGA-SCR-COMMAND = 'AT' OR = 'PO' OR = 'MR' OR = 'AE')
+        AND (#CGA-SCR-ID NE 0)
+*       AND ((#CGA-SCR-ID LT 200000)
+      AND ((#CGA-SCR-ID LT 500000)                                /* NG1
+        OR ((#CGA-SCR-ID GE 600000) AND (#CGA-SCR-ID LT 700000)))
+      PERFORM FIND-MBR-ID
+*
+      IF (((#CGA-SCR-COMMAND = 'AT' OR = 'AE')
+          AND (#CGA-SCR-SUFFIX = 'SPS' OR = 'GEN'))
+          OR (#CGA-SCR-COMMAND = 'PO'))
+          AND NOT MBR-FOUND
+        PERFORM FIND-WIDOW-ID
+      END-IF
+*
+      PERFORM CHG-CMND-TO-WID
+*
+      IF (LINKED-CN (1) NE 0) AND MBR-FOUND
+          AND (NOT XX-S01-VIEW.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+          AND (#CGA-SCR-SUFFIX = 'ALL')
+        PERFORM SELECT-CN
+      END-IF
+    END-IF
+  ELSE
+    IF (TYPE-OF-INPUT = 'N')
+        OR ((TYPE-OF-INPUT = 'O' OR = 'P' OR = 'Q' OR = 'R')
+        AND (#CGA-SCR-ID = 0))
+        OR ((#CGA-SCR-COMMAND = 'AD' OR = 'ID') AND (#CGA-SCR-ID = 0)
+        AND (#CGA-SCR-SUFFIX = 'DAT' OR = 'DTO'))
+      MOVE TRUE TO MBR-FOUND
+      RESET #CGA-SCR-ID
+      RESET #CGA-ID
+    ELSE
+      IF #CGA-SCR-ID GT 999999
+        PERFORM FIND-SSN-GENERIC
+      ELSE
+        IF   (#CGA-SCR-COMMAND = 'AV' OR = 'VP') /* APPL NUM ON 'AV/VP'
+            AND (#CGA-SCR-ID GE 500000)
+            AND (#CGA-SCR-ID LT 600000)
+          MOVE #CGA-SCR-ID TO #CGA-ID
+          MOVE TRUE TO MBR-FOUND
+          RESET #CGA-ISN
+        ELSE
+          PERFORM FIND-MBR-GENERIC
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  IF #START-OVER
+    RESET #START-OVER
+    ESCAPE TOP
+  END-IF
+*
+  IF #CGA-SCR-COMMAND = 'CB' OR = 'CG'  /* RE8 START
+    ignore
+    INPUT USING MAP 'AUCM0001'
+    FETCH 'G1000PXX'
+  END-IF                                /* RE8 END
+*
+  IF  (#CGA-SCR-COMMAND = 'DM' OR = 'DA' OR = 'DD' OR = 'DC' OR = 'BA'
+      OR = 'BR' OR = 'RP' OR = 'SI' OR = 'SU' OR = 'FM' OR = 'FD'
+      OR = 'SS' OR = 'SO' OR = 'DI' OR = 'BS' OR = 'GT')
+      AND ((XX-S01-VIEW.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+      OR  (XX-S01-VIEW.MILITARY-SERVICE = 'EMP'))
+    INPUT TEXT 'Command invalid for SPS/GEN or EMPLOYEES'
+      MARK *#CGA-SCR-ID USING MAP 'G1000MXX'
+*
+    ESCAPE TOP
+  END-IF
+*
+IF #CGA-USER-COMPANY = 'S' AND #CGA-SCR-COMMAND = 'AA' AND #CGA-SCR-ID = 0   /* RE3
+      AND #CGA-SCR-SUFFIX = 'DAT'
+    MOVE FALSE TO MBR-FOUND
+  END-IF
+* - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - *
+  IF MBR-FOUND
+    IF #CGA-SCR-COMMAND = 'DI' OR = 'DV'    /* DW7
+*  AND (WIDOW-FLAG = ' ')   /* alive member / removed 9/2002 bjs
+RESET #CGA-MF-SCR-PARM-1-N #DATE-OF-BIRTH      /* similar logic below is        /* TT1
+#DATE-OF-BIRTH      := GET-DATE-OF-BIRTH(<XX-S01-VIEW.MEMBER-CONTACT-ID>)       /* TT1
+      IF   ((MILITARY-STATUS = 'R')    /* in aoap000a to calculate
+*
+          OR  ((MILITARY-STATUS = 'A') /* Act Resv over 60    /* DW14
+          AND  ((MILITARY-SERVICE = MASK (.'G'.))
+          OR  (MILITARY-SERVICE = MASK (.'R'.))))
+          AND (#DATE-OF-BIRTH LE *DATN - 600000)) /* 60 or oldr END DW14
+*
+          AND (RETIRED-PAY-AMT = 0)      /* retired pay
+*    AND (BASE-PAY-EF-DATE LT 19800908)  /* high-36 calcs can't be done
+      MOVE #CGA-SCR-SUFFIX TO #HOLD-SUFFIX /* above removed 2/9/2004 WDS
+        MOVE 'RP'  TO #CGA-SCR-COMMAND
+          #CGA-ORIG-COMMAND
+        MOVE #CGA-ID  TO #CGA-ORIG-ID
+        MOVE 'DI*' TO #CGA-SCR-SUFFIX
+          #CGA-ORIG-SUFFIX
+        FETCH RETURN 'D3000PXX' /* D3660PRP moves ret pay to
+*                                   #CGA-MF-SCR-PARM-1-N
+        MOVE 'DI'  TO #CGA-SCR-COMMAND
+        MOVE #HOLD-SUFFIX TO #CGA-SCR-SUFFIX
+      END-IF
+    END-IF
+*
+    MOVE #CGA-SCR-COMMAND TO #CGA-ORIG-COMMAND
+    MOVE #CGA-ID          TO #CGA-ORIG-ID
+    MOVE #CGA-SCR-SUFFIX  TO #CGA-ORIG-SUFFIX
+*
+    IF   (#CGA-USER-COMPANY = 'S')      /* DW16
+        AND (PROGRAM-TO-CALL-SVC NE ' ')
+      FETCH PROGRAM-TO-CALL-SVC
+    ELSE
+      FETCH PROGRAM-TO-CALL
+    END-IF
+  ELSE
+    IF #CGA-SCR-ID = 0
+      INPUT TEXT 'ID NUMBER or SSN is required' MARK *#CGA-SCR-ID
+        USING MAP 'G1000MXX'
+    ELSE
+      INPUT TEXT 'ID NUMBER or SSN entered not found' MARK *#CGA-SCR-ID
+        USING MAP 'G1000MXX'
+    END-IF
+*
+    ESCAPE TOP
+  END-IF
+*
+* * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE SECURITY-EDIT
+* * * * * * * * * * * * * * * *
+  CALLNAT 'G1005SXX' #CGA-SCR-COMMAND
+    #CGA-SCR-ID
+    #CGA-SCR-SUFFIX
+    #CGA-CLERK
+    #CGA-SECURITY-CODE
+    #CGA-USER-COMPANY
+    #ERR-MSG
+*
+  END-SUBROUTINE /* (0788)
+*
+* * * * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-SSN-GENERIC
+* * * * * * * * * * * * * * * * * *
+*
+  IF TYPE-OF-INPUT = 'C' OR = 'Q'
+    PERFORM FIND-CADET-SSN
+  ELSE
+    IF TYPE-OF-INPUT = 'M' OR = 'O'
+      PERFORM FIND-MBR-SSN
+      PERFORM CHG-CMND-TO-WID
+    ELSE
+      IF TYPE-OF-INPUT = 'W' OR = 'P' OR = 'A' OR = 'R'
+*     PERFORM FIND-WIDOW-SSN                             /* PM12
+        PERFORM FIND-MBR-SSN                               /* PM12
+        IF   (TYPE-OF-INPUT = 'W' OR = 'P')                /* PM12
+            AND (XX-S01-VIEW.WIDOW-FLAG = ' ')                /* PM12
+          RESET MBR-FOUND                                  /* PM12
+        END-IF                                             /* PM12
+
+*
+        IF MBR-FOUND = FALSE
+*       PERFORM FIND-MBR-SSN                             /* PM12
+          PERFORM FIND-WIDOW-SSN                           /* PM12
+*       IF   (TYPE-OF-INPUT = 'W' OR = 'P')              /* PM12
+*        AND (XX-S01-VIEW.WIDOW-FLAG = ' ')              /* PM12
+*         RESET MBR-FOUND                                /* PM12
+*       END-IF                                           /* PM12
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  PERFORM SELECT-CN
+*
+  END-SUBROUTINE /* (0801)
+*
+* * * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-MBR-GENERIC
+* * * * * * * * * * * * * * * * *
+*
+  IF   (TYPE-OF-INPUT = 'C' OR = 'Q')
+      OR ((#CGA-SCR-COMMAND = 'FM' OR = 'FD' OR = 'MR' OR = 'BD')
+  AND (#CGA-SCR-ID GE 700000) AND (#CGA-SCR-ID LE 799999)) /* INVEST CDT
+    PERFORM FIND-CADET-ID
+  ELSE
+    IF TYPE-OF-INPUT = 'M' OR = 'O'
+      PERFORM FIND-MBR-ID
+      PERFORM CHG-CMND-TO-WID
+    ELSE
+      IF TYPE-OF-INPUT = 'W' OR = 'P'
+        PERFORM FIND-WIDOW-ID
+      ELSE
+        IF TYPE-OF-INPUT = 'A' OR = 'R'
+          PERFORM FIND-MBR-ID
+*
+          IF MBR-FOUND = FALSE
+            PERFORM FIND-WIDOW-ID
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+*
+  PERFORM SELECT-CN
+*
+  END-SUBROUTINE /* (0837)
+*
+* * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-MBR-SSN
+* * * * * * * * * * * * * * *
+*
+  RESET MBR-FOUND
+  FIND XX-S01-VIEW WITH SSN = #CGA-SCR-ID
+    IF   (PROCESS-IND = 'C')
+        AND (INTRO-FLAG NE 'A')  /* DW4
+      ESCAPE TOP
+    END-IF
+*
+*  IF (XX-S01-VIEW.WIDOW-FLAG = 'Y')       /* Removed 10/26/2009  DW19
+*   AND (#CGA-USER-COMPANY NE 'I')                  /* DW15
+*    IGNORE
+*  ELSE
+*    IF (((#CGA-USER-COMPANY = 'S')                  /* DW15
+*           AND (XX-S01-VIEW.PROCESS-IND = 'I' OR = 'O' OR = 'D'))
+*     OR ((#CGA-USER-COMPANY = 'I')                  /* DW15
+*      AND (XX-S01-VIEW.PROCESS-IND = 'S')))
+*      AND (#CGA-SCR-COMMAND NE 'DN') /* AFSC needs access to code death
+*      ESCAPE TOP
+*    END-IF
+*  END-IF
+*
+    MOVE TRUE TO MBR-FOUND
+*
+    IF (TYPE-OF-INPUT = 'M' OR = 'O') AND MEMBER-FLAG = ' '
+      MOVE FALSE TO MBR-FOUND
+      ESCAPE ROUTINE
+    END-IF
+*
+    ASSIGN #CGA-ISN = *ISN
+    MOVE TRUE TO MBR-FOUND
+    MOVE ID-NUMBER  TO #CGA-SCR-ID
+    MOVE ID-NUMBER  TO #CGA-ORIG-ID
+    MOVE ID-NUMBER  TO #CGA-ID
+  END-FIND
+*
+  IF NOT MBR-FOUND
+    RESET XX-S01-VIEW
+    IF (#CGA-SCR-COMMAND = 'BR') AND (#CGA-SCR-SUFFIX = 'CNV')
+      MOVE TRUE TO MBR-FOUND
+      RESET #CGA-ID
+    ELSE
+      IF #CGA-SCR-COMMAND = 'VP' OR = 'AV'
+        RESET MBR-FOUND
+        FIND AT-V WITH SSN = #CGA-SCR-ID
+          IF AT-V.INTRO-FLAG = 'S' /* AFSC AT HAVE NO VP
+            ESCAPE TOP
+          END-IF
+*
+          MOVE TRUE TO MBR-FOUND
+          RESET #CGA-ISN
+        END-FIND
+*
+        IF NOT MBR-FOUND
+          RESET #CGA-ISN
+        END-IF
+      ELSE
+        MOVE FALSE TO MBR-FOUND
+      END-IF
+    END-IF
+  END-IF
+*
+  END-SUBROUTINE /* (0868)
+*
+* * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-MBR-ID
+* * * * * * * * * * * * * * *
+*
+  MOVE #CGA-SCR-ID TO #CGA-ID
+*
+  FIND (1) XX-S01-VIEW WITH MEMBER-KEY = #CGA-ID-G
+    IF NO RECORDS FOUND
+      IF   (#CGA-SCR-COMMAND = 'BR')
+          AND (#CGA-SCR-SUFFIX = 'CNV')
+        MOVE TRUE TO MBR-FOUND
+        RESET #CGA-ID
+      ELSE
+        MOVE FALSE TO MBR-FOUND
+      END-IF
+*
+      ESCAPE ROUTINE
+    END-NOREC
+*
+IF #CGA-SCR-COMMAND = 'ST' AND (#CGA-SCR-SUFFIX = 'SAS' OR = 'IAS') /* RE2
+      RESET #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+    END-IF
+*
+    ASSIGN #CGA-ISN = *ISN
+    ASSIGN #CONTACT-ID = MEMBER-CONTACT-ID      /* RE8
+    MOVE TRUE TO MBR-FOUND
+  END-FIND
+*
+  END-SUBROUTINE /* (0934)
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-WIDOW-SSN
+*
+  RESET MBR-FOUND
+  MOVE EDITED #CGA-SCR-ID(EM=999999999) TO WIDOW-SSN-KEY
+  FIND XX-S01-VIEW WITH SSN-KEY-SP = WIDOW-SSN-KEY
+    IF (XX-S01-VIEW.WIDOW-FLAG = 'Y')
+        AND (#CGA-USER-COMPANY NE 'S')            /* DW15
+      IGNORE
+    ELSE
+      IF  ((#CGA-USER-COMPANY = 'S')           /* DW15
+          AND (XX-S01-VIEW.PROCESS-IND = 'I' OR = 'O' OR = 'D'))
+          OR ((#CGA-USER-COMPANY = 'I')             /* DW15
+          AND (XX-S01-VIEW.PROCESS-IND = 'S'))
+        ESCAPE TOP
+      END-IF
+    END-IF
+*
+    ASSIGN #CGA-ISN = *ISN
+    MOVE TRUE TO MBR-FOUND
+    MOVE ID-NUMBER TO #CGA-SCR-ID
+    MOVE ID-NUMBER  TO #CGA-ORIG-ID
+    MOVE ID-NUMBER TO #CGA-ID
+  END-FIND
+*
+  END-SUBROUTINE /* (0963)
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-WIDOW-ID
+*
+  MOVE #CGA-SCR-ID TO #CGA-ID
+  FIND (1) XX-S01-VIEW WITH WIDOW-KEY = #CGA-ID-G
+    IF NO RECORDS FOUND
+      MOVE FALSE TO MBR-FOUND
+      ESCAPE ROUTINE
+    END-NOREC
+*
+    ASSIGN #CGA-ISN = *ISN
+    MOVE TRUE TO MBR-FOUND
+  END-FIND
+*
+  END-SUBROUTINE /* (0989)
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-CADET-SSN
+*
+  FIND (1) XX-I01-VIEW WITH SSN = #CGA-SCR-ID
+    IF NO RECORDS FOUND
+      MOVE FALSE TO MBR-FOUND
+      ESCAPE ROUTINE
+    END-NOREC
+*
+    MOVE TRUE TO MBR-FOUND
+    ASSIGN #CGA-ISN = *ISN
+    MOVE ID-NUMBER TO #CGA-SCR-ID
+    MOVE ID-NUMBER  TO #CGA-ORIG-ID
+    MOVE ID-NUMBER TO #CGA-ID
+  END-FIND
+*
+  END-SUBROUTINE /* (1004)
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE FIND-CADET-ID
+*
+  IF #CGA-SCR-ID LT 100000
+    ADD 700000 TO #CGA-SCR-ID
+  END-IF
+*
+  MOVE #CGA-SCR-ID TO #CGA-ID
+*
+  FIND (1) XX-I01-VIEW WITH ID-NUMBER = #CGA-ID
+    IF NO RECORDS FOUND
+      MOVE FALSE TO MBR-FOUND
+      ESCAPE ROUTINE
+    END-NOREC
+*
+    ASSIGN #CGA-ISN = *ISN
+    MOVE TRUE TO MBR-FOUND
+  END-FIND
+*
+  END-SUBROUTINE /* (1021)
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+  DEFINE SUBROUTINE CHG-CMND-TO-WID
+*
+  IF   ((NOT MBR-FOUND)                       /* MEMBER NOT FOUND
+      OR (XX-S01-VIEW.WIDOW-FLAG = 'Y')) /* OR FOUND MEMBER IS DEAD
+  AND (#CGA-SCR-SUFFIX NE 'SUM')             /* AND NOT FORCING MBR CMND
+    AND (#CGA-SCR-COMMAND = 'DI' OR = 'DM' OR = 'DC' OR = 'DD' OR = 'DP'
+      OR = 'BA' OR = 'BR' OR = 'AD' OR = 'MR' OR= 'AZ')   /* NG5
+    IF #CGA-SCR-ID GT 999999
+      PERFORM FIND-WIDOW-SSN
+    ELSE
+      PERFORM FIND-WIDOW-ID
+    END-IF
+*
+    IF MBR-FOUND
+      IF #CGA-SCR-COMMAND = 'BA'
+        MOVE 'WB' TO #CGA-SCR-COMMAND
+      END-IF
+*
+      IF #CGA-SCR-COMMAND = 'BR'
+        MOVE 'WO' TO #CGA-SCR-COMMAND
+      END-IF
+    END-IF
+*
+    FIND (1) CM-V WITH COMMAND = #CGA-SCR-COMMAND
+    END-FIND
+*
+    IF *NUMBER (1064) = 0
+      INPUT TEXT 'Invalid command - Call EDS' USING MAP 'G1000MXX'
+      ESCAPE TOP
+    END-IF
+*
+    ASSIGN #CMND-ISN = *ISN (1064)
+    GET CM-V #CMND-ISN
+*
+  END-IF
+*
+  END-SUBROUTINE /* (1041)
+*
+END-REPEAT /* (0191)
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SELECT-CN
+* * * * * * * * * * * * * * *
+*
+IF #CGA-SCR-COMMAND = 'FA'                           /*DW1
+  ESCAPE ROUTINE
+END-IF
+*
+IF (LINKED-CN (1) NE 0) AND MBR-FOUND
+*  AND (NOT XX-S01-VIEW.INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+    AND (#CGA-SCR-SUFFIX = 'ALL')
+  IGNORE
+ELSE
+  ESCAPE ROUTINE
+END-IF
+*
+MOVE EDITED XX-S01-VIEW.SSN (EM=999-99-9999) TO #MBR-SSN
+RESET #DATE-OF-BIRTH                                                 /* TT1
+#DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<XX-S01-VIEW.MEMBER-CONTACT-ID>) /* TT1
+COMPRESS #DOB-DD #DOB-MM #DOB-YYYY INTO #MBR-DOB WITH '-'            /* TT1
+*
+MOVE (AD=P) TO #LINKED-CN-CV (*)
+RESET #LINKED-CN-SEL (*)
+RESET #LINKED-NAME (*)
+RESET #LINKED-DOB  (*)
+RESET #LINKED-SSN  (*)
+RESET #LINKED-TYPE (*)
+FOR #I1 1 TO 30
+  IF LINKED-CN (#I1) NE 0
+    RESET #LINKED-CN-CV (#I1)
+    IF LINKED-CN (#I1) LT 500000
+      FIND (1) ST-V WITH MEMBER-KEY = LINKED-CN-A (#I1)
+        MOVE ST-V.NAME          TO #LINKED-NAME (#I1)
+        MOVE EDITED ST-V.SSN (EM=999-99-9999)  TO #LINKED-SSN (#I1)
+RESET #DATE-OF-BIRTH                                                    /* TT1
+#DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<ST-V.MEMBER-CONTACT-ID>)           /* TT1
+COMPRESS #DOB-DD #DOB-MM #DOB-YYYY INTO #LINKED-DOB(#I1) WITH '-'       /* TT1
+*
+        IF ST-V.INTRO-FLAG = 'S'
+          MOVE 'Spouse' TO #LINKED-TYPE (#I1)
+        ELSE
+          IF ST-V.INTRO-FLAG = 'K'
+            MOVE 'Child' TO #LINKED-TYPE (#I1)
+          ELSE
+            IF ST-V.INTRO-FLAG = 'G'
+              MOVE 'Grandchild' TO #LINKED-TYPE (#I1)
+            ELSE
+              IF ST-V.INTRO-FLAG = 'F'
+                MOVE 'Free "SO"' TO #LINKED-TYPE (#I1)
+              ELSE
+                IF XX-S01-VIEW.INTRO-FLAG = 'F'
+                  MOVE 'Sponsor' TO #LINKED-TYPE (#I1)
+                ELSE
+                  MOVE 'Unknown' TO #LINKED-TYPE (#I1)
+                END-IF
+              END-IF
+            END-IF
+          END-IF
+        END-IF
+      END-FIND
+    ELSE
+      IF NOT #CGA-SCR-COMMAND = 'AT' OR = 'MR' OR = 'PO' OR = 'AE'
+        MOVE (AD=P) TO #LINKED-CN-CV (#I1)
+      END-IF
+*
+      FIND (1) AT-V WITH ID-NUMBER = LINKED-CN (#I1)
+        MOVE AT-V.NAME          TO #LINKED-NAME (#I1)
+        MOVE EDITED AT-V.SSN (EM=999-99-9999)  TO #LINKED-SSN (#I1)
+        COMPRESS DOB-DD DOB-MM DOB-YYYY INTO #LINKED-DOB(#I1) WITH '-'
+*
+        IF AT-V.INTRO-FLAG = 'S'
+          MOVE 'Spouse' TO #LINKED-TYPE (#I1)
+        ELSE
+          IF AT-V.INTRO-FLAG = 'K'
+            MOVE 'Child' TO #LINKED-TYPE (#I1)
+          ELSE
+            IF AT-V.INTRO-FLAG = 'G'
+              MOVE 'Grandchild' TO #LINKED-TYPE (#I1)
+            ELSE
+              MOVE 'Unknown' TO #LINKED-TYPE (#I1)
+            END-IF
+          END-IF
+        END-IF
+      END-FIND
+    END-IF
+  END-IF
+END-FOR
+*
+MOVE #CGA-SCR-COMMAND TO #SAVE-COMMAND
+MOVE '*' TO #CGA-SCR-COMMAND
+INPUT MARK *#LINKED-CN-SEL (1) USING MAP 'G1002MXX'
+*
+IF #CGA-SCR-COMMAND NE '*'
+  MOVE TRUE TO #START-OVER
+  ESCAPE ROUTINE
+END-IF
+MOVE #SAVE-COMMAND TO #CGA-SCR-COMMAND
+*
+FOR #I1 1 TO 10
+  IF #LINKED-CN-SEL (#I1) NE ' '
+    MOVE LINKED-CN (#I1) TO #CGA-SCR-ID
+    IF NOT #CGA-SCR-COMMAND = 'AT' OR = 'MR' OR = 'PO' OR = 'AE'
+      RESET MBR-FOUND
+      PERFORM FIND-MBR-ID
+      PERFORM CHG-CMND-TO-WID
+    END-IF
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SETUP-COMPANY
+* * * * * * * * * * * * * * * *
+*
+IF #CGA-USER-COMPANY = 'S'                      /* DW15
+MOVE '    AAFMAA Financial Advisors            ' TO #COMPANY             /* DW15
+ELSE
+  MOVE 'Army and Air Force Mutual Aid Association' TO #COMPANY
+END-IF
+*
+END-SUBROUTINE
+*
+**********************************************************************************
+DEFINE SUBROUTINE AFSC-SECURITY                                         /* PM24
+**********************************************************************************
+*
+IF #CGA-CLERK = 'DXM' OR = 'JXM' OR = 'RXJ'
+    AND #CGA-SCR-ID NE 0
+  IF #CGA-SCR-COMMAND = 'CR' OR = 'AT' OR = 'CC' OR = 'NM' OR = 'TU'
+    COMPRESS #CGA-SCR-COMMAND 'is not an available command' INTO #TEXT
+    MOVE 'GM' TO #CGA-SCR-COMMAND
+    INPUT TEXT #TEXT USING MAP 'G1000MXX'
+    FETCH 'G1000PXX'
+  END-IF
+*
+  RESET #AFSC-I #CHECK-ID
+  READ WORK FILE 1 #INPUT-RECORD
+    ADD +1 TO #AFSC-I
+    #AFSC-ID (#AFSC-I) := #INPUT-RECORD-N
+  END-WORK
+*
+  IF #CGA-SCR-ID LT 999999
+    #CHECK-ID := #CGA-SCR-ID
+  ELSE
+    FIND (1) ST-V WITH ST-V.SSN = #CGA-SCR-ID
+      #CHECK-ID := ST-V.ID-NUMBER
+    END-FIND
+  END-IF
+*
+  FOR #I1 1 TO #AFSC-I
+    IF #CHECK-ID = #AFSC-ID (#I1)
+      #FOUND := TRUE
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF NOT #FOUND
+COMPRESS #CHECK-ID 'is not an available ID number for AFA employees' INTO #TEXT
+    MOVE 'GM' TO #CGA-SCR-COMMAND
+    INPUT TEXT #TEXT USING MAP 'G1000MXX'
+    FETCH 'G1000PXX'
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+END

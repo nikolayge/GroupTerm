@@ -1,0 +1,534 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+************************************************************************
+* CLASS  NATURAL <XML TOOLKIT>
+* NPPP0001 - New Policy Information
+* DESCRIPTION
+************************************************************************
+*        MODIFICATION LOG
+************************************************************************
+* USER   DATE      TAG  REASON
+* YAK    06202008  Initial Creation
+* YK1    05202011  Changes to add California Page
+* YK2    05202011  Changes to add Cap Loan Process
+* YK3    06072011  Check Scanning Project
+* YK4    07212011  Add error processing when policy number is invalid
+* YK5    11172011  Write Loan and Policy packages requests to different
+*                  files to process later with different templates OI-610
+* YK6    06262012  Add fields to upload_index file for the new DAL
+* YK7    10032012  Add code for new Standard Level II term plan
+* YK8    12132013  Change Loan upload_index file for the new DAL
+* YK9    09232014  Changes for upload_index file for electronic delivery
+*                  of Policy Print
+* YK10   10152014  Additional features for sending communication (letter/email)
+*                  1. if FPF not paid - create a record, mark "do not send"
+*                  2. If reprint - do not create record on letter file
+*                  3. Check all records marked "do not send" - clear if FPF paid
+*                  4. Create "Satisfaction email" in 10 days after issuing the policy
+* YK11   11252014  Skip Letter/Email for LT to RT conversion
+************************************************************************
+*
+DEFINE DATA
+LOCAL USING GPRL0001      /* General Processes Property
+LOCAL USING GPRL0002      /* Index File XML Structure
+LOCAL USING NPPA0001      /* Policy Data
+LOCAL USING NPPA0003      /* Email data - save data for potential e-mails recipients
+  /* email to be sent if has outstanding FPF 20 days after issue
+LOCAL USING GPRA0003      /* Error Log
+LOCAL USING NPPL0001      /* Print Application Property
+LOCAL USING INVA0001      /* Check scan file data              YK3
+LOCAL USING P_PARMS       /* Error processing                  YK3
+LOCAL USING OBJLLETT      /* Letters file                      YK9
+*
+LOCAL
+1 XML             (A) DYNAMIC
+1 XML-END         (A) DYNAMIC
+1 #OUTPUT-RECORD  (A32000)
+1 #INPUT-RECORD   (A50)
+1 #POLICY-NUMBER  (A) DYNAMIC
+* 1 #POL-SEQ        (A) DYNAMIC       /* YK2
+1 #ISSUE-DATE     (A) DYNAMIC
+1 #PROCESS-TYPE   (A) DYNAMIC
+1 #DOCUMENT-LIST  (A) DYNAMIC
+1 #UNIX-FILE-NAME (A) DYNAMIC
+1 #WIN-FILE-NAME  (A) DYNAMIC
+1 #REC-READ       (N4)
+1 #MAX-REC        (N5)  INIT <100>
+1 #IND            (N5)
+1 #DAT-A          (A8)
+1 REDEFINE #DAT-A
+  2 #YYYY         (A4)
+  2 #MM           (A2)
+  2 #DD           (A2)
+1 #DATX   (D)
+1 #SUBMIT-DATE    (A10)
+* YK10
+1 #DATN           (N8)
+1 #DAT4I          (A10)
+1 ST-V VIEW OF A-STATUS
+  2 X-FIRST-PLACE-FEE (9)
+  2 STATUS            (9)
+*
+1 LT-V-UPD VIEW OF A-LETTERS
+  2 IS-SENT
+*
+1 OUT             (A500)
+1 II              (I4)
+1 #I              (I4)
+1 #I1             (I4)
+1 #J              (I4)
+1 #K              (I4)
+*
+1 OUTDYN (A) DYNAMIC
+1 OBJLEN (I4)
+1 OBJEND (I4)
+1 OBJSTART (I4)
+1 OBJLINE (I4)
+1 #TAB (A1) INIT <H'09'>
+*
+1 #CX             (I4)
+1 #CY             (I4)
+1 #CZ             (I4)
+1 #CGA-ID         (N6)
+1 #ERROR          (A1)
+1 #CALIFORNIA-PAGE (L)       /* YK1    Temporary California Page
+1 #LoanOnly        (A) DYNAMIC CONST <'LoanOnly'>                     /* YK2
+1 #PolicyPackage   (A) DYNAMIC CONST <'Policy'>                       /* YK2
+* Temporary process type - old CAP process
+1 #CAPBatch        (A) DYNAMIC CONST <'CAPBatch'>                     /* YK2
+1 #POLICY-DOC      (A) DYNAMIC CONST <'Policy_'>                      /* YK2
+1 #LOAN-DOC        (A) DYNAMIC CONST <'Loan_'>                        /* YK2
+1 #POLICY-PACKAGE  (A) DYNAMIC CONST <'Policy Print Package'>         /* YK2
+1 #LOAN-PACKAGE    (A) DYNAMIC CONST <'CAP Loan Package'>             /* YK2
+1 #OLD-CAP         (A) DYNAMIC CONST <'OCAP'>                         /* YK3
+1 #LOAN-LIST-FILE  (A) DYNAMIC CONST <'LoanFileNames.txt'>            /* YK5
+*
+1 #WINDOWS-TEST-DIR (A) DYNAMIC CONST <'Ftp/EDS/Yelena/PolicyPrintUnix/'>
+*
+1 #CHECK-SCAN-FILE (A) DYNAMIC CONST <'AAFMAA_bills.txt'>  /* YK3
+1 DISPLAY_LINE     (A20)
+1 #DEL             (A1) CONST <'-'>
+* 1 #DOCTITLE        (A) DYNAMIC CONST <'PPKG'>              /* YK6
+1 v_sch            (A) DYNAMIC  INIT <'cp @NAME @NEW_NAME; > @NAME'>   /* YK8
+* YK9
+1 #ID-NUMBER                  (A6)
+1 #ISN                        (P9)
+1 #E-DEL-OPTION               (A) DYNAMIC
+1 #TEMPLATE-NAME              (A) DYNAMIC
+1 #PP-TEMPLATES
+  2 #PolPrintPaperEmail         (A20) CONST <'PP_PAPER_EML'>
+  2 #PolPrintEDelNewMemberLet   (A20) CONST <'PP_E_DEL_NEW_LET'>
+  2 #PolPrintEDelExistMemberLet (A20) CONST <'PP_E_DEL_EXT_LET'>
+  2 #PolPrintEDelAll            (A20) CONST <'PP_E_DEL_ALL_EML'>
+  2 #PolPrintSatAll             (A20) CONST <'PP_SAT_ALL_EML'>
+1 REDEFINE #PP-TEMPLATES
+  2 #TEMPLATE (A20/5)
+1 #NUMBER-PP-TEMPLATES          (N2) CONST <5>
+1 #NO-EMAIL                     (A) DYNAMIC CONST <'E'>
+1 #RESIGNED                     (A) DYNAMIC CONST <'F'>
+1 #CONVERSION                   (A) DYNAMIC
+*
+END-DEFINE
+*
+ON ERROR
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  ERROR-PROGRAM := *PROGRAM
+  ERROR-OBJECT  := P_ERROR_PROGRAM
+  ERROR-LINE    := P_ERROR_LINE
+  ERROR-NUMBER  := P_ERROR_NUM
+  COMPRESS 'Error in processing Policy Number -'
+    POLICY-INFORMATION.POLICY-NUMBER INTO ERROR-MESSAGE
+  CALLNAT 'GPRN0003' ERROR-LOG
+END-ERROR
+*
+#DATN  := *DATN
+#DAT4I := *DAT4I
+*
+COMPRESS #UNIX-DIR #PRINT-REQUEST-FILE INTO #UNIX-FILE-NAME leaving no
+DEFINE WORK FILE 1 #UNIX-FILE-NAME
+COMPRESS #UNIX-DIR #UNIX-XML-FILE INTO #UNIX-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #RM-SCRIPT-NAME #UNIX-DIR #UNIX-XML-FILE
+DEFINE WORK FILE 2 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+CALLNAT 'GPRN0002' #RM-SCRIPT-NAME #UNIX-DIR #POLICY-LIST-FILE         /* YK5
+COMPRESS #UNIX-DIR #POLICY-LIST-FILE INTO #UNIX-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #RM-SCRIPT-NAME #UNIX-DIR #POLICY-LIST-FILE
+DEFINE WORK FILE 3 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+COMPRESS #UNIX-DIR #PRINT-INDEX-FILE INTO #UNIX-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #RM-SCRIPT-NAME #UNIX-DIR #PRINT-INDEX-FILE
+DEFINE WORK FILE 4 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+COMPRESS #UNIX-DIR #MEMBER-CARD-FILE INTO #UNIX-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #RM-SCRIPT-NAME #UNIX-DIR #MEMBER-CARD-FILE
+DEFINE WORK FILE 5 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+COMPRESS #UNIX-DIR #FPF-DUE-FILE INTO #UNIX-FILE-NAME leaving no
+DEFINE WORK FILE 6 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+* YK3 Start
+COMPRESS #UNIX-DIR #CHECK-SCAN-FILE INTO #UNIX-FILE-NAME leaving no
+DEFINE WORK FILE 8 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'
+#INV-LINE-TYPE := 'H'
+CALLNAT 'INVN0001' #INVOICE-RECORD #INV-LINE-TYPE #INV-I #INV-INVOICE-LINE
+WRITE WORK 8 #INVOICE-RECORD
+RESET #INVOICE-RECORD #INV-LINE-TYPE
+* YK3 End
+CALLNAT 'GPRN0002' #RM-SCRIPT-NAME #UNIX-DIR #LOAN-LIST-FILE           /* YK5
+COMPRESS #UNIX-DIR #LOAN-LIST-FILE INTO #UNIX-FILE-NAME leaving no     /* YK5
+DEFINE WORK FILE 9 #UNIX-FILE-NAME TYPE 'ASCII-COMPRESSED'             /* YK5
+WRITE 'begin process...'
+*
+* Check on which server process is running (Test/Prod)
+IF F-IS-DEV(<>)
+  #WINDOWS-DIR := #WINDOWS-TEST-DIR
+END-IF
+*
+* Clean up existing Policy Print Folder on Windows Server
+CALLNAT 'GPRN0002' #CLEAN-DIR-SCRIPT-NAME #WINDOWS-DIR
+RESET DOCUMENTS #ERROR
+*
+EXPAND ARRAY DOCUMENT TO (*:#MAX-REC)
+READ WORK FILE 1 #INPUT-RECORD
+  RESET #POLICY-NUMBER #ISSUE-DATE #PROCESS-TYPE #E-DEL-OPTION #CONVERSION        /* YK9   YK11
+  SEPARATE #INPUT-RECORD INTO #POLICY-NUMBER #ISSUE-DATE #PROCESS-TYPE #E-DEL-OPTION #CONVERSION IGNORE WITH DELIMITER #TAB    /* YK2   YK8  YK9
+  IF #POLICY-NUMBER = ' '
+    COMPRESS 'Policy Number is blank ' INTO ERROR-MESSAGE
+    ERROR-PROGRAM := *PROGRAM
+    CALLNAT 'GPRN0003' ERROR-LOG
+    ESCAPE TOP
+  END-IF
+  EXAMINE #POLICY-NUMBER FOR #DEL POSITION #I
+  IF #I = 0                                                                                /* YK4
+    COMPRESS 'Invalid Policy Number' #POLICY-NUMBER INTO ERROR-MESSAGE                     /* YK4
+    ERROR-PROGRAM := *PROGRAM                                                              /* YK4
+    CALLNAT 'GPRN0003' ERROR-LOG                                                           /* YK4
+    ESCAPE TOP                                                                             /* YK4
+  END-IF
+*   DISPLAY_LINE := #POLICY-NUMBER
+*   WRITE DISPLAY_LINE
+  EXAMINE DOCUMENTS.POL-NUM(*) FOR #POLICY-NUMBER INDEX #I
+  IF #I NE 0
+    DECIDE FOR FIRST CONDITION                                     /* YK2
+      WHEN DOCUMENTS.DOCTITLE(#I) = #DOCTYPE AND                   /* YK2
+          #PROCESS-TYPE = #LoanOnly                                /* YK2
+        IGNORE                                                     /* YK2
+      WHEN DOCUMENTS.DOCTITLE(#I) = #LOAN-DOCTYPE AND              /* YK2
+          #PROCESS-TYPE = #PolicyPackage                           /* YK2
+        IGNORE                                                     /* YK2
+      WHEN NONE                                                    /* YK2
+        COMPRESS 'Duplicate Policy Number ' #POLICY-NUMBER INTO ERROR-MESSAGE
+        ERROR-PROGRAM := *PROGRAM
+        CALLNAT 'GPRN0003' ERROR-LOG
+        ESCAPE TOP
+    END-DECIDE                                                     /* YK2
+  END-IF
+*
+  RESET #DOCUMENT-LIST
+  RESET POLICY-INFORMATION EMAIL-INFORMATION #INVOICE-RECORD
+  RESET #ERROR #CALIFORNIA-PAGE
+*
+  DECIDE ON FIRST VALUE #PROCESS-TYPE                              /* YK2 Start
+    VALUE #CAPBatch
+      POLICY-INFORMATION.DOCTYPE := #OLD-CAP
+      #DOCUMENT-DESCRIPTION      := #POLICY-PACKAGE
+      #DOCUMENT-NAME-PREFIX      := #POLICY-DOC
+    VALUE #PolicyPackage
+*     POLICY-INFORMATION.DOCTYPE := #DOCTYPE                       /* YK6
+      POLICY-INFORMATION.DOCTITLE:= #DOCTYPE                       /* YK6
+      #DOCUMENT-DESCRIPTION      := #POLICY-PACKAGE
+      #DOCUMENT-NAME-PREFIX      := #POLICY-DOC
+    VALUE #LoanOnly
+*     POLICY-INFORMATION.DOCTYPE := #LOAN-DOCTYPE                  /* YK7
+      POLICY-INFORMATION.DOCTITLE:= #LOAN-DOCTYPE                  /* YK8
+      #DOCUMENT-DESCRIPTION      := #LOAN-PACKAGE
+      #DOCUMENT-NAME-PREFIX      := #LOAN-DOC
+    NONE VALUE
+      IGNORE
+  END-DECIDE                                                       /* YK2 end
+*
+  POLICY-INFORMATION.POLICY-NUMBER := #POLICY-NUMBER
+  #DOCUMENT-LIST := #PROCESS-TYPE                          /* YK2
+  CALLNAT 'NPPN0001' POLICY-INFORMATION EMAIL-INFORMATION #DOCUMENT-LIST #ERROR
+  IF #ERROR NE ' '
+    ESCAPE TOP
+  END-IF
+  IF EMAIL-FLAG
+    WRITE WORK FILE 6 EMAIL-INFORMATION
+  END-IF
+* YK1 begin
+  EXAMINE #DOCUMENT-LIST FOR 'CaliforniaWarning' NUMBER #I
+  IF #I NE 0
+    #CALIFORNIA-PAGE := TRUE
+  END-IF
+* YK1 end
+  #REC-READ := #REC-READ + 1
+  IF #REC-READ > #MAX-REC / #NUMBER-OF-DOCUMENTS
+    #MAX-REC := #MAX-REC + 100
+    RESIZE ARRAY DOCUMENT TO (*:#MAX-REC)
+  END-IF
+  #IND := #REC-READ
+*   SEPARATE POLICY-INFORMATION.POLICY-NUMBER INTO
+*   DOCUMENTS.CN(#IND) #POL-SEQ WITH DELIMITER '-'
+  DOCUMENTS.CN(#IND)      := POLICY-INFORMATION.INSURED-CN                /* YK2
+  DOCUMENTS.POL-NUM(#IND) := POLICY-INFORMATION.POLICY-NUMBER
+  DOCUMENTS.OWNER-CN(#IND):= POLICY-INFORMATION.OWNER-CN
+  DOCUMENTS.DOCTYPE(#IND) := POLICY-INFORMATION.DOCTYPE
+  DOCUMENTS.DOCTITLE(#IND):= POLICY-INFORMATION.DOCTITLE                  /* YK6
+  DOCUMENTS.ORGANIZATION(#IND)      := 'AAFMAA'                           /* YK6
+  DOCUMENTS.MEMBER-ACCESSIBLE(#IND) := 'true'                             /* YK6
+  #DAT-A   := #ISSUE-DATE
+  COMPRESS #MM '/' #DD '/' #YYYY INTO #SUBMIT-DATE LEAVING NO
+  DOCUMENTS.SUBMITDATE(#IND) := #SUBMIT-DATE
+  COMPRESS #DOCUMENT-NAME-PREFIX DOCUMENTS.POL-NUM(#IND) #DOCUMENT-NAME-SUFFIX
+    INTO DOCUMENTS.FILENAME(#IND) LEAVING NO
+  DOCUMENTS.DESCRIPTION(#IND) := #DOCUMENT-DESCRIPTION
+  DECIDE FOR FIRST CONDITION
+    WHEN #E-DEL-OPTION = 'Y'                /* YK9
+      PRINTORDER(#IND) := '-1'              /* YK9
+    WHEN #CALIFORNIA-PAGE                   /* YK1
+      PRINTORDER(#IND) := '0'
+    WHEN SUBSTR(PLAN-TYPE,1,1) = 'U' OR = 'S'  /* AND PREMIUM-RATE-CLASS NE ' '   /* YK7
+      PRINTORDER(#IND) := '1'
+    WHEN PLAN-TYPE = 'OL' AND PREMIUM-RATE-CLASS NE ' '
+      PRINTORDER(#IND) := '2'
+    WHEN MEMBERSHIP-DATE NE ' '
+      PRINTORDER(#IND) := '3'
+    WHEN NONE
+      PRINTORDER(#IND) := '4'
+  END-DECIDE
+*
+  PERFORM CREATE-LETTER-RECORD          /* YK9
+  END TRANSACTION
+*
+  RESET #OUTPUT-RECORD XML
+  INCLUDE NPPCS001 "XML" "#CX" "#CY" "#CZ"
+  EXAMINE XML FOR "&" REPLACE WITH "and"
+  #OUTPUT-RECORD := XML
+  WRITE WORK FILE 2 VARIABLE #OUTPUT-RECORD
+  CLOSE WORK FILE 2
+  COMPRESS #WINDOWS-DIR #DOCUMENT-NAME-PREFIX POLICY-INFORMATION.POLICY-NUMBER
+    #FILE-EXTENSION INTO #WIN-FILE-NAME LEAVING NO
+  COMPRESS #UNIX-DIR #UNIX-XML-FILE INTO #UNIX-FILE-NAME leaving no
+  CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WIN-FILE-NAME
+  COMPRESS #DOCUMENT-NAME-PREFIX POLICY-INFORMATION.POLICY-NUMBER
+    #FILE-EXTENSION #TAB #DOCUMENT-LIST INTO OUT leaving no
+*
+  IF #PROCESS-TYPE = #LoanOnly               /* YK5
+    WRITE WORK FILE 9 VARIABLE OUT           /* YK5
+  ELSE                                       /* YK5
+    WRITE WORK FILE 3 VARIABLE OUT
+  END-IF                                     /* YK5
+*
+END-WORK
+*
+IF #REC-READ = 0
+  ESCAPE ROUTINE
+END-IF
+*
+CLOSE WORK FILE 3
+COMPRESS #UNIX-DIR #POLICY-LIST-FILE INTO #UNIX-FILE-NAME leaving no
+COMPRESS #WINDOWS-DIR #POLICY-LIST-FILE INTO #WIN-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WIN-FILE-NAME
+* YK5 Start
+CLOSE WORK FILE 9
+COMPRESS #UNIX-DIR #LOAN-LIST-FILE INTO #UNIX-FILE-NAME leaving no
+COMPRESS #WINDOWS-DIR #LOAN-LIST-FILE INTO #WIN-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WIN-FILE-NAME
+* YK5 End
+*
+C@DOCUMENT := #REC-READ * #NUMBER-OF-DOCUMENTS
+RESIZE ARRAY DOCUMENT TO (*:C@DOCUMENT)
+RESET #OUTPUT-RECORD XML
+INCLUDE GPRCS002 "XML" "#CX" "#CY" "#CZ"
+PERFORM WRITE-INDEX-FILE
+*
+COMPRESS #UNIX-DIR #PRINT-INDEX-FILE INTO #UNIX-FILE-NAME leaving no
+COMPRESS #WINDOWS-DIR #PRINT-INDEX-FILE INTO #WIN-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WIN-FILE-NAME
+*
+CLOSE WORK FILE 5
+COMPRESS #UNIX-DIR #MEMBER-CARD-FILE INTO #UNIX-FILE-NAME leaving no
+COMPRESS #WINDOWS-DIR #MEMBER-CARD-FILE INTO #WIN-FILE-NAME leaving no
+CALLNAT 'GPRN0002' #FTP-SCRIPT-NAME #UNIX-FILE-NAME #WIN-FILE-NAME
+*
+CLOSE WORK FILE 1
+* YK8 Start
+COMPRESS #UNIX-DIR #PRINT-REQUEST-FILE INTO #UNIX-FILE-NAME leaving no
+EXAMINE v_sch  FOR '@NAME' REPLACE #UNIX-FILE-NAME
+EXAMINE v_sch  FOR '@NAME' REPLACE #UNIX-FILE-NAME
+COMPRESS #UNIX-FILE-NAME #DATN INTO #UNIX-FILE-NAME WITH '.'
+EXAMINE v_sch  FOR '@NEW_NAME' REPLACE #UNIX-FILE-NAME
+call 'shcmd' v_sch
+* YK8 end
+*
+CLOSE WORK FILE 8
+* Reset IS-SENT flag if FPF is cleared
+PERFORM CLEAR-SUPPRESS-FLAG                        /* YK10
+PERFORM CHECK-POLICY-STATUS                        /* YK10
+*
+WRITE 'process ended'
+*
+**********************************
+DEFINE SUBROUTINE WRITE-INDEX-FILE
+**********************************
+*
+OBJSTART := 1
+COMPRESS XML H'0A' INTO XML
+EXAMINE xml FOR "<DOCUMENTS><" REPLACE WITH "<DOCUMENTS>" - H'0A' -"<"
+EXAMINE xml FOR "></DOCUMENTS>" REPLACE WITH ">" - H'0A' -"</DOCUMENTS>"
+EXAMINE xml FOR "</DOCUMENT><DOCUMENT>" REPLACE WITH "</DOCUMENT>" - H'0A' -"<DOCUMENT>"
+* EXAMINE xml FOR "><" REPLACE WITH ">" - H'0A' -"<"
+EXAMINE xml FOR H'0A' GIVING POSITION OBJEND
+REPEAT WHILE OBJEND NE 0
+  IF OBJSTART GT 0 THEN
+    ADD OBJSTART TO OBJEND
+  END-IF
+  OBJLEN := OBJEND - OBJSTART -1
+  IF OBJLEN > 0 THEN
+    OUTDYN := SUBSTRING(xml, OBJSTART, OBJLEN)
+    FOR OBJLINE = 1 TO *LENGTH(OUTDYN) STEP 500
+      OUT := SUBSTR (OUTDYN,OBJLINE)
+      EXAMINE OUT FOR #OLD-CAP REPLACE #DOCTYPE
+      WRITE WORK FILE 4 OUT
+    END-FOR
+  END-IF
+  OBJSTART := OBJEND
+  IF OBJSTART GT *LENGTH(xml)
+    ESCAPE BOTTOM
+  END-IF
+  EXAMINE SUBSTRING(xml,OBJSTART) FOR H'0A' GIVING POSITION OBJEND
+END-REPEAT
+CLOSE WORK FILE 4
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE CREATE-LETTER-RECORD
+**************************************
+* If this is a reprint for the old policy - do not create a letter/email
+* If this is a LT to RT conversion - do not create a letter/email
+IF POLICY-INFORMATION.SUPPRESS-COMMUNICATION = 'R' OR #CONVERSION = 'Y'     /* YK11
+  ESCAPE ROUTINE
+END-IF
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #E-DEL-OPTION = 'N'
+    #TEMPLATE-NAME := #PolPrintPaperEmail
+  WHEN #E-DEL-OPTION = 'Y' AND MEMBERSHIP-DATE <> ' '
+    #TEMPLATE-NAME := #PolPrintEDelNewMemberLet
+  WHEN #E-DEL-OPTION = 'Y'
+    #TEMPLATE-NAME := #PolPrintEDelExistMemberLet
+  WHEN NONE
+    ESCAPE ROUTINE
+END-DECIDE
+*
+* If record with this template exist for the policy - then skip it
+* this just a reprint, no communication is required
+FIND LT-V WITH TEMPLATE-NAME = #TEMPLATE-NAME
+  ACCEPT IF LT-V.POLICY-NUMBER = POLICY-INFORMATION.POLICY-NUMBER
+  ESCAPE ROUTINE
+END-FIND
+* Create letter/email record
+RESET LT-V
+LT-V.POLICY-NUMBER     := POLICY-INFORMATION.POLICY-NUMBER
+LT-V.INSURED-CN        := VAL(POLICY-INFORMATION.INSURED-CN)
+LT-V.OWNER-CN          := POLICY-INFORMATION.OWNER-CN
+LT-V.OWNER-SALUTATION  := POLICY-INFORMATION.SALUTATION
+LT-V.OWNER-NAME        := POLICY-INFORMATION.OWNER-NAME-FORMATTED
+LT-V.EMAIL-ADDRESS     := POLICY-INFORMATION.OWNER-EMAIL
+LT-V.INSURED-NAME      := POLICY-INFORMATION.INSURED-NAME
+LT-V.ADDRESS-1         := POLICY-INFORMATION.STREET
+LT-V.ADDRESS-2         := POLICY-INFORMATION.STREET-2
+LT-V.ADDRESS-3         := POLICY-INFORMATION.CITY-STATE-ZIP
+LT-V.DEATH-BENEFIT     := POLICY-INFORMATION.INITIAL-DEATH-BENEFIT
+LT-V.TEMPLATE-NAME     := #TEMPLATE-NAME
+*
+LT-V.LAST-LOAD-DATE := #DATN
+LT-V.LAST-LOAD-TIME := *TIMN
+LT-V.LAST-LOAD-USER := *USER
+*
+* Mark as "not to send" if has outstanding FPF on policy
+LT-V.IS-SENT := POLICY-INFORMATION.SUPPRESS-COMMUNICATION
+* If e-mail and no email address - create record and mark as 'Failed' - 'F'
+IF LT-V.EMAIL-ADDRESS = ' ' AND #TEMPLATE-NAME = SCAN('EML')
+  LT-V.IS-SENT := #NO-EMAIL
+END-IF
+STORE LT-V
+* Create second record for electronic delivery - send when PP available on MC
+IF #E-DEL-OPTION = 'Y'
+  LT-V.TEMPLATE-NAME      := #PolPrintEDelAll
+* Use LT-V.POLICY-CHANGE-DATE for the date when PP available on MC
+  LT-V.POLICY-CHANGE-DATE := #DAT4I
+  MOVE EDITED LT-V.POLICY-CHANGE-DATE TO #DATX (EM=YYYY-MM-DD)
+  #DATX := #DATX + 2
+  MOVE EDITED #DATX (EM=YYYY-MM-DD) TO LT-V.POLICY-CHANGE-DATE
+  STORE LT-V
+END-IF
+*
+* Create third record for all policies - send after 10 days if still active
+LT-V.TEMPLATE-NAME      := #PolPrintSatAll
+* Use LT-V.POLICY-CHANGE-DATE for the date when to sent "Satisfaction email"
+LT-V.POLICY-CHANGE-DATE := #DAT4I
+MOVE EDITED LT-V.POLICY-CHANGE-DATE TO #DATX (EM=YYYY-MM-DD)
+#DATX := #DATX + 10
+MOVE EDITED #DATX (EM=YYYY-MM-DD) TO LT-V.POLICY-CHANGE-DATE
+STORE LT-V
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE CLEAR-SUPPRESS-FLAG  /* YK10
+*************************************
+*
+FOR #I = 1 TO #NUMBER-PP-TEMPLATES
+  F_LT1.
+  FIND LT-V WITH TEMPLATE-NAME = #TEMPLATE(#I)
+    ACCEPT IF LT-V.IS-SENT = 'N'
+    #ID-NUMBER := LT-V.INSURED-CN
+    #IND := F_POLICY_SEGMENT(<LT-V.POLICY-NUMBER,#ID-NUMBER>)
+* Send email notification if error
+    IF #IND = 0
+      COMPRESS 'Cannot determine Policy segment' LT-V.POLICY-NUMBER INTO ERROR-MESSAGE
+      ERROR-PROGRAM := *PROGRAM
+      CALLNAT 'GPRN0003' ERROR-LOG
+      ESCAPE ROUTINE
+    END-IF
+    FIND(1) ST-V WITH ID-NUMBER = LT-V.INSURED-CN
+    END-FIND
+    IF ST-V.X-FIRST-PLACE-FEE(#IND) = 0 AND ST-V.STATUS(#IND) = 'D'
+      #ISN := *ISN (F_LT1.)
+      GT.
+      GET LT-V-UPD #ISN
+      RESET LT-V-UPD.IS-SENT
+      UPDATE (GT.)
+      END TRANSACTION
+    END-IF
+  END-FIND
+END-FOR
+END-SUBROUTINE
+*
+*************************************
+DEFINE SUBROUTINE CHECK-POLICY-STATUS   /* YK10
+*************************************
+*
+F_LT2.
+FIND LT-V WITH TEMPLATE-NAME = #PolPrintSatAll
+  ACCEPT IF LT-V.IS-SENT = ' '
+  #ID-NUMBER := LT-V.INSURED-CN
+  #IND := F_POLICY_SEGMENT(<LT-V.POLICY-NUMBER,#ID-NUMBER>)
+  IF #IND = 0
+    COMPRESS 'Cannot determine Policy segment' LT-V.POLICY-NUMBER INTO ERROR-MESSAGE
+    ERROR-PROGRAM := *PROGRAM
+    CALLNAT 'GPRN0003' ERROR-LOG
+    ESCAPE ROUTINE
+  END-IF
+  FIND(1) ST-V WITH ID-NUMBER = LT-V.INSURED-CN
+  END-FIND
+  IF ST-V.STATUS(#IND) <> 'D'
+    #ISN := *ISN (F_LT2.)
+    GT1.
+    GET LT-V-UPD #ISN
+    LT-V-UPD.IS-SENT := #RESIGNED
+    UPDATE (GT1.)
+    END TRANSACTION
+  END-IF
+END-FIND
+END-SUBROUTINE
+END

@@ -1,0 +1,1880 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+* PROGRAM-ID: ATHP05P0
+* **********************************************************************
+*     MODIFICATION LOG
+* USER DATE       TAG  REASON
+* DRW  02042005   DW1  ADD seg to sungard & stop summarizing
+* DRW  02272005   DW2  process AT-PENDING recs for allotments
+* DRW  03052005   DW3  add AL (Annuity Life) processing
+* DRW  04182005   DW4  Add Online-action of 'T' NEW/ADDL & CSV
+* DRW  05172005   DW5  Fix AT Pending setting Handle flag
+* DRW  09202005   DW6  Increase V/A History Occurances
+* DRW  09292005   DW7  Reset Pad-code to 'S'
+* DRW  10232005   DW8  CLEAR VA HIST ON NEW POLICY
+* DRW  12162005   DW9  Wait till nxt mon to chg svc-fee for new DE-GF
+* SAG  11292005   RH1  SS - Modified the custom coded ON ERROR stmt &
+*                      replaced it with copycode GABNDCX6
+* SAG  12092005   RH1  SS - Modified the call to external object ABEND &
+*                      replaced with copycode GABNDCX2.
+* SAG  12232005   RH2  AB Changed CALLs to Cobol programs to CALLNAT Natural
+*                      subprograms. Note that Cobol ATHP05PA was changed to
+**                     Natural ATHS05PA to avoid clash with report fetch.
+* SAG  02102005   RHC  AB Incorporated parameter blocks for 'Cobol' calls into GDA
+* SAG  03062006   USAPDI Moved these two lines from outside the IF to inside the IF
+* SAG  03282006   RH3  AS Changed hex '40404040' to hex '20202020'.
+* SAG-AB 20060503 #P4 was originally passed as a parameter to ATHP05P4,
+**                and was interpreted there as CREATE-BILLS in Cobol, now it is
+**                populated as global P4, which determines if Bills & EZpay is done
+* SAG  06062006   SAG-AB migrated unlogged changes tagged DW99
+* DRW  06232006   DW10 Chg Pad-code to 'X' and mode to 'Q' if FPF due
+* DRW  09082006   DW11 Stop deleting split pols & newly lapses pols
+* DRW  12282006   DW12 Stop purging AAFMAA pols
+* DRW  04282007   DW13 Remove 'Just Read' WRITE
+* PAM  03/03/2009 PM14 Removed Prenote step for EZPay
+* PAM  04/01/2009 PM15 Forgot Loan Only in PM14
+* RSE  09/17/2009 RE1  Change PROCESS-IND logic
+* DRW  09/24/2009 DW16 More Process-ind Changes plus Number-memberships & 600000
+* DRW  10/25/2009 DW17 Remove fetch to ATHPM50B ( Done in SASP05P0 for AAFL)
+* RSE  11/25/2009 RE2  Make EZPAY work for both IAS & SAS
+* VXT  12/28/2012 vt3  write title of the new work file /Tikcet 1690/
+* YAK  10/09/2012 YK1 Use function to identify Level Term II plans
+* YAK  01/15/2012 YK2 Add EZ term plan (EZ)
+* bz  06/09/2013  Rebranding (Search for AAFMAA)
+* JNT 08/27/2013  JT1 Address normalization
+* NGG 11/08/2013  NG2 1M$ policy project
+* NGG 06/23/2014  NG3 Contact normalization
+* NGG 20141023    NG4 Annuity life products
+* vxt 08/20/2015  vt4 Code improvements
+* vxt 11/02/2016  vt5 /Ticket-4335/
+************************************************************************
+*
+* THIS PROGRAM CALLS COBOL PROGRAMS
+*  ATHY05P0 - copy member used by below programs
+*  ATHP05PN - INSURANCE UPDATES
+*  ATHP05PA - AUTOMATED ALLOTMENT UPDATE
+*  ATHP05P4 - NOTICES & REGISTERS
+*  ATHP05P7 - TERMINATION & TRANSFER REGISTER
+*  ATHPM120 - PRINT M12 REPORT (called by athp05pc)
+* following COBOL progs are used no more
+*  ATHP05PE - EAT INACTIVE SEGMENTS
+*  ATHP05PH - LOAD/UNLOAD HISTORY TABLE
+*  ATHP05P3 - NEW BUSINESS REGISTER
+*  ATHP05P8 - BIRTHDAY LETTER
+*  ATHP05P9 - ACTION PENDING REGISTER
+*
+* THESE PROGRAM FETCHS NATURAL PROGRAMS
+*  ATHP05PN - Insurance updates   *** not yet ***
+*  ATHP05PQ - compress segments when terminated
+*  ATHP05P5 - LOAN REGISTER
+*  ATHP05PA - ALLOTMENT special processing
+*  ATHP05PB - NEW STATISTICS SUMMARY PROCESSOR
+*  ATHP05YB - YTD NEW BUSINESS REGISTER
+*  ATHP05PC - STATUS REPORT AND M12 REPORT AND
+*             THIS PROGRAM CALLS COBOL PROGRAM ATHPM120
+*  ATHP05PM - MEMBERSHIP DRIVE
+*  ATHP05PZ - membership eoj stats processing
+*  ATHPM50B - ACTIVE-DUTY-PAY-YTD UPDATE  (no longer Done - it is done by AFFL)
+*  ATHPNUBS - DISPLAY NEW BUSINESS yds accums
+*
+* REPORT-CODE   REPORT-NAME           SUB-PROGRAM-NAME
+*   A        BIRTHDAY LETTER              ATHP05P8
+*   D        ACTION PENDING REGISTER      ATHP05P9
+*   G        DIRECT BILLING REGISTER      ATHP05P4
+*   H        TERMINATION REGISTER         ATHP05P7
+*   I        NEW BUSINESS REGISTER        ATHP05P3
+*   J        LOAN REGISTER (NAME ORDER)   ATHP05P5
+*   K-P      NOTICES                      ATHP05P4
+*           K - PREMIUM REMINDER
+*           L - PREMIUM DUE
+*           M - LOAN INTEREST DUE
+*           N - PAID UP
+*           P - NOTICE TOTALS
+*   V        MEMBERSHIP AWARDS REPORT     ATHP05PM
+*
+* OUTPUT FILES
+*  WORK  1  -  #C-REPORT-RECORD
+*  WORK  2  -  ERROR-RECORD
+*  WORK  3  -  SUNGARD INFO A/O 10/1999
+*  WORK  4  -  APPL-EXTRACT-RECORD
+*  work  5  -  new bus/term & trans extract
+DEFINE DATA
+GLOBAL USING ATHG05P0
+LOCAL  USING ATHL05P0
+LOCAL  USING GONERLXX                              /* SAG RH1 11292005 SS
+**LOCAL  USING A-IFAFFL   /* PDA used with FUNCTION F-if-AFFL /* DW16
+LOCAL  USING OBJLMB01   /* View of DDM A-SVC-MEMBER      NG1
+LOCAL  USING VAHL0001   /* View VA-HIST NG2
+LOCAL
+**1 #HEX-BLK   (A4) INIT <H'40404040'>  /* DW8
+1 #HEX-BLK   (A4) INIT <H'20202020'>                   /* SAG RH3 03282006 AS
+1 #JCL-PARM         (A25)
+1 REDEFINE #JCL-PARM
+  2 #PARM-DATE      (N8)
+  2 REDEFINE #PARM-DATE
+    3 #PARM-MM      (N2)
+    3 #PARM-DD      (N2)
+    3 #PARM-YYYY    (N4)
+  2 REDEFINE #PARM-DATE
+    3 #PARM-MM-A    (A2)
+    3 #PARM-DD-A    (A2)
+    3 #PARM-YYYY-A  (A4)
+  2 REDEFINE #PARM-DATE
+    3 #PARM-DATE-X  (A8)
+  2 #P1       (A1)  /* UNUSED
+  2 #P2       (A1)  /* UNUSED
+  2 #P3       (A1)  /* NO LONGER RUN
+  2 #P4       (A1)  /* "4" REG BILL + PRE-NOTE - "P" ONLY PRE-NT
+  2 #P5       (A1)  /* LOAN REG TOTS PROCESSING
+  2 #P6       (A1)  /* UNUSED
+  2 #P7       (A1)  /* TERM & TRANS PROCESSING
+  2 #P8       (A1)  /* USED ONLY FOR BIRTHDAY LETTER
+  2 #P9       (A1)  /* ACTION PENDING REG
+  2 #PN       (A1)  /* MONTH-END ACCOUNTING UPDATE PROCESSING
+  2 #PA       (A1)  /* AUTOMATED ALLOTMENT PROCESSING
+  2 #PB       (A1)  /* MEMBERSHIP STATISTICS PROCESSING
+  2 #PC       (A1)  /* PRINT STATUS RPT AND 'M12' STATISTICS SUMM
+  2 #PM       (A1)  /* MEMBERSHIP DRIVE
+  2 #PUR      (A1)  /* PURGE OF INACTIVE MEMBERS
+  2 #DO-NOT-SORT    (A1)  /* SORT SEGMENTS IF = 'S'
+  2 #DEBUG-MODE     (A1)  /* DO DEBUG COMMANDS IF = 'Y'
+*
+1 #UPDATE-SWITCH    (A1)   /* Y-YES DO UPDATE/N-NO DO NOT DO UPDATE
+*
+1 #SAMPLE-CNT      (P5)
+1 #YTD-BUS-LABEL   (A3)
+1 #DEBUG-START-CN  (A6) 1 REDEFINE #DEBUG-START-CN
+  2 #DEBUG-START-CN-N (N6)
+1 #DEBUG-END-CN    (A6) 1 REDEFINE #DEBUG-END-CN
+  2 #DEBUG-END-CN-N   (N6)
+1 #MEMBER-DEATH-PURGE  (N5)
+1 #MEMBER-DELETE-PURGE (N5)
+*
+1 #HOLD-ISN  (P8)
+1 #HEAD-DATE (A10)
+1 #NUM-SEGS  (P3)
+*
+1 #HOLD-RR-256           (A110)
+1 REDEFINE #HOLD-RR-256
+  2 #RR-FILL              (A71)
+  2 #RR-5-5-PCT-YTD-COI-SUBSIDY (N11.2)
+  2 #RR-5-5-DEATH-BENEFIT       (N11.2)
+  2 #RR-BEF-VA-DB               (N11.2)
+*
+1 #INTEGER-FIELDS
+  2 #I                (I2)
+  2 #I1               (I2)
+  2 #I2               (I2)
+  2 #I3               (I2)
+  2 #ISH-X            (I2)
+  2 #NAS-X            (I2)
+  2 #EPR-X            (I2)
+  2 #HIST-X           (I2)
+  2 #ABEND-CODE       (I4)
+*
+1 #START-KEY      (N15) INIT<000000000000000>
+1 REDEFINE #START-KEY
+  2 #START-ID     (N6)
+1 #END-KEY        (N15) INIT<999999999999999>
+1 REDEFINE #END-KEY
+  2 #END-ID       (N6)
+*
+1 #VA-KEY     (N15)
+1 REDEFINE #VA-KEY
+  2 #VA-ID      (N6)
+  2 #VA-ISS-DT  (N8)
+  2 #VA-SPL-IND (N1)
+*
+1 #DOB-96-YYYY    (N4)
+1 #DOB-96-YYYY-1  (N4)
+1 #DOB-96-MM      (N2)
+1 #DOB-96-MM-1    (N2)
+*
+1 #PROCESS-DATE (N6)
+1 #YYYYMMDD    (N8)
+1 REDEFINE #YYYYMMDD
+  2 #YYYYMM     (N6)
+  2 REDEFINE #YYYYMM
+    3 #YYYY   (N4)
+    3 #MM     (N2)
+  2 #DD      (N2)
+1 REDEFINE #YYYYMMDD
+  2 #YYYY-A  (A4)
+  2 #MM-A    (A2)
+  2 #DD-A    (A2)
+*
+1 #C-RUN-DT-MINUS-2-MONS   (N8)  /* DW10
+1 #PURGE-DT-3-YR   (N8)
+1 REDEFINE #PURGE-DT-3-YR
+  2 #PURGE-YYYY-3-YR (N4)
+  2 #PURGE-MM-3-YR   (N2)
+  2 #PURGE-DD-3-YR   (N2)
+*
+1 #PURGE-DT-13-MON   (N8)
+1 REDEFINE #PURGE-DT-13-MON
+  2 #PURGE-YYYY-13-MON (N4)
+  2 #PURGE-MM-13-MON   (N2)
+  2 #PURGE-DD-13-MON   (N2)
+*
+1 #PURGE-DT-2-MON   (N8)
+1 REDEFINE #PURGE-DT-2-MON
+  2 #PURGE-YYYY-2-MON (N4)
+  2 #PURGE-MM-2-MON   (N2)
+  2 #PURGE-DD-2-MON   (N2)
+*
+1 #HOLD-ID      (N6)
+1 REDEFINE #HOLD-ID
+  2 #ID-NUMBER-G   (A6)
+1 #FOUND-VA  (L)
+1 #VA-ISN  (P8)
+*
+1 #CSV        (P7.2)
+*
+1 #NXT-X           (I2)    /* index of nxt pol to adj
+1 #NXT-PRM-ADJ     (P1.2)
+1 #OO-EFF-DT       (N8)
+1 #DEGF-EFF-DT       (N8)
+1 #PRM-ADJ         (P5.2)
+*
+1 #1ST-MON-OO     (L)
+1 #HAS-E          (L)
+1 #HAS-EZ-FPF     (L)
+1 #MUST-BE-SPLIT  (L)
+1 #FOUND-VA-HIST  (L)
+1 #NO-NOTES      (L) INIT<FALSE>
+1 #NO-FIRS       (L) INIT<FALSE>
+1 #FOUND-REC     (L)
+1 #ISN           (P8)
+1 #BD-ID         (N6)
+1 #AMT-5-2      (N5.2)
+1 REDEFINE #AMT-5-2
+  2 #AMT-FILL  (N2)
+  2 #AMT-3-2   (N3.2)
+* - - - - - - - - - - - *
+*    ACCUMULATORS       *
+* - - - - - - - - - - - *
+1 #ACCUMULATORS
+  2 #PAGE-COUNT       (N4)
+  2 #ERROR-COUNT      (P5)
+  2 #LINE-COUNT       (P3) INIT<100>
+  2 #MAST-IN-CNT      (P7)
+  2 #MAST-OUT-CNT     (P7)
+  2 #HIST-IN-CNT      (P7)
+  2 #HIST-OUT-CNT     (P7)
+  2 #HIST-BUCKETS-IN-CNT    (P7)
+  2 #HIST-BUCKETS-IN-M-CNT  (P7)
+  2 #HIST-BUCKETS-IN-Y-CNT  (P7)
+  2 #HIST-BUCKETS-OUT-CNT   (P7)
+  2 #HIST-BUCKETS-OUT-M-CNT (P7)
+  2 #HIST-BUCKETS-OUT-Y-CNT (P7)
+  2 #FIRS-DEATH           (P7)
+  2 #NOTES-DELETED          (P7)
+  2 #VA-HIST-DELETED        (P7)
+  2 #FIRS-DELETED           (P7)
+  2 #SUN-OUT                (P7)
+  2 #DEL-SO                 (P7)
+  2 #mast-upd-cnt           (p7)        /* vt4
+*
+* - - - - - - - - - - - - - - - - - - - *
+*  DEBIT-CREDIT EXTRACT-RECORD   (4)    *
+* - - - - - - - - - - - - - - - - - - - *
+1 DC-EXTR-RECORD
+  2 DC-EXTR-ID    (N6)
+  2 DC-EXTR-AMT    (P5.2)
+*
+* below for accounting trans file
+1 #SUNGARD-SOURCE  (A2) /* DW1
+1 #POL-SEG         (I2) /* DW1
+*
+1 #SUNGARD    (A44)     /* EXTRACT RECORD
+1 REDEFINE #SUNGARD
+  2 #SUN-TRAN        (A4)
+  2 #SUN-CAT-1       (A2)
+  2 #SUN-CAT-2       (A2)
+  2 #SUN-STATE       (A2)
+  2 #SUN-AMT-SIGN    (A1)
+  2 #SUN-AMT         (N6.2)
+  2 #SUN-FILL        (A1)
+  2 #SUN-SOURCE      (A2)
+  2 #SUN-CN          (N6)
+  2 #SUN-POL-NUM     (A16)  /* DW1
+*
+1 ST-V VIEW OF A-STATUS
+  2 LINKED-CN   (1)
+  2 DATE-ENTERED    (9)
+  2 REDEFINE DATE-ENTERED
+    3 DT-ENT-OCC (9)
+      4 DT-ENT-YYYYMM  (N6)
+      4 DT-ENT-DD      (N2)
+*
+* - - - - - - - - - - - - - - - - - - - *
+*  NOTE FILE                            *
+* - - - - - - - - - - - - - - - - - - - *
+1 NT-V VIEW OF A-NOTES
+  2 ID-NUMBER     (N6)
+  2 NOTE-TEXT     (A60/1)
+  2 REDEFINE NOTE-TEXT
+    3 NT-5-5-COI-SUBSIDY (N11.2)
+    3 NT-5-5-DEATH-BENE  (N11.2)
+    3 NT-BEF-VA-DB       (N11.2)
+*
+1 FM-V VIEW OF A-INVESTMENTS
+*
+1 #HIST-ISN                (P8)
+*
+1 #OLDEST-MBR         (N6)
+1 #OLDEST-DOB         (N8) INIT <99999999>
+1 REDEFINE #OLDEST-DOB
+  2 #OLDEST-DOB-YYYY   (N4)
+  2 #OLDEST-DOB-MM     (N2)
+  2 #OLDEST-DOB-DD     (N2)
+1 #OLDEST-AGE         (N4)
+1 #YOUNGEST-MBR       (N6)
+1 #YOUNGEST-DOB       (N8)
+1 REDEFINE #YOUNGEST-DOB
+  2 #YOUNGEST-DOB-YYYY (N4)
+  2 #YOUNGEST-DOB-MM   (N2)
+  2 #YOUNGEST-DOB-DD   (N2)
+1 #YOUNGEST-AGE       (N4)
+*
+1 #PLAN  (A3)
+1 REDEFINE #PLAN
+  2 #PLAN-A1  (A1)
+  2 #PLAN-A2  (A2)
+*
+1 #UNITS  (N3/9)
+1 #TOT-UNITS  (N3)
+1 #SEG-X      (I2)
+*
+1 #STORE-REPORT-REC   (A294)      /* PM99                 VT1 was 300
+1 REDEFINE #STORE-REPORT-REC      /* PM99
+  2 FILL    (A292)                /* PM99                 vt1 was 298
+  2 #TIN1-HOLD-SEG  (N2)          /* PM99
+*  2 #REST-CRAP      (A247)                         /* vt1 11/08/2010
+*
+1 #PAY-STAT         (A4)
+1 #FACE             (P7.2)
+1 #DB-BEFORE  (P7.2/9)
+1 #DB-AFTER   (P7.2/9)
+1 #EFFECT-DATE      (N8)
+1 #TOT-TERM-EXPIRED (P13.2)
+1 #DB-DIFF        (P9.2)
+1 #TOT-DB-BEFORE  (P13.2)
+1 #TOT-DB-AFTER   (P13.2)
+1 #CSV-BEFORE    (P7.2/9)
+1 #ADDL-LOAN     (P7.2)
+1 #TPP          (P7.2)
+1 #LOAN-ALOT    (P5.2)
+1 #TOTAL-PREMS  (P7.2)                                            /* PM2
+1 #RSGN-SAME-ISS (L)      /* DW11
+*
+1 #tab          (a1) init<h'09'>                     /* vt3
+1 #out-file-11   (a80)                               /* vt3
+1 OBSOLETE-STATUS-FIELDS
+  2 DATE-OF-BIRTH  (N8)
+1 #DIR    (A) DYNAMIC CONST <'/usr/SAG/tmp/'>
+1 #FNAME  (A) DYNAMIC
+*
+1 #owner-contact-id     (n8)                                  /* vt5 \/
+1 #owner-cn             (n6)
+1 #owner-ssn            (n9)                                   
+1 stat view of a-status
+  2 id-number
+  2 ssn                                                        
+  2 member-contact-id                                         /* vt5 /\
+*
+END-DEFINE
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+WRITE TITLE LEFT 'PROGRAM:' *PROGRAM 5X 'DATE:' *DAT4U 5X 'TIME:' *TIMX
+FORMAT  LS=133 PS=66
+*
+* * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * * *
+*
+ON ERROR
+  IF #ISH-X = 0
+    MOVE 1 TO #ISH-X
+  END-IF
+  INCLUDE GABNDCX2                              /* SAG RH1 11292005 SS - END
+END-ERROR
+*
+* * * * * *
+*
+INPUT #JCL-PARM          /* FROM STACK
+*
+IF #PARM-DATE NE MASK(MM'01'YYYY)
+  #BATCH-LITERAL-1 := '#PARM-DATE'
+  #BATCH-LITERAL-4 := 'PARM DATE NOT VALID FORMAT (MM01YYYY)'
+  INCLUDE GABNDCX6
+  TERMINATE                                              /* SAG 12092005 RH1 SS - END
+END-IF
+*
+IF #DEBUG-MODE = 'Y'
+  INPUT #DEBUG-START-CN
+  INPUT #DEBUG-END-CN
+  MOVE RIGHT JUSTIFIED #DEBUG-START-CN TO #DEBUG-START-CN
+  MOVE RIGHT JUSTIFIED #DEBUG-END-CN   TO #DEBUG-END-CN
+  WRITE 'read' #DEBUG-START-CN 'thru' #DEBUG-END-CN
+  WRITE (5) 'read' #DEBUG-START-CN 'thru' #DEBUG-END-CN
+ELSE
+  #DEBUG-START-CN-N := 1901
+  #DEBUG-END-CN-N   := 499999
+END-IF
+*
+COMPRESS #PARM-MM-A '/' #PARM-DD-A '/' #PARM-YYYY-A
+  TO #HEAD-DATE LEAVING NO SPACE
+*
+FORMAT (2) LS=133 PS=72
+FORMAT (3) LS=133 PS=58
+WRITE (3) TITLE LEFT
+  40T 'AAFMAA' 91T 'PAGE'
+  96T *PAGE-NUMBER(3) /
+  46T ' MEMBRS PURGED ON' 64T #C-RUN-DT-YYYYMMDD (EM=9999/99/99) //
+  7T 'LAST' 20T 'ID' 34T 'MEMBER' 78T 'MEMBER' 116T 'SUSPEND' /
+  6T 'UPDATE' 18T 'NUMBER' 26T 'RANK' 32T 'DEATH DATE'
+  46T 'MEMBER NAME' 70T 'STATUS' 80T 'SSN'
+  91T 'NOTIFY MESSAGE' 118T 'CODE' //
+FORMAT (4) LS=133 PS=60
+WRITE (4) TITLE LEFT 'PROGRAM: ' *PROGRAM 5X
+  'AAFMAA ERRORS AND EXCEPTIONS' 5X 'DATE ' #HEAD-DATE
+  5X 'PAGE ' *PAGE-NUMBER (4)
+*
+PERFORM INIT-FILES   /* NG99
+*
+compress 'CN'                  #tab                     /* vt3 20121214
+  'Issue Date'                 #tab
+  'Plan'                       #tab
+*  'Calculated Monthly Premium' #tab
+  'Calculated Monthly COI'     #tab
+  into #out-file-11 leaving no
+write work 11 #out-file-11
+*                                                       /* vt3
+*
+MOVE #PARM-YYYY  TO #C-RUN-DT-YYYY
+MOVE #PARM-MM    TO #C-RUN-DT-MM
+MOVE #PARM-DD    TO #C-RUN-DT-DD
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #C-LAST-MON-YYYYMMDD
+*
+SUBTRACT 1 FROM #C-LAST-MON-MM
+*
+IF #C-LAST-MON-MM = 00
+  MOVE 12 TO #C-LAST-MON-MM
+  SUBTRACT 1 FROM #C-LAST-MON-YYYY
+END-IF
+MOVE #C-LAST-MON-YYYYMMDD TO #YYYYMMDD
+MOVE #YYYYMM TO #PROCESS-DATE
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #PURGE-DT-3-YR
+SUBTRACT 3 FROM #PURGE-YYYY-3-YR /* CHGED 8/98 AS PER MBW TO RETAIN FOR
+*                           /* 3 YRS TO ALLOW REINSTATEMENTS FOR 3 YRS
+*                           /* AND FOR TERM REFUND NEXT APRIL
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #PURGE-DT-13-MON
+SUBTRACT 1 FROM #PURGE-YYYY-13-MON
+SUBTRACT 1 FROM #PURGE-MM-13-MON    /* SO V/A HISTORY RECORD REMAINS
+IF #PURGE-MM-13-MON LE 0                    /* FOR VALUATION
+  SUBTRACT 1 FROM #PURGE-YYYY-13-MON
+  ADD 12 TO #PURGE-MM-13-MON
+END-IF
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #PURGE-DT-2-MON    /* used for FSO MBRS
+SUBTRACT 2 FROM #PURGE-MM-2-MON
+IF #PURGE-MM-2-MON LE 0
+  SUBTRACT 1 FROM #PURGE-YYYY-2-MON
+  ADD 12 TO #PURGE-MM-2-MON
+END-IF
+*
+COMPUTE #DOB-96-YYYY   = #C-RUN-DT-YYYY - 96
+COMPUTE #DOB-96-YYYY-1 = #C-RUN-DT-YYYY - 96
+COMPUTE #DOB-96-MM   = #C-RUN-DT-MM + 1
+COMPUTE #DOB-96-MM-1 = #C-RUN-DT-MM + 2
+*
+IF #DOB-96-MM GT 12
+  SUBTRACT 12 FROM #DOB-96-MM
+  ADD 1         TO #DOB-96-YYYY
+END-IF
+*
+IF #DOB-96-MM-1 GT 12
+  SUBTRACT 12 FROM #DOB-96-MM-1
+  ADD 1         TO #DOB-96-YYYY-1
+END-IF
+*
+MOVE #C-RUN-DT-YYYYMMDD TO #YYYYMMDD  /* DW10
+SUBTRACT 2 FROM #MM
+IF #MM LT 0
+  ADD 12 TO #MM
+  SUBTRACT 1 FROM #YYYY
+END-IF
+*
+MOVE #YYYYMMDD TO #C-RUN-DT-MINUS-2-MONS  /* DW10
+*
+IF #PA = 'A'
+  MOVE 'Y' TO #UPDATE-SWITCH
+ELSE
+  MOVE 'N' TO #UPDATE-SWITCH
+END-IF
+*
+MOVE 'I' TO PROCESS-SWITCH             /* INDICATE  INITIALIZE MODE
+*
+FETCH RETURN 'ATHS05PA'
+*
+FETCH RETURN 'ATHP05PC'   /* INITIALIZE STATUS RPT & SUMM    /* not need to call as the process indicator = 'I'   vt 09/02/2015
+*
+MOVE 'P' TO PROCESS-SWITCH             /* INDICATE PROCESSING MODE
+*
+* READ STATUS-VIEW LOGICAL BY ID-NUMBER                             /* vt4  \/
+*    STARTING FROM #DEBUG-START-CN-N ENDING AT #DEBUG-END-CN-N
+read multi-fetch of 20 status-view logical by id-number
+    starting from #debug-start-cn-n to #debug-end-cn-n              /* vt4  /\
+**      initialize global navigation flags for each new customer  SAG-AB
+**      used in navigating ATHP05P                                SAG-AB
+  #LOANS-DONE           := FALSE          /* SAG-AB
+  #CHECK-FOR-LOAN       := FALSE          /* SAG-AB
+**
+  ADD 1 TO #MAST-IN-CNT
+  IF STATUS(*) NE ' '                   /* RE1 Start
+    IGNORE
+  ELSE
+    IF INTRO-FLAG NE 'A'
+      ESCAPE TOP
+    END-IF
+  END-IF                                /* RE1 End
+*
+* #3S-X
+*  CALLNAT 'PLAN-AFA' STATUS-VIEW.ID-NUMBER F-IF-AFFL-DATA /* NG1
+*
+  IF PROCESS-IND = 'S'
+*     FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = STATUS-VIEW.ID-NUMBER                     /* vt 09/02/2015 \/
+*       IF SVC-MEMBER-V.SVC-PLAN = '3S' OR= '3SW' OR= '3SC' OR= '3SR'
+*         ESCAPE BOTTOM
+*       END-IF
+*     END-FIND
+      and INTRO-FLAG ne 'A'                                                                       /* vt 09/02/2015
+    escape top
+  END-IF                                                          /* END DW16
+*
+*   IF AFFL-ONLY-CLIENT(<STATUS-VIEW.ID-NUMBER>)  /* RE1 BYPASS AFFL ONLY CLIENTS
+*     ESCAPE TOP                                  /* RE1
+*   END-IF                                        /* RE1                                /* vt 09/02/2015 /\
+*
+  IF PROCESS-IND = 'C'   /* Contact entity
+    IF INTRO-FLAG NE 'A' /* PM2
+      ADD 1 TO #TOT-CONTACTS
+    END-IF
+*
+    IF INTRO-FLAG NE 'A'    /* Process AT PENDING   DW2
+      END TRANSACTION
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  MOVE STATUS-VIEW.ID-NUMBER TO #HOLD-ID
+*   FIND (1) ST-V WITH MEMBER-KEY = #ID-NUMBER-G                                           /* vt 09/02/2015 \/
+*     IF NO RECORD FOUND
+*       FIND (1) ST-V WITH WIDOW-KEY = #ID-NUMBER-G
+*         IF NO RECORD FOUND
+*           RESET LINKED-CN (1)
+*         END-NOREC
+*       END-FIND
+*     END-NOREC
+*   END-FIND
+  find number st-v with member-key = #id-number-g or widow-key = #id-number-g
+  if *number (0584) = 0
+    reset linked-cn(1)
+  end-if                                                                                 /* vt 09/02/2015 /\
+  OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH :=
+    GET-DATE-OF-BIRTH (< STATUS-VIEW.MEMBER-CONTACT-ID >)  /* NG3
+*
+  MOVE 0 TO #C-INCOMING-FLAG
+  MOVE 2 TO #C-OUTGOING-FLAG
+*
+  RESET #NUM-SEGS #DB-BEFORE(*) #DB-AFTER(*) #CSV-BEFORE(*) #HAS-EZ-FPF
+    #CAP-LOAN-MONS #CAP-CSV-MONS #CAP-REMAIN-MONS #CAP-CONV-ACV
+  FOR #I1 1 TO 9
+    IF STATUS (#I1) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    ADD 1 TO #NUM-SEGS
+*
+    IF STATUS (#I1) NE 'D'
+      ESCAPE TOP
+    END-IF
+*
+    IF #PN = 'N'
+      IF   (MODE (#I1) = 'E') AND (PAD-CODE = 'E')   /* DW10
+          AND (X-FIRST-PLACE-FEE (#I1) GT 0)
+          AND (X-FIRST-PLACE-FEE (#I1) LT 1000)
+          AND (ST-V.DATE-ENTERED (#I1) NE 0)
+          AND (ST-V.DATE-ENTERED (#I1) LT #C-RUN-DT-MINUS-2-MONS)
+        WRITE ID-NUMBER ISSUE-DATE(#I1) 'Found Mode E FPF case'
+          DATE-ENTERED (#I1) #C-RUN-DT-MINUS-2-MONS
+        MOVE TRUE TO #HAS-EZ-FPF
+      END-IF
+*
+*   save info before M/E
+      MOVE FACE-AMOUNT   (#I1) TO #FACE
+      MOVE DEATH-BENEFIT (#I1) TO #DB-BEFORE (#I1)
+**    MOVE CASH-VALUE (#I1) TO #CSV-BEFORE (#I1)               /* RH3 SAG 01312006 AB
+      MOVE STATUS-VIEW.CASH-VALUE (#I1) TO #CSV-BEFORE (#I1)   /* RH3 SAG 01312006 AB
+      RESET #PAY-STAT
+*
+      MOVE #C-LAST-MON-YYYYMMDD TO #EFFECT-DATE
+      MOVE PLAN (#I1) TO #PLAN
+      IF   ((PLAN (#I1) = 'LT')
+          AND (DATE-OF-BIRTH LE (#EFFECT-DATE - 400000))) /* 40 years
+          OR  ((PLAN (#I1) = 'RT')
+          AND (ISSUE-AGE (#I1) GT '65'))
+          OR  ((PLAN (#I1) = 'EZ')                                /* YK2
+          AND (PAID-UP-DATE(#I1) LE #EFFECT-DATE))                /* YK2
+*         OR  (((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z'))          /* YK1
+          OR  (F-LT2-TRUE(<PLAN(#I1)>)                            /* YK1
+          AND ((ISSUE-DATE(#I1) + 40000) LE #EFFECT-DATE)) /* 4 years
+*         OR (PLAN (#I1) = 'AL')     /* DW3
+          OR IS-ANNUITY-LIFE (< PLAN(#I1) >)  /* NG4
+*
+        CALLNAT 'GDROPSTM' USING
+          PLAN          (#I1)
+          SMOKER-FLAG   (#I1)
+          DATE-OF-BIRTH
+          ISSUE-DATE    (#I1)
+          PAID-UP-DATE  (#I1)
+          #EFFECT-DATE
+          ISSUE-AGE     (#I1)
+          #PAY-STAT
+          #FACE
+          #DB-BEFORE (#I1)
+          STATUS-VIEW.CASH-VALUE (#I1)
+          BEG-CASH-VALUE (#I1)
+      END-IF
+*
+      IF ((ONLINE-ACTION (#I1) = '1') OR (ONLINE-ACTION-GN = '2')
+          OR (PLAN (#I1) = 'LT' OR = 'RT' OR = 'EZ')) /* use possibly lowerd FACE AMT     /* YK2 add EZ
+*         AND (PLAN (#I1) NE 'AL')
+          AND NOT IS-ANNUITY-LIFE (< PLAN(#I1) >) /* NG4
+        MOVE #FACE TO #DB-BEFORE (#I1)
+      END-IF
+*
+      ADD #DB-BEFORE (#I1) TO #TOT-DB-BEFORE
+    END-IF
+  END-FOR
+*
+  DECIDE FOR EVERY CONDITION
+    WHEN #PUR = 'P'
+      IGNORE                    /* No Longer needed
+    WHEN #PN = 'N'
+      RESET #COI-ADJ (*) #NXT-X #NXT-PRM-ADJ #1ST-MON-OO
+*
+      IF   (PROCESS-IND = 'O' OR = 'D')
+          AND (NUMBER-MEMBERSHIPS NE 0)
+        CALLNAT 'GOPTOSXX'
+          STATUS-VIEW.ID-NUMBER
+          #PROCESS-DATE
+          STATUS          (1:9)
+          PAY-STATUS      (1:9)
+          ISSUE-DATE      (1:9)
+          MONTH-ALLOC-AMT (1:9)
+          FACE-AMOUNT     (1:9)
+          NUM-MBRSHIPS    (1:9)
+          EXPIRY-DAY      (1:9)
+          #COI-ADJ        (1:9)
+          #NXT-X
+          #NXT-PRM-ADJ
+          #OO-EFF-DT
+          #DEGF-EFF-DT
+*
+        IF PROCESS-IND = 'O'
+          MOVE #OO-EFF-DT TO #YYYYMMDD
+          IF   (#YYYY = #C-LAST-MON-YYYY)
+              AND (#MM   = #C-LAST-MON-MM)
+            WRITE STATUS-VIEW.ID-NUMBER 'new opt out'
+            MOVE TRUE TO #1ST-MON-OO
+            MOVE 'G' TO PROCESS-IND
+            RESET #NXT-X #NXT-PRM-ADJ #COI-ADJ (*)
+          END-IF
+        END-IF
+      END-IF
+*
+      FOR #I1 1 TO 9   /* 1ST MONTH CAP ACV PREM ADJ
+        MOVE PLAN (#I1) TO #PLAN
+        IF   (ISSUE-DATE(#I1) = #C-RUN-DT-YYYYMMDD) /*must be CAP 1st mn
+            AND (MODE (#I1) = 'G')
+            AND (PAY-STATUS(#I1) = '22' OR = '20')
+            AND ((ONLINE-ACTION (#I1) = '1') OR  (ONLINE-ACTION-GN = '2'))
+*           AND (NOT #PLAN = 'LT' OR = 'RT')                 /* YK1
+*           AND ((#PLAN-A1 LT 'U') OR (#PLAN-A1 GT 'Z'))     /* YK1
+            AND (NOT FUNCTION-TERM-POLICY(<#PLAN>))          /* YK1
+          COMPUTE #PRM-ADJ = ANNUAL-PREM (#I1) / 12
+          MOVE #I1 TO #NXT-X
+          PERFORM PRM-ADJ
+        END-IF
+      END-FOR
+*
+*     FETCH RETURN 'ATHPM50B'   /* No longer as of 01/1/2010 (done by AFFL)
+      PERFORM LOAD-HISTORY-TABLE
+      PERFORM CALL-ATHP05PN
+      PERFORM UNLOAD-HISTORY-TABLE
+      PERFORM BUILD-TERMED-TERM-HISTORY
+      PERFORM SAVE-TERMED-INFO
+*
+      RESET #HAS-E                     /* DW7
+*
+      IF PROCESS-IND = 'S'
+          AND SVC-MODE = 'E' /* Does AFFL 3S? plan have mode E?
+        MOVE TRUE TO #HAS-E
+      END-IF                                                      /* DW16
+*
+      FOR #I1 1 TO 9
+        IF  (STATUS (#I1) NE 'D')
+*           OR (PROCESS-IND ='S')                 /* DW16
+          ESCAPE TOP
+        END-IF
+*
+        IF (MODE (#I1) = 'E')
+            OR (X-ALT-LP-IND   (#I1) = '3' OR = '4')
+            OR (X-ALT-LP-IND-2 (#I1) = '3' OR = '4')
+          MOVE TRUE TO #HAS-E
+        END-IF
+*
+*   save db after M/E
+        MOVE FACE-AMOUNT   (#I1) TO #FACE
+        MOVE DEATH-BENEFIT (#I1) TO #DB-AFTER (#I1)
+        RESET #PAY-STAT
+*
+        MOVE #C-RUN-DT-YYYYMMDD TO #EFFECT-DATE
+        MOVE PLAN (#I1) TO #PLAN
+        IF   ((PLAN (#I1) = 'LT')
+            AND (DATE-OF-BIRTH LE (#EFFECT-DATE - 400000)))
+            OR  ((PLAN (#I1) = 'RT')
+            AND (ISSUE-AGE (#I1) GT '65'))
+            OR  ((PLAN (#I1) = 'EZ')                                /* YK2
+            AND (PAID-UP-DATE(#I1) LE #EFFECT-DATE))                /* YK2
+*           OR  (((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z'))          /* YK1
+            OR  (F-LT2-TRUE(<PLAN(#I1)>)                            /* YK1
+            AND ((ISSUE-DATE(#I1) + 40000) LE #EFFECT-DATE))
+*           OR (PLAN (#I1) = 'AL')   /* DW3
+            OR IS-ANNUITY-LIFE (< PLAN(#I1) >)  /* NG4
+*
+          CALLNAT 'GDROPSTM' USING
+            PLAN          (#I1)
+            SMOKER-FLAG   (#I1)
+            DATE-OF-BIRTH
+            ISSUE-DATE    (#I1)
+            PAID-UP-DATE  (#I1)
+            #EFFECT-DATE
+            ISSUE-AGE     (#I1)
+            #PAY-STAT
+            #FACE
+            #DB-AFTER (#I1)
+**          CASH-VALUE(#I1)                    /* RH3 SAG 01312006 AB
+            STATUS-VIEW.CASH-VALUE(#I1)        /* RH3 SAG 01312006 AB
+            BEG-CASH-VALUE (#I1)
+*
+          IF (#DB-BEFORE (#I1) NE #DB-AFTER (#I1))
+*              AND (PLAN (#I1) NE 'AL')   /* DW3
+              AND NOT IS-ANNUITY-LIFE (< PLAN(#I1) >) /* NG4
+            IF #PAY-STAT = 'EXPD' /* status should be D be now
+              COMPUTE #TOT-TERM-EXPIRED = #TOT-TERM-EXPIRED
+                + (#DB-BEFORE (#I1) - #DB-AFTER (#I1))
+              WRITE ID-NUMBER ISSUE-DATE (#I1) PLAN (#I1)
+                'expired'
+            ELSE
+              COMPUTE #LT-50-55-DB-DROP = #LT-50-55-DB-DROP +
+                (#DB-BEFORE (#I1) - #DB-AFTER  (#I1))
+*             WRITE ID-NUMBER ISSUE-DATE (#I1) PLAN (#I1)
+*               'LT DB drop at age 50/55' #DB-BEFORE(#I1) #DB-AFTER(#I1)
+            END-IF
+          END-IF
+        END-IF
+*
+        ADD #DB-AFTER  (#I1) TO #TOT-DB-AFTER
+        COMPUTE #DB-DIFF = #DB-AFTER(#I1) - #DB-BEFORE(#I1)
+        MOVE PLAN (#I1) TO #PLAN
+*
+*       IF   (PLAN (#I1) = 'LT' OR = 'RT')                     /* YK1
+*           OR ((#PLAN-A1 GE 'U') AND (#PLAN-A1  LE 'Z'))      /* YK1
+        IF FUNCTION-TERM-POLICY(<PLAN(#I1)>)                   /* YK1
+          IF #DB-BEFORE (#I1) NE #DB-AFTER (#I1)
+            IGNORE
+          END-IF
+        ELSE  /* must be whole life
+          IF #DB-DIFF LT 0
+            WRITE ID-NUMBER ISSUE-DATE (#I1) PLAN (#I1)
+              'Whole life DB lowered during M/E' #DB-DIFF
+          END-IF
+          ADD #DB-DIFF TO #WL-DB-CHG
+        END-IF
+*
+        IF MODE (#I1) = 'E'             /* DW10
+            AND #HAS-EZ-FPF
+          MOVE 'Q' TO MODE (#I1)
+          MOVE 'D' TO OWNERSHIP-FLAG (#I1)
+          WRITE ID-NUMBER ISSUE-DATE(#I1) 'chg mode to Q/own-flag to D'
+        END-IF
+      END-FOR
+*
+      IF #HAS-EZ-FPF             /* DW10
+        MOVE 'X' TO PAD-CODE
+        WRITE ID-NUMBER 'chg PAD-CODE to X'
+      END-IF
+*
+      IF   (PAD-CODE = 'E')    /* DW7
+          AND (NOT #HAS-E)
+*         AND (PROCESS-IND NE 'S')                /* DW16
+        MOVE 'S' TO PAD-CODE
+*       WRITE STATUS-VIEW.ID-NUMBER 'Pad-Code chg from E to S'
+      END-IF
+*
+      IF #1ST-MON-OO   MOVE 'O' TO PROCESS-IND END-IF
+*
+    WHEN #P4 = '4'
+      PERFORM CALL-ATHP05P4
+    WHEN #P5 = '5'
+      PERFORM CALL-ATHP05P5
+    WHEN #P7 = '7'
+      PERFORM CALL-ATHP05P7
+    WHEN #PA = 'A'             /* ALLOTMENT PROCESSING (PA) MUST FOLLOW
+      PERFORM CALL-ATHP05PA    /* P7 (PAID-UP PROC) AND PRECEED P9
+      FETCH RETURN 'ATHP05PA'      /* ALLOTMENT EXCEPTION REPORTS
+    WHEN #PB = 'B'
+      FETCH RETURN 'ATHP05PB'      /* ACCUM STATS FOR "MS" SCR AND RPT
+    WHEN #PC = 'C'
+      FETCH RETURN 'ATHP05PC'      /* PROCESS STATUS RPT & SUMM
+      PERFORM FIND-SEL-MBR
+*
+    WHEN NONE IGNORE
+  END-DECIDE  /* (0665)
+*
+  IF #PN= 'N'
+    FETCH RETURN 'ATHP05PQ'   /* compress segments for terminations
+*
+    RESET #NUM-SEGS
+    FOR #I1 1 TO 9  /* RESET NUM SEGS SINCE SOME MAY HAVE BEEN deleted
+      IF STATUS (#I1) = ' '
+        ESCAPE BOTTOM
+      END-IF
+*
+      ADD 1 TO #NUM-SEGS
+    END-FOR
+*
+    RESET ONLINE-ACTION-GN
+      ONLINE-ACTION (*)
+      PRIOR-STATUS  (*)
+*
+    IF (SUSPEND-CODE NE '4') AND (#NUM-SEGS = 0)
+        AND (PROCESS-IND NE 'C')                    /* DW5
+      MOVE '9' TO HANDLE-FLAG  S-ADDRESS-CODE       /* JT1  S-ADDRESS-CODE is maybe obsolete
+    END-IF
+*
+    PERFORM FIND-MODE
+  END-IF /* (0851)
+*
+  IF (#PN = 'N') OR (#PA = 'A')
+    UPDATE (0530)
+  END-IF
+*
+  ADD 1 TO #MAST-OUT-CNT
+  add 1 to #mast-upd-cnt                    /* vt4 \/
+  if #mast-upd-cnt ge 50
+    reset #mast-upd-cnt                     /* vt4 /\
+    END TRANSACTION
+  end-if                                    /* vt4
+END-READ  /* (0530)
+*
+MOVE 'F' TO PROCESS-SWITCH
+*
+IF #P4 = '4'
+  PERFORM CALL-ATHP05P4    /* TO CLOSE PRE-AUTH DEBIT TAPE
+END-IF
+*
+FETCH RETURN 'ATHS05PA'
+PERFORM WRITE-RECORD
+*
+FETCH RETURN 'ATHS05PA'
+PERFORM WRITE-RECORD
+*
+FETCH RETURN 'ATHS05PA'
+FETCH RETURN 'ATHP05PC' /* FINALIZE STAT RPT & SUMM - MUST PRECEDE PB
+PERFORM WRITE-RECORD
+*
+IF #PB = 'B'
+  FETCH RETURN 'ATHP05PB' /* UPDATE STATS IN "MS" FILE - MUST FOLLOW PC
+END-IF
+*
+IF #PC = 'C'
+  COMPUTE #OLDEST-AGE = #C-RUN-DT-YYYY - #OLDEST-DOB-YYYY
+  IF #OLDEST-DOB-MM GE #C-RUN-DT-MM
+    SUBTRACT 1 FROM #OLDEST-AGE
+  END-IF
+*
+  COMPUTE #YOUNGEST-AGE = #C-RUN-DT-YYYY - #YOUNGEST-DOB-YYYY
+  IF #YOUNGEST-DOB-MM GE #C-RUN-DT-MM
+    SUBTRACT 1 FROM #YOUNGEST-AGE
+  END-IF
+ELSE
+  NEWPAGE (2)
+  WRITE (2) /////  30T  'STATISTICS SUMMARY NOT SELECTED'
+END-IF
+*
+IF #PN = 'N'
+  NEWPAGE (2)
+  WRITE (2) NOTITLE USING FORM 'ATHP05F3'  /* NEW BUSINESS SUMMARY
+  FETCH RETURN 'ATHP05YB'   /* ADD OLD YTD NEW BUSINESS ACCUMS
+  MOVE 'YTD' TO #YTD-BUS-LABEL
+  NEWPAGE (2)
+  WRITE (2) NOTITLE USING FORM 'ATHP05F3'  /* YTD NEW BUSINESS SUMMARY
+  NEWPAGE (2)
+  WRITE (2) NOTITLE USING FORM 'ATHP05F4'  /* TERM/TRANS SUMMARY
+  MOVE 999999 TO DC-EXTR-ID               /* EOF MARKER
+  MOVE 0 TO DC-EXTR-AMT
+  WRITE WORK 4 DC-EXTR-RECORD
+END-IF
+*
+MOVE 1 TO #C-INCOMING-FLAG
+*
+FETCH RETURN 'ATHP05PN'
+*
+PERFORM WRITE-RECORD
+*
+MOVE #C-RR-256 TO #HOLD-RR-256
+WRITE 'TOTAL 5.5 DEATH BENEFIT = ' #RR-5-5-DEATH-BENEFIT
+WRITE 'TOTAL PRE-VA DETH BENE  = ' #RR-BEF-VA-DB
+* MOVE TRUE TO #FOUND-REC                                  /* vt4
+FIND (1) NT-V WITH ID-NUMBER = 800102
+  IF NO RECORDS FOUND
+*    WRITE 'NO-NX 800102 REC FOUND'                        /* vt4
+*    RESET #FOUND-REC                                      /* vt4
+    MOVE 800102 TO NT-V.ID-NUMBER
+    STORE NT-V
+    MOVE *ISN(0951) TO #ISN
+  END-NOREC
+  MOVE *ISN TO #ISN
+END-FIND
+*
+GET NT-V #ISN
+MOVE #RR-5-5-PCT-YTD-COI-SUBSIDY TO NT-5-5-COI-SUBSIDY
+MOVE #RR-5-5-DEATH-BENEFIT       TO NT-5-5-DEATH-BENE
+MOVE #RR-BEF-VA-DB               TO NT-BEF-VA-DB
+UPDATE (0957)
+*
+* IF #FOUND-REC                                           /* vt4 \/
+*   UPDATE (0956)
+* ELSE
+*   MOVE 800102 TO NT-V.ID-NUMBER
+*   STORE NT-V
+* END-IF                                                  /* vt4 /\
+*
+END TRANSACTION
+*
+FETCH RETURN 'ATHP05PN'
+PERFORM WRITE-RECORD
+*
+ADD #SAMPLE-CNT TO #MAST-OUT-CNT
+WRITE (3) 40T 'END OF REPORT'
+WRITE 'TOTAL RECORDS PROCESSED BY ATHP05PC = ' #GET-CNT
+  / 'MASTER RECORDS IN     ' #MAST-IN-CNT
+  / 'MASTER RECORDS OUT    ' #MAST-OUT-CNT
+  / 'Mst Samples in above  ' #SAMPLE-CNT   ' not included in PC cnts'
+  / 'HISTORY RECORDS IN    ' #HIST-IN-CNT
+  / 'HISTORY RECORDS OUT   ' #HIST-OUT-CNT
+  / 'HISTORY BUCKETS IN    ' #HIST-BUCKETS-IN-CNT
+  / 'HISTORY BUCKETS OUT   ' #HIST-BUCKETS-OUT-CNT
+  / 'HISTORY BUCKETS IN -M ' #HIST-BUCKETS-IN-M-CNT
+  / 'HISTORY BUCKETS OUT-M ' #HIST-BUCKETS-OUT-M-CNT
+  / 'HISTORY BUCKETS IN -Y ' #HIST-BUCKETS-IN-Y-CNT
+  / 'HISTORY BUCKETS OUT-Y ' #HIST-BUCKETS-OUT-Y-CNT
+  / 'MEMBER DEATH RECDS PUR' #MEMBER-DEATH-PURGE
+  / 'MEMBER DELETE RECD PUR' #MEMBER-DELETE-PURGE
+  / 'MEMBER FIRS RECD PUR' #FIRS-DEATH
+  / 'MEMBER FIRS RECD DEL' #FIRS-DELETED
+  / 'MEMBER NOTE RECD PUR' #NOTES-DELETED
+  / 'MEMBER VA-HIST RECD PUR' #VA-HIST-DELETED
+  / 'SUNGARD RECORDS OUT    ' #SUN-OUT
+  //  'TOTAL death benefit before month-end  =' #TOT-DB-BEFORE
+  /   'TOTAL death benefit after  month-end  =' #TOT-DB-AFTER
+  /   'TOTAL WHOLE LIFE DEATH BENEFIT GROWTH =' #WL-DB-CHG
+  /   'TOTAL LT drop at age 50 & 55          =' #LT-50-55-DB-DROP
+  /   'TOTAL TERM exp DB (included in losses)=' #TOT-TERM-EXPIRED
+*
+  /   'LOAN INFO from AFTER MONTH-END'
+  / #TOT-PRINC       'Fixed Principal'
+  / #TOT-ACCINT      'Fixed Acc Int'
+*
+  / #TOT-PRINC-2      'Var Principal'
+  / #TOT-ACCINT-2     'Var Acc Int'
+* * * * * * * * * * * * *
+DEFINE SUBROUTINE PRM-ADJ
+* * * * * * * * * * * * *
+*
+IF #NXT-X NE 1 /* FILLUP PRECEEDING MULTIPLE FIELDS
+  COMPUTE #I3 = #NXT-X - 1
+  FOR #I2 1 TO #I3
+    IF MTD-ACV-PREM-ADJ (#I2) = 0
+      MOVE 9999999.99 TO MTD-ACV-PREM-ADJ (#I2)
+    END-IF
+  END-FOR
+END-IF
+*
+IF MTD-ACV-PREM-ADJ (#NXT-X) = 9999999.99
+  RESET MTD-ACV-PREM-ADJ (#NXT-X)
+END-IF
+*
+ADD #PRM-ADJ TO MTD-ACV-PREM-ADJ (#NXT-X)
+IF MTD-ACV-PREM-ADJ (#NXT-X) = 0
+  MOVE 9999999.99 TO MTD-ACV-PREM-ADJ (#NXT-X)
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE LOAD-HISTORY-TABLE
+* * * * * * * * * * * * * * * * * *
+*
+RESET #ISH-NUMBER-RECORDS
+  #ISH-X
+MOVE STATUS-VIEW.ID-NUMBER TO #START-ID
+MOVE STATUS-VIEW.ID-NUMBER TO #END-ID
+*
+READ VA-HIST LOGICAL BY RECORD-KEY FROM #START-KEY TO #END-KEY     /* vt4 was thru
+  ADD +1 TO #HIST-IN-CNT
+  ADD +1 TO #ISH-NUMBER-RECORDS
+  ADD +1 TO #ISH-X
+  MOVE *ISN TO #HIST-ISN
+  MOVE #HIST-ISN TO #ISH-ISN (#ISH-X)
+*
+  MOVE RECORD-KEY         TO #ISH-RECORD-KEY           (#ISH-X)
+  MOVE MONTHLY-ALLOC-AMT  TO #ISH-MONTHLY-ALLOC-AMT    (#ISH-X)
+  MOVE PREMIUM-DEFIC      TO #ISH-PREMIUM-DEFIC        (#ISH-X)
+  MOVE NET-PREM-RATIO     TO #ISH-NET-PREM-RATIO       (#ISH-X)
+  MOVE PREV-ANN-DATE      TO #ISH-PREV-ANN-DATE        (#ISH-X)
+  MOVE PREV-ACCUM-CASH-VALUE TO #ISH-PREV-ACCUM-CASH-VALUE (#ISH-X)
+  MOVE PREV-CASH-VALUE    TO #ISH-PREV-CASH-VALUE      (#ISH-X)
+  MOVE PREV-DEATH-BENE    TO #ISH-PREV-DEATH-BENE      (#ISH-X)
+  MOVE PREV-PRORAT-LOAN-BAL TO #ISH-PREV-PRORAT-LOAN-BAL (#ISH-X)
+  MOVE PREV-PRORAT-LN-ACC-INT TO #ISH-PREV-PRORAT-LN-ACC-INT (#ISH-X)
+  MOVE TWO-AGO-ANN-DATE   TO #ISH-TWO-AGO-ANN-DATE   (#ISH-X)
+  MOVE TWO-AGO-CASH-VALUE TO #ISH-TWO-AGO-CASH-VALUE (#ISH-X)
+  MOVE ETI-DATE           TO #ISH-ETI-DATE           (#ISH-X)
+  MOVE ETI-ACCUM-CASH-VALUE  TO #ISH-ETI-ACCUM-CASH-VALUE  (#ISH-X)
+  MOVE ETI-CASH-VALUE     TO #ISH-ETI-CASH-VALUE     (#ISH-X)
+  MOVE ETI-DEATH-BENE     TO #ISH-ETI-DEATH-BENE     (#ISH-X)
+  MOVE ETI-LOAN-VALUE     TO #ISH-ETI-LOAN-VALUE     (#ISH-X)
+  MOVE CUR-DURATION       TO #ISH-CUR-DURATION       (#ISH-X)
+  MOVE CUR-CONV-DURATION  TO #ISH-CUR-CONV-DURATION  (#ISH-X)
+  MOVE TERMINATION-DATE   TO #ISH-TERMINATION-DATE   (#ISH-X)
+  MOVE TERMINATION-CODE   TO #ISH-TERMINATION-CODE   (#ISH-X)
+  MOVE ISSUE-PLAN         TO #ISH-ISSUE-PLAN         (#ISH-X)
+  MOVE ISSUE-AGE          TO #ISH-ISSUE-AGE          (#ISH-X)
+*
+  MOVE SMOKER-FLAG-M       (*) TO #ISH-SMOKER-FLAG-M     (#ISH-X, *)
+  MOVE YEAR-MONTH-M        (*) TO #ISH-YEAR-MONTH-M      (#ISH-X, *)
+  MOVE MONTH-IND-M         (*) TO #ISH-MONTH-IND-M       (#ISH-X, *)
+  MOVE ACCUM-CASH-VALUE-M  (*) TO #ISH-ACCUM-CASH-VALUE-M(#ISH-X, *)
+  MOVE CASH-VALUE-M        (*) TO #ISH-CASH-VALUE-M      (#ISH-X, *)
+  MOVE DEATH-BENEFIT-M     (*) TO #ISH-DEATH-BENEFIT-M   (#ISH-X, *)
+  MOVE PREMIUM-M           (*) TO #ISH-PREMIUM-M         (#ISH-X, *)
+  MOVE COST-OF-INSURANCE-M (*) TO #ISH-COST-OF-INSURANCE-M (#ISH-X, *)
+  MOVE INTEREST-M          (*) TO #ISH-INTEREST-M        (#ISH-X, *)
+  MOVE PRORAT-LOAN-BAL-M   (*) TO #ISH-PRORAT-LOAN-BAL-M (#ISH-X, *)
+  MOVE PRORAT-LN-ACC-INT-M (*) TO #ISH-PRORAT-LN-ACC-INT-M (#ISH-X, *)
+*
+  MOVE SMOKER-FLAG-Y       (*) TO #ISH-SMOKER-FLAG-Y     (#ISH-X, *)
+  MOVE YEAR-MONTH-Y        (*) TO #ISH-YEAR-MONTH-Y      (#ISH-X, *)
+  MOVE MONTH-IND-Y         (*) TO #ISH-MONTH-IND-Y       (#ISH-X, *)
+  MOVE ACCUM-CASH-VALUE-Y  (*) TO #ISH-ACCUM-CASH-VALUE-Y  (#ISH-X, *)
+  MOVE CASH-VALUE-Y        (*) TO #ISH-CASH-VALUE-Y      (#ISH-X, *)
+  MOVE DEATH-BENE-Y        (*) TO #ISH-DEATH-BENE-Y      (#ISH-X, *)
+  MOVE PREMIUM-Y           (*) TO #ISH-PREMIUM-Y         (#ISH-X, *)
+  MOVE COST-OF-INSURANCE-Y (*) TO #ISH-COST-OF-INSURANCE-Y (#ISH-X, *)
+  MOVE INTEREST-Y          (*) TO #ISH-INTEREST-Y        (#ISH-X, *)
+  MOVE PRORAT-LOAN-BAL-Y   (*) TO #ISH-PRORAT-LOAN-BAL-Y (#ISH-X, *)
+  MOVE PRORAT-LN-ACC-INT-Y (*) TO #ISH-PRORAT-LN-ACC-INT-Y (#ISH-X, *)
+*
+  MOVE +1 TO #HIST-X
+  REPEAT UNTIL #HIST-X GT +13
+    IF YEAR-MONTH-M (#HIST-X) NE 0
+      ADD +1 TO #HIST-BUCKETS-IN-CNT
+      ADD +1 TO #HIST-BUCKETS-IN-M-CNT
+    END-IF
+*
+    IF YEAR-MONTH-Y (#HIST-X) NE 0
+      ADD +1 TO #HIST-BUCKETS-IN-CNT
+      ADD +1 TO #HIST-BUCKETS-IN-Y-CNT
+    END-IF
+*
+    ADD +1 TO #HIST-X
+  END-REPEAT  /* (1097)
+*
+  IF YEAR-MONTH-Y (14) NE 0
+    ADD +1 TO #HIST-BUCKETS-IN-CNT
+    ADD +1 TO #HIST-BUCKETS-IN-Y-CNT
+  END-IF
+END-READ  /* (0674)
+*
+END-SUBROUTINE  /* (1033)
+* * * * * * * * * * *
+DEFINE SUBROUTINE UNLOAD-HISTORY-TABLE
+* * * * * * * * * * *
+*
+FOR #ISH-X 1 TO #ISH-NUMBER-RECORDS
+  MOVE +1 TO #HIST-X
+  REPEAT UNTIL #HIST-X GT +13
+    IF #ISH-YEAR-MONTH-M (#ISH-X, #HIST-X) NE 0
+      ADD +1 TO #HIST-BUCKETS-OUT-CNT
+      ADD +1 TO #HIST-BUCKETS-OUT-M-CNT
+    END-IF
+*
+    IF #ISH-YEAR-MONTH-Y (#ISH-X, #HIST-X) NE 0
+      ADD +1 TO #HIST-BUCKETS-OUT-CNT
+      ADD +1 TO #HIST-BUCKETS-OUT-Y-CNT
+    END-IF
+*
+    ADD +1 TO #HIST-X
+  END-REPEAT  /* (1124)
+*
+  IF #ISH-YEAR-MONTH-Y (#ISH-X, 14) NE 0
+    ADD +1 TO #HIST-BUCKETS-OUT-CNT
+    ADD +1 TO #HIST-BUCKETS-OUT-Y-CNT
+  END-IF
+*
+  IF #ISH-ISN (#ISH-X) NE 0
+    MOVE #ISH-ISN (#ISH-X) TO #HIST-ISN
+    GET VA-HIST #HIST-ISN
+  ELSE
+    RESET VA-HIST   /* DW8
+  END-IF
+*
+  MOVE #ISH-RECORD-KEY            (#ISH-X) TO RECORD-KEY
+  MOVE #ISH-MONTHLY-ALLOC-AMT     (#ISH-X) TO MONTHLY-ALLOC-AMT
+  MOVE #ISH-PREMIUM-DEFIC         (#ISH-X) TO PREMIUM-DEFIC
+  MOVE #ISH-NET-PREM-RATIO        (#ISH-X) TO NET-PREM-RATIO
+  MOVE #ISH-PREV-ANN-DATE         (#ISH-X) TO PREV-ANN-DATE
+  MOVE #ISH-PREV-ACCUM-CASH-VALUE (#ISH-X) TO PREV-ACCUM-CASH-VALUE
+  MOVE #ISH-PREV-CASH-VALUE       (#ISH-X) TO PREV-CASH-VALUE
+  MOVE #ISH-PREV-DEATH-BENE       (#ISH-X) TO PREV-DEATH-BENE
+  MOVE #ISH-PREV-PRORAT-LOAN-BAL  (#ISH-X) TO PREV-PRORAT-LOAN-BAL
+  MOVE #ISH-PREV-PRORAT-LN-ACC-INT(#ISH-X) TO PREV-PRORAT-LN-ACC-INT
+  MOVE #ISH-TWO-AGO-ANN-DATE      (#ISH-X) TO TWO-AGO-ANN-DATE
+  MOVE #ISH-TWO-AGO-CASH-VALUE    (#ISH-X) TO TWO-AGO-CASH-VALUE
+  MOVE #ISH-ETI-DATE              (#ISH-X) TO ETI-DATE
+  MOVE #ISH-ETI-ACCUM-CASH-VALUE  (#ISH-X) TO ETI-ACCUM-CASH-VALUE
+  MOVE #ISH-ETI-CASH-VALUE        (#ISH-X) TO ETI-CASH-VALUE
+  MOVE #ISH-ETI-DEATH-BENE        (#ISH-X) TO ETI-DEATH-BENE
+  MOVE #ISH-ETI-LOAN-VALUE        (#ISH-X) TO ETI-LOAN-VALUE
+  MOVE #ISH-CUR-DURATION          (#ISH-X) TO CUR-DURATION
+  MOVE #ISH-CUR-CONV-DURATION     (#ISH-X) TO CUR-CONV-DURATION
+  MOVE #ISH-TERMINATION-DATE      (#ISH-X) TO TERMINATION-DATE
+  MOVE #ISH-TERMINATION-CODE      (#ISH-X) TO TERMINATION-CODE
+  MOVE #ISH-ISSUE-PLAN            (#ISH-X) TO ISSUE-PLAN
+  MOVE #ISH-ISSUE-AGE             (#ISH-X) TO ISSUE-AGE
+*
+  FOR #I 1 TO 49                            /* DW6
+    IF  ((#ISH-SMOKER-FLAG-M (#ISH-X, #I) = 'C' OR = 'S' OR = 'N')
+        OR ((#I LE 13) AND (#ISH-YEAR-MONTH-M (#ISH-X, #I) NE 0))) /* DW8
+        AND (#ISH-YEAR-MONTH-M-A4 (#ISH-X, #I) NE #HEX-BLK)         /* DW8
+      MOVE #ISH-SMOKER-FLAG-M      (#ISH-X, #I) TO SMOKER-FLAG-M      (#I)
+      MOVE #ISH-YEAR-MONTH-M       (#ISH-X, #I) TO YEAR-MONTH-M       (#I)
+      MOVE #ISH-MONTH-IND-M        (#ISH-X, #I) TO MONTH-IND-M        (#I)
+      MOVE #ISH-ACCUM-CASH-VALUE-M (#ISH-X, #I) TO ACCUM-CASH-VALUE-M (#I)
+      MOVE #ISH-CASH-VALUE-M       (#ISH-X, #I) TO CASH-VALUE-M       (#I)
+      MOVE #ISH-DEATH-BENEFIT-M    (#ISH-X, #I) TO DEATH-BENEFIT-M    (#I)
+      MOVE #ISH-PREMIUM-M          (#ISH-X, #I) TO PREMIUM-M          (#I)
+      MOVE #ISH-COST-OF-INSURANCE-M(#ISH-X, #I) TO COST-OF-INSURANCE-M(#I)
+      MOVE #ISH-INTEREST-M         (#ISH-X, #I) TO INTEREST-M         (#I)
+      MOVE #ISH-PRORAT-LOAN-BAL-M  (#ISH-X, #I) TO PRORAT-LOAN-BAL-M  (#I)
+      MOVE #ISH-PRORAT-LN-ACC-INT-M(#ISH-X, #I) TO PRORAT-LN-ACC-INT-M(#I)
+    END-IF
+  END-FOR
+*
+  FOR #I 1 TO 17          /* DW6
+    IF ((#I GT 14)
+        AND (#ISH-SMOKER-FLAG-Y (#ISH-X, #I) = 'C' OR = 'S' OR = 'N'))
+        OR ((#I LE 14) AND (#ISH-YEAR-MONTH-Y  (#ISH-X, #I) NE 0))
+*
+      MOVE #ISH-SMOKER-FLAG-Y      (#ISH-X, #I) TO SMOKER-FLAG-Y      (#I)
+      MOVE #ISH-YEAR-MONTH-Y       (#ISH-X, #I) TO YEAR-MONTH-Y       (#I)
+      MOVE #ISH-MONTH-IND-Y        (#ISH-X, #I) TO MONTH-IND-Y        (#I)
+      MOVE #ISH-ACCUM-CASH-VALUE-Y (#ISH-X, #I) TO ACCUM-CASH-VALUE-Y (#I)
+      MOVE #ISH-CASH-VALUE-Y       (#ISH-X, #I) TO CASH-VALUE-Y       (#I)
+      MOVE #ISH-DEATH-BENE-Y       (#ISH-X, #I) TO DEATH-BENE-Y       (#I)
+      MOVE #ISH-PREMIUM-Y          (#ISH-X, #I) TO PREMIUM-Y          (#I)
+      MOVE #ISH-COST-OF-INSURANCE-Y(#ISH-X, #I) TO COST-OF-INSURANCE-Y(#I)
+      MOVE #ISH-INTEREST-Y         (#ISH-X, #I) TO INTEREST-Y         (#I)
+      MOVE #ISH-PRORAT-LOAN-BAL-Y  (#ISH-X, #I) TO PRORAT-LOAN-BAL-Y  (#I)
+      MOVE #ISH-PRORAT-LN-ACC-INT-Y(#ISH-X, #I) TO PRORAT-LN-ACC-INT-Y(#I)
+    END-IF
+  END-FOR
+*
+  IF #ISH-ISN (#ISH-X) = 0
+    STORE VA-HIST
+  ELSE
+    UPDATE (1145)
+  END-IF
+*
+  ADD +1 TO #HIST-OUT-CNT
+END-FOR   /* (1122)
+*
+END-SUBROUTINE  /* (0029)
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-ATHP05PN
+* * * * * * * * * * * * * * *
+*
+* IF PROCESS-IND = 'S'                  /* DW16
+*   ESCAPE ROUTINE
+* END-IF
+*
+RESET SUN-OCC (*)          /* replaced SAG-AB 20060316
+RESET #FIX-ADDL-LOAN (*) #VAR-ADDL-LOAN (*)
+  #LOAN-ALOT #EZPAY-LOAN-OVERFLOW
+  #TOTAL-PREMS                        /* PM2
+MOVE STATUS-VIEW.PREM-RATING (*) TO #PREM-RATING (*)
+*
+DECIDE FOR FIRST CONDITION            /* PM14
+  WHEN PAD-CODE = 'P'                 /* PM14
+    PAD-CODE := 'V'                   /* PM14
+  WHEN PAD-CODE = 'D'                 /* PM14
+    PAD-CODE := 'X'                   /* PM14
+  WHEN PAD-CODE = 'L'                 /* PM15
+    PAD-CODE := 'Z'                   /* PM15
+  WHEN NONE                           /* PM14
+    IGNORE                            /* PM14
+END-DECIDE                            /* PM14
+*
+IF PAD-CODE = 'V' OR = 'W' OR = 'X'    /* do not include "z"
+  FOR #I1 1 TO 9
+    IF STATUS-VIEW.STATUS (#I1) = ' '
+      ESCAPE BOTTOM
+    END-IF
+*
+    IF  ((STATUS-VIEW.PAD-CODE = 'W')  /* only non-mbr
+        AND (STATUS-VIEW.OWNERSHIP-FLAG (#I1) NE 'N'))
+        OR  ((STATUS-VIEW.PAD-CODE = 'X') /* only "D"'s
+        AND (STATUS-VIEW.OWNERSHIP-FLAG (#I1) NE 'D'))
+        OR  (STATUS-VIEW.PAY-STATUS (#I1) GE '40')
+      ESCAPE TOP
+    END-IF
+*
+    IF STATUS-VIEW.X-ALT-LP-IND (#I1) = '1' OR = '2'
+        AND STATUS-VIEW.STATUS (#I1) = 'D'
+      ADD STATUS-VIEW.X-ALT-LP-AMT (#I1) TO #LOAN-ALOT
+    END-IF
+*
+    IF STATUS-VIEW.X-ALT-LP-IND-2 (#I1) = '1' OR = '2'
+        AND STATUS-VIEW.STATUS (#I1) = 'D'
+      ADD STATUS-VIEW.X-ALT-LP-AMT-2 (#I1) TO #LOAN-ALOT
+    END-IF
+*
+    IF STATUS-VIEW.STATUS (#I1) = 'D'                             /* PM2
+      COMPUTE #TOTAL-PREMS = #TOTAL-PREMS
+        + STATUS-VIEW.ANNUAL-PREM (#I1) / 12
+    END-IF
+*
+    IF   (PAD-CODE = 'V' OR = 'W' OR = 'X')
+        AND (STATUS-VIEW.MODE (#I1) = 'M')
+        AND (STATUS-VIEW.X-ALT-LP-IND (#I1) = '6')
+      MOVE '4' TO STATUS-VIEW.X-ALT-LP-IND (#I1)
+    END-IF
+  END-FOR
+*
+  IF  (STATUS-VIEW.PAD-CODE = 'V') /* strt ez-pay for all-pols
+      AND (STATUS-VIEW.ALOT-AMT NE 0)   /* alot not stoped yet
+    IF (STATUS-VIEW.ALOT-AMT GE #LOAN-ALOT + #TOTAL-PREMS)        /* PM2
+      MOVE 'P' TO PAD-CODE
+    END-IF
+  END-IF
+END-IF
+*
+REPEAT
+  FETCH RETURN 'ATHP05PN'
+*
+  IF #C-E-ID (1) NE ' '
+    PERFORM PRINT-ERROR
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 2
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 1
+    PERFORM WRITE-RECORD
+    ESCAPE TOP
+  ELSE
+    PERFORM WRITE-RECORD
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+FOR #I1 1 TO 9
+  IF  ((#FIX-ADDL-LOAN (#I1) NE 0) OR (#VAR-ADDL-LOAN (#I1) NE 0))
+      AND (STATUS-VIEW.MEC-IND (#I1) = 'Y')
+*
+    WRITE STATUS-VIEW.ID-NUMBER 'ADDL loan on a MEC'
+      'fix addl LN =' #FIX-ADDL-LOAN (#I1)
+      'var addl LN =' #VAR-ADDL-LOAN (#I1)
+    COMPUTE #ADDL-LOAN = #FIX-ADDL-LOAN (#I1) + #VAR-ADDL-LOAN (#I1)
+*
+    IF ISSUE-DATE-DD (#I1) = 1
+      MOVE STATUS-VIEW.CASH-VALUE (#I1) TO #CSV
+    ELSE
+      MOVE #CSV-BEFORE (#I1) TO #CSV
+    END-IF
+*
+    #owner-cn := get-policy-owner(<STATUS-VIEW.POLICY-ID(#i1)>)          /* vt5 \/
+    find(1) stat with stat.id-number = #owner-cn
+      #owner-contact-id := stat.member-contact-id
+      #owner-ssn        := stat.ssn                                 
+    end-find                                                             /* vt5 /\
+*
+    CALLNAT 'G1099SXX' USING
+      STATUS-VIEW.ID-NUMBER
+      #I1
+      #CSV
+      STATUS-VIEW.PAY-STATUS (#I1)
+      STATUS-VIEW.COST-BASIS (#I1)
+      #ADDL-LOAN
+      status-view.member-contact-id                     /* vt5  \/
+      #owner-contact-id
+      status-view.policy-id  (#i1)                      /* vt5  /\
+*
+  END-IF
+END-FOR
+*
+MOVE 'PN' TO #SUNGARD-SOURCE  /* DW1
+PERFORM WRITE-SUNGARD         /* DW1
+*
+END-SUBROUTINE  /* (1223)
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-ATHP05PA
+* * * * * * * * * * * * * * * *
+*
+REPEAT
+  RESET SUN-OCC (*)          /* replaced SAG-AB 20060316
+  FETCH RETURN 'ATHS05PA'
+*
+  MOVE 'PA' TO #SUNGARD-SOURCE  /* DW1
+  PERFORM WRITE-SUNGARD         /* DW1
+*
+  IF #C-E-ID (1) NE ' '
+    PERFORM PRINT-ERROR
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 2
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 1
+    IF #C-RR-SECT = 'B'
+      PERFORM WRITE-RECORD
+    ELSE
+      WRITE WORK 2 #C-RR-256  /* FOR NEW NATURAL NOTICE WRITTER
+    END-IF
+    ESCAPE TOP
+  ELSE
+    IF #C-RR-SECT = 'B'
+      PERFORM WRITE-RECORD
+    ELSE
+      WRITE WORK 2 #C-RR-256  /* FOR NEW NATURAL NOTICE WRITTER
+    END-IF
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #C-OUTGOING-FLAG NE 1
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+END-SUBROUTINE  /* (1352)
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-ATHP05P4
+* * * * * * * * * * * * * * * * *
+MOVE #P4 TO P4 /* SAG-AB 20060503 this was originally passed as a parameter
+**                and was interpreted as CREATE-BILLS in the Cobol
+REPEAT
+  RESET SUN-OCC (*)          /* replaced SAG-AB 20060316
+  FETCH RETURN 'ATHP05P4'
+*
+  MOVE 'P4' TO #SUNGARD-SOURCE  /* DW1
+  PERFORM WRITE-SUNGARD         /* DW1
+*
+  IF #C-E-ID (1) NE ' '
+    PERFORM PRINT-ERROR
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 2
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 1
+    IF #C-RR-SECT = 'A' OR = 'C' OR = 'E' OR = 'K' OR = 'P' OR = 'Q'
+      WRITE WORK 2 #C-RR-256       /* FOR NEW NATURAL NOTICE WRITTER
+    ELSE
+      PERFORM WRITE-RECORD
+    END-IF
+    ESCAPE TOP
+  ELSE
+    IF #C-RR-SECT = 'A' OR = 'C' OR = 'E' OR = 'K' OR = 'P' OR = 'Q'
+      WRITE WORK 2 #C-RR-256       /* FOR NEW NATURAL NOTICE WRITTER
+    ELSE
+      PERFORM WRITE-RECORD
+    END-IF
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #C-OUTGOING-FLAG NE 1
+    ESCAPE BOTTOM
+  END-IF
+END-REPEAT
+*
+END-SUBROUTINE  /* (1394)
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-ATHP05P5
+* * * * * * * * * * * * * * * * * *
+*
+MOVE 1 TO #SEG-X
+REPEAT
+*  WRITE (22) 'About to call 05P0' 1X #SEG-X 1X #TIN1-HOLD-SEG
+*  WRITE (22) STATUS-VIEW.ID-NUMBER
+  FETCH RETURN 'ATHP05P5' #SEG-X /* to save next seg to process
+**    #M-E-LOAN-INFO             /* excluded - now in global SAG  02102005 RHC
+  MOVE #C-RR-256 TO #STORE-REPORT-REC
+  MOVE #TIN1-HOLD-SEG TO #SEG-X
+*
+  IF #C-E-ID (1) NE ' '
+    PERFORM PRINT-ERROR
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 2
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 1
+    PERFORM WRITE-RECORD
+    ESCAPE TOP
+  ELSE
+    PERFORM WRITE-RECORD
+    ESCAPE BOTTOM
+  END-IF
+*
+END-REPEAT
+*
+END-SUBROUTINE  /* (1437)
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-ATHP05P7
+* * * * * * * * * * * * * * * * * *
+
+REPEAT
+  FETCH RETURN 'ATHP05P7'
+  IF #C-E-ID (1) NE ' '
+    PERFORM PRINT-ERROR
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 2
+    ESCAPE ROUTINE
+  END-IF
+*
+  IF #C-OUTGOING-FLAG = 1
+    PERFORM WRITE-RECORD
+    ESCAPE TOP
+  ELSE
+    PERFORM WRITE-RECORD
+    ESCAPE BOTTOM
+  END-IF
+*
+END-REPEAT
+*
+END-SUBROUTINE  /* (1469)
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-MODE
+* * * * * * * * * * * * * * *
+FOR #NAS-X 1 TO 9
+  IF STATUS-VIEW.MODE(#NAS-X) = 'A' OR = 'Q' OR = 'S' OR = 'M'
+    IF STATUS-VIEW.DEBIT-CREDIT-AMT = 0
+      IGNORE
+    ELSE
+      MOVE STATUS-VIEW.ID-NUMBER TO DC-EXTR-ID
+      IF STATUS-VIEW.DEBIT-CREDIT-AMT GT 99999.99
+        MOVE 99999.99 TO DC-EXTR-AMT
+      ELSE
+        IF STATUS-VIEW.DEBIT-CREDIT-AMT LT -99999.99
+          MOVE -99999.99 TO DC-EXTR-AMT
+        ELSE
+          MOVE STATUS-VIEW.DEBIT-CREDIT-AMT TO DC-EXTR-AMT
+        END-IF
+      END-IF
+      WRITE WORK 4 DC-EXTR-RECORD
+    END-IF
+    ESCAPE ROUTINE
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE PRINT-ERROR
+* * * * * * * * * * * * * * * *
+*
+FOR #EPR-X 1 TO 5
+  IF #C-E-ID (#EPR-X) = ' '
+    ESCAPE ROUTINE
+  END-IF
+*
+  DISPLAY (4)
+    'ID-NUMBER'    #C-E-ID      (#EPR-X)
+    'NAME'         #C-E-NAME    (#EPR-X)  (AL=58)           /* vt1
+    'RANK'         #C-E-RANK    (#EPR-X)  (al=5)            /* vt1
+    'STATUS'       #C-E-RETIRED (#EPR-X)
+    'MESSAGE'      #C-E-MESSAGE (#EPR-X)
+  RESET #C-ERROR-PRINT-RECORD (#EPR-X)
+END-FOR  /* (1527)
+*
+END-SUBROUTINE  /* (1520)
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE WRITE-RECORD
+* * * * * * * * * * * * * * * * *
+*
+MOVE 2 TO #C-OUTGOING-FLAG
+WRITE WORK 1 #C-REPORT-RECORD
+*
+END-SUBROUTINE  /* (1539)
+*
+* * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DELETE-PURGE-ROUTINE
+* * * * * * * * * * * * * * * * * * * *
+*
+FIND (1) FM-V WITH ID-NUMBER = STATUS-VIEW.ID-NUMBER
+  WRITE 'deleted investments for CN' STATUS-VIEW.ID-NUMBER
+  DELETE (1551)
+END-FIND
+*
+ASSIGN #NO-NOTES = FALSE
+FIND (1) A-NOTES-VIEW WITH ID-NUMBER = STATUS-VIEW.ID-NUMBER
+  IF NO RECORDS FOUND
+    ASSIGN #NO-NOTES = TRUE
+  END-NOREC
+*
+  IF #NO-NOTES
+    IGNORE
+  ELSE
+    ADD 1 TO #NOTES-DELETED
+    DELETE (1557)
+  END-IF
+END-FIND
+*
+ASSIGN #NO-FIRS = FALSE
+MOVE STATUS-VIEW.ID-NUMBER TO #HOLD-ID
+FIND (1) A-FIRS-VIEW WITH MEMBER-KEY = #ID-NUMBER-G
+  IF NO RECORDS FOUND
+    ASSIGN #NO-FIRS = TRUE
+  END-NOREC
+*
+  IF #NO-FIRS
+    IGNORE
+  ELSE
+    DELETE (1572)
+    ADD 1 TO #FIRS-DELETED
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DEATH-PURGE-ROUTINE
+* * * * * * * * * * * * * * * * * * *
+*
+ASSIGN #NO-FIRS = FALSE
+MOVE STATUS-VIEW.ID-NUMBER TO #HOLD-ID
+FIND (1) A-FIRS-VIEW WITH MEMBER-KEY = #ID-NUMBER-G
+  IF NO RECORDS FOUND
+    ASSIGN #NO-FIRS = TRUE
+  END-NOREC
+*
+  IF #NO-FIRS
+    IGNORE
+  ELSE
+    RESET A-FIRS-VIEW.MEMBER-FLAG
+    UPDATE RECORD (1593)
+    ADD 1 TO #FIRS-DEATH
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CLEAR-BD-AND-VA-HIST
+* * * * * * * * * * * * * * *
+*
+MOVE STATUS-VIEW.ID-NUMBER TO #START-ID
+MOVE STATUS-VIEW.ID-NUMBER TO #END-ID
+READ VA-HIST LOGICAL BY RECORD-KEY FROM #START-KEY TO #END-KEY    /* vt4 was through
+  DELETE (1615)
+  ADD 1 TO #VA-HIST-DELETED
+END-READ
+*
+COMPUTE #BD-ID = STATUS-VIEW.ID-NUMBER + 200000
+FIND (1) NT-V WITH ID-NUMBER = #BD-ID
+  WRITE 'DELETED BD FOR ' #BD-ID
+  DELETE (1621)
+END-FIND
+*
+ADD 200000 TO #BD-ID
+FIND (1) NT-V WITH ID-NUMBER = #BD-ID
+  WRITE 'DELETED BD FOR ' #BD-ID
+  DELETE (1627)
+END-FIND
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FIND-SEL-MBR
+* * * * * * * * * * * * * * * *
+*
+IF STATUS-VIEW.NUMBER-MEMBERSHIPS = 0  /* Only process AAFMAA members
+  ESCAPE ROUTINE
+END-IF
+*
+IF NOT INTRO-FLAG = 'S' OR = 'K' OR = 'G' /* ONLY MBRS
+  IF OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH GT #YOUNGEST-DOB
+    MOVE STATUS-VIEW.ID-NUMBER     TO #YOUNGEST-MBR
+    MOVE OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH TO #YOUNGEST-DOB
+  END-IF
+*
+  IF OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH LT #OLDEST-DOB
+    MOVE STATUS-VIEW.ID-NUMBER     TO #OLDEST-MBR
+    MOVE OBSOLETE-STATUS-FIELDS.DATE-OF-BIRTH TO #OLDEST-DOB
+  END-IF
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE BUILD-TERMED-TERM-HISTORY
+* * * * * * * * * * * * * * * * * * * * * * *
+*
+* WRITE STATUS-VIEW.ID-NUMBER 'build-termed-hist'
+FOR #I1 1 TO 9
+  MOVE STATUS-VIEW.PLAN (#I1) TO #PLAN
+  IF (STATUS-VIEW.ONLINE-ACTION (#I1) = '5' OR = '6' OR = 'J' OR = 'K'
+      OR = '8'   OR = 'L' OR = 'M' OR = 'E' OR = 'G' OR = 'H' OR = 'S'
+      OR = 'T')      /* DW4
+*       AND ((#PLAN = 'LT' OR = 'RT')                       /* YK1
+*       OR ((#PLAN-A1 GE 'U') AND (#PLAN-A1 LE 'Z')))       /* YK1
+      AND (FUNCTION-TERM-POLICY(<#PLAN>))                   /* YK1
+    RESET #MUST-BE-SPLIT
+    FOR #I2 1 TO 9
+      IF   (#I1 NE #I2)
+          AND (STATUS-VIEW.ISSUE-DATE (#I2) = STATUS-VIEW.ISSUE-DATE (#I1))
+          AND (STATUS-VIEW.PLAN (#I2) = STATUS-VIEW.PLAN (#I1))
+*       WRITE STATUS-VIEW.ID-NUMBER 'Termed Term with Face Amt Split'
+        MOVE TRUE TO #MUST-BE-SPLIT
+      END-IF
+    END-FOR
+*
+    IF #MUST-BE-SPLIT
+      ESCAPE TOP
+    END-IF
+*
+    RESET #FOUND-VA
+    MOVE STATUS-VIEW.ID-NUMBER TO #START-ID
+    MOVE STATUS-VIEW.ID-NUMBER TO #END-ID
+*
+    READ VA-HIST LOGICAL BY RECORD-KEY FROM #START-KEY to #END-KEY    /* vt4 was through
+      MOVE VA-HIST.RECORD-KEY TO #VA-KEY
+      IF   (STATUS-VIEW.ISSUE-DATE (#I1) = #VA-ISS-DT)
+          AND (STATUS-VIEW.SPLIT-IND  (#I1) = #VA-SPL-IND)
+          AND (STATUS-VIEW.SPLIT-IND  (#I1) = 5 OR = 6 OR = 7)
+        MOVE TRUE TO #FOUND-VA
+        MOVE *ISN TO #VA-ISN
+        ESCAPE BOTTOM
+      END-IF
+    END-READ
+*
+    IF  #FOUND-VA
+      GET VA-HIST #VA-ISN
+    ELSE
+      RESET VA-HIST
+      MOVE STATUS-VIEW.ID-NUMBER        TO #VA-ID
+      MOVE STATUS-VIEW.ISSUE-DATE (#I1) TO #VA-ISS-DT
+      MOVE STATUS-VIEW.SPLIT-IND  (#I1) TO #VA-SPL-IND
+*
+      IF NOT #VA-SPL-IND = 5 OR = 6 OR = 7 OR = 8              /* YK2 add 8 for EZ
+        IF STATUS-VIEW.PLAN (#I1) = 'LT'
+          MOVE 5 TO #VA-SPL-IND
+        ELSE
+          IF STATUS-VIEW.PLAN (#I1) = 'RT'
+            MOVE 6 TO #VA-SPL-IND
+          ELSE
+            IF STATUS-VIEW.PLAN (#I1) = 'EZ'                  /* YK2
+              MOVE 8 TO #VA-SPL-IND                           /* YK2
+            ELSE                                              /* YK2
+              MOVE 7 TO #VA-SPL-IND    /* VAR-TERM
+            END-IF                                            /* YK2
+          END-IF
+        END-IF
+      END-IF
+*
+      MOVE #VA-KEY TO RECORD-KEY
+    END-IF
+*
+    MOVE STATUS-VIEW.PLAN       (#I1) TO VA-HIST.ISSUE-PLAN
+    MOVE STATUS-VIEW.ISSUE-AGE  (#I1) TO VA-HIST.ISSUE-AGE
+    MOVE STATUS-VIEW.SMOKER-FLAG(#I1) TO VA-HIST.SMOKER-FLAG-M (13)
+*   MOVE STATUS-VIEW.PAID-TO-DATE (#I1) TO TWO-AGO-ANN-DATE /* 4 REFUND
+    COMPUTE TWO-AGO-ANN-DATE /* 4 REFUND
+      = (STATUS-VIEW.PAID-TO-YYYY (#I1) * 100)
+      + STATUS-VIEW.PAID-TO-MM (#I1)
+    COMPUTE TWO-AGO-CASH-VALUE = STATUS-VIEW.ANNUAL-PREM (#I1) / 12
+*
+    COMPUTE #AMT-5-2 =   /* FOR VALUATION (YTD PREMS PAID)
+      (STATUS-VIEW.ANNUAL-PREM (#I1) / 12) * (#C-LAST-MON-MM)
+    MOVE #AMT-3-2 TO VA-HIST.PREMIUM-M (13)
+    MOVE #C-LAST-MON-YYYYMMDD TO #YYYYMMDD
+    MOVE #YYYYMM TO VA-HIST.TERMINATION-DATE
+    MOVE #YYYYMM TO VA-HIST.YEAR-MONTH-M (13)
+*
+    IF STATUS-VIEW.ONLINE-ACTION (#I1) = '5' OR = 'J' OR = 'T'  /* DW4
+      MOVE 'CSV' TO TERMINATION-CODE
+    ELSE
+      IF STATUS-VIEW.ONLINE-ACTION (#I1) = 'E' OR = 'G' OR = 'H'
+        MOVE 'DTH' TO TERMINATION-CODE
+      ELSE
+        IF STATUS-VIEW.ONLINE-ACTION (#I1) = '8'
+          MOVE 'EXP' TO TERMINATION-CODE
+        ELSE
+          MOVE 'LAP' TO TERMINATION-CODE
+        END-IF
+      END-IF
+    END-IF
+*
+    IF #FOUND-VA
+      UPDATE (1699)
+    ELSE
+      STORE VA-HIST
+    END-IF
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SAVE-TERMED-INFO
+* * * * * * * * * * * * * * * * * *
+*
+FOR #I1 1 TO 9
+  IF (STATUS-VIEW.ONLINE-ACTION (#I1) = '5' OR = '6' OR = 'J' OR = 'K'
+      OR = '8'  OR = 'L' OR = 'M' OR = 'E' OR = 'G' OR = 'H' OR = 'S'
+      OR = 'T')              /* DW4
+      AND (NOT STATUS-VIEW.PLAN (#I1) = 'SO' OR = 'FSO')
+    RESET #FOUND-VA
+    MOVE STATUS-VIEW.ID-NUMBER TO #START-ID
+    MOVE STATUS-VIEW.ID-NUMBER TO #END-ID
+*
+    READ VA-HIST LOGICAL BY RECORD-KEY FROM #START-KEY to #END-KEY     /* vt4 was through
+      MOVE VA-HIST.RECORD-KEY TO #VA-KEY
+      IF   (STATUS-VIEW.ISSUE-DATE (#I1) = #VA-ISS-DT)
+          AND (STATUS-VIEW.SPLIT-IND  (#I1) = #VA-SPL-IND)
+        MOVE TRUE TO #FOUND-VA
+        MOVE *ISN TO #VA-ISN
+        ESCAPE BOTTOM
+      END-IF
+    END-READ
+*
+    IF  NOT #FOUND-VA
+      ESCAPE ROUTINE
+    END-IF
+*
+    GET VA-HIST #VA-ISN
+
+    MOVE STATUS-VIEW.NUM-MBRSHIPS (#I1) TO VA-HIST.POLICY-NUMBER
+*
+    IF   (STATUS-VIEW.ISSUE-DATE (#I1) GE 19970101)
+        AND (STATUS-VIEW.MONTH-ALLOC-AMT (#I1) NE 999.99)
+      MOVE STATUS-VIEW.BEG-CASH-VALUE (#I1) TO VA-HIST.CONT-FUND
+      MOVE STATUS-VIEW.MONTH-ALLOC-AMT(#I1)
+        TO VA-HIST.MONTHLY-ALLOC-AMT
+      MOVE STATUS-VIEW.PREM-DEFICIENCY(#I1)
+        TO VA-HIST.PREMIUM-DEFIC
+    END-IF
+*
+    UPDATE (1792)
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE WRITE-SUNGARD
+* * * * * * * * * * * * * * * *
+*
+FOR #I1 1 TO 27
+  IF SUN-TRAN (#I1) = ' ' OR = '0000'                                /* SAG
+    ESCAPE TOP
+  END-IF
+*
+  IF #I1 GT 14
+    WRITE STATUS-VIEW.ID-NUMBER 'Sungard table at index' #I1
+  END-IF
+*
+  MOVE SUN-TRAN (#I1) TO  #SUN-TRAN                                  /* SAG
+  MOVE SUN-CAT1 (#I1) TO  #SUN-CAT-1                                 /* SAG
+  MOVE SUN-CAT2 (#I1) TO  #SUN-CAT-2                                 /* SAG
+*
+  IF SUN-AMT (#I1) LT 0                                              /* SAG
+    COMPUTE #SUN-AMT = SUN-AMT (#I1) * -1                            /* SAG
+    MOVE '-' TO #SUN-AMT-SIGN
+  ELSE
+    MOVE SUN-AMT  (#I1) TO  #SUN-AMT                                 /* SAG
+    RESET #SUN-AMT-SIGN
+  END-IF
+*
+  MOVE #SUNGARD-SOURCE TO  #SUN-SOURCE
+  MOVE STATUS-VIEW.ID-NUMBER TO #SUN-CN
+*
+  IF SUN-SEG (#I1) = 0                                               /* SAG
+    MOVE 1 TO SUN-SEG (#I1)                                          /* SAG
+  END-IF
+*
+  MOVE SUN-SEG (#I1) TO #POL-SEG                                     /* SAG
+  CALLNAT 'GPLNMSXX' #SUN-POL-NUM STATUS-VIEW.ID-NUMBER #POL-SEG
+*
+  WRITE WORK 3 #SUNGARD
+  ADD 1 TO #SUN-OUT
+END-FOR
+*
+END-SUBROUTINE
+*
+
+DEFINE INIT-FILES
+/*     ==========
+IF *SERVER-TYPE = 'DEVELOP'
+  COMPRESS #DIR '01' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 1 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '02' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 2 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '03' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 3 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '04' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 4 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '05' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 5 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '06' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 6 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '07' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 7 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '08' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 8 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '09' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 9 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '10' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 10 #FNAME TYPE 'ASCII-COMPRESSED'
+  COMPRESS #DIR '11' INTO #FNAME LEAVING NO
+  DEFINE WORK FILE 11 #FNAME TYPE 'ASCII-COMPRESSED'
+END-IF
+END-SUBROUTINE
+END

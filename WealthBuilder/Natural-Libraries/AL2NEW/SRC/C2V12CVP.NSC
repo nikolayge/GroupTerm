@@ -1,0 +1,1050 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 5
+* <Natural Source Header
+*****************************************************************************
+*                       MODIFICATION LOG                                    *
+* USER DATE      TAG  REASON                                                *
+* SAG 10282005   RH1  AB - Replaced CALL to Cobol with CALLNAT to Natural   *
+* SAG 20060303   RH1  AS - Uncommented code which had been previously       *
+*                         commented out.                                    *
+* PAM 20080116   PM2  Changed processing for AT premium rating              *
+* DRW 08/22/2008 DW21 Gen Plus Processing                                   *
+* PAM 01/07/2010 PM3  Revised issue date for applications                   *
+* PAM 11/17/2010 PM4  Temporary fix for longer names                        *
+* NGG 10/02/2012 NG1  CN Expansion Project - New beneficiary database file  *
+* YAK 10/16/2012 YK1  Use function to identify Level Term II plans          *
+* TMT 06/18/2014 TT1  Contact Normalization - Gender and DOB                *
+* vxt 07/15/2014 vt1  Fix the issue with not showing DOB and SEX when it is a general projection choosen.
+* NGG 20141023   NG1  Annuity life products
+*****************************************************************************
+FORMAT LS=133
+MOVE *DATN TO #CURR-DATN
+*
+* write 'top of c2v12cvp sufix=' #cga-scr-suffix #cga-orig-suffix
+IF *DEVICE = 'BATCH'
+  MOVE #MAX-PAG-LINES TO #PAGE-LENGTH
+ELSE
+  MOVE #MAX-SCN-LINES TO #PAGE-LENGTH
+END-IF
+*
+IF (#CGA-ISN = 0) AND (#CGA-SCR-ID NE 0) /* ent id/ssn not found as MBR
+  IF (#CGA-SCR-ID GE 500000) AND (#CGA-SCR-ID LT 700000) /* APPL ID ENT
+    FIND (1) APPL-V WITH ID-NUMBER = #CGA-SCR-ID
+      IF NO RECORDS FOUND
+        IF *DEVICE = 'BATCH'
+          ESCAPE ROUTINE
+        END-IF
+*
+        MOVE '"AT" ID Not found' TO #ERR-TEXT
+        PERFORM SHOW-ERROR
+      END-NOREC
+      MOVE TRUE TO #USE-AT
+      MOVE *ISN TO #CGA-ISN
+    END-FIND
+  ELSE
+    MOVE FALSE TO #SSN-FOUND
+    IF #CGA-SCR-ID GE 999999   /* ssn ENTERED
+      FIND APPL-V WITH SSN = #CGA-SCR-ID
+        IF APPL-V.INTRO-FLAG = 'V'
+          ESCAPE TOP
+        ELSE
+          MOVE TRUE TO #SSN-FOUND
+        END-IF
+*
+        MOVE TRUE TO #USE-AT
+        MOVE *ISN TO #CGA-ISN
+        ESCAPE BOTTOM
+      END-FIND
+*
+      IF NOT #SSN-FOUND
+        IF *DEVICE = 'BATCH'
+          ESCAPE ROUTINE
+        END-IF
+*
+        MOVE 'SSN NOT FOUND' TO #ERR-TEXT
+        PERFORM SHOW-ERROR
+      END-IF
+    ELSE
+*      IF #CGA-SCR-ID LT 200000  /* CN ENTERED
+      IF #CGA-SCR-ID LT 500000   /* CN ENTERED NG1
+        FIND (1) VP-S01 WITH MEMBER-KEY = #CGA-ID-G
+          IF NO RECORDS FOUND
+            IF *DEVICE = 'BATCH'
+              ESCAPE ROUTINE
+            END-IF
+*
+            MOVE 'SSN NOT FOUND' TO #ERR-TEXT
+            PERFORM SHOW-ERROR
+          END-NOREC
+          MOVE *ISN TO #CGA-ISN
+        END-FIND
+      ELSE
+        IF *DEVICE = 'BATCH'
+          ESCAPE ROUTINE
+        END-IF
+*
+        MOVE 'ID/SSN NOT FOUND' TO #ERR-TEXT
+        PERFORM SHOW-ERROR
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+RESET #TOT-FACE
+IF (#CGA-SCR-ID NE 0) AND (NOT #USE-AT)   /* BLANK VP OPTION
+  GET VP-S01 #CGA-ISN
+  GET #PR-V  #CGA-ISN
+  FOR #I1 1 TO 9
+    IF STATUS (#I1) NE 'D'
+      ESCAPE TOP
+    END-IF
+*
+    IF PAY-STATUS (#I1) = '44' OR = '45'
+      IF ISSUE-DATE (#I1) LT 18841201
+        ADD (NUM-MBRSHIPS (#I1) * 5000) TO #TOT-FACE
+      ELSE
+        ADD (VP-S01.EXPIRY-DAY (#I1) * 5000) TO #TOT-FACE
+      END-IF
+    ELSE
+      ADD FACE-AMOUNT (#I1) TO #TOT-FACE
+    END-IF
+*
+    IF VP-S01.MTD-ACV-PREM-ADJ (#I1) NE 9999999.99
+      ADD VP-S01.MTD-ACV-PREM-ADJ (#I1)
+        TO #PR-V.ACC-CASH-VALUE (#I1)
+      ADD VP-S01.MTD-ACV-PREM-ADJ (#I1)
+        TO #PR-V.CASH-VALUE (#I1)
+    END-IF
+*
+    IF VP-S01.MTD-ACV-INT-ADJ (#I1) NE 99999.99
+      ADD VP-S01.MTD-ACV-INT-ADJ (#I1)
+        TO #PR-V.ACC-CASH-VALUE (#I1)
+      ADD VP-S01.MTD-ACV-INT-ADJ (#I1)
+        TO #PR-V.CASH-VALUE (#I1)
+    END-IF
+*
+    IF VP-S01.MTD-ACV-COI-ADJ (#I1) NE 99999.99
+      SUBTRACT VP-S01.MTD-ACV-COI-ADJ (#I1)
+        FROM #PR-V.ACC-CASH-VALUE (#I1)
+      SUBTRACT VP-S01.MTD-ACV-COI-ADJ (#I1)
+        FROM #PR-V.CASH-VALUE (#I1)
+    END-IF
+*
+    IF   (#PR-V.ISSUE-DATE (#I1) GT *DATN - 10000)
+        AND  (VP-S01.X-FIRST-PLACE-FEE (#I1) GT 400.00)  /* pusp not yet pd
+      MOVE VP-S01.TOT-PREMIUMS-PAID (#I1) TO
+        #PR-V.ACC-CASH-VALUE (#I1)
+        #PR-V.CASH-VALUE (#I1)
+    END-IF
+  END-FOR
+END-IF
+*
+IF  (#CGA-SCR-ID = 0)
+    OR (#CGA-ORIG-SUFFIX = 'ADD' OR = 'FLX')
+    OR (#USE-AT)
+    OR (#CGA-ORIG-COMMAND = 'AV')
+  PERFORM INITIALIZE-BLANK-VP
+END-IF
+*
+RESET #MR-VP
+IF  ((*DEVICE = 'BATCH') AND (#CGA-ORIG-SUFFIX = 'MR'))
+    OR  (#CGA-ORIG-SUFFIX = 'MR')  /* ONLINE MR VP
+  FIND (1) MR-V WITH ID-NUMBER = #CGA-SCR-ID
+    IF NO RECORDS FOUND
+      WRITE 'NO "MR" REC FOUND FOR VP REQUEST FOR' #CGA-SCR-ID
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    IF VP-IND NE ' '   /* A VP WAS REQUESTED
+      MOVE TRUE TO #MR-VP
+    ELSE
+      WRITE 'NO "MR" VP INDICATOR FOUND FOR' #CGA-SCR-ID
+    END-IF
+  END-FIND
+END-IF
+*
+IF #USE-AT
+  PERFORM LOAD-APPL-INFO
+  IF #CGA-SCR-SUFFIX = 'GPL'                     /* DW21
+    MOVE 'GPL' TO APPL-V.PLAN PLAN (#IDX)
+  END-IF
+*
+  IF #CGA-SCR-SUFFIX = 'GP2'                     /*TT1
+    MOVE 'GP2' TO APPL-V.PLAN PLAN (#IDX)
+  END-IF
+*
+  IF (LUMP-SUM NE 0) OR (EXCH-1035 NE 0)
+*     OR (NOT APPL-V.PLAN ='7P' OR='20' OR='30' OR='OL' OR='GPL' OR='GP' OR='GP2' OR='S1')
+*     OR = 'S1' OR = 'AL')    /* DW5
+      OR NOT (APPL-V.PLAN
+      ='7P' OR='20' OR='30' OR='OL' OR='GPL' OR='GP' OR='GP2' OR='S1'
+      OR IS-ANNUITY-LIFE (< APPL-V.PLAN >))   /* NG2
+    MOVE 'FLX' TO #CGA-ORIG-SUFFIX
+  END-IF
+END-IF
+*
+IF #CGA-ORIG-SUFFIX = 'FLX'
+  IF #CGA-ORIG-COMMAND = 'AV'
+    MOVE '"AV" invalid with "FLX"' TO #ERR-TEXT
+    PERFORM SHOW-ERROR
+  END-IF
+*
+  MOVE (AD=P) TO #FLX-CV #PLAN-CV
+  MOVE TRUE TO #PAYS-DUES
+  IF #USE-AT
+    #PREM-RATING := APPL-V.RATING-CODE              /* PM2
+    MOVE LUMP-SUM  TO #LUMP-PMT
+    MOVE EXCH-1035 TO #EXCH-1035
+*
+    IF (LUMP-SUM NE 0) OR (EXCH-1035 NE 0)
+        OR (NOT APPL-V.PLAN = '7P' OR = '20' OR = '30' OR = 'OL' OR = 'S1')
+      IF APPL-V.PLAN = MASK (NN)
+        MOVE APPL-V.PLAN-N TO #NUM-YEARS
+      ELSE
+        IF APPL-V.PLAN = MASK (N.)
+          MOVE APPL-V.PLAN-N1 TO #NUM-YEARS
+        END-IF
+      END-IF
+    END-IF
+*
+    IF (MEMBER-CN NE ' ')  /* existing mbr
+      RESET #PAYS-DUES
+    END-IF
+  ELSE
+    IF #CGA-SCR-ID NE 0   /* existing mbr
+      RESET #PAYS-DUES
+    END-IF
+  END-IF
+*
+  IF VP-S01.INTRO-FLAG = 'S' OR = 'K' OR = 'G'   /* SPS/GEN
+      OR = 'O' OR = 'P' OR = 'Q'   /* INS/ONLY
+    RESET #PAYS-DUES
+  END-IF
+*
+  MOVE VP-S01.INTRO-FLAG TO #INTRO-FLAG
+  MOVE FACE-AMOUNT (#IDX) TO #FAC-AMT
+  MOVE PREM-RATING (#IDX) TO #PREM-RATING
+*
+  MOVE '*' TO #CGA-SCR-COMMAND
+*
+  RESET #SCR-SUFFIX
+*
+  RESET #SEX
+  #SEX := GET-GENDER(<VP-S01.MEMBER-CONTACT-ID>)
+  CALLNAT 'C1602SCO'
+    #CGA-SCR-COMMAND #CGA-SCR-ID #SCR-SUFFIX
+    #CGA-ORIG-COMMAND #CGA-CLERK
+    #PAYS-DUES NAME DATE-OF-BIRTH
+    SMOKER-FLAG (#IDX) #SEX #LUMP-PMT
+    #EXCH-1035 #FAC-AMT #NUM-YEARS #ANN-PREM #DUES-PMT #PREM-AGE
+    #FLEX-POLICY #PREM-RATING
+*
+  IF #SCR-SUFFIX = 'GPL'                    /* DW21
+    MOVE 'GPL' TO APPL-V.PLAN PLAN (#IDX) #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+    RESET #FLX-CV #PLAN-CV
+  ELSE                                                                       /* TT1 BEGIN
+    IF #SCR-SUFFIX = 'GP2'
+      MOVE 'GP2' TO APPL-V.PLAN PLAN (#IDX) #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX
+      RESET #FLX-CV #PLAN-CV                                                 /* TT1 END
+    ELSE                                       /* END DW21
+      IF #NUM-YEARS = 0 OR = 999    /* DW5
+        IF  #NUM-YEARS = 999
+          MOVE 'AL' TO PLAN (#IDX)  /* NG2  ?
+        ELSE
+          MOVE 'SPF' TO PLAN (#IDX)
+        END-IF
+*
+        MOVE '47'  TO PAY-STATUS (#IDX)
+        RESET ANNUAL-PREM (#IDX)
+        COMPUTE CASH-VALUE (#IDX) = #EXCH-1035 + #ANN-PREM - #DUES-PMT
+          + #LUMP-PMT
+      ELSE
+        MOVE #ANN-PREM TO ANNUAL-PREM (#IDX)
+        COMPRESS #NUM-YEARS 'F' INTO PLAN (#IDX) LEAVING NO
+        COMPUTE CASH-VALUE (#IDX) = #LUMP-PMT + #EXCH-1035
+      END-IF
+*
+      MOVE #PREM-RATING      TO PREM-RATING    (#IDX)
+      MOVE CASH-VALUE (#IDX) TO ACC-CASH-VALUE (#IDX)
+      MOVE CASH-VALUE (#IDX) TO VP-S01.TOT-PREMIUMS-PAID (#IDX)
+      MOVE #FAC-AMT          TO FACE-AMOUNT       (#IDX)
+      MOVE #PREM-AGE-A       TO ISSUE-AGE         (#IDX)
+      RESET X-LOAN-AMOUNT (#IDX)  X-LOAN-AMOUNT-2 (#IDX)
+      RESET LAST-ANN-CASH-VALUE (#IDX)
+      RESET MIN-CASH-VALUE (#IDX) NXT-YR-MIN-CASH-VALUE (#IDX)
+    END-IF
+  END-IF
+END-IF
+*
+MOVE VP-S01.NAME TO #SCR-NAME
+SEPARATE VP-S01.NAME LEFT INTO #LAST-NAME #FIRST-NAME #OVFLW-NAME
+  WITH DELIMITER #COMMA
+*
+COMPRESS #FIRST-NAME #LAST-NAME INTO #L-SWITCHED-NAME
+*
+IF #OVFLW-NAME > '   '
+  COMPRESS #L-SWITCHED-NAME ',' INTO #HOLD-NAME LEAVING NO SPACE
+  COMPRESS #HOLD-NAME #OVFLW-NAME INTO #L-SWITCHED-NAME
+END-IF
+*
+PERFORM FORMAT-MENU
+*
+IF #MR-VP AND (VP-IND = '1' OR = '3') /* BYPASS CURRENT POLICIES
+  RESET #SCR-SELECTION (*)
+END-IF
+*
+IF #CGA-SCR-SUFFIX = 'OPT'
+  INPUT TEXT #SCR-TEXT USING MAP 'C2V18MVP'
+  PERFORM CHECK-AST
+END-IF
+*
+REPEAT  /* MAJ LOOP FOR NON 'OVR' 'RF'
+  IF   (#SCR-SELECTION(1) = ' ')
+      AND (#SCR-SELECTION(2) = ' ')
+      AND (#SCR-SELECTION(3) = ' ')
+      AND (#SCR-SELECTION(4) = ' ')
+      AND (#SCR-SELECTION(5) = ' ')
+      AND (#SCR-SELECTION(6) = ' ')
+      AND (#SCR-SELECTION(7) = ' ')
+      AND (#SCR-SELECTION(8) = ' ')
+      AND (#SCR-SELECTION(9) = ' ')
+*   IF #CGA-SCR-SUFFIX = 'OPT'  /* DW10  #OO-TOT stuff can be removed
+*     RESET #OO-DT (*) #OO-AGE (*) #OO-RET-CSV (*) #OO-RET-DB(*)
+*          #OO-OO-CSV (*) #OO-OO-DB(*)
+*     COMPRESS '*** SUMMARY OF ALL POLICIES THAT INCLUDE G/F SERVICES ('
+*          #OO-NUM-WL ')***' TO #SCR-PROJ-LINE (2) LEAVING NO
+*     RESET #I1
+*     FOR #OO-X 1 TO 5
+*       IF #OO-TOT-AGE (#OO-X) = ' ' OR = '***'
+*         ESCAPE TOP
+*       END-IF
+*
+*       ADD 1 TO #I1
+*       MOVE #OO-TOT-DT  (#OO-X) TO #OO-DT  (#I1)
+*       MOVE #OO-TOT-AGE (#OO-X) TO #OO-AGE (#I1)
+*       MOVE EDITED #OO-TOT-RET-CSV (#OO-X) (EM=Z,ZZZ,ZZZ)
+*          TO #OO-RET-CSV (#I1)
+*       COMPRESS '$' #OO-RET-CSV(#I1)
+*          INTO #OO-RET-CSV(#I1) LEAVING NO
+*       MOVE EDITED #OO-TOT-RET-DB (#OO-X) (EM=Z,ZZZ,ZZZ)
+*          TO #OO-RET-DB (#I1)
+*       COMPRESS '$' #OO-RET-DB (#I1)
+*          INTO #OO-RET-DB (#I1) LEAVING NO
+*       MOVE EDITED #OO-TOT-OO-CSV (#OO-X) (EM=Z,ZZZ,ZZZ)
+*          TO #OO-OO-CSV(#I1)
+*       COMPRESS '$' #OO-OO-CSV (#I1)
+*          INTO #OO-OO-CSV (#I1) LEAVING NO
+*       MOVE EDITED #OO-TOT-OO-DB (#OO-X) (EM=Z,ZZZ,ZZZ)
+*          TO #OO-OO-DB (#I1)
+*       COMPRESS '$' #OO-OO-DB  (#I1)
+*          INTO #OO-OO-DB (#I1) LEAVING NO
+*     END-FOR
+*
+*     INPUT USING MAP 'C2V19MVP'
+*
+*     IF #CGA-SCR-COMMAND = '*'
+*       MOVE 'VP' TO #CGA-SCR-COMMAND
+*     END-IF
+*     PERFORM FETCH-G1000PXX
+*   END-IF
+*
+    IF *DEVICE = 'BATCH'  /* MUST BE A MR VP- end of policies
+        OR #MR-VP
+      IF #MR-VP    /* 1 or 2 means check if new projs were requested
+        MOVE 1 TO #ISC
+        PERFORM DO-MR-NEW-PROJS
+      END-IF
+      ESCAPE ROUTINE
+    ELSE
+      IF #ONLY-1
+        MOVE 'VP' TO #CGA-SCR-COMMAND
+        MOVE #CGA-ORIG-ID TO #CGA-SCR-ID
+        RESET #CGA-SCR-SUFFIX
+        PERFORM FETCH-G1000PXX
+      END-IF
+    END-IF
+*
+    #LONG-NAME := #SCR-NAME                             /* PM4
+    INPUT MARK *#SCR-SELECTION(1) USING MAP 'C2V10MVP'
+    PERFORM CHECK-AST
+  END-IF
+*
+  IF #MR-VP AND (VP-IND = '1' OR = '3')   /* BYPASS CURRENT POLS
+    ESCAPE TOP
+  END-IF
+*
+  FOR #SCR-X = 1 TO 9
+    IF #SCR-SELECTION (#SCR-X) NE ' '
+      MOVE #SCR-X TO #SAVE-SCR-X
+      MOVE #SCR-SAVE-IDX (#SCR-X) TO #IDX
+      MOVE #IDX TO #ISC
+      MOVE PAY-STATUS (#IDX) TO #HOLD-PAY-STATUS
+      ESCAPE BOTTOM
+    END-IF
+  END-FOR
+*
+  IF   (#SCR-X GT 9)
+      OR (#SCR-SELECTION (#SCR-X) = ' ')
+      OR (#SCR-LFT-PAREN (#SCR-X) NE '(')
+    REINPUT WITH 'NO SELECTION REQUESTED'
+  END-IF
+*
+  MOVE X-LOAN-AMOUNT  (#IDX) TO #CURR-LOAN-AMT
+*
+  MOVE X-LOAN-AMOUNT   (#IDX) TO #SCR-OVR-LOAN-AMT
+  MOVE X-LOAN-AMOUNT-2 (#IDX) TO #SCR-OVR-LOAN-AMT-2
+  MOVE X-LOAN-AMOUNT   (#IDX) TO LOAN-AMOUNT    /* to setup correct loan
+*
+  IF X-LOAN-AMOUNT-2 (#IDX) GT 99999.99  /* DW2
+    MOVE 99999.99 TO LOAN-AMOUNT-2
+  ELSE
+    MOVE X-LOAN-AMOUNT-2 (#IDX) TO LOAN-AMOUNT-2
+  END-IF
+*
+  MOVE X-INTEREST-RATE (#IDX) TO INTEREST-RATE  /* & rate
+*
+  IF X-LOAN-AMOUNT (#IDX) = 0
+    RESET #SCR-OVR-LOAN-INT-RATE
+  ELSE
+    MOVE X-INTEREST-RATE-5 (#IDX) TO #SCR-OVR-LOAN-INT-RATE
+  END-IF
+  MOVE ACC-CASH-VALUE (#IDX) TO #HOLD-ACV
+  MOVE CASH-VALUE     (#IDX) TO #HOLD-CSV
+  MOVE MIN-CASH-VALUE (#IDX) TO #HOLD-MCV
+  MOVE NXT-YR-MIN-CASH-VALUE (#IDX) TO #HOLD-NYMCV
+  MOVE NXT-MON-CASH-VALUE (#IDX)    TO #HOLD-NMCSV
+  MOVE PREM-RATING (#IDX) TO #PREM-RATING
+*
+  MOVE ISSUE-AGE (#IDX) TO #YRS-TO-100-2
+  COMPUTE #YRS-TO-100 = 100 - (#YRS-TO-100 + LAST-DURATION (#IDX))
+  IF #SCR-OVR-NUM-YRS GT #YRS-TO-100
+    MOVE 99 TO #SCR-OVR-NUM-YRS
+  END-IF
+*
+  REPEAT                  /* LOOP FOR 'OVR' 'RF' PROCESSING
+    MOVE #HOLD-ACV TO ACC-CASH-VALUE (#IDX) /* reset for after paid-up
+    MOVE #HOLD-CSV TO CASH-VALUE     (#IDX) /* calcs
+    MOVE #HOLD-MCV TO MIN-CASH-VALUE (#IDX)
+    MOVE #HOLD-NYMCV TO NXT-YR-MIN-CASH-VALUE (#IDX)
+    MOVE #HOLD-NMCSV TO NXT-MON-CASH-VALUE (#IDX)
+    MOVE ANNUAL-PREM(#IDX) TO #OLD-ANN-PREM /* hold 4 tot-prm paid calc
+*
+    RESET #OVERRIDE
+    IF  (#CGA-ORIG-SUFFIX = 'OVR' OR = 'OVP'  /* OVR EXISTING MBR
+        OR = 'ADD' OR = 'FLX') /* ADD INS OPTION
+        OR (#CGA-ORIG-SUFFIX = MASK ('IP')) /* INT PROJ
+        OR (#CGA-ORIG-ID = 0)              /* BLANK VP OPTION
+        OR (#CGA-ORIG-COMMAND = 'AV')      /* AV COMMAND
+        OR (#USE-AT)
+      IF #CGA-ORIG-COMMAND = 'AV'
+        MOVE (AD=P) TO #SCR-AV-OVR-CV #NUM-YRS-CV #PLAN-CV
+      END-IF
+*
+      MOVE TRUE TO #OVERRIDE
+      PERFORM OVERRIDE-PROCESS
+    ELSE
+      MOVE PLAN (#IDX) TO #SCR-OVR-PLAN #HOLD-PLAN
+    END-IF
+*
+    IF   (#CGA-ORIG-SUFFIX = 'PUR' OR = 'OVP')
+        AND (PAY-STATUS (#IDX) = '47' OR = '48')
+      MOVE 'Y' TO #SCR-OVR-SNG-PREM
+      MOVE 'PUR' TO #CGA-ORIG-SUFFIX
+      PERFORM OVERRIDE-PROCESS
+    END-IF
+*
+*   IF #CGA-ORIG-COMMAND = 'AV'
+*     MOVE 'AV' TO #CGA-SCR-COMMAND
+*     PERFORM AV-PROCESSING
+*     FETCH 'G1000PXX'
+*   END-IF
+*
+    IF #CGA-ORIG-COMMAND = 'AV'                            /*SAG 20060303 RH1 AS
+      MOVE 'AV' TO #CGA-SCR-COMMAND                        /*SAG 20060303 RH1 AS
+      PERFORM AV-PROCESSING                                /*SAG 20060303 RH1 AS
+      FETCH 'G1000PXX'                                     /*SAG 20060303 RH1 AS
+    END-IF                                                 /*SAG 20060303 RH1 AS
+*
+    PERFORM CALC-ACQ  /* DW2
+*
+    PERFORM SETUP-PROJECTION
+    PERFORM BUILD-PAGE-1
+*
+    IF #REFRESH   /* IF 'RF' ENT DURING SHOW CALCS
+      RESET #REFRESH
+    ELSE
+      MOVE '*' TO #CGA-SCR-COMMAND
+*
+      IF *DEVICE = 'BATCH'
+        WRITE (8) NOTITLE USING FORM 'C2V13FVP'
+      ELSE
+        IF #CGA-SCR-SUFFIX = 'OPT'
+*         COMPRESS 'Pol' #POL-# 'of' #TOT-WL-POLS INTO #TEXT-13 /* DW10
+          RESET #CGA-SCR-SUFFIX #CGA-ORIG-SUFFIX     /* DW10
+          INPUT TEXT #TEXT-13 USING MAP 'C2V19MVP'
+*
+          PERFORM CHECK-AST
+        ELSE
+*         IF PLAN (#IDX) = 'AL'   /* DW5
+          IF IS-ANNUITY-LIFE (< PLAN (#IDX) >)  /* NG2
+            IF PLAN(#IDX) = 'AL2'                         
+              #MAP-FIRST-LINE   := #AL2-FIRST-LINE
+              #MAP-SECOND-LINE  := #AL2-SECOND-LINE
+            ELSE
+              #MAP-FIRST-LINE   := #AL-FIRST-LINE
+              #MAP-SECOND-LINE  := #AL-SECOND-LINE
+            END-IF                                         
+            INPUT TEXT #SCR-TEXT USING MAP 'C2V20MVP'
+          ELSE
+            IF ISSUE-DATE(#IDX) GE 19970101   /* DW2
+              IF PLAN (#IDX) = 'GPL' OR = 'GP'                   /* DW21
+                INPUT TEXT #SCR-TEXT USING MAP 'C2V22MVP'
+              ELSE                                               /* TT1 BEGIN
+                IF PLAN (#IDX) = 'GP2' THEN
+                  INPUT TEXT #SCR-TEXT USING MAP 'C2V23MVP'
+                ELSE                                             /* TT1 END
+                  INPUT TEXT #SCR-TEXT USING MAP 'C2V21MVP'
+                END-IF
+              END-IF
+            ELSE
+              INPUT TEXT #SCR-TEXT USING MAP 'C2V18MVP'
+            END-IF
+          END-IF
+          PERFORM CHECK-AST
+*
+          IF  (#CGA-ORIG-ID = 0)
+              OR (#CGA-ORIG-SUFFIX = 'ADD' OR = 'FLX')
+            MOVE 'Press ENTER to see cost indices' TO #SCR-TEXT
+            MOVE '*' TO #CGA-SCR-COMMAND
+          END-IF
+*
+          INPUT TEXT #SCR-TEXT USING MAP 'C2V13MVP'
+          RESET #SCR-TEXT
+          PERFORM CHECK-AST
+*
+          IF  ((#CGA-ORIG-ID = 0)
+              OR (#CGA-ORIG-SUFFIX = 'ADD' OR = 'FLX'))
+              AND (NOT PLAN (#IDX) = 'GP' OR = 'GPL' OR = 'GP2')       /* TT1           /* DW21
+            INPUT TEXT #SCR-TEXT USING MAP 'C2V14MVP'  /* COST INDICES
+            PERFORM CHECK-AST
+          END-IF
+        END-IF
+*
+        IF #OVERRIDE
+          ESCAPE TOP
+        END-IF
+      END-IF
+    END-IF
+*
+    IF  (#CGA-SCR-COMMAND = 'RF')
+        AND ((#CGA-SCR-ID = #CGA-ORIG-ID)
+        OR (#CGA-SCR-ID = 0))
+      IF  (#CGA-ORIG-SUFFIX = 'OVR' OR = 'OVP')
+          OR (#CGA-ORIG-SUFFIX = MASK ('IP')) /* INT PROJ
+          OR (#CGA-ORIG-ID = 0)
+        IGNORE
+      ELSE
+        RESET #SCR-SELECTION (*)
+        ESCAPE BOTTOM
+      END-IF
+    ELSE
+      IF  (#CGA-SCR-COMMAND NE '*')
+          OR (#CGA-SCR-ID NE #CGA-ORIG-ID)
+          OR (#CGA-SCR-SUFFIX NE #CGA-ORIG-SUFFIX)
+          OR (#ONLY-1 AND (#CGA-SCR-COMMAND NE 'RF')
+          AND (*DEVICE NE 'BATCH'))
+        IF #CGA-SCR-COMMAND = '*'
+          MOVE 'VP' TO #CGA-SCR-COMMAND
+        END-IF
+*
+        FETCH 'G1000PXX'
+      END-IF
+*
+      MOVE '*' TO #CGA-SCR-COMMAND
+      RESET #SCR-SELECTION (#SAVE-SCR-X) /* flag as done
+      ESCAPE BOTTOM
+    END-IF
+  END-REPEAT  /* (0426)  'OVR' 'RF' LOOP
+END-REPEAT  /* (0304)  NON 'OVR' 'RF' LOOP
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE FORMAT-MENU
+*
+MOVE '*' TO #CGA-SCR-COMMAND
+MOVE *DATN         TO #YYYYMMDD
+MOVE #YYYY         TO #SCR-OVR-START-YEAR
+*
+MOVE #L-SWITCHED-NAME TO #SCR-OVR-NAME         /* TT1
+if #scr-ovr-name ne ' '                                                           /* vt1
+  RESET #SEX                                     /* TT1
+  #SEX := GET-GENDER(<#PR-V.MEMBER-CONTACT-ID>)  /* TT1
+  MOVE #SEX    TO #SCR-OVR-SEX                   /* TT1
+  RESET DATE-OF-BIRTH                                                   /* TT1    /* vt1
+  DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<#PR-V.MEMBER-CONTACT-ID>)          /* TT1   /* vt1
+end-if                                                                            /* vt1
+*
+IF ID-NUMBER NE 0
+  MOVE ID-NUMBER     TO #SCR-OVR-CERT-NO
+END-IF
+*
+* RESET DATE-OF-BIRTH                                                   /* TT1    /* vt1
+* DATE-OF-BIRTH := GET-DATE-OF-BIRTH(<#PR-V.MEMBER-CONTACT-ID>)          /* TT1   /* vt1
+* *
+IF DATE-OF-BIRTH NE 0
+  MOVE DOB-MM        TO #SCR-OVR-DOB-MM
+  MOVE DOB-DD        TO #SCR-OVR-DOB-DD
+  MOVE DOB-CENT      TO #SCR-OVR-DOB-CENT
+  MOVE DOB-YY        TO #SCR-OVR-DOB-YY
+END-IF
+MOVE DATE-OF-BIRTH TO #OVR-DOB
+*
+MOVE 0 TO #SCR-X
+RESET #OPT-FOUND   /* DW99
+*
+FOR #IDX = 1 TO 9
+  IF STATUS (#IDX) = 'D'
+*    IF  (PLAN (#IDX) = 'RT' OR = 'LT' OR = 'SO' OR = 'FSO')
+*    OR ((PLAN-1A (#IDX) GE ('U')) AND  (PLAN-1A (#IDX) LE ('Z')))     /* YK1
+    IF  (PLAN (#IDX) = 'SO' OR = 'FSO')                               /* YK1
+        OR FUNCTION-TERM-POLICY(<PLAN(#IDX)>)                             /* YK1
+      ESCAPE TOP
+    END-IF
+  ELSE
+    IF (STATUS (#IDX) = 'E' OR = 'F' OR = 'G')
+        AND (#CGA-ORIG-SUFFIX = 'PUR' OR = 'OVP')
+      IGNORE
+    ELSE
+      ESCAPE TOP
+    END-IF
+  END-IF
+*
+  IF #IDX GT VP-S01.C*ACTIVE-SEGMENTS
+    ESCAPE BOTTOM
+  END-IF
+*
+  ADD 1 TO #SCR-X
+*
+  CALLNAT 'GPLNMSXX' #SCN-POLICY-NUMBER ID-NUMBER #IDX /* build POL-#
+  MOVE #SCN-POLICY-NUMBER TO #SCR-POL-NUM (#SCR-X)
+*
+  MOVE EDITED FACE-AMOUNT (#IDX) (EM=ZZZ,ZZ9.99) TO #SCR-FACE (#SCR-X)
+  COMPRESS '$' #SCR-FACE (#SCR-X) INTO #SCR-FACE (#SCR-X) LEAVING NO
+  MOVE PLAN (#IDX) TO #SCR-PLAN (#SCR-X)
+*
+  MOVE ISSUE-DATE (#IDX) TO #YYYYMMDD
+  COMPRESS #MM #DD #YYYY INTO #SCR-EFF-DATE(#SCR-X) WITH #SLASH
+  MOVE '(' TO #SCR-LFT-PAREN (#SCR-X)
+  MOVE ')' TO #SCR-RGT-PAREN (#SCR-X)
+  MOVE #IDX TO #SCR-SAVE-IDX (#SCR-X)
+*
+  IF  ((*DEVICE = 'BATCH')
+      OR  ((#CGA-SCR-SUFFIX = 'OPT') AND ((ISSUE-DATE (#IDX) LT 19970101)
+      OR (MONTH-ALLOC-AMT (#IDX) = 999.99))))
+      AND NOT #OPT-FOUND          /* DW99
+    IF #CGA-SCR-SUFFIX = 'OPT'  /* Find 1st policy DW99
+      MOVE TRUE TO #OPT-FOUND
+    END-IF
+*
+    MOVE 'X' TO #SCR-SELECTION (#SCR-X)
+    ADD 1 TO #TOT-WL-POLS
+  END-IF
+END-FOR  /* (0606)
+*
+IF #SCR-X = 1
+  MOVE 'X' TO #SCR-SELECTION (1)
+  MOVE 1   TO #IDX
+  MOVE TRUE TO #ONLY-1
+END-IF
+*
+FOR #IDX = 1 TO 9
+  IF #SCR-LFT-PAREN(#IDX) NE '('
+    MOVE (AD=P) TO #SEL-CV(#IDX)
+  END-IF
+END-FOR
+*
+END-SUBROUTINE  /* (0573)
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE CALL-AOCX2V6A
+* * * * * * * * * * * * * * * * *
+*
+CALLNAT 'C1601SCO'
+  #CGA-ORIG-COMMAND
+  #CGA-ORIG-ID
+  #CGA-ID
+  #CGA-ORIG-SUFFIX
+  #TO-PLAN
+  #SCR-OVR-SEX
+  #IDX
+  #TRAN-DATE
+  #PR-V.STATUS          (1:9)
+  #PR-V.PLAN            (1:9)
+  #PR-V.ONLINE-ACTION   (1:9)
+  #PR-V.MODE            (1:9)
+  #PR-V.CONVERSION-FLAG (1:9)
+  #PR-V.SMOKER-FLAG     (1:9)
+  #PR-V.ISSUE-AGE       (1:9)
+  #PR-V.PAY-STATUS      (1:9)
+  #PR-V.ISSUE-DATE      (1:9)
+  PAID-TO-DATE                     (1:9)
+  #PR-V.FACE-AMOUNT     (1:9)
+  #PR-V.ANNUAL-PREM     (1:9)
+  #PR-V.LAST-DURATION   (1:9)
+  #PR-V.CASH-VALUE      (1:9)
+  #PR-V.DEATH-BENEFIT   (1:9)
+  #PR-V.NUM-MBRSHIPS    (1:9)
+  #PR-V.DURATION        (1:9)
+  #PR-V.MONTH-IND       (1:9)
+  #PR-V.MIN-CASH-VALUE  (1:9)
+  #PR-V.NXT-YR-MIN-CASH-VALUE (1:9)
+  #PR-V.NXT-MON-CASH-VALUE    (1:9)
+  #PR-V.NXT-MON-DEATH-BENEFIT (1:9)
+  #PR-V.ACC-CASH-VALUE        (1:9)
+  #PR-V.CONV-DURATION         (1:9)
+  #PR-V.MONTH-ALLOC-AMT       (1:9)
+  #PR-V.PREM-DEFICIENCY       (1:9)
+  #PR-V.BEG-CASH-VALUE        (1:9)
+  #PR-V.NET-PR-RATIO          (1:9)
+  #LINK-604-RSV-VA-DIFF
+  #OUTPUT-OLD-PDUP-AMT
+  #PRORATE-LOAN
+  #RPU-ACV
+  #TOT-LOAN-AMOUNT
+  #TOT-CURR-ACCUM-INT
+  #NU-ANN-PREM
+  #OUTPUT-PREM-DIFF
+  #DUES-DIFF
+  #LUMP-SUM
+*
+END-SUBROUTINE   /* (0670)
+* * * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE INITIALIZE-BLANK-VP
+*
+IF  #CGA-ID = 0
+  MOVE 999999 TO ID-NUMBER
+END-IF
+*
+IF    ((#CGA-ORIG-COMMAND NE 'AV') OR (#CGA-ID = 0))
+    AND (NOT #CGA-ORIG-SUFFIX = 'ADD' OR = 'FLX' OR = 'MR')
+  RESET VP-S01.NAME
+  MOVE 'M' TO #SEX              /* TT1
+  MOVE 0   TO DATE-OF-BIRTH
+END-IF
+*
+RESET STATUS (*)
+RESET LOAN-AMOUNT
+RESET LOAN-AMOUNT-2
+RESET INTEREST-RATE
+RESET ONLINE-ACTION-GN
+RESET RESTRICT-MBR-SW
+MOVE 1 TO NUMBER-MEMBERSHIPS
+MOVE 1 TO VP-S01.C*ACTIVE-SEGMENTS
+*
+MOVE 1 TO #IDX
+MOVE *DATN  TO ISSUE-DATE (#IDX)
+MOVE 'D'    TO STATUS     (#IDX)
+MOVE 'N'    TO SMOKER-FLAG(#IDX)
+MOVE 'N'    TO CONVERSION-FLAG(#IDX)
+MOVE 10000  TO FACE-AMOUNT(#IDX)
+MOVE '1'    TO ONLINE-ACTION(#IDX)
+MOVE '22'   TO PAY-STATUS (#IDX)
+MOVE 1      TO NUM-MBRSHIPS (#IDX)
+MOVE 'OL'   TO PLAN (#IDX)
+MOVE 'G'    TO MODE (#IDX)
+*
+RESET CONV-DURATION (#IDX) /* to reset 999 on vp add on capped
+RESET CASH-VALUE     (#IDX)
+RESET VP-S01.TOT-PREMIUMS-PAID (#IDX)
+RESET ACC-CASH-VALUE (#IDX)
+RESET MIN-CASH-VALUE (#IDX)
+RESET MONTH-ALLOC-AMT (#IDX) /* to ind use new va calcs
+RESET BEG-CASH-VALUE  (#IDX) /*    2/3/2005 RLB
+*
+IF   (#CGA-ORIG-SUFFIX = 'ADD' OR = 'FLX')
+    AND (LAST-SEG-USED LT 9)
+  COMPUTE NUM-MBRSHIPS (#IDX) = LAST-SEG-USED + 1
+END-IF
+*
+END-SUBROUTINE   /* (0723)
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE LOAD-APPL-INFO
+* * * * * * * * * * * * * * * * * *
+*
+MOVE 1 TO #IDX
+MOVE APPL-V.NAME           TO VP-S01.NAME
+MOVE APPL-V.DATE-OF-BIRTH  TO DATE-OF-BIRTH
+MOVE APPL-V.INTRO-FLAG     TO VP-S01.INTRO-FLAG
+* MOVE APPL-V.DATE-RECEIVED  TO ISSUE-DATE (#IDX)    /* PM3
+MOVE *DATN                 TO ISSUE-DATE (#IDX)      /* PM3
+MOVE APPL-V.SMOKER-FLAG    TO SMOKER-FLAG(#IDX)
+MOVE APPL-V.PLAN           TO PLAN (#IDX)
+*
+IF APPL-V.SEX NE ' '
+  MOVE APPL-V.SEX TO #SEX                               /* TT1
+ELSE
+  MOVE 'M' TO #SEX                                      /* TT1
+END-IF
+*
+IF APPL-V.CAP-IND = 'Y'
+  MOVE 999 TO CONV-DURATION (#IDX)
+END-IF
+*
+IF APPL-V.PLAN = MASK (NN)
+  COMPRESS PLAN (#IDX) 'P' INTO PLAN (#IDX) LEAVING NO
+END-IF
+*
+COMPUTE FACE-AMOUNT (#IDX) = (APPL-V.FACE-AMT-UNITS * 1000)
+  + APPL-V.FACE-AMT-DOLS
+MOVE *DATN TO VP-S01.PAID-TO-DATE (#IDX)
+*
+IF APPL-V.PLAN ='SP'
+  MOVE '47' TO PAY-STATUS (#IDX)
+END-IF
+*
+END-SUBROUTINE   /* (0772)
+*
+* * * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE SETUP-PROJECTION
+* * * * * * * * * * * * * * * * * *
+*
+MOVE *DATN TO #YYYYMMDD
+COMPRESS #MM-A #DD-A #YYYY-A
+  INTO #PARM-DATE WITH '/'
+MOVE #IDX                       TO #L-SEGNO
+MOVE VP-S01.C*ACTIVE-SEGMENTS   TO #L-ACTIVE-SEG
+MOVE PAID-TO-DATE (#IDX)        TO #L-PAID-THRU
+*
+FOR #SCR-X 1 TO VP-S01.C*ACTIVE-SEGMENTS
+  IF STATUS (#SCR-X) = 'D'
+    MOVE ISSUE-DATE (#SCR-X) TO #L-ISS-DT (#SCR-X)
+  END-IF
+END-FOR
+*
+COMPUTE #L-GROWTH-RATE = #SCR-OVR-GROWTH-RATE * 1000
+*
+IF #SCR-OVR-MTHLY-VAL = 'Y'
+  MOVE 'M' TO #L-MONTHLY-SW
+ELSE
+  MOVE 'N' TO #L-MONTHLY-SW
+END-IF
+*
+MOVE #SCR-OVR-START-YEAR  TO #L-MNTHLY-START-YR
+MOVE 'PROJ'               TO #L-REIN-CODE
+MOVE #SCR-OVR-NUM-YRS     TO #L-NUM-PROJ-YRS
+MOVE #SCR-OVR-DISPLAY-CALCS TO #L-DISPLAY-CALCS
+MOVE #SCR-OVR-SHOW-LOAN-REPAID TO #L-SHOW-LOAN-REPAID
+*
+IF #CGA-ORIG-COMMAND = 'AV'
+  MOVE 'AV' TO #L-REIN-CODE
+  MOVE 25   TO #L-NUM-PROJ-YRS
+  MOVE 'N'  TO #L-SHOW-LOAN-REPAID
+END-IF
+*
+IF #CGA-SCR-SUFFIX = MASK ('IP')
+  MOVE 'N' TO #L-SHOW-LOAN-REPAID
+  IF #CGA-SCR-SUFFIX = 'IPA'
+    MOVE 'IPRA' TO #L-REIN-CODE
+  ELSE
+    IF #CGA-SCR-SUFFIX = 'IPB'
+      MOVE 'IPRB' TO #L-REIN-CODE
+    ELSE
+      IF #CGA-SCR-SUFFIX = 'IPC'
+        MOVE 'IPRC' TO #L-REIN-CODE
+      ELSE
+        IF #CGA-SCR-SUFFIX = 'IPD'
+          MOVE 'IPRD' TO #L-REIN-CODE
+        ELSE
+          IF #CGA-SCR-SUFFIX = 'IPE'
+            MOVE 'IPRE' TO #L-REIN-CODE
+            MOVE 'Y' TO #L-SHOW-LOAN-REPAID
+          END-IF
+        END-IF
+      END-IF
+    END-IF
+  END-IF
+END-IF
+*
+IF  ((PROCESS-IND = 'O')  /* opted-out of sharing data
+    OR  (#CGA-SCR-SUFFIX = 'OPT'))
+    AND (NOT INTRO-FLAG = 'S' OR = 'K' OR = 'G')
+  IF #CGA-SCR-SUFFIX = 'OPT'
+    MOVE 'O' TO PROCESS-IND
+  END-IF
+END-IF
+*
+MOVE #PREM-RATING TO #L-PREM-RATING
+*
+IF #SCR-OVR-CAP-INT = 'Y'
+  MOVE 'CAP' TO #L-REIN-CODE
+END-IF
+*
+IF #CGA-SCR-SUFFIX = MASK ('LN')
+  IF #CGA-SCR-SUFFIX = 'LN4'
+    MOVE 'LN40' TO #L-REIN-CODE
+  ELSE
+    IF #CGA-SCR-SUFFIX = 'LN5'
+      MOVE 'LN50' TO #L-REIN-CODE
+    END-IF
+  END-IF
+END-IF
+*
+RESET #L-NUM-DTLS  #OO-DT (*)  #OO-AGE (*)
+RESET #OO-RET-CSV (*) #OO-RET-DB (*) #OO-OO-CSV (*) #OO-OO-DB (*)
+*
+* * * *  *  *  *  *
+IF  INTRO-FLAG = 'C' OR = 'B' OR = 'P' OR = 'Q'
+  RESET LOAN-AMOUNT
+END-IF
+*
+* DISPLAY 'DOB' DATE-OF-BIRTH 'NUM/SEG' #L-ACTIVE-SEG 'SEG' #L-SEGNO
+*         'PREM' ANNUAL-PREM (#L-SEGNO)
+*  'CSV' CASH-VALUE (#L-SEGNO)
+*  'DUR' DURATION (#L-SEGNO)
+*  'FAC' FACE-AMOUNT (#L-SEGNO)
+*  'AGE' ISSUE-AGE (#L-SEGNO)
+*  'Pd-THRU' #L-PAID-THRU #L-ISS-DT (#L-SEGNO)
+* WRITE
+*   '1st CALL'
+*   'process-ind' PROCESS-IND
+*   'GRO/RATE' #L-GROWTH-RATE
+*  'ACV' ACC-CASH-VALUE (#L-SEGNO)
+*   'MCSV' MIN-CASH-VALUE (#L-SEGNO)
+*   'NXT/MCSV' NXT-YR-MIN-CASH-VALUE (#L-SEGNO)
+*  'NPR' NET-PR-RATIO (#L-SEGNO)
+*    INTRO-FLAG
+* STOP
+*      KEEP ABOVE <<<<<<<<<<<<
+*
+*
+IF *DEVICE = 'BATCH'
+** SAG RH1 10282005 AB START
+** CALL 'AOCX2V5B' ID-NUMBER
+**   #L-ACTIVE-SEG
+**   #L-NUM-DTLS
+  CALLNAT 'AOCX2V5B'  #PR-V  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+ELSE
+** SAG RH1 10282005 AB START
+** CALL 'AOCX2V5A' ID-NUMBER
+**  #L-ACTIVE-SEG
+**  #L-NUM-DTLS
+  CALLNAT 'AOCX2V5A'  #PR-V  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+END-IF
+*
+IF #CGA-SCR-SUFFIX = 'OPT'
+  MOVE #L-PTY-MEM-AGE (*) TO #OO-MEM-AGE (*)
+  MOVE #L-PTY-PR-CSV (*) TO #OO-CSV (*)
+  MOVE #L-PTY-PR-DB  (*) TO #OO-DB  (*)
+*
+  IF   (*DEVICE NE 'BATCH')
+*
+*   RESET #L-OPT-OUT-ADJ     /* DW9
+    MOVE 'G' TO PROCESS-IND  /* DW9
+*  WRITE
+*    '2st CALL'
+*    'process-ind' PROCESS-IND
+*   'GRO/RATE' #L-GROWTH-RATE
+*  'ACV' ACC-CASH-VALUE (#L-SEGNO)
+** SAG RH1 10282005 AB START
+** CALL 'AOCX2V5A' ID-NUMBER
+**  #L-ACTIVE-SEG
+**  #L-NUM-DTLS
+    CALLNAT 'AOCX2V5A'  #PR-V  #L-MISC-INPUT  #L-OUTPUT-INFO
+** SAG RH1 10282005 AB END
+  END-IF
+END-IF
+END-SUBROUTINE   /* (0809)
+*
+* * * * * * * * * * * * * *
+DEFINE SUBROUTINE SHIFT-DOB
+* * * * * * * * * * * * * *
+MOVE #OVR-DOB-MM TO #SCR-OVR-DOB-MM
+MOVE #OVR-DOB-DD TO #SCR-OVR-DOB-DD
+MOVE #OVR-DOB-CENT TO #SCR-OVR-DOB-CENT
+MOVE #OVR-DOB-YY TO #SCR-OVR-DOB-YY
+*
+END-SUBROUTINE
+*
+* * * * * * * * * * * * * * * * *
+DEFINE SUBROUTINE DATE-REFORMAT
+* * * * * * * * * * * * * * * * *
+*
+IF (#MM GT 00) AND (#MM LT 13)
+  MOVE #MM TO #I1
+  MOVE EDITED #DD (EM=Z9) TO #DD-A
+  COMPRESS #DD #MON (#I1) #YYYY-A INTO #W-DATE-EDITED WITH '-'
+ELSE
+  MOVE '    ?    ' TO #W-DATE-EDITED
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * * * *
+DEFINE SUBROUTINE DO-MR-NEW-PROJS
+* * * * * * * * * *
+*
+FOR #MR-VP-X 1 TO 3
+  IF ASSUM-RET-DATE-X (#MR-VP-X) NE 0
+    PERFORM INITIALIZE-BLANK-VP
+*
+    IF #USE-AT
+      PERFORM LOAD-APPL-INFO
+    END-IF
+*
+    PERFORM OVERRIDE-PROCESS
+    PERFORM SETUP-PROJECTION
+    PERFORM BUILD-PAGE-1
+    RESET #CGA-SCR-COMMAND
+*
+    IF *DEVICE = 'BATCH'
+      WRITE (8) NOTITLE USING FORM 'C2V13FVP'
+    ELSE
+      MOVE '*' TO #CGA-SCR-COMMAND
+      INPUT TEXT #SCR-TEXT USING MAP 'C2V13MVP'
+      PERFORM CHECK-AST
+    END-IF
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+* * * * * * * *
+DEFINE SUBROUTINE SHOW-ERROR
+* * * * * * * *
+*
+INPUT TEXT #ERR-TEXT MARK *#CGA-SCR-ID USING MAP 'G1000MXX'
+PERFORM FETCH-G1000PXX
+*
+END-SUBROUTINE
+*
+* * * * * * *
+DEFINE SUBROUTINE CHECK-AST
+* * * * * * *
+*
+IF #CGA-SCR-COMMAND NE '*'
+  PERFORM FETCH-G1000PXX
+END-IF
+*
+END-SUBROUTINE
+*
+* * * * * * * *
+DEFINE SUBROUTINE FETCH-G1000PXX
+* * * * * * * *
+*
+FETCH 'G1000PXX'
+*
+END-SUBROUTINE
+*
+* * * * * * * *
+DEFINE SUBROUTINE CALC-ACQ /* DW2
+*
+COMPUTE ROUNDED #ACQ-COST = #ACQ-COST-PER-POL + (#ACQ-COSP-PER-1K
+  * FACE-AMOUNT (#IDX) / 1000)
+MOVE EDITED #ACQ-COST (EM=ZZ,ZZ9.99) TO #ACQ-COST-X
+COMPRESS #ACQ-COST-X '.' INTO #ACQ-COST-X LEAVING NO
+*
+END-SUBROUTINE
+*

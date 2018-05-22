@@ -1,0 +1,849 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* PGM-ID: C2010SNM    *** Process Deposits/Lockbox ***
+************************************************************************
+*                       MODIFICATION LOG                               *
+* USER   DATE      TAG     REASON                                      *
+*                                                                      *
+* PAM    05022005  None    Program written.                            *
+* DRW    05122005  DW1     Add #CMBX to pass Combo code                *
+* PAM    07082005  PM2     Always default credit amounts to $0.00      *
+* PAM    08172005  PM3     Allow users to abort process                *
+* PAM    09122005  PM4     Remove separation of Rider and Policy FPF   *
+* PAM    09122005  PM5     Added credit card deposits to process       *
+* PAM    09212005  PM6     Fixed issue for cc greater than FPF         *
+* PAM    11162007  PM7     Credit card deposits now on file. No open   *
+*                          items allowed - stripped all old rider      *
+*                          logic and archived pgm                      *
+* DRW   03/27/2008 DW8     Add CASH CODE Linkage to C2521SAM           *
+* DRW   03/29/2008 DW9     Make Cash Code "A"                          *
+* PAM   09/22/2008 PM10    Overpayments to BADJ, other remains in open *
+*                          item account                                *
+* YAK   05/26/2009 YK1     Enter/Verify CC information                 *
+* YAK   01/08/2010 YK2     Enter/Verify CC information whenever credit *
+*                          card will be used (not only for deposits)   *
+* NGG   01/30/2012 NG1     Changes for premier services                *
+* YAK   09/26/2012 YK3     Use function to identify Level Term II plan *
+*                          Add codes for new Term II plans             *
+* TMT   06/10/2104 TT1     CONTACT NORMALIZATION DOB                   *
+* YAK   07/31/2014 YK4     Fix FPF for Premier services                *
+*                          Change Credit Card indicator to "C"         *
+************************************************************************
+DEFINE DATA
+*
+PARAMETER
+1 #ID-NUMBER                      (N6)
+1 REDEFINE #ID-NUMBER
+  2 #ID-NUMBER-A                   (A6)
+1 #SEGMENT                        (I2)
+1 #FBR-POL-ONLY                   (L)
+1 #CLERK-ID                       (A3)
+1 #DEP-RCVD                       (N7.2)
+1 #CREDIT-CARD-DEPOSIT            (A1)                            /* YK2
+1 #ABORT                          (A1)                            /* PM3
+1 #SVC-FPF                        (N7.2)                          /* YK4
+*
+LOCAL USING C2500AAM
+LOCAL USING OBJAMB01                                              /* NG1
+LOCAL USING SVCA0003                                              /* NG1
+LOCAL
+1 #TEMP7V2                        (N7.2)                          /* NG1
+1 #FPSD-TO-APPLY                  (N7.2)                          /* NG1
+1 #HOLD-FPSD-TO-APPLY             (N7.2)                          /* NG1
+1 #FPF-DUE                        (N7.2)                          /* NG1
+1 #FPF-TO-APPLY                   (N7.2)                          /* NG1
+1 #MSG         (A) DYNAMIC                                        /* NG1
+1 #GET         (A) DYNAMIC CONST <'GET'>                          /* NG1
+1 #APPLY       (A) DYNAMIC CONST <'APPLY'>                        /* NG1
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER                      (N6)
+  2 SSN                            (N9)
+  2 NAME                           (A25)
+*   2 DATE-OF-BIRTH                  (N8)                        /* tt1
+  2 DUES-ALL-PAID-IND              (A1)
+  2 DUES-BALANCE                   (P5.2)
+  2 DUES-FPF                       (P3.2)
+  2 DUES-TOT-PAID                  (P5.2)
+  2 INTRO-FLAG                     (A1)
+  2 PROCESS-IND                    (A1)
+  2 DEBIT-CREDIT-AMT               (P7.2)
+  2 DATE-ACCT-UPDATE               (N8)
+  2 ALOT-AMT                       (P5.2)
+  2 ALOT-SW                        (A1)
+  2 STOP-DATE                      (N8)
+  2 AUX-DEBIT-CREDIT-AMT           (P7.2)
+  2 ALT-LP-AMT                     (P5.2)
+  2 PAD-CODE                       (A1)
+  2 ISSUE-DATE                     (N8/9)
+  2 REDEFINE ISSUE-DATE
+    3 ISSUE-DATE-OCC                (9)
+      4 ISSUE-DATE-YYYY              (N4)
+      4 ISSUE-DATE-MM                (N2)
+      4 ISSUE-DATE-DD                (N2)
+  2 STATUS                         (A1/9)
+  2 PLAN                           (A3/9)
+  2 REDEFINE PLAN
+    3 PLAN-OCC                      (9)
+      4 PLAN-A1                      (A1)
+      4 PLAN-REST                    (A2)
+  2 X-FIRST-PLACE-FEE              (P7.2/9)
+  2 PAY-STATUS                     (A2/9)
+  2 MODE                           (A1/9)
+  2 PAID-TO-DATE                   (N8/9)
+  2 PAID-UP-DATE                   (N8/9)
+  2 LAST-DB-CR-CHECK               (P7.2)
+  2 PAY-NOW-SWITCH                 (A1)
+  2 ANNUAL-PREM                    (P5.2/9)
+  2 MTD-ACV-PREM-ADJ               (P7.2/9)
+*  2 MONTH-ALLOC-AMT                (P7.2/9)     /* NG99
+  2 X-BILL-ADJUST                  (P5.2/9)
+  2 X-BILL-DOLLAR                  (P5.2/9)
+  2 OWNERSHIP-FLAG                 (A1/9)
+  2 RID-PLAN                       (A2/9)
+  2 RID-EFF-DT                     (N8/9)
+  2 RID-PD-TO                      (N8/9)
+  2 X-RID-FPF                      (P3.2/9)
+  2 X-RID-BALANCE                  (P5.2/9)
+  2 RID-TOT-PAID                   (P5.2)
+  2 DATE-OTHER-UPDATE              (N8)                            /* PM7
+*
+1 DP-V VIEW OF A-DEPOSITS
+  2 SSN                            (P9)
+  2 DEPOSIT-OCC                    (99)
+    3 AMOUNT                        (P7.2)
+    3 DATE                          (N8)
+    3 SENT-BY                       (A1)
+    3 TYPE                          (A1)
+    3 CHECK-NUM                     (A6)
+    3 SPLIT                         (A1)
+    3 NAME                          (A25)
+    3 ADDR-1                        (A25)
+    3 ADDR-2                        (A25)
+    3 CITY                          (A22)
+    3 STATE                         (A2)
+    3 CC-NUM                        (A16)                           /* PM7
+    3 ZIP-CODE                      (N9)
+    3 APPLIED-DATE                  (N8)
+    3 APPLIED-CN                    (N6)
+    3 CC-EXP-DT                     (N6)                            /* PM7
+*
+1 TRLOG VIEW OF A-TRANSACTION-REGISTER                            /* PM7
+  2 ID-NUMBER
+  2 NAME
+  2 DATE-LAST-UPDATE
+  2 TERMINAL-ID
+  2 PROCESS-IND
+  2 CLERK-ID
+  2 TRANSACTION-DATN               (P9)
+  2 TRANSACTION-TIMN               (P7)
+  2 OLD-DATA                       (A125/32)
+  2 NEW-DATA                       (A125/32)
+  2 REDEFINE NEW-DATA
+    3 NEW-DATA-OCC                  (32)
+      4 NEW-DATA-CG                  (A3)
+      4 NEW-DATA-REST                (A122)
+  2 SYNC-FLD-NUM                   (60)
+  2 SYNC-FLD-OLD-DATA              (60)
+  2 SYNC-FLD-NEW-DATA              (60)
+*
+1 #W-OLD-NEW-DATA                 (A125)                          /* PM7
+1 REDEFINE #W-OLD-NEW-DATA                                        /* PM7
+  2 #W-DESCRIPTION                (A10)                           /* PM7
+  2 #W-DATA                       (A115)                          /* PM7
+*
+1 #I1                             (I2)
+1 #I2                             (I2)
+1 #SCR-LINE                       (I2)
+1 #TOTAL-DEPOSIT                  (N7.2)
+1 #SSN                            (N9)
+1 #SEQ-NUM                        (N1)
+1 #LAST                           (A25)
+1 REDEFINE #LAST
+  2 #LAST1-15                      (A15)
+  2 #LAST-REST                     (A10)
+1 #FIRST-20                       (A20)
+1 #MI                             (A1)
+1 #ERR-MSG                        (A60)
+1 #TRAN-TYPE                      (A4) INIT <'APFR'>
+*
+1 #ILN2                           (I2)
+1 #UPDATE-MODE                    (L)  INIT <TRUE>
+1 #EXTRA-STOP                     (L)
+1 #SG-TBL                         (15)
+  2 #SG-CAT1                       (A2)
+  2 #SG-CAT2                       (A2)
+  2 #SG-AMT                        (N6.2)
+1 #CMBX                           (A4)                            /* DW1
+1 #DATE-OF-UPDATE                 (N8)
+1 #TIME-OF-UPDATE                 (N7)
+1 #HOLD-CUR-ACCT-UPDT             (N8)
+1 #TT-EFF-DT                      (P8)
+*
+1 #FIRST-PLACEMENT-FEE            (N7.2)
+1 #FPF-BEFORE-CREDIT              (N7.2)                          /* PM5
+1 #RIDER-FPF                      (N7.2)
+1 #DBCR-AMOUNT                    (N7.2)
+1 #DEPOSIT-AMOUNT                 (N7.2)
+1 #AMOUNT-TO-APPLY-RIDER          (N7.2)
+1 #AMOUNT-TO-APPLY                (N7.2)
+1 #HOLD-AMOUNT-TO-APPLY           (N7.2)  INIT <9999999.99>
+1 #AMOUNT-DBCR-FPF                (N7.2)
+1 #HOLD-AMOUNT-DBCR-FPF           (N7.2)  INIT <9999999.99>
+1 #REMAINING-DEPOSIT              (N7.2)
+1 #REMAINING-FPF                  (N7.2)
+1 #AMOUNT-DBCR-TO-APPLY           (N7.2)
+1 #TEXT                           (A60)
+1 #DBCR-TEXT-1                    (A58)
+1 #DBCR-TEXT-2                    (A58)
+1 #DBCR-TEXT-3                    (A58)
+1 #DBCR-FPF-TEXT                  (A41)
+1 #DBCR-AVAIL-TEXT                (A41)
+1 #AMOUNT-EXCESS-TEXT             (A41)
+1 #DBCR-CV                        (C)
+*
+1 #YYYYMMDD                       (N8)
+1 #FROM-DATE                      (N8)
+1 #MMDDYYYY                       (N8)
+1 #REQUEST                        (A1) INIT <'C'>
+*
+1 #CREDIT-CARD-TABLE              (15)                            /* PM7
+  2 #CC-NUM                        (A16)                           /* PM7
+  2 #CC-EXP-DT                     (N6)                            /* PM7
+*
+1 #NUM-CREDIT-CARDS               (P3)                            /* PM7
+1 #CC-NUMBER                      (A16)                           /* PM7
+1 #CC-EXP-DATE                    (N6)                            /* PM7
+1 REDEFINE #CC-EXP-DATE                                           /* PM7
+  2 #CC-EXP-DATE-MM                (N2)                            /* PM7
+  2 #CC-EXP-DATE-YYYY              (N4)                            /* PM7
+1 #OLD-EXP-DT                     (N6)                            /* PM7
+1 REDEFINE #OLD-EXP-DT                                            /* PM7
+  2 #OLD-EXP-DT-MM                 (N2)                            /* PM7
+  2 #OLD-EXP-DT-YYYY               (N4)                            /* PM7
+1 #INDEX                          (I2)                            /* PM7
+1 #FOUND                          (L)                             /* PM7
+*
+1 #CASH-CODE                      (A1)                            /* DW8
+1 #APPLICATION-IND                (A1)                            /* PM10
+1 #REMAINDER                      (P7.2)                          /* PM10
+1 #ACTUAL-DEPOSIT-AMOUNT          (P7.2)                          /* PM10
+*
+END-DEFINE
+************************************************************************
+*
+DEFINE WINDOW APPLY-FPF
+  SIZE 22 * 65
+  BASE TOP LEFT
+  FRAMED ON POSITION SYMBOL AUTO
+*
+DEFINE WINDOW CREDIT-CARD                                         /* PM7
+  SIZE 22 * 78                                                    /* PM7
+  BASE TOP LEFT                                                   /* PM7
+  FRAMED ON POSITION SYMBOL AUTO                                  /* PM7
+*
+RESET #TOTAL-DEPOSIT
+MOVE (AD=P) TO #DBCR-CV
+MOVE *DATN TO #DATE-OF-UPDATE
+MOVE *DATN TO #TT-EFF-DT
+MOVE *TIMN TO #TIME-OF-UPDATE
+*                               NG1
+RESET #SVC-MEMBER
+#SVC-MEMBER.SVC-ID-NUMBER := #ID-NUMBER
+#SVC-MEMBER.SVC-PLAN  := 'PSM'
+CALLNAT 'OBJNMB01' #GET #MSG #SVC-MEMBER
+*                               NG1
+FIND (1) ST-V WITH MEMBER-KEY = #ID-NUMBER-A
+  IF NO RECORDS FOUND
+    WRITE 'Member' ST-V.ID-NUMBER ' not found'
+    WRITE 'Deposit Processing not completed'
+    WRITE 'Please contact your EDS representative'
+    ESCAPE BOTTOM
+  END-NOREC
+*
+  FIND DP-V WITH DP-V.SSN = ST-V.SSN
+    IF NO RECORDS
+      ESCAPE BOTTOM
+    END-NOREC
+*
+    FOR #I1 1 TO 99
+      IF DP-V.AMOUNT (#I1) = 0
+          OR DP-V.APPLIED-DATE (#I1) NE 0
+        ESCAPE TOP
+      END-IF
+*
+      ADD DP-V.AMOUNT (#I1) TO #TOTAL-DEPOSIT
+*
+      IF DP-V.CC-NUM (#I1) NE ' '                                 /* PM7
+        RESET #FOUND                                              /* PM7
+        IF #NUM-CREDIT-CARDS GT 0                                 /* PM7
+          PERFORM CHECK-FOR-DUPLICATE-CREDIT-CARDS                /* PM7
+        END-IF                                                    /* PM7
+        IF NOT #FOUND                                             /* PM7
+          ADD +1 TO #NUM-CREDIT-CARDS                             /* PM7
+          #CC-NUM (#NUM-CREDIT-CARDS)    := DP-V.CC-NUM (#I1)     /* PM7
+          #CC-EXP-DT (#NUM-CREDIT-CARDS) := DP-V.CC-EXP-DT (#I1)  /* PM7
+        END-IF                                                    /* PM7
+      END-IF                                                      /* PM7
+    END-FOR
+  END-FIND
+*
+  MOVE ST-V.X-FIRST-PLACE-FEE (#SEGMENT)   TO #FIRST-PLACEMENT-FEE
+  ADD  ST-V.X-RID-FPF (#SEGMENT)           TO #FIRST-PLACEMENT-FEE
+  MOVE #FIRST-PLACEMENT-FEE                TO #FPF-BEFORE-CREDIT    /* PM5
+*
+  IF ST-V.DEBIT-CREDIT-AMT LT 0
+    COMPUTE #DBCR-AMOUNT = ST-V.DEBIT-CREDIT-AMT * -1
+  END-IF
+  #DEPOSIT-AMOUNT := #TOTAL-DEPOSIT
+* #FPF-DUE        := #FIRST-PLACEMENT-FEE + SVC-FIRST-PLACE-FEE    /* YK4
+  #FPF-DUE        := #FIRST-PLACEMENT-FEE + #SVC-FPF               /* YK4
+*
+  SET WINDOW 'APPLY-FPF'                                          /* PM10
+  IF #FIRST-PLACEMENT-FEE GE #TOTAL-DEPOSIT                     /* PM4
+    MOVE #TOTAL-DEPOSIT                    TO #AMOUNT-TO-APPLY
+  ELSE
+    MOVE #FIRST-PLACEMENT-FEE              TO #AMOUNT-TO-APPLY  /* PM4
+* NG1   Service first placement fee
+    #FPSD-TO-APPLY := #TOTAL-DEPOSIT - #FIRST-PLACEMENT-FEE
+*     IF #FPSD-TO-APPLY GE SVC-FIRST-PLACE-FEE                  /* YK4
+*       #FPSD-TO-APPLY := SVC-FIRST-PLACE-FEE                   /* YK4
+    IF #FPSD-TO-APPLY GE #SVC-FPF                               /* YK4
+      #FPSD-TO-APPLY := #SVC-FPF                                /* YK4
+    ELSE
+      IF #SVC-MEMBER.SVC-PAY-UP NE 'Y'
+        RESET #TEMP7V2
+        REPEAT UNTIL #FPSD-TO-APPLY < #SVC-MEMBER.SVC-MONTHLY-RATE
+          ADD #SVC-MEMBER.SVC-MONTHLY-RATE TO #TEMP7V2
+          SUBTRACT #SVC-MEMBER.SVC-MONTHLY-RATE FROM #FPSD-TO-APPLY
+        END-REPEAT
+        #FPSD-TO-APPLY := #TEMP7V2
+      END-IF
+    END-IF
+  END-IF
+* NG1
+  IF #DBCR-AMOUNT GT 0
+      AND #TOTAL-DEPOSIT LT #FIRST-PLACEMENT-FEE                   /* PM4
+    MOVE 'This policy needs additional funds and the member may'
+      TO #DBCR-TEXT-1
+    MOVE 'have premiums in suspense. Please adjust the amount to'
+      TO #DBCR-TEXT-2
+    MOVE 'pull from the member"s account below:' TO #DBCR-TEXT-3
+    MOVE 'Amount of Credit to Apply to FPF        =' TO #DBCR-FPF-TEXT
+    MOVE 'Available Credit                        =' TO #DBCR-AVAIL-TEXT
+    MOVE (AD=I) TO #DBCR-CV
+*
+    IF #AMOUNT-TO-APPLY LT #FIRST-PLACEMENT-FEE
+      MOVE 0.00 TO #AMOUNT-DBCR-FPF                             /* PM2
+    END-IF
+*
+  ELSE
+    RESET #DBCR-AMOUNT
+  END-IF
+*
+  PERFORM CALCULATE-REMAINING-DEPOSIT                           /* PM10
+*
+  REPEAT
+    COMPUTE #REMAINING-FPF = #FPF-DUE - #FPF-TO-APPLY          /* NG1
+*
+    IF #AMOUNT-TO-APPLY = #HOLD-AMOUNT-TO-APPLY
+        AND #AMOUNT-DBCR-FPF = #HOLD-AMOUNT-DBCR-FPF
+        AND #FPSD-TO-APPLY = #HOLD-FPSD-TO-APPLY                /* NG1
+      RESET #TEXT
+      ESCAPE BOTTOM
+    ELSE
+      MOVE #AMOUNT-TO-APPLY       TO #HOLD-AMOUNT-TO-APPLY
+      MOVE #AMOUNT-DBCR-FPF       TO #HOLD-AMOUNT-DBCR-FPF
+      MOVE #FPSD-TO-APPLY         TO #HOLD-FPSD-TO-APPLY        /* NG1
+      MOVE 'Please make changes or press enter to continue' TO #TEXT
+    END-IF
+*
+    MOVE 'N' TO #ABORT                                          /* PM3
+    INPUT TEXT #TEXT MARK *#AMOUNT-TO-APPLY USING MAP 'C2010MNM'
+*
+    IF NOT #ABORT = 'Y' OR = 'N'                                /* PM3
+      MOVE 'Please enter a "Y" to abort the process' TO #TEXT   /* PM3
+      REINPUT WITH TEXT #TEXT MARK *#ABORT                      /* PM3
+    END-IF                                                      /* PM3
+*
+    IF #ABORT = 'Y'                                             /* PM3
+      ESCAPE BOTTOM                                             /* PM3
+    END-IF                                                      /* PM3
+*
+    PERFORM CALCULATE-REMAINING-DEPOSIT                         /* PM10
+*
+    IF #AMOUNT-TO-APPLY GT #FIRST-PLACEMENT-FEE
+      MOVE 'Entered amount is greater than FPF' TO #TEXT
+      REINPUT WITH TEXT #TEXT MARK *#AMOUNT-TO-APPLY
+    END-IF
+*
+    IF #AMOUNT-DBCR-FPF + #AMOUNT-TO-APPLY GT #FIRST-PLACEMENT-FEE
+      MOVE 'Entered amount is greater than FPF' TO #TEXT
+      REINPUT WITH TEXT #TEXT MARK *#AMOUNT-DBCR-FPF
+    END-IF
+*
+    IF #AMOUNT-TO-APPLY + #FPSD-TO-APPLY GT #DEPOSIT-AMOUNT     /* PM4 NG1
+      MOVE 'Total amount is greater than outstanding deposit' TO #TEXT
+      REINPUT WITH TEXT #TEXT MARK *#AMOUNT-TO-APPLY
+    END-IF
+*
+    IF #AMOUNT-DBCR-FPF GT #DBCR-AMOUNT                         /* PM4
+      MOVE 'Total amount is greater than outstanding credit' TO #TEXT
+      REINPUT WITH TEXT #TEXT MARK *#AMOUNT-DBCR-FPF
+    END-IF
+*
+    IF ((#REMAINING-DEPOSIT GT 0 AND #APPLICATION-IND = 'N')    /* PM10
+        AND (#AMOUNT-DBCR-FPF GT 0))
+      MOVE 'Can"t apply FPF to credit and credit to FPF' TO #TEXT
+      COMPRESS 'Must use TOTAL deposit before applying'
+        'credit to policy' INTO #TEXT
+      REINPUT WITH TEXT #TEXT MARK *#AMOUNT-TO-APPLY
+    END-IF
+* NG1
+*   IF #FPSD-TO-APPLY GT SVC-FIRST-PLACE-FEE          /* YK4
+    IF #FPSD-TO-APPLY GT #SVC-FPF                     /* YK4
+      MOVE 'Entered amount is greater than Service FPF' TO #TEXT
+      REINPUT WITH TEXT #TEXT MARK *#FPSD-TO-APPLY
+    END-IF
+    IF #SVC-MEMBER.SVC-PAY-UP NE 'Y'
+        AND #SVC-MEMBER.SVC-MONTHLY-RATE NE 0
+      DIVIDE #SVC-MEMBER.SVC-MONTHLY-RATE INTO #FPSD-TO-APPLY
+        GIVING SVC-AMOUNT-DUE REMAINDER #TEMP7V2
+      IF #TEMP7V2 NE 0
+        MOVE 'Service FPF amount ne multiple of monthly rate' TO #TEXT
+        REINPUT WITH TEXT #TEXT MARK *#FPSD-TO-APPLY
+      END-IF
+    END-IF
+  END-REPEAT
+* NG1
+  SET WINDOW OFF
+*
+  IF #ABORT = 'Y'                                                 /* PM3
+    ESCAPE ROUTINE                                                /* PM3
+  END-IF                                                          /* PM3
+*
+  COMPUTE #AMOUNT-DBCR-TO-APPLY = #AMOUNT-DBCR-FPF
+*
+  COMPUTE #TOTAL-DEPOSIT = #AMOUNT-TO-APPLY
+    + #AMOUNT-DBCR-TO-APPLY
+    + #FPSD-TO-APPLY                                              /* NG1
+  IF #APPLICATION-IND = 'N'                                       /* PM10
+    ADD #REMAINING-DEPOSIT TO #TOTAL-DEPOSIT                      /* PM10
+  END-IF                                                          /* PM10
+*
+  ADD #AMOUNT-DBCR-FPF TO #AMOUNT-TO-APPLY
+*
+  IF #AMOUNT-TO-APPLY GT ST-V.X-FIRST-PLACE-FEE (#SEGMENT)        /* PM4
+    COMPUTE #AMOUNT-TO-APPLY-RIDER = #AMOUNT-TO-APPLY -           /* PM4
+      ST-V.X-FIRST-PLACE-FEE (#SEGMENT)  /* PM4
+    SUBTRACT #AMOUNT-TO-APPLY-RIDER FROM #AMOUNT-TO-APPLY         /* PM4
+  END-IF                                                          /* PM4
+*
+  IF #TOTAL-DEPOSIT GT 0
+    MOVE #TOTAL-DEPOSIT TO #DEP-RCVD
+  END-IF
+*
+  COMPUTE #ACTUAL-DEPOSIT-AMOUNT = #TOTAL-DEPOSIT                 /* PM10
+    - #AMOUNT-DBCR-TO-APPLY          /* PM10
+  IF #ACTUAL-DEPOSIT-AMOUNT GT 0                                  /* PM10
+    FIND DP-V WITH DP-V.SSN = ST-V.SSN
+      IF NO RECORDS
+        ESCAPE BOTTOM
+      END-NOREC
+*
+      MOVE 'FPFP' TO #CMBX
+      RESET #REMAINDER                                            /* PM10
+      FOR #I1 1 TO 99
+        IF #REMAINDER NE 0                                        /* PM10
+          IF DP-V.AMOUNT (#I1) NE 0                               /* PM10
+            ESCAPE TOP                                            /* PM10
+          ELSE                                                    /* PM10
+            PERFORM COPY-DEPOSIT                                  /* PM10
+            ESCAPE BOTTOM                                         /* PM10
+          END-IF                                                  /* PM10
+        END-IF                                                    /* PM10
+*
+        IF DP-V.AMOUNT (#I1) = 0
+            OR DP-V.APPLIED-DATE (#I1) NE 0
+          ESCAPE TOP
+        END-IF
+*
+        IF DP-V.AMOUNT (#I1) LE #ACTUAL-DEPOSIT-AMOUNT            /* PM10
+          SUBTRACT DP-V.AMOUNT (#I1) FROM #ACTUAL-DEPOSIT-AMOUNT  /* PM10
+        ELSE
+          COMPUTE #REMAINDER = DP-V.AMOUNT (#I1)                  /* PM10
+            - #ACTUAL-DEPOSIT-AMOUNT             /* PM10
+          DP-V.AMOUNT (#I1) := #ACTUAL-DEPOSIT-AMOUNT             /* PM10
+          #I2               := #I1                                /* PM10
+          RESET #ACTUAL-DEPOSIT-AMOUNT                            /* PM10
+        END-IF
+        MOVE #DATE-OF-UPDATE TO DP-V.APPLIED-DATE (#I1)
+        MOVE ST-V.ID-NUMBER  TO DP-V.APPLIED-CN (#I1)
+        MOVE DP-V.SSN        TO #SSN
+        MOVE 'A' TO #CASH-CODE                                    /* DW8
+        PERFORM CREATE-REVERSAL-ACCOUNTING
+      END-FOR
+      RESET #CMBX
+*
+      UPDATE (0452)
+    END-FIND
+  END-IF
+*
+  MOVE 1 TO #SCR-LINE
+  MOVE *DATN TO #YYYYMMDD
+  CALLNAT 'GDATESXX'
+    #YYYYMMDD
+    #FROM-DATE
+    #MMDDYYYY
+    #REQUEST
+  MOVE EDITED #MMDDYYYY (EM=99999999)  TO #SCR-EFF-DT (#SCR-LINE)
+*
+  MOVE ST-V.ID-NUMBER                  TO #SCR-ID-SSN (#SCR-LINE)
+  MOVE ST-V.ISSUE-DATE-YYYY (#SEGMENT) TO #SCR-ISS-DT-YYYY (#SCR-LINE)
+  MOVE ST-V.ISSUE-DATE-MM (#SEGMENT)   TO #SCR-ISS-DT-MM (#SCR-LINE)
+  MOVE ST-V.ISSUE-DATE-DD (#SEGMENT)   TO #SCR-ISS-DT-DD (#SCR-LINE)
+  MOVE 'A'                             TO #SCR-CASH-CODE (#SCR-LINE)   /* DW9
+  MOVE ST-V.DATE-ACCT-UPDATE           TO #HOLD-CUR-ACCT-UPDT
+*
+  IF #AMOUNT-DBCR-TO-APPLY GT 0
+    MOVE 'N'                           TO #SCR-ALP-CODE (#SCR-LINE)
+    MOVE 'RDCR'                        TO #CMBX
+    REPEAT
+      IF #AMOUNT-DBCR-TO-APPLY GE 100000
+        MOVE 99999 TO #SCR-TRAN-AMT (#SCR-LINE)
+      ELSE
+        MOVE #AMOUNT-DBCR-TO-APPLY TO #SCR-TRAN-AMT (#SCR-LINE)
+      END-IF
+*
+      MOVE 'RDCR' TO #SCR-TRAN-CODE (#SCR-LINE)
+      PERFORM PROCESS-RDCR
+      PERFORM PROCESS-ACCOUNTING-REGISTER
+      SUBTRACT #SCR-TRAN-AMT (#SCR-LINE) FROM #AMOUNT-DBCR-TO-APPLY
+*
+      IF #AMOUNT-DBCR-TO-APPLY LE 0
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT
+    RESET #CMBX
+  END-IF
+*
+* IF ST-V.PLAN (#SEGMENT) = 'LT' OR = 'RT'         /* YK3
+*     OR ((ST-V.PLAN-A1 (#SEGMENT) GE 'U')         /* YK3
+*     AND (ST-V.PLAN-A1 (#SEGMENT) LE 'Z'))        /* YK3
+  IF FUNCTION-TERM-POLICY(<ST-V.PLAN(#SEGMENT)>)   /* YK3
+    MOVE 'T' TO #SCR-ALP-CODE (#SCR-LINE)
+  ELSE
+    MOVE 'W' TO #SCR-ALP-CODE (#SCR-LINE)
+  END-IF
+*
+  MOVE 'FPFP' TO #CMBX
+  IF #AMOUNT-TO-APPLY GT 0
+    REPEAT
+      IF #AMOUNT-TO-APPLY GE 100000
+        MOVE 99999 TO #SCR-TRAN-AMT (#SCR-LINE)
+      ELSE
+        MOVE #AMOUNT-TO-APPLY TO #SCR-TRAN-AMT (#SCR-LINE)
+      END-IF
+*
+      MOVE 'FPFP' TO #SCR-TRAN-CODE (#SCR-LINE)
+      PERFORM PROCESS-FPFP
+      PERFORM PROCESS-ACCOUNTING-REGISTER
+      SUBTRACT #SCR-TRAN-AMT (#SCR-LINE) FROM #AMOUNT-TO-APPLY
+*
+      IF #AMOUNT-TO-APPLY LE 0
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT
+  END-IF
+*
+  IF #AMOUNT-TO-APPLY-RIDER GT 0
+    MOVE #AMOUNT-TO-APPLY-RIDER TO #SCR-TRAN-AMT (#SCR-LINE)
+    MOVE 'FPRP' TO #SCR-TRAN-CODE (#SCR-LINE)
+    PERFORM PROCESS-FPRP
+    PERFORM PROCESS-ACCOUNTING-REGISTER
+  END-IF
+  RESET #CMBX
+*
+  IF #REMAINING-DEPOSIT GT 0
+      AND #APPLICATION-IND = 'N'                                  /* PM10
+    MOVE 'ADCR'                          TO #CMBX
+    REPEAT
+      IF #REMAINING-DEPOSIT GE 100000
+        MOVE 99999 TO #SCR-TRAN-AMT (#SCR-LINE)
+      ELSE
+        MOVE #REMAINING-DEPOSIT TO #SCR-TRAN-AMT (#SCR-LINE)
+      END-IF
+*
+      #SCR-TRAN-CODE (#SCR-LINE) := 'BADJ'                      /* PM10
+      #SCR-ADJ (#SCR-LINE)       := '-'                         /* PM10
+      PERFORM PROCESS-BADJ                                      /* PM10
+      PERFORM PROCESS-ACCOUNTING-REGISTER
+      SUBTRACT #SCR-TRAN-AMT (#SCR-LINE) FROM #REMAINING-DEPOSIT
+*
+      IF #REMAINING-DEPOSIT LE 0
+        ESCAPE BOTTOM
+      END-IF
+    END-REPEAT
+    RESET #CMBX
+  END-IF
+*
+* IF #NUM-CREDIT-CARDS GT 0                                     /* PM7 /* YK2
+*  AND ST-V.MODE (#SEGMENT) = '0' OR = '1' OR = '2' OR = '4'    /* PM7 /* YK2
+  IF ST-V.MODE (#SEGMENT) = '0' OR = '1' OR = '2' OR = '4'        /* YK2
+*     OR #CREDIT-CARD-DEPOSIT = 'Y'                              /* YK2
+      OR #CREDIT-CARD-DEPOSIT = 'C'                              /* YK4
+    PERFORM PROCESS-CREDIT-CARDS                                /* PM7
+  END-IF                                                        /* PM7
+*
+  UPDATE (0259)
+  IF #FPSD-TO-APPLY > 0                                         /* NG1
+    PARM-SVC.ACTION := #APPLY
+    PARM-SVC.USER   := #CLERK-ID
+    PARM-SVC.SVC-PAY-AMOUNT   := #FPSD-TO-APPLY
+    PARM-SVC.TRANSACTION-DATN := *DATN
+    PARM-SVC.TRANSACTION-TIMN := *TIMN
+    PARM-SVC.SVC-MEMBER-ID    := #SVC-MEMBER.SVC-ID-NUMBER
+    PARM-SVC.SVC-PLAN         := #SVC-MEMBER.SVC-PLAN
+    PARM-SVC.CASH-MODE        := 'A'   /* #SCR-CASH-CODE (#SCR-LINE)
+    CALLNAT 'SVCN0003' PARM-SVC #MSG
+  END-IF
+END-FIND
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-FPFP
+************************************************************************
+*
+CALLNAT 'CFPFPSAM' #SCR-LINES
+  ST-V.STATUS                (1:9)
+  ST-V.PAY-STATUS            (1:9)
+  ST-V.MODE                  (1:9)
+  ST-V.PLAN                  (1:9)
+  ST-V.ISSUE-DATE            (1:9)
+  ST-V.PAID-TO-DATE          (1:9)
+  ST-V.PAID-UP-DATE          (1:9)
+  ST-V.ANNUAL-PREM           (1:9)
+  ST-V.MTD-ACV-PREM-ADJ      (1:9)
+  ST-V.X-FIRST-PLACE-FEE     (1:9)
+  #SCR-LINE
+  #ILN2
+  #UPDATE-MODE
+  #SG-TBL                    (1:15)
+  #SEGMENT
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-FPRP
+************************************************************************
+*
+CALLNAT 'CRIDRSAM'
+  #SCR-LINES
+  ST-V.X-RID-FPF             (1:9)
+  ST-V.X-RID-BALANCE         (1:9)
+  ST-V.RID-TOT-PAID
+  ST-V.RID-PLAN              (1:9)
+  ST-V.RID-EFF-DT            (1:9)
+  ST-V.RID-PD-TO             (1:9)
+  ST-V.MODE                  (1:9)
+  #SCR-LINE
+  #ILN2
+  #SG-TBL                    (1:15)
+  #SEGMENT
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-RDCR
+************************************************************************
+*
+CALLNAT 'CRDCRSAM' #SCR-LINES
+  ST-V.STATUS                (1:9)
+  ST-V.PAY-STATUS            (1:9)
+  ST-V.MODE                  (1:9)
+  ST-V.PLAN                  (1:9)
+  ST-V.ISSUE-DATE            (1:9)
+  ST-V.PAID-TO-DATE          (1:9)
+  ST-V.PAID-UP-DATE          (1:9)
+  ST-V.ANNUAL-PREM           (1:9)
+  ST-V.MTD-ACV-PREM-ADJ      (1:9)
+  ST-V.ALOT-AMT
+  ST-V.ALOT-SW
+  ST-V.STOP-DATE
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.AUX-DEBIT-CREDIT-AMT
+  ST-V.ALT-LP-AMT
+  ST-V.PAD-CODE
+  ST-V.LAST-DB-CR-CHECK
+  ST-V.PAY-NOW-SWITCH
+  #SCR-LINE
+  #ILN2
+  #UPDATE-MODE
+  #TT-EFF-DT
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-BADJ                                   /* PM10
+************************************************************************
+*
+SUBTRACT #SCR-TRAN-AMT (#SCR-LINE) FROM X-BILL-ADJUST (#SEGMENT)
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CREATE-REVERSAL-ACCOUNTING
+************************************************************************
+*
+CALLNAT 'C2521SAM'
+  #SSN
+  #TRAN-TYPE
+  DP-V.AMOUNT                (#I1)
+  #CLERK-ID
+  DP-V.SENT-BY               (#I1)
+  DP-V.TYPE                  (#I1)
+  DP-V.CHECK-NUM             (#I1)
+  #CMBX
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #CASH-CODE                                                     /* DW8
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-ACCOUNTING-REGISTER
+************************************************************************
+*
+CALLNAT 'C2520SAM' #SCR-LINES
+  ST-V.ID-NUMBER
+  ST-V.PROCESS-IND
+  ST-V.INTRO-FLAG
+  ST-V.NAME
+  ST-V.PLAN                  (1:9)
+  ST-V.DEBIT-CREDIT-AMT
+  ST-V.DATE-ACCT-UPDATE
+  #DATE-OF-UPDATE
+  #TIME-OF-UPDATE
+  #SCR-LINE
+  #HOLD-CUR-ACCT-UPDT
+  #CLERK-ID
+  #EXTRA-STOP
+  #SG-TBL                    (1:15)
+  #CMBX                                                           /* DW1
+*
+RESET #EXTRA-STOP
+  #SG-TBL (*)
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE PROCESS-CREDIT-CARDS                            /* PM7
+************************************************************************
+*
+IF #NUM-CREDIT-CARDS GT 1
+  SET WINDOW 'CREDIT-CARD'
+  SET KEY PF3 NAMED 'Retrn'
+  *CURS-LINE := 6
+  *CURS-COL  := 13
+  INPUT WITH TEXT 'Please select a CC NUMBER and press "ENTER"'
+    USING MAP 'C2010MN1'
+*
+  IF *PF-KEY = 'PF3'
+    RESET #CC-NUMBER #CC-EXP-DATE
+    SET WINDOW OFF
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF *CURS-LINE LT 6
+      OR *CURS-LINE GT 6 + #NUM-CREDIT-CARDS
+    REINPUT 'Please Select a CC NUM or press F12 to CANCEL'
+  END-IF
+*
+  #INDEX             := *CURS-LINE - 5
+  #CC-NUMBER         := #CC-NUM (#INDEX)
+  #CC-EXP-DATE       := #CC-EXP-DT (#INDEX)
+  SET WINDOW OFF
+ELSE
+  #CC-NUMBER           := #CC-NUM (1)
+  #CC-EXP-DATE         := #CC-EXP-DT (1)
+END-IF
+*
+CALLNAT 'GPXNCC01' ST-V.ID-NUMBER #CC-NUMBER #CC-EXP-DATE /* YK1
+*
+SET WINDOW OFF             /* YK1
+*
+IF ST-V.PLAN-A1 (#SEGMENT) = 'U' OR = 'X' OR = 'S'       /* YK3
+  SET WINDOW 'CREDIT-CARD'
+  INPUT USING MAP 'C2010MN2'
+  SET WINDOW OFF
+END-IF
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CHECK-FOR-DUPLICATE-CREDIT-CARDS                /* PM7
+************************************************************************
+*
+FOR #I2 1 TO #NUM-CREDIT-CARDS
+  IF #CC-NUM (#I2) = ' '
+    ESCAPE BOTTOM
+  END-IF
+*
+  IF #CC-NUM (#I2) = DP-V.CC-NUM (#I1)
+    #FOUND := TRUE
+    ESCAPE BOTTOM
+  END-IF
+END-FOR
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE CALCULATE-REMAINING-DEPOSIT                    /* PM10
+************************************************************************
+*
+#FPF-TO-APPLY := #AMOUNT-TO-APPLY + #AMOUNT-DBCR-FPF + #FPSD-TO-APPLY
+COMPUTE #REMAINING-DEPOSIT = #DEPOSIT-AMOUNT - #FPF-TO-APPLY
+*
+IF #REMAINING-DEPOSIT LE 0
+  ESCAPE ROUTINE
+END-IF
+*
+REPEAT UNTIL #APPLICATION-IND = 'Y' OR = 'N'
+  INPUT MARK *#APPLICATION-IND USING MAP 'NMOMDEPS'
+END-REPEAT
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #APPLICATION-IND = 'Y'
+    #AMOUNT-EXCESS-TEXT := 'Amount of Deposit to remain in open items'
+  WHEN #APPLICATION-IND = 'N'
+    #AMOUNT-EXCESS-TEXT := 'Amount of Deposit to apply to Bill Adjustment'
+  WHEN NONE
+    RESET #AMOUNT-EXCESS-TEXT
+END-DECIDE
+*
+END-SUBROUTINE
+*
+************************************************************************
+DEFINE SUBROUTINE COPY-DEPOSIT                                   /* PM10
+************************************************************************
+*
+DP-V.AMOUNT    (#I1) := #REMAINDER
+DP-V.DATE      (#I1) := DP-V.DATE      (#I2)
+DP-V.SENT-BY   (#I1) := DP-V.SENT-BY   (#I2)
+DP-V.TYPE      (#I1) := DP-V.TYPE      (#I2)
+DP-V.CHECK-NUM (#I1) := DP-V.CHECK-NUM (#I2)
+DP-V.SPLIT     (#I1) := DP-V.SPLIT     (#I2)
+DP-V.NAME      (#I1) := DP-V.NAME      (#I2)
+DP-V.ADDR-1    (#I1) := DP-V.ADDR-1    (#I2)
+DP-V.ADDR-2    (#I1) := DP-V.ADDR-2    (#I2)
+DP-V.CITY      (#I1) := DP-V.CITY      (#I2)
+DP-V.STATE     (#I1) := DP-V.STATE     (#I2)
+DP-V.CC-NUM    (#I1) := DP-V.CC-NUM    (#I2)
+DP-V.ZIP-CODE  (#I1) := DP-V.ZIP-CODE  (#I2)
+DP-V.CC-EXP-DT (#I1) := DP-V.CC-EXP-DT (#I2)
+*
+END-SUBROUTINE
+*
+END
