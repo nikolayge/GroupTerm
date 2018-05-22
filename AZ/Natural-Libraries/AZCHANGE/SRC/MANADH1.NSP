@@ -1,0 +1,127 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP
+* :LineIncrement 10
+* <Natural Source Header
+/** New Program MANADH1.
+/**
+/** :author nguentchev
+DEFINE DATA
+LOCAL
+1 #TAB         (A1) CONST <H'09'>
+1 BLANK        (A1) CONST <' '>
+1 DASH         (A1) CONST <'-'>
+1 N/A          (A4) CONST <'#N/A'>
+1 #IN-RECORD   (A1000)
+1 #OUT-RECORD  (A1000)
+1 #IN-FIELDS   (A25/8)
+1 NR           (I4)
+1 N            (I4)
+1 #Policy      (A16)
+1 #13thCheck   (N7.2)
+1 #CN          (N6)
+1 #CI          (N8)
+1 AZRecord-ISN (P8)
+1 #GENERATION-NBR     (N7)
+1 #TODAY       (N8)
+1 REDEFINE #TODAY
+  2 #YYYY  (N4)
+  2 #MM    (N2)
+  2 #DD    (N2)
+1 REDEFINE #TODAY
+  2 #YYYY-A (A4)
+1 AZ-V VIEW OF A-ANNUITANTS
+  2 ADD-USER (A8)
+  2 ADD-DATE (N8.0)
+  2 ADD-TIME (N7.0)
+  2 LAST-UPD-USER (A8)
+  2 LAST-UPD-DATE (N8.0)
+  2 LAST-UPD-TIME (N7.0)
+  2 POLICY-NUMBER (A16)
+  2 CONTACT-ID (N8.0)
+  2 ANNUITANT-STATUS (A1)
+  2 T13TH-CHECK (N7.2)
+1 #Msg  (A) DYNAMIC
+END-DEFINE
+/*
+DEFINE WORK FILE 1 "/usr/SAG/tmp/AZ13CHECK.txt" TYPE 'ASCII-COMPRESSED'
+DEFINE WORK FILE 2 "/usr/SAG/tmp/AZ13REPORT.txt" TYPE 'ASCII-COMPRESSED'
+
+COMPRESS 'CN'
+  'CID'
+  'Policy No'
+  '13th Check'
+  'Error Description'
+  INTO #OUT-RECORD WITH DELIMITERS #TAB
+WRITE WORK 2 #OUT-RECORD
+
+#TODAY := 20170101
+
+READ WORK 1 #IN-RECORD
+  ADD 1 TO NR
+  IF NR = 1
+    ESCAPE TOP
+  END-IF
+/*  1: CN
+/*  2: CI
+/*  3: Policy
+/*  4: 13th Check
+  SEPARATE #IN-RECORD INTO #IN-FIELDS (*) WITH DELIMITER #TAB
+  if #IN-FIELDS (1) = BLANK
+    escape bottom
+  end-if
+  #CN := VAL (#IN-FIELDS (1))
+
+  IF #IN-FIELDS (2) = N/A
+    #Msg := 'No Contact Number'
+    COMPRESS #IN-FIELDS (1)
+      #IN-FIELDS (2)
+      #IN-FIELDS (3)
+      #IN-FIELDS (4)
+      #Msg
+      INTO #OUT-RECORD WITH DELIMITERS #TAB
+    WRITE WORK FILE 2 #OUT-RECORD 
+    escape top  
+  ELSE
+    #CI := VAL (#IN-FIELDS (2))
+  END-IF
+  #Policy    := #IN-FIELDS (3)
+  EXAMINE #IN-FIELDS (4) FOR DASH GIVING POSITION N
+  IF N > 0
+    RESET #13thCheck
+  ELSE
+    IF #IN-FIELDS (4) = BLANK
+      #13thCheck := 0
+    ELSE
+      #13thCheck := VAL (#IN-FIELDS (4))
+    END-IF
+  END-IF
+  IF #CI = 0
+    ESCAPE TOP
+  END-IF
+
+  find AZ-V with CONTACT-ID = #CI and POLICY-NUMBER = #Policy
+    IF NO RECORD FOUND
+      #Msg := 'No annuity found'
+      COMPRESS #CN
+        #CI
+        #Policy
+        #13thCheck
+        #Msg
+        INTO #OUT-RECORD WITH DELIMITERS #TAB
+      WRITE WORK FILE 2 #OUT-RECORD
+      ESCAPE BOTTOM
+    END-NOREC
+    AZRecord-ISN := *ISN
+    CALLNAT 'MANNHST' AZRecord-ISN #GENERATION-NBR #TODAY
+    AZ-V.T13TH-CHECK := #13thCheck
+    update
+    end transaction
+  end-find
+
+END-WORK
+
+On error
+  print 'Record' NR #IN-RECORD
+end-error
+END
