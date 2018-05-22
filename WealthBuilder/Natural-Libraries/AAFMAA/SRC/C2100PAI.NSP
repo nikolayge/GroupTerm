@@ -83,9 +83,13 @@
 * vxt 05/12/2017 vt13 Group Term Plan Project
 * bz  06/07/2017 hd-4094  Allow Jet issue for R1 R2 R3
 * TMT 07/11/2017 TT4  Multiple Cap Project
-* YAK 08/14/2017 YK12 Assign Bill Cycle when issuing the policy
+* YAK 08/14/2017 YK12 Assign Bill Cycle for Credit Card when issuing the policy
 * bz-4912  10/18/2017 EZ req. U6
 * bz-hd-7693 2/16/2018 Status PU must be present for all APPL
+* YAK 12/28/2017 YK13 Assign Bill Cycle for EZ-Pay when issuing the policy
+*                     Stop using Q/P-Q/D/D combinations for EZ-Pay
+* NGG 04/18/2018 NG10 SOLA Project
+* vxt 05/11/2018 vt14 fix the issue with record on hold
 *****************************************************************************
 DEFINE DATA
 GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
@@ -315,7 +319,7 @@ LOCAL
 1 #replay          (a1)                             /* vt3
 1 #k               (i2)                             /* vt3
 1 #kk              (i2)
-1 #last-pol        (i2)                             /* vt3
+1 #last-pol        (i2)                            /* vt3
 1 stat view of A-status
   2 id-number
   2 issue-date (9)
@@ -345,7 +349,10 @@ LOCAL
 1 v_RC           (N4)                      /*  bz-GPL/GP2
 1 GroupTerm      (A3) CONST <'GT1'>
 1 #CC-MODE       (A1/4) CONST <'0','4','2','1'>     /* YK12
-1 #CREDIT-CARD   (A) DYNAMIC CONST <'CC'>           /* YK12
+1 #EZ-MODE       (A1)   CONST <'E'>                 /* YK13
+1 #ADD-POLICY    (A) DYNAMIC CONST <'AI'>           /* YK13
+1 #msg-parm      (a79)                           /* vt14
+*
 END-DEFINE
 ******************************************************************************
 *
@@ -530,7 +537,7 @@ MOVE #HOLD-TODAY-MM TO #AP-INDEX
 *
 IF SUSPEND-CODE = '5' OR = '9'
 *    AND (#PLAN NE 'AL' AND #PLAN NE 'GP2')              /*TT2 ??
-    AND NOT (IS-ANNUITY-LIFE (< #PLAN >) OR #PLAN EQ 'GP2')  /* NG8
+    AND NOT (SUBSTR(#PLAN,1,2) EQ 'AL' OR #PLAN EQ 'GP2')  /* NG8
   MOVE 'Invalid for Addl Ins-Chk Suspend Code (CG)' TO #MSG
   PERFORM ERR-SCN
 END-IF
@@ -545,13 +552,14 @@ IF NEW-V.INTRO-FLAG= 'S'                                 /* PM32
   END-FIND                                               /* PM32
 END-IF                                                   /* PM32
 *
-FOR #I1 1 TO 9
+* FOR #I1 1 TO 9
+FOR #I1 1 TO NEW-V.C*ACTIVE-SEGMENTS                     /* YK13
   IF  (STATUS(#I1) NE 'D')
       OR (#TU-POL-SELECT (#I1) = 1) /* trade-up pol to bypass
     ESCAPE TOP
   ELSE
     IF PAY-STATUS(#I1) LE '40'
-      add 1 to #nbr-pol                                  /* vt3 vt4 07302012
+      ADD 1 TO #NBR-POL                                  /* vt3 vt4 07302012
       IF NEW-V.MODE(#I1) = 'E'
         COMPUTE #E-DUES = #E-DUES + (ANNUAL-PREM(#I1) / 12)
       ELSE
@@ -572,81 +580,94 @@ FOR #I1 1 TO 9
     END-IF
   END-IF
 END-FOR
-*
-IF APPL-TRACK-V.MODE NE ' '
-  MOVE APPL-TRACK-V.MODE TO #MODE
-ELSE
-  IF PAD-CODE = 'E'
-    MOVE 'E' TO #MODE
-  ELSE
-    FOR #I1 9 TO 1 STEP -1
-      IF NEW-V.ISSUE-DATE(#I1) NE 0
-          AND (PAY-STATUS (#I1) LT '40')
-        move #i1 to #last-pol
-        MOVE MODE (#I1) TO #MODE
+* ?????? YK13 > Unnecessary Code - APPL-TRACK-V.MODE cannot be blank
+* IF APPL-TRACK-V.MODE NE ' '
+MOVE APPL-TRACK-V.MODE TO #MODE
+* ELSE
+*   IF PAD-CODE = 'E'
+*     MOVE 'E' TO #MODE
+*   ELSE
+*     FOR #I1 9 TO 1 STEP -1
+*       IF NEW-V.ISSUE-DATE(#I1) NE 0
+*           AND (PAY-STATUS (#I1) LT '40')
+*         MOVE #I1 TO #LAST-POL
+*         MOVE MODE (#I1) TO #MODE
+*         ESCAPE BOTTOM
+*       END-IF
+*     END-FOR
+* *
+*     IF #MODE = ' '
+*       MOVE 'G' TO #MODE
+*     END-IF
+*   END-IF
+* END-IF
+* ????? < YK13
+* IF  #NBR-POL = 0                             /* vt4 \/  #NBR-POL - number of policies in premium-pay status ?
+*   MOVE 1 TO #NBR-POL
+* END-IF                                       /* vt4 /\
+* IF #MODE = 'E' AND #NBR-POL GE 1                        /* vt3\/
+IF #MODE = 'E'
+  #PAD-CODE := NEW-V.PAD-CODE := 'E'
+  IF #NBR-POL GT 0                          /* account has other policies in premium pay status   YK13
+*   find stat with id-number = #cn1
+*     if no
+*       escape bottom
+*     end-norec
+* *
+* YK13 - find number of policies?? is it the same as C*ACTIVE-SEGMENTS   ???
+*   RESET #NBR-POL                          /* VT 04/05/2013 REMOVED ON 04/18/2013 /* ADDED ON 11/17/2015
+*   FOR #KK 1 9
+*     FOR #KK = 1 TO C*ACTIVE-SEGMENTS
+*       IF STAT.ISSUE-DATE (#KK) NE 0
+*         ADD 1 TO #NBR-POL
+*       END-IF
+*     END-FOR
+* *
+*   for #k 9 to 1 step -1
+*     if stat.issue-date(#k) ne 0
+*         and (pay-status (#k) lt '40')
+*       move #k to #last-pol                     /* ???? what if the last policy is paid-up policy or sp or annuity ?
+*       escape bottom
+*     end-if
+*   end-for
+*   end-find
+* *
+* *  write '=' #last-pol '=' #nbr-pol
+    REPEAT
+      #REPLAY := '?'
+      INPUT MARK *#REPLAY USING MAP 'NEWMAPAI'
+      IF #REPLAY = ' '
+        REINPUT 'Must Enter (Y)es or (N)o'
+          MARK *#replay
+      ELSE
         ESCAPE BOTTOM
       END-IF
-    END-FOR
-*
-    IF #MODE = ' '
-      MOVE 'G' TO #MODE
+    END-REPEAT
+*   decide on first value of #replay
+*     value 'Y'
+*       for #k 1 #nbr-pol
+*         move 'Q' to new-v.mode(#k)
+*       end-for
+*       move 'P' to new-v.pad-code #pad-code     /* vt7
+*     value 'N'
+*       move 'Q' to new-v.mode(#last-pol + 1)
+*       move 'D' to new-v.pad-code   #pad-code   /* vt7
+*       move 'D' to new-v.ownership-flag (#last-pol + 1)
+*     none value
+*       ignore
+*   end-decide
+*   update (0500)
+    IF #REPLAY = 'Y'
+      FOR #K = 1 TO C*ACTIVE-SEGMENTS
+        IF PAY-STATUS(#K) < '40'
+          NEW-V.MODE(#K) := 'E'
+        END-IF
+      END-FOR
+      UPDATE (GET-1.)
     END-IF
   END-IF
-END-IF
-*
-if  #nbr-pol = 0                             /* vt4 \/
-  move 1 to #nbr-pol
-end-if                                       /* vt4 /\
-*
-if #mode = 'E' and #nbr-pol ge 1                        /* vt3\/
-  find stat with id-number = #cn1
-    if no
-      escape bottom
-    end-norec
-*
-    reset #nbr-pol                          /* vt 04/05/2013 removed on 04/18/2013 /* added on 11/17/2015
-    for #kk 1 9
-      if stat.issue-date (#kk) ne 0
-        add 1 to #nbr-pol
-      end-if
-    end-for
-*
-    FOR #k 9 TO 1 STEP -1
-      IF stat.ISSUE-DATE(#k) NE 0
-          AND (PAY-STATUS (#k) LT '40')
-        move #K to #last-pol
-        ESCAPE BOTTOM
-      end-if
-    end-for
-  end-find
-*
-*  write '=' #last-pol '=' #nbr-pol
-  repeat
-    #replay := '?'
-    input mark *#replay using map 'newmapai'
-    IF #replay = ' '
-      REINPUT 'Must Enter (Y)es or (N)o'
-        MARK *#replay
-    else
-      escape bottom
-    END-IF
-  end-repeat
-  decide on first value of #replay
-    value 'Y'
-      for #k 1 #nbr-pol
-        move 'Q' to new-v.mode(#k)
-      end-for
-      move 'P' to new-v.pad-code #pad-code     /* vt7
-    value 'N'
-      move 'Q' to new-v.mode(#last-pol + 1)
-      move 'D' to new-v.pad-code   #pad-code   /* vt7
-      move 'D' to new-v.ownership-flag (#last-pol + 1)
-    none value
-      ignore
-  end-decide
-  update (0493)
-end-if                                                 /* vt3/\
-*
+END-IF                                              /* vt3/\
+* < YK13
 FOR #I1 1 TO 9
   IF STATUS (#I1) = 'D'
     IF NEW-V.ISSUE-DATE (#I1) LT 19941201
@@ -757,17 +778,18 @@ RESET #TERM
 IF FUNCTION-TERM-POLICY(<#PLAN>)                              /* YK7
   MOVE TRUE TO #TERM
 END-IF
-*
-IF  #MODE = 'E'
-    AND #PAD-CODE NE 'E'
-*   AND (NOT #PLAN = 'SP' OR = 'AL'))
-    AND NOT (#PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >))  /*NG8  /* vt10
-    OR #EZ-PAY-WAITING
-  MOVE TRUE TO #EZ-PAY-WAITING
-  MOVE 'Q' TO #MODE
-ELSE
-  RESET #EZ-PAY-WAITING
-END-IF
+* YK13 >
+* IF  #MODE = 'E'
+*     AND #PAD-CODE NE 'E'
+* *   AND (NOT #PLAN = 'SP' OR = 'AL'))
+*     AND NOT (#PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >))  /*NG8  /* vt10
+*     OR #EZ-PAY-WAITING
+*   MOVE TRUE TO #EZ-PAY-WAITING
+*   MOVE 'Q' TO #MODE
+* ELSE
+RESET #EZ-PAY-WAITING
+* END-IF
+* < YK13
 *
 IF #HAS-FBR-ONLY-ATT-POL
   PERFORM FBR-EDITS
@@ -834,7 +856,7 @@ IF (((#MODE = 'G') AND (NEW-V.ALOT-AMT GE #WORK-PREM-HOLD))
 * AND (#DEP-RCVD = 0) /* PM7
     AND (NOT #HAS-FBR-ONLY-ATT-POL)
 *   AND (NOT #PLAN = 'SP' OR = 'AL')
-    AND NOT (#PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >))  /* NG8
+    AND NOT (#PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL')  /* NG8
 * MOVE #FPF-START-A TO #FPF-END-A               /* vt1 06022011
   RESET #FPF #FPF-DUES #FPF-FBR
   MOVE TRUE TO #NO-FPF
@@ -999,7 +1021,7 @@ END-IF
 *
 PERFORM EDIT-APPL-SRC
 *
-END-SUBROUTINE  /* (0968)
+END-SUBROUTINE  /* (0990)
 *
 ******************************************************************************
 DEFINE SUBROUTINE CALCULATE-START-DT
@@ -1045,7 +1067,7 @@ END-IF
 *
 **IF (#PLAN = 'SP' OR = 'AL')
 **  OR (#CAP-IND = 'Y' AND APPL-TRACK-V.CAP-TYPE EQ 'C')   /* vt1
-IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG8
+IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG8
     OR (#CAP-IND = 'Y' AND APPL-TRACK-V.CAP-TYPE EQ 'C')
   MOVE #FPF-START TO #FPF-END    /* SINCE THERE IS NO FPF
   ESCAPE ROUTINE
@@ -1060,9 +1082,12 @@ DEFINE SUBROUTINE CALC-FPF-END
 ******************************************************************************
 *
 IF   (#EFF-YYYYMM LT #HOLD-TODAY-YYYYMM)
-    AND ((NOT #MODE = 'A' OR = 'S' OR = 'Q' OR = '0' OR = '1'
-    OR = '2' OR = '4' OR = 'E')
-    OR #EZ-PAY-WAITING)  /* DW11
+* YK13 >
+*     AND ((NOT #MODE = 'A' OR = 'S' OR = 'Q' OR = '0' OR = '1'
+*     OR = '2' OR = '4' OR = 'E'))
+*   OR #EZ-PAY-WAITING)  /* DW11
+    AND (#MODE = 'G' OR #MODE = 'M')
+* < YK13
   MOVE #HOLD-TODAY-YYYYMMDD TO #WORK-DATE-YYYYMMDD
   MOVE #EFF-DD TO #WD-DD
 END-IF
@@ -1081,7 +1106,7 @@ END-IF
 *
 IF   (#MODE = 'A' OR = 'S' OR = 'Q' OR = '0' OR = '1' OR = '2' OR = '4')
 *   AND (NOT #PLAN = 'SP' OR = 'AL')
-    AND NOT (#PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >))  /* NG8
+    AND NOT (#PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL')  /* NG8
     AND (NOT #EZ-PAY-WAITING)
     AND (#APPL-SRC NE 'TU')
   MOVE #EFF-YYYYMMDD TO #YYYYMMDD
@@ -1264,14 +1289,14 @@ IF NOT #HAS-FBR-ONLY-ATT-POL
   MOVE 'D' TO STATUS (#INDEX)
   MOVE #PLAN TO #PLAN-COMBINE
 * IF #PLAN = 'SP' OR = 'AL'
-  IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >) or #plan = GroupTerm  /* NG8
+  IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL' or #plan = GroupTerm  /* NG8
     RESET #APREM #MPREM
   ELSE
     MOVE #APREM TO ANNUAL-PREM (#INDEX)
   END-IF
 *
   IF #FLEX-PLAN
-      AND NOT IS-ANNUITY-LIFE (< #PLAN >)        /* NG8
+      AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'        /* NG8
     MOVE 'F' TO #PLAN-SUFFIX
   ELSE
     IF #PLAN = '20' OR = '30'
@@ -1306,13 +1331,14 @@ IF NOT #HAS-FBR-ONLY-ATT-POL
 *   PERFORM CREATE-ROLES
 
   MOVE #EFF-YYYYMMDD TO NEW-V.ISSUE-DATE (#INDEX)
-* YK12 >
-  IF #MODE = #CC-MODE(*)
-    NEW-V.BILL-CYCLE(#INDEX) := F-BILL-CYCLE(<#EFF-DD,#CREDIT-CARD>)
-  ELSE
-    NEW-V.BILL-CYCLE(#INDEX) := '3'
-  END-IF
-* < YK12
+* YK12 YK13 >
+  DECIDE FOR FIRST CONDITION
+    WHEN #MODE = #CC-MODE(*) OR #MODE = #EZ-MODE
+      NEW-V.BILL-CYCLE(#INDEX) := F-BILL-CYCLE(<#EFF-DD,#ADD-POLICY>)
+    WHEN NONE
+      NEW-V.BILL-CYCLE(#INDEX) := '3'
+  END-DECIDE
+* < YK12 YK13
   IF #PLAN = 'LT'
     MOVE 5 TO SPLIT-IND (#INDEX)
   END-IF
@@ -1390,11 +1416,11 @@ IF NOT #HAS-FBR-ONLY-ATT-POL
 *
   IF #FLEX-PLAN
 *     AND (#PLAN NE 'AL')
-      AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* NG8
+      AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG8
     PERFORM PROCESS-FLEX-PLAN
   ELSE
 *   IF #PLAN = 'SP' OR = 'AL'
-    IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG8
+    IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG8
       PERFORM PROCESS-PUSP
     END-IF
   END-IF
@@ -1484,6 +1510,8 @@ IF #CGA-ORIG-SUFFIX NE 'OVR'
     APPL-TRACK-V.E-DEPOSIT-IND         /* YK10
     #ABORT /* PM8
     #PSM-FPF
+    #msg-parm                        /* vt14
+*    
 * END-IF     /* PM9
 *
   IF #ABORT = 'Y' /* PM8
@@ -1604,7 +1632,7 @@ IF #CGA-ORIG-SUFFIX NE 'OVR'
 *     ADD 1 TO CAPS-CONV-MON (#CURR-MM-N)  /* YK1
     END-IF
 *
-    UPDATE (1601)
+    UPDATE (1629)
   END-FIND
 *
   IF #APPL-FOUND
@@ -1616,7 +1644,7 @@ IF #CGA-ORIG-SUFFIX NE 'OVR'
           ESCAPE BOTTOM
         END-IF
       END-FOR
-      UPDATE (1611)
+      UPDATE (1639)
     END-FIND
   END-IF
 *
@@ -1645,7 +1673,7 @@ IF #CGA-ORIG-SUFFIX NE 'OVR'
       AND ((#LUMP-SUM NE 0) OR (#EXCH-1035 NE 0))
     IF (#LUMP-SUM NE 0) AND (#EXCH-1035 = 0)
 *       AND (#PLAN NE 'AL')
-        AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* NG8
+        AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG8
       ADD 1 TO #INT
       MOVE EDITED #LUMP-SUM (EM=ZZZ,ZZ9.99) TO #AMT-DISP
       COMPRESS '$' #AMT-DISP INTO #AMT-DISP LEAVING NO
@@ -1663,7 +1691,7 @@ IF #CGA-ORIG-SUFFIX NE 'OVR'
         COMPRESS #NOTE-TEXT (#INT) '/' #EFF-DD-A '/' #EFF-YYYY-A
           INTO #NOTE-TEXT (#INT) LEAVING NO
 *       IF  (#LUMP-SUM NE 0) AND (#PLAN NE 'AL')
-        IF #LUMP-SUM NE 0 AND NOT IS-ANNUITY-LIFE (< #PLAN >) /* NG8
+        IF #LUMP-SUM NE 0 AND NOT SUBSTR(#PLAN,1,2) EQ 'AL' /* NG8
           MOVE EDITED #LUMP-SUM (EM=ZZZ,ZZ9.99) TO #AMT-DISP
           COMPRESS '$' #AMT-DISP INTO #AMT-DISP LEAVING NO
           COMPRESS #NOTE-TEXT (#INT) 'PLUS' #AMT-DISP 'PRMS'
@@ -1736,7 +1764,7 @@ ELSE
 * < YK11
 END-IF
 * > YK10
-END-SUBROUTINE  /* (1133)
+END-SUBROUTINE  /* (1158)
 *
 ******************************************************************************
 DEFINE SUBROUTINE CALC-TOT-DUE
@@ -1979,7 +2007,7 @@ MOVE #CGA-CLERK TO TRAN-REG-VIEW.CLERK-ID
 MOVE *INIT-ID TO TRAN-REG-VIEW.TERMINAL-ID
 *
 **IF #PLAN = 'SP' OR = 'AL'
-IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG8
+IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG8
   MOVE 'SP' TO #PLAN-COMBINE
   ASSIGN OLD-SINGL-PREM-LBL(1) = ' SNG-PRM'
   MOVE #SPM-AMT TO OLD-SINGL-PREM(1)
@@ -1991,11 +2019,13 @@ MOVE EDITED #FACE-AMT (EM=ZZZ9999.99) TO OLD-FACE(1)   /*tt1
 ASSIGN OLD-SMOKER-LBL(1) = ' SM-FLG'
 ASSIGN OLD-SMOKER-FLAG(1) = #SMOKER
 ASSIGN OLD-MODE-LBL(1) = ' MOD'    /* DW4
+*
 IF #EZ-PAY-WAITING
   MOVE 'E' TO OLD-MODE (1)
 ELSE
   MOVE #MODE TO OLD-MODE (1)
 END-IF
+*
 ASSIGN OLD-FPF-LBL(1) = ' FPF'
 MOVE EDITED #FPF (EM=ZZZ,ZZ9.99) TO OLD-FPF(1)
 ASSIGN OLD-PD-TO-LBL(1) = ' PDTO'
@@ -2075,7 +2105,7 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
 *
   IF #HAS-FBR-ONLY-ATT-POL
     IF #STATS-FOUND
-      UPDATE (2068)
+      UPDATE (2098)
     END-IF
     ESCAPE ROUTINE
   END-IF
@@ -2099,7 +2129,7 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
     WHEN #PLAN= 'EZ'
       MOVE 8 TO #GL-X                /* YK9 new for EZ
 *   WHEN #PLAN = 'AL'
-    WHEN IS-ANNUITY-LIFE (< #PLAN >)  /* NG8
+    WHEN SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG8
       MOVE 4 TO #GL-X
     WHEN #PLAN = 'GPL' OR = 'GP' OR = 'GP2'    /* TT2          /* DW15
       MOVE 7 TO #GL-X
@@ -2148,7 +2178,7 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
     END-IF
 *
 *   IF #PLAN = 'AL'
-    IF IS-ANNUITY-LIFE (< #PLAN >)  /* NG8
+    IF SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG8
       MOVE 19 TO #IS
       IF #WAS-INACTIVE AND (#CSV-RSGN-X = 0)
         MOVE 18 TO #IS
@@ -2197,7 +2227,7 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
       ADD NEW-V.FACE-AMOUNT (#INDEX) TO GAINS-BY-PLAN-DB (#GL-X)
       MOVE #HOLD-TODAY-DD TO LAST-NU-POL-ADDED-DAY
 *
-      UPDATE (2068)
+      UPDATE (2098)
     END-IF
   ELSE   /* (not GEN)
     DECIDE ON FIRST #PLAN
@@ -2222,7 +2252,7 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
 *
     IF #FLEX-PLAN
 *       AND (#PLAN NE 'AL')
-        AND NOT IS-ANNUITY-LIFE (< #PLAN >)   /* NG8
+        AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'   /* NG8
 *       IF NEW-V.INTRO-FLAG = 'S' OR = 'K' OR ='G'     /* YK9
 *         MOVE 15 TO #IS                               /* YK9
 *       ELSE                                           /* YK9
@@ -2310,7 +2340,7 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
         END-IF
       END-IF
 *
-      UPDATE (2068)
+      UPDATE (2098)
     END-IF
   END-IF
 *
@@ -2353,10 +2383,10 @@ IF #HOLD-APPL-ISN NE 0
   GET APPL-TRACK-V #HOLD-APPL-ISN
   MOVE TRUE TO #RECORD-FOUND
 *
- IF NOT ( ST-NOTE-STATUS(*) = 'PU' )                             /* bz-hd-7693
-   #MSG := 'APPL PU status is mandatory'
-   PERFORM ERR-SCN
- END-IF                                                          /* bz-hd-7693
+  IF NOT ( ST-NOTE-STATUS(*) = 'PU' )                             /* bz-hd-7693
+    #MSG := 'APPL PU status is mandatory'
+    PERFORM ERR-SCN
+  END-IF                                                          /* bz-hd-7693
 
   #ADD-OLD-FORMAT := 'Y'                          /* PM33
   #ADD-CONTACT-ID := APPL-TRACK-V.CONTACT-ID      /* PM33
@@ -2735,7 +2765,7 @@ COMPUTE #FAC-AMT = (APPL-TRACK-V.FACE-AMT-UNITS * 1000)
   + APPL-TRACK-V.FACE-AMT-DOLS
 *
 **IF APPL-TRACK-V.PLAN = 'AL'
-IF IS-ANNUITY-LIFE (< APPL-TRACK-V.PLAN >)   /* NG8
+IF SUBSTR(APPL-TRACK-V.PLAN,1,2) EQ 'AL'   /* NG8
   MOVE 999 TO #FLEX-YEARS
 ELSE
   IF   (APPL-TRACK-V.PLAN NE ' ')
@@ -2779,7 +2809,7 @@ MOVE #FAC-AMT-3 TO #SCR-FACE
 MOVE #FAC-AMT-DOLS TO #SCR-FACE-DOLS
 *
 **IF #PLAN = 'AL'
-IF IS-ANNUITY-LIFE (< #PLAN >)   /* NG8
+IF SUBSTR(#PLAN,1,2) EQ 'AL'   /* NG8
   ESCAPE ROUTINE
 END-IF
 *
@@ -2823,72 +2853,59 @@ CALLNAT 'C1103SAI'
 *
 END-SUBROUTINE
 *
+*
+*
 DEFINE SUBROUTINE CREATE-ROLES
 * -------------------------
-RESET PC-V
-RESET INITIAL #CLERK-KEY
-COMPRESS #CLERK-KEY #CGA-CLERK INTO #CLERK-KEY LEAVING NO
-*
-FIND(1) GEN-TABLE-V WITH SEC-KEY = #CLERK-KEY
-  FIND(1) USER-V WITH CLERK-ID = GEN-SUB-KEY
-    PC-V.ADD-USER := PC-V.LAST-UPD-USER := USER-V.TERMINAL-ID
-  END-FIND
-END-FIND
-PC-V.ADD-DATE := PC-V.LAST-UPD-DATE := NEW-V.ISSUE-DATE (#INDEX)
-PC-V.ADD-TIME := PC-V.LAST-UPD-TIME := *TIMN
-PC-V.POLICY-NUMBER := #POL-NUMBER
-PC-V.REFERENCE-NUMBER   := NEW-V.ID-NUMBER
-PC-V.CONTACT-ID := NEW-V.MEMBER-CONTACT-ID
-PC-V.RELATION := 1 /* INSURED
-STORE PC-V
-*
-IF NEW-V.INTRO-FLAG = 'S' OR ='K' OR = 'G'
-  PC-V.REFERENCE-NUMBER   := NEW-V.LINKED-CN(1)
-  PC-V.CONTACT-ID := F-GET-CONTACT-ID(<NEW-V.LINKED-CN(1)>)
-  PC-V.RELATION := #LINKED-MEMBER
-ELSE
-  PC-V.REFERENCE-NUMBER   := NEW-V.ID-NUMBER
-  PC-V.CONTACT-ID := NEW-V.MEMBER-CONTACT-ID
-  PC-V.RELATION := #MEMBER
+CALLNAT 'ORDNROLE'
+  APPL-TRACK-V.ID-NUMBER
+  #POL-NUMBER
+  NEW-V.MEMBER-CONTACT-ID
+  #CGA-CLERK
+  #CURR-DATE           /*TT Changed from NEW-V.ISSUE-DATE
+  NEW-V.ID-NUMBER
+
+IF #APPL-FOUND  
+  #CRM-RESULT := 'FAMILY'
+  CALLNAT 'MBRCRC'
+    NEW-V.MEMBER-CONTACT-ID
+    #CRM-RESULT
 END-IF
-*
-STORE PC-V
-*
+/* The update style of NM/AI has multiple END TRANSACTION
+/* This one is related to the policy roles
 END TRANSACTION
-*
-END-SUBROUTINE
-* ------------
-* DEFINE SUBROUTINE CREATE-ROLES
-* * -------------------------
+
 * RESET PC-V
+* RESET INITIAL #CLERK-KEY
+* COMPRESS #CLERK-KEY #CGA-CLERK INTO #CLERK-KEY LEAVING NO
+* *
+* FIND(1) GEN-TABLE-V WITH SEC-KEY = #CLERK-KEY
+*   FIND(1) USER-V WITH CLERK-ID = GEN-SUB-KEY
+*     PC-V.ADD-USER := PC-V.LAST-UPD-USER := USER-V.TERMINAL-ID
+*   END-FIND
+* END-FIND
+* PC-V.ADD-DATE := PC-V.LAST-UPD-DATE := NEW-V.ISSUE-DATE (#INDEX)
+* PC-V.ADD-TIME := PC-V.LAST-UPD-TIME := *TIMN
 * PC-V.POLICY-NUMBER := #POL-NUMBER
 * PC-V.REFERENCE-NUMBER   := NEW-V.ID-NUMBER
 * PC-V.CONTACT-ID := NEW-V.MEMBER-CONTACT-ID
-* PC-V.RELATION := 1
+* PC-V.RELATION := 1 /* INSURED
 * STORE PC-V
 * *
-* RESET PC-V
-* PC-V.POLICY-NUMBER := #POL-NUMBER
-* PC-V.RELATION := 9
 * IF NEW-V.INTRO-FLAG = 'S' OR ='K' OR = 'G'
-* *   IF NEW-V.LINKED-CN(1) = 0
-* *     PC-V.REFERENCE-NUMBER   := NEW-V.ID-NUMBER
-* *     PC-V.CONTACT-ID := NEW-V.MEMBER-CONTACT-ID
-* *   ELSE
-*     PC-V.REFERENCE-NUMBER   := NEW-V.LINKED-CN(1)
-*     PC-V.CONTACT-ID := F-GET-CONTACT-ID(<NEW-V.LINKED-CN(1)>)
-*     PC-V.RELATION := 9
-* *   END-IF
+*   PC-V.REFERENCE-NUMBER   := NEW-V.LINKED-CN(1)
+*   PC-V.CONTACT-ID := F-GET-CONTACT-ID(<NEW-V.LINKED-CN(1)>)
+*   PC-V.RELATION := #LINKED-MEMBER
 * ELSE
-*     PC-V.REFERENCE-NUMBER   := NEW-V.ID-NUMBER
-*     PC-V.CONTACT-ID := NEW-V.MEMBER-CONTACT-ID
-*     PC-V.RELATION := 3
+*   PC-V.REFERENCE-NUMBER   := NEW-V.ID-NUMBER
+*   PC-V.CONTACT-ID := NEW-V.MEMBER-CONTACT-ID
+*   PC-V.RELATION := #MEMBER
 * END-IF
 * *
 * STORE PC-V
-* END TRANSACTION
 * *
-* END-SUBROUTINE
-/*
+* END TRANSACTION
+*
+END-SUBROUTINE
 
 END

@@ -88,17 +88,22 @@
 * vxt 03/16/2016 vt10 /Ticket 4258 - special handling flag/
 * bz  03/28/2016   bz-4190 Update SUSPEND CODE
 * YAK 04/13/2016 YK10 Bypass CC charge and pass error message when CC data not updated successfully
-* vxt 07/28/2016 vt11 Allow CLiff to issue K and S-policies when the linked memebr does not exist
-* vxt 01/27/2017 vt12 HD-2502 Ticket - Add GAil and Emy Cox access as Cliffs in vt11
+* vxt 07/28/2016 vt11 Allow Cliff to issue K and S-policies when the linked memebr does not exist
+* vxt 01/27/2017 vt12 HD-2502 Ticket - Add Gail and Emy Cox access as Cliffs in vt11
 * vxt 04/10/2017 vt13 HD-3422 Ticket - Grant access for EH and GMS as Cliffs one.(vt11)
 * vxt 05/11/2017 vt14 Group Term Plan Project
 * NGG 20170523   NG9  Group Term Plan Project
 * bz  06/07/2017 hd-4094  Allow Jet issue for R1 R2 R3
-* TMT 06/08/2017 TT4  Multiple CAP Prokect
-* YAK 08/14/2017 YK11 Assign Bill Cycle when issuing the policy
+* TMT 06/08/2017 TT4  Multiple CAP Project
+* YAK 08/14/2017 YK11 Assign Bill Cycle for Credit Card when issuing the policy
 * bz-4912  10/18/2017 EZ req. U6
-* NGG 20171201   NG10  SOLA Project
+* bz-hd-7693 2/16/2018 Status PU must be present for all APPL
+* YAK 12/28/2017 YK12 Assign Bill Cycle for EZ-Pay when issuing the policy
+*                     Stop using Q/P-Q/D/D combinations for EZ-Pay
+* NGG 04/18/2018 NG10 SOLA Project
+* vxt 05/11/2018 vt15 Fix Record on hold issue
 ******************************************************************************
+
 DEFINE DATA
 GLOBAL USING BCOMMGXX WITH MASTER-BLOCK
 LOCAL USING C2000LNM
@@ -412,14 +417,17 @@ LOCAL
 1 REDEFINE #NEW-CN-A
   2 #NEW-CN           (N6)
 1 #I                (I2)
-1 #TOT-FACE-AMOUNT   (N7.2)
+* 1 #TOT-FACE-AMOUNT   (N7.2)
   /* vt9 /\
 1 #MEMBER        (N2) CONSTANT <3>
 1 #LINKED-MEMBER (N2) CONSTANT <9>
 1 #CLERK-KEY     (A7) INIT <'WEBU'>
 1 #ADD       (I4) CONST <1>                    /* TT4
 1 #CC-MODE       (A1/4) CONST <'0','4','2','1'>     /* YK11
-1 #CREDIT-CARD   (A) DYNAMIC CONST <'CC'>           /* YK11
+1 #EZ-MODE       (A1)   CONST <'E'>                 /* YK12
+1 #NEW-POLICY    (A) DYNAMIC CONST <'NM'>           /* YK12
+1 #msg-parm      (a79)                          /* vt15 
+*
 END-DEFINE
 ******************************************************************************
 *
@@ -438,9 +446,9 @@ MOVE (AD=U) TO #SCR-CV #FLEX-CV #FPF-CV                              /* PM22
 *
 MOVE *DATN TO #HOLD-TODAY-YYYYMMDD
 MOVE '*' TO #CGA-SCR-COMMAND
-IF #CGA-SCR-SUFFIX = 'CON'                                    /* PM28
-  FETCH 'C2001PNM'                                            /* PM28
-END-IF                                                        /* PM28
+IF #CGA-SCR-SUFFIX = 'CON'                                           /* PM28
+  FETCH 'C2001PNM'                                                   /* PM28
+END-IF                                                               /* PM28
 *
 IF #CGA-SCR-SUFFIX = 'FLX'
   WRITE '"FLX" is invalid as suffix on "NM"'
@@ -533,16 +541,16 @@ IF #CAP-IND = 'Y'
 * END-IF                                                          /* vt3
   DECIDE FOR FIRST CONDITION                           /* PM19
     WHEN APPL-TRACK-V.CAP-TYPE = 'G'                   /* PM19
-MOVE 'L' TO #AIL-IND                                                       /* vt3
-MOVE *DATN TO #AIL-DATE                                                    /* vt3
+      MOVE 'L' TO #AIL-IND                                                       /* vt3
+      MOVE *DATN TO #AIL-DATE                                                    /* vt3
       MOVE 'G' TO #MODE
-#X-ALT-LP-AMT := FUNCTION-LOAN-PAYMENT(<#CAP-AMOUNT, #CAP-TERM, #STRT-AMOUNT>)    /* vt3
+      #X-ALT-LP-AMT := FUNCTION-LOAN-PAYMENT(<#CAP-AMOUNT, #CAP-TERM, #STRT-AMOUNT>)    /* vt3
 *     COMPRESS #CID-MMDD-A #CID-YYYY-A INTO #EFF-DT-A LEAVING NO
     WHEN APPL-TRACK-V.CAP-TYPE = 'E'                   /* PM19
       MOVE 'E' TO #MODE                                /* PM19
-MOVE 'E' TO #AIL-IND                                                       /* vt3
-MOVE *DATN TO #AIL-DATE                                                    /* vt3
-#X-ALT-LP-AMT := FUNCTION-LOAN-PAYMENT(<#CAP-AMOUNT, #CAP-TERM, #STRT-AMOUNT>)  /* vt3
+      MOVE 'E' TO #AIL-IND                                                       /* vt3
+      MOVE *DATN TO #AIL-DATE                                                    /* vt3
+      #X-ALT-LP-AMT := FUNCTION-LOAN-PAYMENT(<#CAP-AMOUNT, #CAP-TERM, #STRT-AMOUNT>)  /* vt3
     WHEN APPL-TRACK-V.CAP-TYPE = 'C'                   /* PM19
       MOVE '0' TO #MODE                                /* PM19
       COMPRESS #CID-MMDD-A #CID-YYYY-A INTO #EFF-DT-A LEAVING NO
@@ -599,12 +607,12 @@ IF #PSM-FPF > 0                 /* NG3
   COMPRESS #NEW-MSSG '-' #PSM-MSG INTO #NEW-MSSG
 END-IF
 IF  #CGA-CLERK = 'CEB' OR = 'VXT'                    /* VT7   \/
-or = 'GME'  or = 'EAC'                                                           /* vt8
+    or = 'GME'  or = 'EAC'                                                           /* vt8
   MOVE (AD=U) TO #PLAN-CV
   INPUT  TEXT #NEW-MSSG MARK *#PLAN USING MAP 'C2000MNM'
 ELSE
   MOVE (AD=P) TO #PLAN-CV
-INPUT TEXT #NEW-MSSG MARK *#EFF-DT-A USING MAP 'C2000MNM'    /* PM22 PM28 vt 07292013
+  INPUT TEXT #NEW-MSSG MARK *#EFF-DT-A USING MAP 'C2000MNM'    /* PM22 PM28 vt 07292013
 END-IF
 * INPUT TEXT #NEW-MSSG MARK *#EFF-DT-A USING MAP 'C2000MNM'    /* PM22 PM28
 *
@@ -624,18 +632,18 @@ RESET #TOT-FACE
 *     AND (#PAD-CODE NE 'E')
 *     AND (NOT #PLAN = 'SP' OR = 'AL'))
 *     OR #EZ-PAY-WAITING
-IF  #MODE = 'E'
-    AND #PAD-CODE NE 'E'
-    AND #PLAN NE 'SP'
-    AND SUBSTR(#PLAN,1,2) NE 'AL'
-*    AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /*NG7
-    OR #EZ-PAY-WAITING
-  MOVE TRUE TO #EZ-PAY-WAITING
-  MOVE 'Q' TO #MODE
-ELSE
-  RESET #EZ-PAY-WAITING
-END-IF
-*
+* YK12 >
+* IF  #MODE = 'E'
+*     AND #PAD-CODE NE 'E'
+*     AND #PLAN NE 'SP'
+*     AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /*NG7
+*     OR #EZ-PAY-WAITING
+*   MOVE TRUE TO #EZ-PAY-WAITING
+*   MOVE 'Q' TO #MODE
+* ELSE
+RESET #EZ-PAY-WAITING
+* END-IF
+* < YK12
 PERFORM STANDARD-EDITS
 PERFORM FBR-EDITS
 *
@@ -861,7 +869,7 @@ IF #CGA-SCR-SUFFIX NE 'OVR'
   END-IF
 END-IF
 *
-END-SUBROUTINE /* (0762)
+END-SUBROUTINE /* (0771)
 *
 ******************************************************************************
 DEFINE SUBROUTINE CALCULATE-START-DT
@@ -870,7 +878,7 @@ DEFINE SUBROUTINE CALCULATE-START-DT
 MOVE #EFF-YYYYMMDD TO #WORK-DATE-YYYYMMDD
 *
 IF #CAP-IND = 'Y'
-AND APPL-TRACK-V.CAP-TYPE NE 'E'                                      /* PM19
+    AND APPL-TRACK-V.CAP-TYPE NE 'E'                                      /* PM19
   MOVE #EFF-DT TO #FPF-START
 * SUBTRACT 1 FROM #FPFS-MM               /* vt3
 *
@@ -895,9 +903,11 @@ DEFINE SUBROUTINE CALCULATE-END-DT
 ******************************************************************************
 *
 IF   (#EFF-YYYYMM LT #HOLD-TODAY-YYYYMM)
-    AND ((NOT #MODE = 'A' OR = 'S' OR = 'Q' OR = '0' OR = '1'
-    OR = '2' OR = '4')
-    OR #EZ-PAY-WAITING)
+* YK12 >
+*   AND ((NOT #MODE = 'A' OR = 'S' OR = 'Q' OR = '0' OR = '1' OR = '2' OR = '4')
+*   OR #EZ-PAY-WAITING)
+    AND (#MODE = 'G' OR #MODE = 'E' OR #MODE = 'M')
+* < YK12
   MOVE #HOLD-TODAY-YYYYMMDD TO #WORK-DATE-YYYYMMDD
   MOVE #EFF-DD TO #WD-DD
 END-IF
@@ -917,9 +927,8 @@ END-IF
 IF   (#MODE = 'A' OR = 'S' OR = 'Q' OR = '0' OR = '1' OR = '2' OR = '4')
 *    AND (NOT #PLAN = 'SP' OR = 'AL')
     AND #PLAN NE 'SP'
-    AND SUBSTR(#PLAN,1,2) NE 'AL'
-*    AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
-    AND (NOT #EZ-PAY-WAITING)
+    AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
+*   AND (NOT #EZ-PAY-WAITING)            /* YK12 - Commented out - always true
   MOVE #EFF-YYYYMMDD TO #YYYYMMDD-N
   IF #MODE = 'A' OR = '1' MOVE 12 TO #FREQ END-IF
   IF #MODE = 'S' OR = '2' MOVE 6  TO #FREQ END-IF
@@ -965,10 +974,7 @@ IF #HAS-FBR
 END-IF
 *
 **IF (#PLAN = 'SP' OR = 'AL') OR (#CAP-IND = 'Y' AND APPL-TRACK-V.CAP-TYPE EQ 'C')    /* vt3
-IF #PLAN = 'SP' 
-    OR = GroupTerm 
-    OR SUBSTR(#PLAN,1,2) EQ 'AL'
-**OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+IF #PLAN = 'SP' or = GroupTerm OR SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
     OR (#CAP-IND = 'Y' AND APPL-TRACK-V.CAP-TYPE EQ 'C')
   MOVE #FPF-START TO #FPF-END    /* SINCE THERE IS NO FPF
   ESCAPE ROUTINE
@@ -1061,11 +1067,11 @@ MOVE 1   TO NEW-V.NUM-MBRSHIPS (1)
 MOVE 'D' TO NEW-V.STATUS (1)
 *
 IF #FPF = 0 /* MUST PRECEDE PERFORM PROCESS-PUSP
-if #plan eq GroupTerm                                                     /* vt14  \/
+  if #plan eq GroupTerm                                                     /* vt14  \/
     move '42' to new-v.pay-status (1)
   else
     MOVE '21' TO NEW-V.PAY-STATUS (1)
-end-if                                                                    /* vt14  \/
+  end-if                                                                    /* vt14  \/
 ELSE
   MOVE '12' TO NEW-V.PAY-STATUS (1)
 END-IF
@@ -1080,13 +1086,14 @@ MOVE #X-ALT-LP-AMT TO NEW-V.X-ALT-LP-AMT (1)                       /* vt3
 COMPRESS NEW-V.ID-NUMBER '-1' INTO NEW-V.POLICY-ID(1) LEAVING NO
 * move #alot-chg-auth to new-v.alot-chg-auth                          /* vt6
 *
-* YK11 >
-IF #MODE = #CC-MODE(*)
-  NEW-V.BILL-CYCLE(1) := F-BILL-CYCLE(<#EFF-DD,#CREDIT-CARD>)
-ELSE
-  NEW-V.BILL-CYCLE(1) := '3'
-END-IF
-* < YK11
+* YK11 YK12 >
+DECIDE FOR FIRST CONDITION
+  WHEN #MODE = #CC-MODE(*) OR #MODE = #EZ-MODE
+    NEW-V.BILL-CYCLE(1) := F-BILL-CYCLE(<#EFF-DD,#NEW-POLICY>)
+  WHEN NONE
+    NEW-V.BILL-CYCLE(1) := '3'
+END-DECIDE
+* < YK11 YK12
 *
 IF #PLAN = 'LT'    /* SO THAT IN CASES OF DUP ISS-DATES
   MOVE 5 TO NEW-V.SPLIT-IND (1)   /* THE BD CAN TELL THEM APART
@@ -1122,8 +1129,8 @@ MOVE #APPL-SRC TO NEW-V.APPL-SOURCE
 *
 MOVE '*' TO NEW-V.TRIGGER-FLAG
 *
-IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'
-**IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+**IF #PLAN = 'SP' OR 'AL'
+IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
   RESET #APREM #MPREM
 ELSE
   MOVE #APREM TO NEW-V.ANNUAL-PREM (1)
@@ -1132,15 +1139,15 @@ MOVE #PLAN  TO #PLAN-COMBINE
 *
 MOVE 1 TO #INDEX
 IF #FLEX-PLAN
-    AND SUBSTR(#PLAN,1,2) NE 'AL'
-*    AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+*    AND (#PLAN NE 'AL')
+    AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
   PERFORM PROCESS-FLEX-PLAN
 *
   MOVE 'F' TO #PLAN-SUFFIX
   MOVE #PLAN-COMBINE TO NEW-V.PLAN (1)
 ELSE
-  IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'
-*  IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+* IF #PLAN = 'SP' OR = 'AL'
+  IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
     PERFORM PROCESS-PUSP
   ELSE
     IF #PLAN = '20' OR = '30'
@@ -1174,7 +1181,7 @@ CALLNAT 'C1102SAI'                                                     /* PM3
   #PDA-C1002SAT
 *
 IF #AUTO-ISSUE-KEY-FOUND-1100                                          /* PM3
-NEW-V.AUTO-ISSUE (1) := #AUTO-ISSUE                                  /* PM3
+  NEW-V.AUTO-ISSUE (1) := #AUTO-ISSUE                                  /* PM3
 END-IF                                                                 /* PM3
 *
 IF #CGA-SCR-SUFFIX = 'OVR'
@@ -1188,7 +1195,7 @@ ELSE
   FIND (1) NM-T01 WITH TERMINAL-ID = 'CNMASTER'
     MOVE LAST-CN TO #CN1
     ADD 1 TO LAST-CN
-    UPDATE RECORD (1188)
+    UPDATE RECORD (1195)
     MOVE #CN1 TO NEW-V.ID-NUMBER
     MOVE #CN1 TO #CGA-SCR-ID
   END-FIND
@@ -1200,7 +1207,7 @@ FIND ST-V WITH SSN = NEW-V.SSN /* IN CASE AN AFSC REC EXISTS
     MOVE ST-V.ID-NUMBER TO NEW-V.OTHER-COMPANY-ID
     MOVE NEW-V.ID-NUMBER TO ST-V.OTHER-COMPANY-ID
 *
-    UPDATE (1197)
+    UPDATE (1204)
     ESCAPE BOTTOM
   END-IF
 END-FIND
@@ -1209,8 +1216,8 @@ MOVE *DATN TO NEW-V.DTS-DATN
 MOVE *TIMN TO NEW-V.DTS-TIMN
 
 IF ( APPL-TRACK-V.PLAN = MASK('S') AND APPL-TRACK-V.PLAN <> MASK('SP') )  /* bz-4190
-OR ( APPL-TRACK-V.RATING-CODE = '1' OR = '2' OR = '3')                /* bz-4190
-CALLNAT 'C1SUSNAT' NEW-V.ID-NUMBER '6'                                  /* bz-4190
+    OR ( APPL-TRACK-V.RATING-CODE = '1' OR = '2' OR = '3')                /* bz-4190
+  CALLNAT 'C1SUSNAT' NEW-V.ID-NUMBER '6'                                  /* bz-4190
 END-IF                                                                    /* bz-4190
 *
 IF #PENDING-MEMBER
@@ -1221,10 +1228,10 @@ IF #PENDING-MEMBER
     NEW-V.ISSUE-DATE (1)
     NEW-V.PLAN       (1)
     NEW-V.VERSION    (1)
-  UPDATE (0507)
+  UPDATE (0515)
 **ELSE                                  /* NG4 No Status record creation
 *  STORE NEW-V
-*  MOVE *ISN (1225) TO #HOLD-ISN
+*  MOVE *ISN (1233) TO #HOLD-ISN
 END-IF
 *
 #PSM-REQUEST := 'SET-FPF'
@@ -1246,6 +1253,7 @@ CALLNAT 'C2010SNM'
   APPL-TRACK-V.E-DEPOSIT-IND                           /* YK9
   #ABORT
   #PSM-FPF                                             /* YK9
+  #msg-parm                         /* vt15 
 *
 IF #CAP-IND = 'Y'         /* TT1
   COMPRESS NEW-V.ID-NUMBER '-1' INTO #LOAN.LOAN-POLICY-NUMBER LEAVING NO
@@ -1288,13 +1296,13 @@ IF   (NEW-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G' OR = 'F')
     IF NO RECORDS FOUND
       FIND (1) ST-V WITH WIDOW-KEY = #LINKED-CN-A
         PERFORM SETUP-LINKAGE
-        UPDATE (1289)
+        UPDATE (1297)
       END-FIND
       ESCAPE BOTTOM
     END-NOREC
 *
     PERFORM SETUP-LINKAGE
-    UPDATE 
+    UPDATE (1295)
   END-FIND
 END-IF
 *
@@ -1303,7 +1311,7 @@ END TRANSACTION
 * Following must follow END transaction above
 IF   (NEW-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G')           /* DW13
     AND (#LINKED-CN NE 0)
-FIND (1) ST-V WITH MEMBER-KEY = #LINKED-CN-A  /* Set ALOT AUTH to A on Mbr
+  FIND (1) ST-V WITH MEMBER-KEY = #LINKED-CN-A  /* Set ALOT AUTH to A on Mbr
     IF NO RECORDS FOUND
       FIND (1) ST-V WITH WIDOW-KEY = #LINKED-CN-A
         PERFORM SET-MBR-ALOT-AUTH
@@ -1342,8 +1350,8 @@ END-FOR
 IF    #FLEX-PLAN
     AND ((#LUMP-SUM NE 0) OR (#EXCH-1035 NE 0))
   IF (#LUMP-SUM NE 0) AND (#EXCH-1035 = 0)
-    AND (SUBSTR(#PLAN,1,2) NE 'AL')
-*      AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+*     AND (#PLAN NE 'AL')
+      AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
     ADD 1 TO #INT
     MOVE EDITED #LUMP-SUM (EM=ZZZ,ZZ9.99) TO #AMT-DISP
     COMPRESS '$' #AMT-DISP INTO #AMT-DISP LEAVING NO
@@ -1418,7 +1426,6 @@ END-IF
 END TRANSACTION
 *
 IF #APPL-FOUND
-  G1.
   GET A-UPDATE-APPL #HOLD-APPL-ISN
   MOVE NEW-V.ID-NUMBER TO A-UPDATE-APPL.MEMBER-CN
   MOVE 'A'   TO A-UPDATE-APPL.ACTION-FLAG
@@ -1435,7 +1442,7 @@ IF #APPL-FOUND
     A-UPDATE-APPL.ST-NOTE-USER   (1:50)
     A-UPDATE-APPL.ST-NOTE-STATUS (1:50)
     A-UPDATE-APPL.ACTION-DATE
-  UPDATE (G1.)
+  UPDATE (1429)
 *****************************************
 
 END-IF
@@ -1454,7 +1461,7 @@ IF #APPL-FOUND
       END-IF
     END-IF
 *
-    UPDATE (1446)
+    UPDATE (1453)
   END-FIND
 END-IF
 *
@@ -1467,7 +1474,7 @@ IF #APPL-FOUND
         ESCAPE BOTTOM
       END-IF
     END-FOR
-    UPDATE (1462)
+    UPDATE (1469)
   END-FIND
 END-IF
 *
@@ -1489,7 +1496,7 @@ PERFORM CREATE-ROLES
 * END TRANSACTION                                            /* TT3
 *
 if appl-track-v.plan ne GroupTerm                                          /* vt14
-#PROCESS-NAME         := 'POLPRINT'                                      /* vt3 \/
+  #PROCESS-NAME         := 'POLPRINT'                                      /* vt3 \/
   #ID-NUMBER            := #POLICY-NUMBER
   #ORDER-LIST           := 'Policy'
   CALLNAT 'GPRN0001' #PROCESS-NAME #ID-NUMBER #ORDER-LIST #RESPONSE-CODE
@@ -1506,18 +1513,27 @@ IF #APPL-FOUND AND (APPL-TRACK-V.E-DEPOSIT-IND = 'E' OR APPL-TRACK-V.E-DEPOSIT-I
 *
   IF #ERROR-CODE <> ' '
 *   COMPRESS #TXN-COMPLETE-MSG F-ERROR-DESCRIPTION(<#ERROR-CODE>) INTO #TXN-COMPLETE-MSG
-#TXN-COMPLETE-MSG := 'Error charging FPF. Please, correct data and use WebCharge'
+    #TXN-COMPLETE-MSG := 'Error charging FPF. Please, correct data and use WebCharge'
   END-IF
 ELSE
 * YK10 >
   IF APPL-TRACK-V.E-DEPOSIT-IND = 'F'
-#TXN-COMPLETE-MSG := 'FPF has not been charged. Please, correct data and use WebCharge'
+    #TXN-COMPLETE-MSG := 'FPF has not been charged. Please, correct data and use WebCharge'
   END-IF
 * < YK10
 END-IF
 * > YK9
+*
+* ng11: Change synch point - after policy roles are created
+*
+* IF #APPL-FOUND               /* NG1 PM28
+*   CALLNAT 'MBRNEWST'
+*     APPL-TRACK-V.ID-NUMBER
+*     NEW-V.ID-NUMBER
+*     #CRM-RESULT
+* END-IF
 
-END-SUBROUTINE /* (0983)
+END-SUBROUTINE /* (0990)
 *
 ******************************************************************************
 DEFINE SUBROUTINE SETUP-LINKAGE
@@ -1528,7 +1544,7 @@ IF  (ST-V.PROCESS-IND = 'G' OR = 'S') /*SPS/GEN LINKED TO G/F SHOULD BE SYNCED /
     OR (ST-V.OTHER-COMPANY-ID NE 0)    /* OR COMBO MEMBER
   FIND (1) XX-ST WITH MEMBER-KEY = NEW-V.ID-NUMBER-A
     MOVE 'A' TO XX-ST.ALOT-SW
-    UPDATE (1529)
+    UPDATE (1545)
   END-FIND
 END-IF
 *
@@ -1589,9 +1605,8 @@ MOVE #PLAN-COMBINE TO NEW-PLAN(3)
 MOVE EDITED #FACE-AMT (EM=Z,ZZ9,999) TO NEW-FACE(3)     /*TT1
 MOVE 'SMOK FLAG' TO NEW-SMOKER-MSG(3)
 MOVE #SMOKER       TO NEW-SMOKER(3)
-
-IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'
-**IF #PLAN = 'SP' OR IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+**IF #PLAN = 'SP' OR = 'AL'
+IF #PLAN = 'SP' OR SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
   MOVE 'SP '      TO NEW-PLAN(3)
   MOVE 'SINGLE PREM=' TO NEW-SINGL-PREM-MSG(3)
   MOVE #SPM-AMT   TO NEW-SINGL-PREM(3)
@@ -1604,11 +1619,13 @@ COMPRESS #SCR-TEL-WORK-1 #SCR-TEL-WORK-2 #SCR-TEL-WORK-3
   INTO NEW-TEL-WORK (3) LEAVING NO
 *
 ASSIGN NEW-MODE-LBL(4) = ' MOD'
-IF #EZ-PAY-WAITING
-  MOVE 'E' TO NEW-MODE (4)
-ELSE
-  MOVE #MODE TO NEW-MODE (4)
-END-IF
+* YK12 >
+* IF #EZ-PAY-WAITING
+*   MOVE 'E' TO NEW-MODE (4)
+* ELSE
+MOVE #MODE TO NEW-MODE (4)
+* END-IF
+* < YK12
 ASSIGN NEW-FPF-LBL(4) = ' FPF'
 MOVE EDITED #FPF (EM=ZZZ,ZZZ.99) TO NEW-FPF(4)
 ASSIGN NEW-PD-TO-LBL(4) = ' PDTO'
@@ -1649,7 +1666,7 @@ CALLNAT 'CDUELSNM' #CGA-SCR-ID #CGA-SCR-SUFFIX #CGA-SCR-COMMAND
   #HAS-FBR #FPF-FBR #FBR-MON-PREM
   CONV-DURATION (1) #FACE-AMT #SMOKER #AGE NEW-V.PREM-RATING (1)
   #NO-FPF #DB-CR-AMT #WORK-PREM-HOLD #PAD-LAST-MON-AMT #XTRA-AMT-DUE
-#INDEX #DEP-RCVD DATE-ENTERED (1) #EZ-PAY-WAITING                   /* PM17
+  #INDEX #DEP-RCVD DATE-ENTERED (1) #EZ-PAY-WAITING                   /* PM17
 *
 END-SUBROUTINE
 *
@@ -1667,14 +1684,14 @@ IF APPL-TRACK-V.MEMBER-CN NE ' '
     IF ST-V.PROCESS-IND = 'C'
         AND ( ST-V.INTRO-FLAG = 'A' OR= 'O' )    /* NG4
       MOVE TRUE TO #PENDING-MEMBER
-      MOVE *ISN (1662) TO #HOLD-ISN
+      MOVE *ISN (1679) TO #HOLD-ISN
     END-IF
   END-FIND
 END-IF
 *
 FIND ST-V WITH SSN = #SSN
 *  IF (ST-V.PROCESS-IND NE 'S') AND NOT #CONTACT                       RE1
-IF NOT AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                         /* RE1 PM28
+  IF NOT AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                         /* RE1 PM28
       AND (ST-V.ID-NUMBER GE 1900)
       AND ((ST-V.ID-NUMBER-A NE APPL-TRACK-V.MEMBER-CN)
       OR  ((ST-V.ID-NUMBER-A = APPL-TRACK-V.MEMBER-CN)
@@ -1698,7 +1715,7 @@ IF NOT AFFL-ONLY-CLIENT(<ST-V.ID-NUMBER>)                         /* RE1 PM28
   END-IF
 END-FIND
 *
-END-SUBROUTINE /* (1656)
+END-SUBROUTINE /* (1674)
 *
 ******************************************************************************
 DEFINE SUBROUTINE WRITE-STATS
@@ -1756,8 +1773,8 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
   END-DECIDE
 *
 *
-  IF SUBSTR(#PLAN,1,2) EQ 'AL'
-*  IF IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+*  IF #PLAN = 'AL'
+  IF SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
     IF NEW-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
       MOVE 18 TO #IS
     ELSE
@@ -1766,8 +1783,8 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
   END-IF
 *
   IF #FLEX-PLAN
-     AND SUBSTR(#PLAN,1,2) NE 'AL'
-*     AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+*      AND (#PLAN NE 'AL')
+      AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
     IF NEW-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
       MOVE 14 TO #IS
     ELSE
@@ -1847,8 +1864,8 @@ FIND (1) STATS-V WITH MONTH-KEY = #HOLD-TODAY-YYYYMM
         MOVE 3 TO #GL-X
       WHEN #PLAN= 'EZ'
         MOVE 8 TO #GL-X                /* new for EZ
-      WHEN SUBSTR(#PLAN,1,2) EQ 'AL'
-*      WHEN IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+*      WHEN #PLAN = 'AL'
+      WHEN SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
         MOVE 4 TO #GL-X
       WHEN #PLAN = 'GPL' OR = 'GP' OR = 'GP2'       /* TT2     /* DW15
         MOVE 7 TO #GL-X
@@ -1930,7 +1947,7 @@ FIND (1) NEW-V WITH MEMBER-KEY = #CGA-ID-G
   END-IF
 *
   FIND (1) CT-V WITH CT-V.CONTACT-ID = APPL-TRACK-V.CONTACT-ID  /* PM28
-#NAME := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME,CT-V.LAST-NAME,CT-V.SUFFIX>) /* PM28
+    #NAME := FUNCTION-DISP-CT-NAME(<CT-V.FIRST-NAME,CT-V.MIDDLE-NAME,CT-V.LAST-NAME,CT-V.SUFFIX>) /* PM28
   END-FIND                                                      /* PM28
 *
   MOVE APPL-SOURCE TO #APPL-SRC
@@ -2015,6 +2032,11 @@ IF NOT #APPL-FOUND
 END-IF
 *
 GET APPL-TRACK-V #HOLD-APPL-ISN
+IF NOT ( ST-NOTE-STATUS(*) = 'PU' )                             /* bz-hd-7693
+  INPUT TEXT 'APPL PU status is mandatory' USING MAP 'G1000MXX' /* bz-hd-7693
+  FETCH 'G1000PXX'                                              /* bz-hd-7693
+END-IF
+
 IF APPL-TRACK-V.INTRO-FLAG = 'V'
   ESCAPE TOP
 END-IF
@@ -2028,7 +2050,7 @@ CALLNAT 'ADDN0001'                              /* PM28
 #ZIP-CODE      := #ADD-ZIP-CODE                 /* PM28
 *                                                                 /* vt1 \/
 IF APPL-TRACK-V.DISCLOSURE-IND NE 'Y' AND #ADD-STATE = 'CA'                    /* PM28
-INPUT TEXT 'WARNING!!! CALIFORNIA APPLICATION. Please use AT to enter the disclosure doc'
+  INPUT TEXT 'WARNING!!! CALIFORNIA APPLICATION. Please use AT to enter the disclosure doc'
     USING MAP 'G1000MXX'
   FETCH 'G1000Pxx'
 END-IF                                                              /* vt1 /\
@@ -2047,13 +2069,16 @@ IF  ((NOT APPL-TRACK-V.ACTION-FLAG = 'P' OR = 'U' OR = 'R')        /* hd-4094
 END-IF
 *
 move appl-track-v.member-cn to #new-cn-a                         /* vt9 \/
-find a-stat with a-stat.id-number = #new-cn
-  for #i 1 9
-    if a-stat.status(#i) = 'D'
-      add a-stat.face-amount (#i) to #tot-face-amount
-    end-if
-  end-for
-end-find
+** =====================================================
+* ??????????? Unused code. What we are counting here? This is the first policy... YK00
+* find a-stat with a-stat.id-number = #new-cn
+*   for #i 1 9
+*     if a-stat.status(#i) = 'D'
+*       add a-stat.face-amount (#i) to #tot-face-amount
+*     end-if
+*   end-for
+* end-find
+** =======================================================
 IF  (appl-track-v.plan = 'OL' OR = 'SPF')
     OR (appl-track-v.plan = MASK (NN.))
     OR (appl-track-v.plan = MASK (N'P'.))
@@ -2063,20 +2088,20 @@ else
 end-if
 *
 COMPUTE #face-amount  := (appl-track-v.FACE-AMT-UNITS * 1000) + appl-track-v.FACE-AMT-DOLS
-#face-amount := #face-amount + #tot-face-amount
+* #face-amount := #face-amount + #tot-face-amount      /* YK00
 *
 EXAMINE APPL-TRACK-V.ST-NOTE-STATUS (*) for 'U6'    giving #IDX1
 *
 if #idx1 lt 1
-if  f-lt2-true(<appl-track-v.plan>) OR APPL-TRACK-V.PLAN = 'EZ'            /* bz-4912
-  INPUT TEXT  'Underwriting has not been completed for this application'
+  if  f-lt2-true(<appl-track-v.plan>) OR APPL-TRACK-V.PLAN = 'EZ'            /* bz-4912
+    INPUT TEXT  'Underwriting has not been completed for this application'
       USING MAP 'G1000MXX'
     FETCH 'G1000PXX'
   end-if
 *
   if appl-track-v.plan = 'LT'
       and (#face-amount gt 400001.00) and ( #idx1 lt 1)
-  INPUT TEXT  'Underwriting has not been completed for this application'
+    INPUT TEXT  'Underwriting has not been completed for this application'
       USING MAP 'G1000MXX'
     FETCH 'G1000PXX'
   end-if
@@ -2084,20 +2109,20 @@ if  f-lt2-true(<appl-track-v.plan>) OR APPL-TRACK-V.PLAN = 'EZ'            /* bz
   if   #whole-life
     if  APPL-TRACK-V.intro-flag   =  'S'
       if  #face-amount gt 300001.00 and #idx1 lt 1
-  INPUT TEXT  'Underwriting has not been completed for this application'
+        INPUT TEXT  'Underwriting has not been completed for this application'
           USING MAP 'G1000MXX'
         FETCH 'G1000PXX'
       end-if
     else
       if  APPL-TRACK-V.intro-flag    = 'K' or = 'G'
         if #FACE-AMOUNT GT 100001.00 and #idx1 lt 1
-  INPUT TEXT  'Underwriting has not been completed for this application'
+          INPUT TEXT  'Underwriting has not been completed for this application'
             USING MAP 'G1000MXX'
           FETCH 'G1000PXX'
         END-IF
       else
         if #FACE-AMOUNT GT 400001.00 and #idx1 lt 1
-  INPUT TEXT  'Underwriting has not been completed for this application'
+          INPUT TEXT  'Underwriting has not been completed for this application'
             USING MAP 'G1000MXX'
           FETCH 'G1000PXX'
         END-IF
@@ -2116,7 +2141,7 @@ FIND (1) CT-V WITH CT-V.CONTACT-ID = APPL-TRACK-V.CONTACT-ID  /* PM28
   #NAME-FIRST   := CT-V.FIRST-NAME                            /* PM28
   #NAME-MIDDLE  := CT-V.MIDDLE-NAME                           /* PM28
   #NAME-SUFFIX  := CT-V.SUFFIX                                /* PM28
-#NAME := FUNCTION-DISP-CT-NAME(<#NAME-FIRST,#NAME-MIDDLE,#NAME-LAST,#NAME-SUFFIX>) /* PM28
+  #NAME := FUNCTION-DISP-CT-NAME(<#NAME-FIRST,#NAME-MIDDLE,#NAME-LAST,#NAME-SUFFIX>) /* PM28
   #SEX          := CT-V.GENDER-CD                             /* PM28
   #DOB-DISP     := CT-V.DATE-OF-BIRTH                         /* PM28
   #MIL-ST       := CT-V.MILITARY-STATUS                       /* PM28
@@ -2169,7 +2194,7 @@ IF (#INSURED = 'S' OR = 'K' OR = 'G')
       END-FIND
     END-NOREC
 *
-if #cga-clerk = 'VXT' or = 'CEB'  or = 'GME' or = 'EAC'  or = 'EH' or = 'GMS'         /*   vt11  vt12  vt13
+    if #cga-clerk = 'VXT' or = 'CEB'  or = 'GME' or = 'EAC'  or = 'EH' or = 'GMS'         /*   vt11  vt12  vt13
         or= 'NG'
       ignore
     else                                                      /*   vt11
@@ -2226,7 +2251,7 @@ END-IF
 COMPUTE #DIVIDEND = (#SCR-FACE * 1000) / 5000
 IF  (EXCH-1035 NE 0) OR (LUMP-SUM NE 0)
     OR (NOT #PLAN = '7P' OR = '20'  OR = '30'  OR = 'OL' OR = 'SP'
-OR = 'GPL' OR = 'GP2'    /* TT2        /* Gen Plus                              /* DW15
+    OR = 'GPL' OR = 'GP2'    /* TT2        /* Gen Plus                              /* DW15
     OR = '20P' OR = '30P')   /* OR = 'LT' OR = 'RT')             /* YK6
     OR (#REM NE 0)  OR (#SCR-FACE-DOLS NE 0)
 *  MOVE TRUE TO #FLEX-POLICY
@@ -2334,8 +2359,7 @@ MOVE #FAC-AMT TO #FACE-AMT
 IF   (APPL-TRACK-V.PLAN NE ' ')
 *    AND (NOT APPL-TRACK-V.PLAN = 'SP' OR = 'AL')   /* DW1
     AND APPL-TRACK-V.PLAN NE 'SP'
-    AND SUBSTR(#PLAN,1,2) NE 'AL'
-*    AND NOT IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+    AND NOT SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
   IF PLAN-A2 = 'P'
     MOVE PLAN-N1 TO #FLEX-YEARS
   ELSE
@@ -2343,8 +2367,8 @@ IF   (APPL-TRACK-V.PLAN NE ' ')
   END-IF
 END-IF
 *
-IF SUBSTR(APPL-TRACK-V.PLAN,1,2) = 'AL'
-**IF IS-ANNUITY-LIFE (< APPL-TRACK-V.PLAN >)  /* NG7
+**IF APPL-TRACK-V.PLAN = 'AL'
+IF SUBSTR(APPL-TRACK-V.PLAN,1,2) EQ 'AL'  /* NG7
   MOVE 999 TO #FLEX-YEARS
 END-IF
 *
@@ -2370,8 +2394,8 @@ END-IF
 MOVE #FAC-AMT-3 TO #SCR-FACE
 MOVE #FAC-AMT-DOLS TO #SCR-FACE-DOLS
 *
-IF SUBSTR(#PLAN,1,2) EQ 'AL'
-**IF IS-ANNUITY-LIFE (< #PLAN >)  /* NG7
+**IF #PLAN = 'AL'
+IF SUBSTR(#PLAN,1,2) EQ 'AL'  /* NG7
   ESCAPE ROUTINE
 END-IF
 *
@@ -2458,11 +2482,10 @@ CALLNAT 'GPXNEC01'
 *
 END-SUBROUTINE
 *
-* NG10   SOLA Project
-*
+/* ng10: New code to create policy roles based on application roles
+/*
 DEFINE SUBROUTINE CREATE-ROLES
 * -------------------------
-*
 CALLNAT 'ORDNROLE'
   APPL-TRACK-V.ID-NUMBER
   #POLICY-NUMBER
@@ -2477,7 +2500,10 @@ IF #APPL-FOUND
     NEW-V.MEMBER-CONTACT-ID
     #CRM-RESULT
 END-IF
-
+/* The update style of NM/AI has multiple END TRANSACTION
+/* This one is related to the policy roles
+END TRANSACTION
+ 
 * RESET PC-V
 * RESET INITIAL #CLERK-KEY
 * COMPRESS #CLERK-KEY #CGA-CLERK INTO #CLERK-KEY LEAVING NO
@@ -2508,7 +2534,7 @@ END-IF
 * END-IF
 * *
 * STORE PC-V
-*
+* *
 * END TRANSACTION
 *
 END-SUBROUTINE
