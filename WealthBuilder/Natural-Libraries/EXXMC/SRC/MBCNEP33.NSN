@@ -1,0 +1,204 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*******************************************************************
+* MBCNEP33 - Member Center/MC-II - Update payment settings
+* Called from MBCNEP30 - 'ManagePaymentSettings' function - Change Payer
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    05102017       Initial Creation EB&P III
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER USING MBCAEP30
+PARAMETER
+1 #ErrorCode (A3)
+1 #ErrorDescription (A) DYNAMIC
+*
+LOCAL USING MBCAEC51
+LOCAL USING OBJAPINF
+LOCAL USING GPRATR02
+LOCAL USING ERROR_LN
+LOCAL
+1 #I                (I2)
+1 #II               (I2)
+1 #value            (A) DYNAMIC
+1 #length           (N2)
+1 #DATN             (N8)
+1 #TRAN-CONTACT-ID  (N8)
+1 FUNCTION_CODE     (A) DYNAMIC INIT <'PayerChange'>
+*
+1 #LAST-UPDATE-CLERK (A3)
+1 #LAST-UPDATE-USER  (A) DYNAMIC
+1 #MEMBER-CENTER-CLERK (A3) INIT <'MBR'>
+1 #MEMBER-CENTER-USER  (A) DYNAMIC INIT <'MEMBER'>
+1 #AUC (A) DYNAMIC CONST <'AUC'>
+1 #ADD-EZPAY       (A) DYNAMIC CONST <'ADD-EZPAY'>
+1 #EZ-PAY          (A) DYNAMIC CONST <'EZ-Pay'>       /* (A/3) DYNAMIC CONST <'E','3','4'>
+1 #CC              (A) DYNAMIC CONST <'Credit Card'>  /* (A1/6) CONST <'0','1','4','2','8','C'>
+1 #Allotment       (A) DYNAMIC CONST <'Allotment'>
+1 #DirectBill      (A) DYNAMIC CONST <'Direct Bill'>
+1 #Service         (A) DYNAMIC CONST <'Service'>
+1 #Payer           (N2) CONSTANT    <8>
+1 #PrimaryOwner    (N2) CONSTANT    <2>
+1 #CoOwner         (N2) CONSTANT    <10>
+1 #OWNER-CN        (N6)
+1 #CO-OWNER-CN     (N6)
+1 #PAYER-CN        (N6)
+1 #ISN             (P9)
+1 #Role            (A) DYNAMIC
+1 #PaymentInfo     (A) DYNAMIC
+1 #UPDATE-MODE     (A) DYNAMIC CONST <'UPDATE-MODE'>
+*
+1 POS-V VIEW OF A-POLICY-CONTACTS
+  2 POLICY-NUMBER
+  2 RELATION
+  2 REFERENCE-NUMBER
+  2 CONTACT-ID
+  2 ADD-USER
+  2 ADD-DATE
+  2 ADD-TIME
+  2 LAST-UPD-USER
+  2 LAST-UPD-DATE
+  2 LAST-UPD-TIME
+*
+END-DEFINE
+*
+#DATN := *DATN
+DECIDE FOR FIRST CONDITION
+  WHEN PaymentSettings.UserID <> ' '
+    #LAST-UPDATE-CLERK := FUNCTION-WEB-USER(<PaymentSettings.UserID>)(1)
+    #LAST-UPDATE-USER  := FUNCTION-WEB-USER(<PaymentSettings.UserID>)(2)
+  WHEN PaymentSettings.SystemSource = #AUC
+    #LAST-UPDATE-CLERK := #AUC
+    #LAST-UPDATE-USER  := #AUC
+  WHEN NONE
+    #LAST-UPDATE-CLERK := #MEMBER-CENTER-CLERK
+    #LAST-UPDATE-USER  := #MEMBER-CENTER-USER
+END-DECIDE
+*
+FOR #I = 1 TO C@AutoPay
+  F1. FIND POS-V WITH POLICY-NUMBER = PaymentSettings.AutoPayPolicyNumber(#I)
+    IF NO RECORDS FOUND
+      ESCAPE ROUTINE
+    END-NOREC
+    ACCEPT IF RELATION = #Payer OR RELATION = #PrimaryOwner OR RELATION = #CoOwner
+    DECIDE FOR FIRST CONDITION
+      WHEN RELATION = #Payer
+        #PAYER-CN := POS-V.REFERENCE-NUMBER
+        #ISN := *ISN (F1.)
+      WHEN RELATION = #PrimaryOwner
+        #OWNER-CN := POS-V.REFERENCE-NUMBER
+      WHEN RELATION = #CoOwner
+        #CO-OWNER-CN := POS-V.REFERENCE-NUMBER
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-FIND
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN PaymentSettings.AutoPayPayerCN(#I) = #PAYER-CN
+      #ErrorCode := #ALREADY-PAYER
+      ESCAPE MODULE
+    WHEN PaymentSettings.AutoPayPayerCN(#I) = #OWNER-CN
+      #Role := 'Owner'
+    WHEN PaymentSettings.AutoPayPayerCN(#I) = #CO-OWNER-CN
+      #Role := 'Co-Owner'
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+*
+  DECIDE FOR FIRST CONDITION
+    WHEN PaymentSettings.AutoPayMethod(#I) = #CC
+* Check CC
+      #PaymentInfo := F-CC-ACCOUNT(<AutoPayPayerCN(#I)>)
+      IF #PaymentInfo = ' '
+        #ErrorCode := #NO-CC-ON-FILE
+        ESCAPE MODULE
+      END-IF
+      IF #PaymentInfo = SCAN('Expired')
+        #ErrorCode := #EXPIRED-CC-ON-FILE
+        ESCAPE MODULE
+      END-IF
+    WHEN PaymentSettings.AutoPayMethod(#I) = #EZ-Pay
+* Check EZ
+      #PaymentInfo := F-BANK-ACCOUNT(<AutoPayPayerCN(#I)>)
+      IF #PaymentInfo <> ' '
+        IF #PaymentInfo <> SCAN('EZ-Pay')
+          PERFORM UPDATE-EZPAY-DATA
+        END-IF
+      ELSE
+*   No Bank account
+        #ErrorCode := #NO-BA-ON-FILE
+        ESCAPE MODULE
+      END-IF
+    WHEN PaymentSettings.AutoPayMethod(#I) = #Allotment
+      #ErrorCode := #CHANGE-NOT-ALLOWED
+      ESCAPE MODULE
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+* Change Payer always sends 1 policy at a time, if there are loan - it is the same payer
+#I := 1                                           /* Policy 
+IF #ISN <> 0
+  G1. GET POS-V #ISN
+  POS-V.REFERENCE-NUMBER := PaymentSettings.AutoPayPayerCN(#I)
+  POS-V.CONTACT-ID := F-GET-CONTACT-ID(<PaymentSettings.AutoPayPayerCN(#I)>)
+  UPDATE (G1.)
+ELSE
+  RESET POS-V
+  POS-V.POLICY-NUMBER := PaymentSettings.AutoPayPolicyNumber(#I)
+  POS-V.RELATION      := #Payer
+  POS-V.REFERENCE-NUMBER := PaymentSettings.AutoPayPayerCN(#I)
+  POS-V.CONTACT-ID := F-GET-CONTACT-ID(<PaymentSettings.AutoPayPayerCN(#I)>)
+*
+  POS-V.ADD-USER := LAST-UPD-USER := 'LOAD'
+  POS-V.ADD-DATE := LAST-UPD-DATE := *DATN
+  POS-V.ADD-TIME := LAST-UPD-TIME := *TIMN
+  STORE POS-V
+END-IF
+COMPRESS 'Payer CN' #PAYER-CN INTO BEFORE_IMAGE.PAYER LEAVING NO
+COMPRESS 'CN' PaymentSettings.AutoPayPayerCN(#I) INTO AFTER_IMAGE.PAYER LEAVING NO
+COMPRESS 'Payer' '/' #Role AFTER_IMAGE.PAYER INTO AFTER_IMAGE.PAYER
+AFTER_IMAGE.POLICY-NUMBER := BEFORE_IMAGE.POLICY-NUMBER := PaymentSettings.AutoPayPolicyNumber(#I)
+* Write Transaction log
+PERFORM WRITE-TRANSACTION-LOG
+* Check if mode of the policy was changed
+PERFORM CHECK-MODE-CHANGE
+*
+***********************************
+DEFINE SUBROUTINE CHECK-MODE-CHANGE
+***********************************
+*
+CALLNAT 'MBCNEP32' PaymentSettings #ErrorCode #ErrorDescription
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE UPDATE-EZPAY-DATA
+***********************************
+*
+SEPARATE #PaymentInfo INTO #value BankAccount.RoutingNumber BankAccount.AccountNumber BankAccount.AccountType WITH DELIMITER '/'
+BankAccount.ActionType := #ADD-EZPAY
+BankAccount.AccountCN  := PaymentSettings.AutoPayPayerCN(#I)
+BankAccount.UserID     := PaymentSettings.UserID
+CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE WRITE-TRANSACTION-LOG
+***************************************
+* BEFORE_IMAGE.DATE-LAST-UPDATE
+TR_ID_NUMBER     := PaymentSettings.AutoPayCN(#I)
+#TRAN-CONTACT-ID := F-GET-CONTACT-ID(<TR_ID_NUMBER>)
+TR_NAME          := FUNCTION-CONTACT-NAME(<#TRAN-CONTACT-ID>)
+TR_CLERK         := #LAST-UPDATE-CLERK
+CALLNAT 'GPRNTR02' FUNCTION_CODE TRAN_LOG_HEADER BEFORE_IMAGE AFTER_IMAGE
+END-SUBROUTINE
+*
+END

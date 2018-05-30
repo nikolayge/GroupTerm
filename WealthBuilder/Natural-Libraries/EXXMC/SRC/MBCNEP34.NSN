@@ -1,0 +1,254 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*******************************************************************
+* Member Center / EB&P III
+* MBCNEP34 - "ValidatePayer" function
+* Called from NATSERV0
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    05262017       Initial Creation
+* YAK    08252017  YK1  More rules for Allotmnet Payer change
+* YAK    09062017  YK2  Check if Insured is a Payer of other policies for EZ-Pay
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+*
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL USING ERROR_LN
+LOCAL USING MBCAEC51
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 #XML              (A) DYNAMIC
+*
+1 PayerValidation
+  2 PayerCN           (N6)
+  2 InsuredContactID  (N8)
+  2 PolicyNumber      (A) DYNAMIC
+*
+1 POS-V VIEW OF A-POLICY-CONTACTS
+  2 POLICY-NUMBER    (A16)
+  2 RELATION         (N2)
+  2 REFERENCE-NUMBER (N6)
+*
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MILITARY-STATUS
+  2 SSN
+*
+1 #PAYER            (N2) CONST  <8>
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value            (A) DYNAMIC
+1 #CC-MODE          (A1/4) CONST <'0','1','2','4'>
+1 #CC-LOAN-MODE     (A1/2) CONST <'8','C'>
+1 #EZPAY-MODE       (A1)   CONST <'E'>
+1 #EZPAY-LOAN-MODE  (A1/3) CONST <'3','4','E'>
+1 #AL-MODE          (A1)   CONST <'G'>
+1 #AL-LOAN-MODE     (A1/3) CONST <'1','2','L'>
+1 #PAY-MODE         (A1)
+1 #LOAN-MODE        (A1/2)
+1 #ADD-EZPAY        (A) DYNAMIC CONST <'ADD-EZPAY'>
+1 #CurrentPayer     (N6)
+1 #InsuredCN        (N6)
+1 #PaymentInfo      (A) DYNAMIC
+1 #InsuredPaymentInfo (A) DYNAMIC
+1 #InsuredPaymentAccount (A) DYNAMIC INIT <'false'>
+1 #NoOtherPayments  (L)
+1 #NumberCC         (N1)
+1 #I                (I2)
+1 #ACTIVE           (A1)   CONST <'D'>
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Input verify
+DECIDE FOR FIRST CONDITION
+  WHEN PayerValidation.PayerCN = 0
+    #ErrorCode  := #MISSING-CN
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN PayerValidation.InsuredContactID = 0
+    #ErrorCode  := #MISSING-CONTACT-ID
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN PayerValidation.PolicyNumber = ' '
+    #ErrorCode  := #MISSING-POLICY-NUMBER
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+PERFORM VALIDATE-PAYER
+*
+PERFORM COMPOSE-RESPONSE-DATA
+*
+********************************
+DEFINE SUBROUTINE VALIDATE-PAYER
+********************************
+#CurrentPayer := GET-POLICY-PAYER(<PayerValidation.PolicyNumber>)
+#InsuredCN := F-GET-CN(<PayerValidation.InsuredContactID>)
+#PAY-MODE  := F-POLICY-MODE(<#InsuredCN,PayerValidation.PolicyNumber>)
+  F-LOAN-PAY-MODE(<#InsuredCN,PayerValidation.PolicyNumber,#LOAN-MODE(*)>)
+DECIDE FOR EVERY CONDITION
+  WHEN #PAY-MODE = #CC-MODE(*) OR #LOAN-MODE(1) = #CC-LOAN-MODE(*) OR #LOAN-MODE(2) = #CC-LOAN-MODE(*)
+    #PaymentInfo := F-CC-ACCOUNT(<PayerValidation.PayerCN>)
+    #InsuredPaymentInfo := F-CC-ACCOUNT(<#InsuredCN,#NumberCC>)
+    DECIDE FOR FIRST CONDITION
+      WHEN #PaymentInfo = ' ' AND #CurrentPayer <> 0
+        #ErrorCode := #NO-CC-ON-FILE
+      WHEN #PaymentInfo = ' ' AND #InsuredPaymentInfo = ' '
+        #ErrorCode := #NO-CC-ON-FILE
+      WHEN #PaymentInfo <> ' ' AND #PaymentInfo = SCAN('Expired')
+        #ErrorCode := #EXPIRED-CC-ON-FILE
+      WHEN #PaymentInfo = ' ' AND #InsuredPaymentInfo <> ' '  AND #InsuredPaymentInfo <> SCAN('Expired')
+        PERFORM CHECK-OTHER-PAYMENTS
+        IF #NumberCC = 1 AND #NoOtherPayments
+          #InsuredPaymentAccount := 'true'
+        ELSE
+          #ErrorCode := #NO-CC-ON-FILE
+        END-IF
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  WHEN #PAY-MODE = #EZPAY-MODE OR #LOAN-MODE(1) = #EZPAY-LOAN-MODE(*) OR #LOAN-MODE(2) = #EZPAY-LOAN-MODE(*)
+    #PaymentInfo := F-BANK-ACCOUNT(<PayerValidation.PayerCN>)
+    #InsuredPaymentInfo := F-BANK-ACCOUNT(<#InsuredCN>)
+    DECIDE FOR FIRST CONDITION
+      WHEN #PaymentInfo = ' ' AND #CurrentPayer <> 0
+        #ErrorCode := #NO-BA-ON-FILE
+      WHEN #PaymentInfo = ' ' AND #InsuredPaymentInfo = ' '
+        #ErrorCode := #NO-BA-ON-FILE
+      WHEN #PaymentInfo <> ' ' AND #PaymentInfo <> SCAN('EZ-Pay')
+        PERFORM ADD-EZPAY-ACCOUNT
+      WHEN #PaymentInfo = ' ' AND #InsuredPaymentInfo <> ' ' AND #InsuredPaymentInfo = SCAN('EZ-Pay')
+* YK2 >
+        PERFORM CHECK-OTHER-PAYMENTS
+        IF #NoOtherPayments
+          #InsuredPaymentAccount := 'true'
+        ELSE
+          #ErrorCode := #NO-EZ-ON-FILE
+        END-IF
+* < YK2
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  WHEN #PAY-MODE = #AL-MODE OR #LOAN-MODE(1) = #AL-LOAN-MODE(*) OR #LOAN-MODE(2) = #AL-LOAN-MODE(*)
+* YK1 >
+    IF PayerValidation.PayerCN <> #CurrentPayer AND #CurrentPayer <> 0
+      #ErrorCode := #NO-ALLOTMENT-PAYER-CHANGE
+      ESCAPE ROUTINE
+    END-IF
+    FIND(1) ST-V WITH ID-NUMBER = PayerValidation.PayerCN
+    END-FIND
+    IF ST-V.MILITARY-STATUS <> 'A' AND ST-V.MILITARY-STATUS <> 'R'
+      #ErrorCode := #NO-ALLOTMENT
+    END-IF
+    IF ST-V.SSN = 0
+      #ErrorCode := #MISSING-SSN-FOR-ALLOTMENT
+    END-IF
+* < YK1
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+END-SUBROUTINE
+*
+***********************************
+DEFINE SUBROUTINE ADD-EZPAY-ACCOUNT
+***********************************
+*
+#PaymentInfo := F-BANK-ACCOUNT(<PayerValidation.PayerCN>)
+SEPARATE #PaymentInfo INTO #value BankAccount.RoutingNumber BankAccount.AccountNumber BankAccount.AccountType WITH DELIMITER '/'
+BankAccount.ActionType := #ADD-EZPAY
+BankAccount.AccountCN  := PayerValidation.PayerCN
+CALLNAT 'MBCNEC52' BankAccount #ErrorCode
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE CHECK-OTHER-PAYMENTS
+**************************************
+*
+#NoOtherPayments := true
+FIND POS-V WITH REFERENCE-NUMBER = #InsuredCN
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  ACCEPT IF RELATION = #PAYER
+  IF GET-POLICY-STATUS(<POS-V.POLICY-NUMBER>) = #ACTIVE
+    #NoOtherPayments := false
+  END-IF
+END-FIND
+*
+END-SUBROUTINE
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'PayerValidation/PayerCN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      PayerValidation.PayerCN := VAL(#value)
+    END-IF
+  VALUE 'PayerValidation/InsuredContactID/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8)
+      PayerValidation.InsuredContactID := VAL(#value)
+    END-IF
+  VALUE 'PayerValidation/PolicyNumber/$'
+    PayerValidation.PolicyNumber := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE MODULE
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+IF #ErrorCode <> '0'
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS
+  '<PayerValidation>'
+  '<PayerCN>' PayerValidation.PayerCN '</PayerCN>'
+  '<OnlyInsuredHasPaymentMethod>' #InsuredPaymentAccount '</OnlyInsuredHasPaymentMethod>'
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</PayerValidation>' INTO RESPONSE-DATA LEAVING NO
+*
+ESCAPE MODULE
+END-SUBROUTINE
+*
+END

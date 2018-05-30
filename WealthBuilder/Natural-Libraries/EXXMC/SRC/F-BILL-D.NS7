@@ -1,0 +1,93 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* F-BILL-DATE
+* Returns default bill cycle to assign to the policy based on issue date
+*******************************************************************
+* MODIFICATION LOG
+* USER   DATE      TAG     REASON
+*******************************************************************                                                                      *
+* YAK    08222017          Create program
+*****************************************************************
+DEFINE FUNCTION F-BILL-DATE RETURNS (N8/3)
+  DEFINE DATA
+  PARAMETER
+  1 #DATE    (N8)
+  1 #PROCESS (A) DYNAMIC
+  LOCAL USING OBJLGENT
+  LOCAL
+  1 #SEC-KEY    (A7)
+  1 #BILL-CYCLE-DATES (N2/3)
+  1 #CC-KEY (A3) CONST <'BCC'>
+  1 #EZ-KEY (A3) CONST <'BCE'>
+  1 #I (I2)
+  1 #I1 (I2)
+  1 #DATN        (N8)
+  1 REDEFINE #DATN
+    2 #YYYYMM    (N6)
+    2 #DD        (N2)
+  1 #BC-DATES    (3)
+    2 #BC-DATE     (N8)
+    2 REDEFINE #BC-DATE
+      3 #BC-YYYY   (N4)
+      3 #BC-MM     (N2)
+      3 #BC-DD     (N2)
+  1 #PAID-TO-DATE(N8)
+  1 REDEFINE #PAID-TO-DATE
+    2 #PTD-YYYYMM (N6)
+  1 #DAYS (N2/12) INIT <31,28,31,30,31,30,31,31,30,31,30,31>
+  1 #LAST-BUSINESS-DAY (A) DYNAMIC
+  END-DEFINE
+*
+#DATN := *DATN
+#PAID-TO-DATE := #DATE
+DECIDE ON FIRST VALUE #PROCESS
+  VALUE 'CC'
+    COMPRESS 'CODE' #CC-KEY INTO #SEC-KEY LEAVING NO
+  VALUE 'EZ'
+    COMPRESS 'CODE' #EZ-KEY INTO #SEC-KEY LEAVING NO
+  NONE VALUE
+    ESCAPE ROUTINE
+END-DECIDE
+*
+FIND GEN-TABLE-V WITH SEC-KEY = #SEC-KEY
+  IF NO RECORDS FOUND
+    ESCAPE BOTTOM
+  END-NOREC
+  #I := VAL(GEN-TABLE-V.GEN-ALPHA-VALUE)
+  #BILL-CYCLE-DATES(#I) := GEN-TABLE-V.GEN-NUMBER-VALUE
+END-FIND
+*
+DECIDE FOR FIRST CONDITION
+  WHEN #PAID-TO-DATE <= #DATN OR (#PAID-TO-DATE > #DATN AND #PTD-YYYYMM <= #YYYYMM)
+    #BC-DATE(*) := #DATN
+    #BC-DD(*) := #BILL-CYCLE-DATES(*)
+    #I := #BC-MM(3)
+    #BC-DD(3) := #DAYS(#I)
+    DECIDE FOR FIRST CONDITION
+      WHEN #DD <= #BILL-CYCLE-DATES(1)
+        IGNORE
+* When desired bill cycle is behind in this month
+      WHEN (#DD > #BILL-CYCLE-DATES(1) AND #DD <= #BILL-CYCLE-DATES(2))
+        #BC-DD(1) := #BC-DD(2)
+      WHEN NONE
+        #BC-DD(*) := #BC-DD(3)
+    END-DECIDE
+  WHEN #PAID-TO-DATE > #DATN AND #PTD-YYYYMM > #YYYYMM
+    #BC-DATE(*) := #PAID-TO-DATE
+    #BC-DD(*) := #BILL-CYCLE-DATES(*)
+    #I := #BC-MM(3)
+    #BC-DD(3) := #DAYS(#I)
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+* Find last business day of the month for Bill Cycle 3
+#LAST-BUSINESS-DAY := FUNCTION-CALENDAR(<#BC-DATE(3),'8'>)
+#BC-DATE(3) := VAL(#LAST-BUSINESS-DAY)
+F-BILL-DATE(*) := #BC-DATE(*)
+*
+END-FUNCTION
+END

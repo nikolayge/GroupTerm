@@ -1,0 +1,269 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+***************************************************************
+* SUBPROGRAM-ID: GPRN006N - Find all the policies this Customer
+* (CN) owns - authorized to update, view etc.
+* New version using Policy Ownership structure
+* This version has more fields to pass
+* Called from MBCNEP30 - Payment Settings maintenance function
+***************************************************************
+*        MODIFICATION LOG
+***************************************************************
+* USER   DATE      TAG  REASON
+* YAK    10012016       Initial Creation (Member Center for life)
+*                       EB&P Phase III
+* YAK    02132017  YK1  Sort by Policy Number to Correct policy
+*                       order in the final array
+* YAK    03292017  YK3  EB&P III (Payor project)
+* YAK    08072017  YK4  Add Bill Cycle
+***************************************************************
+*
+DEFINE DATA
+PARAMETER USING GPRA006N
+PARAMETER
+1 #PolicyRelation (N2)
+1 #All_Policies   (A1) OPTIONAL
+*
+LOCAL
+1 ST-V VIEW OF A-STATUS
+  2 ID-NUMBER
+  2 MEMBER-CONTACT-ID
+  2 INTRO-FLAG
+  2 LINKED-CN (1)
+  2 PAD-CODE
+  2 CAP-BILL-DATE
+  2 C*ACTIVE-SEGMENTS
+  2 POLICY-ID   (9)
+  2 STATUS      (9)
+  2 MODE        (9)
+  2 BILL-CYCLE  (9)
+  2 ISSUE-DATE  (9)
+  2 PAY-STATUS  (9)
+  2 PLAN        (9)
+  2 FACE-AMOUNT (9)
+  2 ANNUAL-PREM (9)
+  2 PAID-TO-DATE(9)
+  2 MONTH-ALLOC-AMT (9)
+  2 X-ALT-LP-IND    (9)
+  2 X-LOAN-AMOUNT   (9)
+  2 X-ALT-LP-IND-2  (9)
+  2 X-LOAN-AMOUNT-2 (9)
+  2 X-ALT-LP-AMT    (9)
+  2 X-ALT-LP-AMT-2  (9)
+  2 CONV-DURATION   (9)
+  2 OWNERSHIP-FLAG  (9)
+*
+1 POS-V VIEW OF A-POLICY-CONTACTS
+  2 POLICY-NUMBER
+  2 RELATION
+  2 REFERENCE-NUMBER
+  2 CONTACT-ID
+  2 NI-OWNER
+*
+1 #PRIMARY-OWNER       (N2) CONSTANT    <2>
+1 #CO-OWNER            (N2) CONSTANT    <10>
+1 #PAYER               (N2) CONSTANT    <8>
+1 #INSURED             (N2) CONSTANT    <1>
+1 #ACTIVE              (A2) CONSTANT    <'D'>
+1 #POLICY-ARRAY  (*)
+  2 ID-NUMBER          (N6)
+  2 CONTACT-ID         (N8)
+  2 POLICY-NUMBER      (A16)
+  2 OWNER-CN           (N6)
+  2 PAYER-CN           (N6)
+  2 PAYER-CONTACT-ID   (N8)
+  2 POLICY-INDEX       (I2)
+  2 POLICY-MODE        (A1)
+  2 BILL-CYCLE         (A1)
+  2 POLICY-STATUS      (A1)
+  2 POLICY-PAY-STATUS  (A2)
+  2 POLICY-PLAN        (A3)
+  2 FACE-AMOUNT        (N7.2)
+  2 MONTHLY-PREM       (N5.2)
+  2 PAID-TO-DATE       (N8)
+  2 ISSUE-DATE         (N8)
+  2 LOAN-PAY-MODE      (A1/2)
+  2 MONTHLY-PAYMENT    (N5.2/2)
+  2 CONV-DURATION      (N3)
+  2 CAP-BILL-DATE      (N8)
+*
+1 #I    (I2)
+1 #J    (I2)
+1 #I_PO (I2)
+1 #II   (I2)
+1 #I1   (I2)
+1 #GetPayorPolicies (L)
+END-DEFINE
+*
+IF #PolicyRelation <> #PRIMARY-OWNER
+  #GetPayorPolicies := true
+END-IF
+* Get CN membership
+FIND(1) ST-V WITH ID-NUMBER = PARM-CN
+  IF ST-V.INTRO-FLAG = 'S' OR = 'K' OR = 'G'
+    PARM-MEMBER-CN := LINKED-CN(1)
+  ELSE
+    PARM-MEMBER-CN := PARM-CN
+  END-IF
+END-FIND
+* Get policies owned / payed for #I_PO
+FIND POS-V WITH REFERENCE-NUMBER = PARM-CN SORTED BY POLICY-NUMBER       /* YK1
+  IF NO RECORDS FOUND
+    ESCAPE ROUTINE
+  END-NOREC
+  ACCEPT IF RELATION = #PRIMARY-OWNER OR RELATION = #PAYER OR = #CO-OWNER
+  RESET #I
+  IF #I_PO <> 0
+    EXAMINE #POLICY-ARRAY.POLICY-NUMBER(*) FOR POS-V.POLICY-NUMBER INDEX #I
+  END-IF
+  IF #I = 0
+    #I_PO := #I_PO + 1
+    EXPAND ARRAY #POLICY-ARRAY TO (*:#I_PO)
+    #POLICY-ARRAY.POLICY-NUMBER(#I_PO) := POS-V.POLICY-NUMBER
+    #I := #I_PO
+  END-IF
+  DECIDE FOR FIRST CONDITION
+    WHEN RELATION = #PRIMARY-OWNER OR RELATION = #CO-OWNER
+      #POLICY-ARRAY.OWNER-CN(#I) := POS-V.REFERENCE-NUMBER
+    WHEN RELATION = #PAYER
+      #POLICY-ARRAY.PAYER-CN(#I) := POS-V.REFERENCE-NUMBER
+      #POLICY-ARRAY.PAYER-CONTACT-ID(#I) := POS-V.CONTACT-ID
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FIND
+* Get Insured CN / Contact ID for own policies
+FOR #I = 1 TO #I_PO
+  FIND POS-V WITH POLICY-NUMBER = #POLICY-ARRAY.POLICY-NUMBER(#I)
+      WHERE POS-V.RELATION = #INSURED
+    #POLICY-ARRAY.ID-NUMBER(#I)  := POS-V.REFERENCE-NUMBER
+    #POLICY-ARRAY.CONTACT-ID(#I) := POS-V.CONTACT-ID
+  END-FIND
+  IF #POLICY-ARRAY.OWNER-CN(#I) = 0
+    FIND POS-V WITH POLICY-NUMBER = #POLICY-ARRAY.POLICY-NUMBER(#I)
+        WHERE POS-V.RELATION = #PRIMARY-OWNER
+      #POLICY-ARRAY.OWNER-CN(#I) := POS-V.REFERENCE-NUMBER
+    END-FIND
+  END-IF
+  IF #POLICY-ARRAY.PAYER-CN(#I) = 0
+    FIND POS-V WITH POLICY-NUMBER = #POLICY-ARRAY.POLICY-NUMBER(#I)
+        WHERE POS-V.RELATION = #PAYER
+      #POLICY-ARRAY.PAYER-CN(#I)  := POS-V.REFERENCE-NUMBER
+      #POLICY-ARRAY.PAYER-CONTACT-ID(#I) := POS-V.CONTACT-ID
+    END-FIND
+  END-IF
+END-FOR
+*
+* Populate Policy Info from Status file for all policies
+FOR #I = 1 TO #I_PO
+  FIND(1) ST-V WITH ID-NUMBER = #POLICY-ARRAY.ID-NUMBER(#I)
+    EXAMINE FULL ST-V.POLICY-ID(*) FOR FULL #POLICY-ARRAY.POLICY-NUMBER(#I) NUMBER #II INDEX  #I1
+    DECIDE FOR FIRST CONDITION
+      WHEN #II = 1 AND #I1 <> 0
+        #POLICY-ARRAY.POLICY-INDEX(#I) := #I1
+      WHEN #II > 1  AND #I1 <> 0
+        #POLICY-ARRAY.POLICY-INDEX(#I) := #I1
+        IF ST-V.STATUS(#I1) <> 'D'
+          #I1 := #I1 + 1
+          FOR #J = #I1 TO C*ACTIVE-SEGMENTS
+            IF ST-V.POLICY-ID (#J) = #POLICY-ARRAY.POLICY-NUMBER(#I) AND ST-V.STATUS (#J) = 'D'
+              #POLICY-ARRAY.POLICY-INDEX(#I) := #J
+              ESCAPE BOTTOM
+            END-IF
+          END-FOR
+        END-IF
+      WHEN ANY
+        #II := #POLICY-ARRAY.POLICY-INDEX(#I)
+        IF (ST-V.MODE(#II) = 'Q' AND PAD-CODE = 'P') OR (ST-V.MODE(#II) = 'Q' AND PAD-CODE = 'D' AND ST-V.OWNERSHIP-FLAG(#II) = 'D')
+          #POLICY-ARRAY.POLICY-MODE(#I) := 'E'
+        ELSE
+          #POLICY-ARRAY.POLICY-MODE(#I)     := ST-V.MODE(#II)
+        END-IF
+        #POLICY-ARRAY.POLICY-STATUS(#I)     := ST-V.STATUS(#II)
+        #POLICY-ARRAY.POLICY-PAY-STATUS(#I) := ST-V.PAY-STATUS(#II)
+        #POLICY-ARRAY.POLICY-PLAN(#I)       := ST-V.PLAN(#II)
+        #POLICY-ARRAY.FACE-AMOUNT(#I)       := ST-V.FACE-AMOUNT(#II)
+        #POLICY-ARRAY.MONTHLY-PREM(#I)      := ST-V.ANNUAL-PREM(#II) / 12
+        #POLICY-ARRAY.ISSUE-DATE(#I)        := ST-V.ISSUE-DATE(#II)
+        #POLICY-ARRAY.BILL-CYCLE(#I)        := ST-V.BILL-CYCLE(#II)          /* YK4
+        IF #POLICY-ARRAY.BILL-CYCLE(#I) = ' '                                /* YK4
+          #POLICY-ARRAY.BILL-CYCLE(#I) := '3'                                /* YK4
+        END-IF                                                               /* YK4
+* Paid to date calculation
+        CALLNAT 'GPDTOSXX'
+          ST-V.ISSUE-DATE (#II)
+          ST-V.MONTH-ALLOC-AMT (#II)
+          ST-V.PAID-TO-DATE (#II)
+          #POLICY-ARRAY.PAID-TO-DATE(#I)
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+    DECIDE FOR EVERY CONDITION
+      WHEN ST-V.X-LOAN-AMOUNT(#II) NE 0
+        #POLICY-ARRAY.LOAN-PAY-MODE(#I,1)   := ST-V.X-ALT-LP-IND(#II)
+        IF #POLICY-ARRAY.LOAN-PAY-MODE(#I,1) = ' '
+          #POLICY-ARRAY.LOAN-PAY-MODE(#I,1) := '0'
+        END-IF
+        IF ST-V.X-LOAN-AMOUNT(#II) < ST-V.X-ALT-LP-AMT(#II)
+          #POLICY-ARRAY.MONTHLY-PAYMENT(#I,1) := ST-V.X-LOAN-AMOUNT(#II)
+        ELSE
+          #POLICY-ARRAY.MONTHLY-PAYMENT(#I,1) := ST-V.X-ALT-LP-AMT(#II)
+        END-IF
+        #POLICY-ARRAY.CONV-DURATION(#I)     := ST-V.CONV-DURATION(#II)
+        #POLICY-ARRAY.CAP-BILL-DATE(#I)     := ST-V.CAP-BILL-DATE
+      WHEN ST-V.X-LOAN-AMOUNT-2(#II) NE 0
+        #POLICY-ARRAY.LOAN-PAY-MODE(#I,2)   := ST-V.X-ALT-LP-IND-2(#II)
+        IF #POLICY-ARRAY.LOAN-PAY-MODE(#I,2) = ' '
+          #POLICY-ARRAY.LOAN-PAY-MODE(#I,2) := '0'
+        END-IF
+        IF ST-V.X-LOAN-AMOUNT-2(#II) < ST-V.X-ALT-LP-AMT-2(#II)
+          #POLICY-ARRAY.MONTHLY-PAYMENT(#I,2) := ST-V.X-LOAN-AMOUNT-2(#II)
+        ELSE
+          #POLICY-ARRAY.MONTHLY-PAYMENT(#I,2) := ST-V.X-ALT-LP-AMT-2(#II)
+        END-IF
+      WHEN ST-V.X-LOAN-AMOUNT(#II) = 0 AND ST-V.X-ALT-LP-AMT(#II) <> 0
+        #POLICY-ARRAY.MONTHLY-PAYMENT(#I,1) := ST-V.X-ALT-LP-AMT(#II)
+        #POLICY-ARRAY.LOAN-PAY-MODE(#I,1)   := ST-V.X-ALT-LP-IND(#II)
+      WHEN NONE
+        IGNORE
+    END-DECIDE
+  END-FIND
+END-FOR
+* Populate array for all policies (has to be sorted by CN)
+* Based on request select/de-select active/non-active policies
+* For PaymentHistory - only CN Owner/Payer, PaymentCN, PolicyNumber needed
+IF #I_PO <> 0
+  EXPAND ARRAY PARM-POLICIES TO (*:#I_PO)
+  DECIDE FOR FIRST CONDITION
+    WHEN #All_Policies SPECIFIED AND #GetPayorPolicies
+      MOVE BY NAME #POLICY-ARRAY(*) TO PARM-POLICIES(*)
+    WHEN #All_Policies SPECIFIED AND NOT #GetPayorPolicies
+      RESET #II
+      FOR #I = 1 TO #I_PO
+        IF #POLICY-ARRAY.OWNER-CN(#I) = PARM-CN
+          #II := #II + 1
+          MOVE BY NAME #POLICY-ARRAY(#I) TO PARM-POLICIES(#II)
+        END-IF
+      END-FOR
+      IF #II <> 0
+        RESIZE ARRAY PARM-POLICIES TO (*:#II)
+      END-IF
+    WHEN NONE
+      RESET #II
+      FOR #I = 1 TO #I_PO
+        IF #POLICY-ARRAY.POLICY-STATUS(#I) = #ACTIVE AND
+            (#POLICY-ARRAY.OWNER-CN(#I) = PARM-CN OR (#GetPayorPolicies AND #POLICY-ARRAY.PAYER-CN(#I) = PARM-CN))
+          #II := #II + 1
+          MOVE BY NAME #POLICY-ARRAY(#I) TO PARM-POLICIES(#II)
+        END-IF
+      END-FOR
+      IF #II <> 0
+        RESIZE ARRAY PARM-POLICIES TO (*:#II)
+      END-IF
+  END-DECIDE
+END-IF
+*
+END

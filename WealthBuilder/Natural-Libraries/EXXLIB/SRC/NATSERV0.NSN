@@ -1,0 +1,325 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+* Created to be used for any generic process through EntireX
+* NATSERV0 - EntireX Driver module (dynamic parameters length)
+* Call Business Object module based on ProcessName
+*
+********************************************************
+*        MODIFICATION LOG
+********************************************************
+* USER   DATE      TAG  REASON
+* YAK    03010010       Initial Creation
+* YAK    11142012  YK1  Two functions added for Mobile Payments project
+* YAK    11142012  YK2  Function added for Mobile App project
+* YAK    11142012  YK3  Rename/Keep old functions with MC-II
+* YAK    12072015  YK4  Add functions for MC-II FIR
+* YAK    08202016  YK5  Add DV upload and Life Ins company sync
+* bz     04/19/2018     HD-7569  Avoid accesive logging for test CN 6
+* NGG    05/09/2018 NG1 SOLA Project
+********************************************************
+*
+DEFINE DATA PARAMETER
+1 PROCESS-NAME      (A) Dynamic
+1 REQUEST-DATA      (A) Dynamic
+1 RESPONSE-DATA     (A) Dynamic        /* Out
+*
+LOCAL USING P_PARMS
+LOCAL USING GPRA0003
+LOCAL USING GPRL0EML
+LOCAL
+1 LOG-MESSAGE       (A30000)
+1 LOG_ACTION        (A) DYNAMIC
+1 #FAILED-ON-HOLD   (A) DYNAMIC CONST <'F'>
+1 #ErrorTag         (A) Dynamic
+1 #ErrorTagClose    (A) Dynamic
+1 #LOG-FILE         (A) Dynamic INIT <'/usr/SAG/tmp/natserv0_'>
+1 #FIR-REQUEST-FILE (A) Dynamic INIT <'/usr/SAG/MC/FIR_REQUEST.TXT'>
+1 #FIR-REPORT-FILE  (A) Dynamic INIT <'/usr/SAG/MC/FIR_REPORT.TXT'>
+1 #FAS-REPORT-FILE  (A) Dynamic INIT <'/usr/SAG/MC/FAS_REPORT.TXT'>
+1 #FIR-DEBUG-FILE   (A) Dynamic INIT <'/usr/SAG/tmp/FIR_DEBUG.TXT'>
+1 #length           (n9)
+1 #DATN             (N8)
+*
+1 #ErrorCode        (A3)
+1 #MethodId         (N2)
+*
+1 USR1040L
+  2 INPUTS
+    3 FUNCTION         (A01)
+  2 INPUT-OUTPUTS
+    3 UDB-PARM         (N05)
+  2 OUTPUTS
+    3 RESPONSE         (I04)
+END-DEFINE
+*
+#DATN := *DATN
+COMPRESS #LOG-FILE #DATN '.log' INTO #LOG-FILE LEAVING NO
+DEFINE WORK FILE 1 #LOG-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 2 #FIR-REQUEST-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 3 #FIR-REPORT-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 4 #FAS-REPORT-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+DEFINE WORK FILE 5 #FIR-DEBUG-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+*
+ASSIGN FUNCTION = 'G'
+CALLNAT 'USR1040N' USR1040L
+*
+ON ERROR
+  BACKOUT TRANSACTION
+  CALLNAT 'USR2001N' P_PARMS  /* Get the actual error line details
+  ERROR-PROGRAM := *PROGRAM
+  ERROR-OBJECT  := P_ERROR_PROGRAM
+  ERROR-LINE    := P_ERROR_LINE
+  ERROR-NUMBER  := P_ERROR_NUM
+  RESET LOG-MESSAGE
+  COMPRESS ERROR-NUMBER ERROR-LINE ERROR-PROGRAM ERROR-OBJECT *DAT4I *TIMX INTO LOG-MESSAGE
+  CLOSE WORK FILE 1
+  DEFINE WORK FILE 1 #LOG-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+  CLOSE WORK FILE 1
+  IF *ERROR-NR = 3009
+    CALLNAT 'NATSERV0' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    ESCAPE ROUTINE
+  END-IF
+  IF *ERROR-NR = 3145
+    LOG_ACTION := #FAILED-ON-HOLD
+    CALLNAT 'ERR_LOG' LOG_ACTION PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+    ERROR-NUMBER  := '997'
+    ERROR-MESSAGE := 'We received your request. It will be processed shortly.'
+  ELSE
+    ERROR-MESSAGE := 'Error occurred while processing your request'
+  END-IF
+  COMPRESS '<' #ErrorTag '>'
+    '<ErrorCode>' ERROR-NUMBER '</ErrorCode>' -
+    '<ErrorDescription>' ERROR-MESSAGE '</ErrorDescription>' -
+    '</' #ErrorTag '>'
+    INTO RESPONSE-DATA LEAVING NO
+  P_TO     := 'ykegeles@aafmaa.com'
+  P_CC     :=  'bzaslavskiy@aafmaa.com,vtokmakova@aafmaa.com,7037861865@att.net'   
+  P_SUBJ   := '"Member Center Error"'
+  P_MSG(1) := 'Error processing request from Member Center'
+  P_MSG(2) := LOG-MESSAGE
+  CALLNAT 'GPRS0EML' p_EMAIL
+  COMPRESS *DAT4I *TIMX PROCESS-NAME RESPONSE-DATA INTO LOG-MESSAGE
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+*
+  ESCAPE ROUTINE
+END-ERROR
+*
+IF REQUEST-DATA <> SCAN ('<CN>6</CN>')                                       /* HD-7569
+  COMPRESS '--' *DAT4I *TIMX PROCESS-NAME REQUEST-DATA INTO LOG-MESSAGE
+ELSE                                                                         /* HD-7569  
+  COMPRESS '--' *DAT4I *TIMX ' CN-6' INTO LOG-MESSAGE                        /* HD-7569
+END-IF 
+COMPRESS 'DB=' UDB-PARM LOG-MESSAGE INTO LOG-MESSAGE
+
+WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+DECIDE ON FIRST VALUE PROCESS-NAME
+  VALUE 'AuthenticateMember'  /* NG1
+    #ErrorTag := 'MemberCheck'
+    CALLNAT 'ORDNAM01' REQUEST-DATA RESPONSE-DATA
+  VALUE 'CheckUserID' , 'MemberLogin', 'RegisterMember', 'CheckIsRegistered',
+      'VerifyMemberInfo', 'GetAccountInformation'
+    #ErrorTag := 'MemberLogin'
+    CALLNAT 'MBCNN010' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'UpdatePassword', 'UpdateUserName', 'UpdateDALAccessDate', 'UpdateSecurityQuestions'
+    #ErrorTag := 'MemberLogin'
+    CALLNAT 'MBCNN011' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'UpdatePaperlessOptions'
+    #ErrorTag := 'MemberLogin'
+    CALLNAT 'MBCNN014' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetTermRefundInfo'
+    #ErrorTag := 'TermRefundInfo'
+    CALLNAT 'MBCN0002' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetMemberProfileSummary'
+    #ErrorTag := 'MemberProfileSummary'
+    CALLNAT 'MBCNN020' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetMemberProfilePayment'                                        /* YK2
+    #ErrorTag := 'MemberProfilePayment'
+    CALLNAT 'MBCNN021' REQUEST-DATA RESPONSE-DATA
+  VALUE 'MemberIdentification'
+    #ErrorTag := 'MemberIdentification'
+    CALLNAT 'MBCNN012' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetPolicyDocumentInfo'
+    #ErrorTag := 'PolicyDocument'
+    CALLNAT 'MBCNN015' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageMilitaryInfo'
+    #ErrorTag := 'MilitaryInformation'
+    CALLNAT 'MBCN0020' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetServicesProductsSummary'
+    #ErrorTag := 'MemberServicesProductsSummary'
+    CALLNAT 'MBCNNSP0' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageAddresses'
+    #ErrorTag := 'MemberAddresses'
+    CALLNAT 'MBCN0030' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageAddressTypes'
+    #ErrorTag := 'MemberAddresses'
+    CALLNAT 'MBCNN030' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManagePhones'
+    #ErrorTag := 'MemberPhones'
+    CALLNAT 'MBCNN040' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageEmails'
+    #ErrorTag := 'MemberEmails'
+    CALLNAT 'MBCNN050' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageFamilyInfo'
+    #ErrorTag := 'FamilyInformation'
+    CALLNAT 'MBCN0060' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetPolicyDetails'
+    #ErrorTag := 'PolicyDetails'
+    CALLNAT 'MBCNNP00' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetLoanDetails'
+    #ErrorTag := 'LoanDetails'
+    CALLNAT 'MBCNNL00' REQUEST-DATA RESPONSE-DATA
+* Manage Benefits
+  VALUE 'GetExternalLifeInsurance', 'UpdateExternalLifeInsurance'
+    #ErrorTag := 'ExternalLifeInsurances'
+    CALLNAT 'MBCN0080' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetBenefitsSS', 'UpdateBenefitsSS'
+    #ErrorTag := 'BenefitsSS'
+    CALLNAT 'MBCN0080' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetBenefitsVA', 'UpdateBenefitsVA'
+    #ErrorTag := 'BenefitsVA'
+    CALLNAT 'MBCN0080' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetBenefitsMilitary', 'UpdateBenefitsMilitary'
+    #ErrorTag := 'BenefitsMilitary'
+    CALLNAT 'MBCN0080' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetBenefitsOther', 'UpdateBenefitsOther'
+    #ErrorTag := 'BenefitsOther'
+    CALLNAT 'MBCN0080' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'FinancialProfile'
+    #ErrorTag := 'FinancialProfile'
+    CALLNAT 'MBCN0090' REQUEST-DATA RESPONSE-DATA
+* YK4 >
+* Fir Request
+  VALUE 'GetFirPolicies'
+    #ErrorTag := 'FirPolicies'
+    CALLNAT 'MBCNFIR3' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetBAScreen'
+    #ErrorTag := 'BAScreen'
+    CALLNAT 'MBCNFIR0' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetWageHistory'
+    #ErrorTag := 'MemberWageHistory'
+    CALLNAT 'MBCNFIR0' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetFirList'
+    #ErrorTag := 'GetFirList'
+    CALLNAT 'MBCNFIR0' PROCESS-NAME REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageMemberDocuments'
+    #ErrorTag := 'MemberDocuments'
+    CALLNAT 'MBCN0100' REQUEST-DATA RESPONSE-DATA    
+* < YK4 YK5 >    
+  VALUE 'ManageDVUpload'
+    #ErrorTag := 'DigitalVaultUpload'
+    CALLNAT 'MBCN0100' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageInsuranceCompanies'
+    #ErrorTag := 'InsuranceCompany'
+    CALLNAT 'MBCN0101' REQUEST-DATA RESPONSE-DATA    
+* < YK5
+* Grandfathered Retirement calcualtion
+  VALUE 'RequestRET'
+    #ErrorTag := 'RETInfo'
+    CALLNAT 'MBCNR001' REQUEST-DATA RESPONSE-DATA
+* Payment Center
+  VALUE 'GetPayments'
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNEP10' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ApplyPayments'
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNEP20' REQUEST-DATA RESPONSE-DATA PROCESS-NAME
+  VALUE 'ManagePaymentSettings'
+    #ErrorTag := 'PaymentSettings'
+    CALLNAT 'MBCNEP30' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageCreditCards'
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNCC40' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ManageBankAccounts'
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNEC50' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetPaymentHistory'
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNEP60' REQUEST-DATA RESPONSE-DATA
+  VALUE 'SchedulePayment'
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNPR10' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetBankName'
+    #ErrorTag := 'Bank'
+    CALLNAT 'MBCNN016' REQUEST-DATA RESPONSE-DATA
+* Old Member Center functions - used for AUC
+  VALUE 'UpdateContactInfo'
+    EXAMINE REQUEST-DATA FOR 'ContactInformation' REPLACE 'MilitaryInfo'  /* bz
+    #ErrorTag := 'ContactInformation'
+    CALLNAT 'MBCN0020' REQUEST-DATA RESPONSE-DATA
+    EXAMINE RESPONSE-DATA FOR 'MilitaryInfo' REPLACE 'ContactInformation'  /* bz
+  VALUE 'UpdatePhone'
+    #ErrorTag := 'MemberPhones'
+    CALLNAT 'MBCN0040' REQUEST-DATA RESPONSE-DATA
+  VALUE 'UpdateEmail'
+    #ErrorTag := 'MemberEmails'
+    CALLNAT 'MBCN0050' REQUEST-DATA RESPONSE-DATA
+* Called from Online Application
+  VALUE 'GetMemberProfile'
+    #ErrorTag := 'MemberProfile'
+    CALLNAT 'MBCN0010' REQUEST-DATA RESPONSE-DATA
+  VALUE 'UpdateAddress'
+    #ErrorTag := 'AddressInfo'
+    CALLNAT 'MOAN0030' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ServicePayment'
+    #ErrorTag := 'ServicePayment'
+    CALLNAT 'WEBN0004' REQUEST-DATA RESPONSE-DATA
+  VALUE 'CreditCardInfo'
+    #ErrorTag := 'CreditCardInfo'
+    CALLNAT 'MOANCC40' REQUEST-DATA RESPONSE-DATA
+* Service related
+  VALUE  'Service Eligible'
+    #ErrorTag := 'Contact'
+    CALLNAT 'MBRSVCE' REQUEST-DATA RESPONSE-DATA
+  VALUE 'Service FPF'
+    #ErrorTag := 'ServiceFee'
+    CALLNAT 'MBRSVCFP' REQUEST-DATA RESPONSE-DATA
+  VALUE 'Service Rates'
+    #ErrorTag := 'ServiceRates'
+    CALLNAT 'MBRATE' REQUEST-DATA RESPONSE-DATA
+* External payer
+  VALUE 'CheckExtPayerInfo'
+    #ErrorTag := 'CNInfo'
+    CALLNAT 'MBCN001A' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetExtPayerPayment'
+    #ErrorTag := 'ExternalPayer'
+    CALLNAT 'MBCNCC1A' REQUEST-DATA RESPONSE-DATA
+  VALUE 'ApplyExtPayerPayment'
+    #ErrorTag := 'ExternalPayer'
+    CALLNAT 'MBCNCC2A' REQUEST-DATA RESPONSE-DATA
+* Mobile Payments
+  VALUE 'GetAppMobileProfilePayment'                   /* YK2
+    #ErrorTag := 'MemberProfile'
+    CALLNAT 'MBCN001M' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetPolicyInfo'
+    #ErrorTag := 'Policies'
+    CALLNAT 'MBCN0070' REQUEST-DATA RESPONSE-DATA
+  VALUE 'GetMobilePayments'                            /* YK1
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNCC10' REQUEST-DATA RESPONSE-DATA      /* YK3
+  VALUE 'ApplyMobilePayments'                          /* YK1
+    #ErrorTag := 'Members'
+    CALLNAT 'MBCNCC20' REQUEST-DATA RESPONSE-DATA PROCESS-NAME   /* YK3
+  VALUE 'UpdateAnnRptFlag'
+    #ErrorTag := 'MCMemberInfo'
+    CALLNAT 'WEBN0003' REQUEST-DATA RESPONSE-DATA
+  NONE VALUE
+    IGNORE
+END-DECIDE
+* Calling subprogram to retreive Bank Name by routing number (uses work file 1)
+* Need to re-define work file 1 back to the log file
+CLOSE WORK FILE 1
+IF RESPONSE-DATA = SCAN ('<CN>6</CN>')  ESCAPE ROUTINE  END-IF              /* HD-7569
+DEFINE WORK FILE 1 #LOG-FILE TYPE 'ASCII-COMPRESSED' ATTRIBUTES 'APPEND'
+LOG-MESSAGE := RESPONSE-DATA
+WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+IF *LENGTH(RESPONSE-DATA) > 30000
+  LOG-MESSAGE := SUBSTR(RESPONSE-DATA,30001)
+  WRITE WORK FILE 1 VARIABLE LOG-MESSAGE
+END-IF  
+CLOSE WORK FILE 1
+*
+END

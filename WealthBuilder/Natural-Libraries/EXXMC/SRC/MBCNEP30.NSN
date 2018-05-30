@@ -1,0 +1,502 @@
+* >Natural Source Header 000000
+* :Mode S
+* :CP ISO_8859-1:1987
+* :LineIncrement 10
+* <Natural Source Header
+*******************************************************************
+* Member Center / MC-II
+* MBCNEP30 - "ManagePaymentSettings" function
+* Called from NATSERV0
+*******************************************************************
+*        MODIFICATION LOG
+*******************************************************************
+* USER   DATE      TAG  REASON
+* YAK    06022015       Initial Creation
+* YAK    06022015  YK1  Changes for EB&P II
+* YAK    04022017  YK2  Changes for EB&P III
+* YAK    08062017  YK3  Add parsing PaidToDate
+* YAK    08072017  YK4  Add Bill Cycle selection
+*                       Remove SAS from Payment Settings
+* YAK    10202017  YK5  Add CAP Bill Date
+*******************************************************************
+*
+DEFINE DATA
+PARAMETER
+1 REQUEST-DATA      (A) DYNAMIC
+1 RESPONSE-DATA     (A) DYNAMIC
+*
+LOCAL USING PARSER-X
+LOCAL USING ERROR_L
+LOCAL USING GPRA006N
+LOCAL USING MBCAEC50
+LOCAL USING MBCACC40
+LOCAL USING MBCAEP30
+LOCAL USING OBJLMB01
+LOCAL
+1 XML_PARSER_XPATH             (A) DYNAMIC
+1 XML_PARSER_XPATH_TYPE        (A1)
+1 XML_PARSER_CONTENT           (A) DYNAMIC
+1 XML_PARSER_CONTENT_IS_EMPTY  (L)
+1 XML_PARSER_INPUT   (A) DYNAMIC
+1 XML_PARSER_ERROR_TEXT        (A253)
+1 XML_PARSER_RESPONSE          (I2)
+1 #XML              (A) DYNAMIC
+1 #I                (I2)
+1 #II               (I2)
+1 #I1               (I2)
+1 #I2               (I2)
+1 #ErrorCode        (A3) INIT <'0'>
+1 #ErrorDescription (A) DYNAMIC
+1 #value            (A) DYNAMIC
+1 #MethodID         (N2)
+1 #CardID           (N2)
+1 #MethodCN         (N6)
+1 #MethodType       (A) DYNAMIC
+1 #ActionType       (A) DYNAMIC
+1 #Get              (A) DYNAMIC CONST <'0'>
+1 #Add              (A) DYNAMIC CONST <'1'>
+1 #Update           (A) DYNAMIC CONST <'2'>
+1 #Delete           (A) DYNAMIC CONST <'3'>
+1 #ChangePayer      (A) DYNAMIC CONST <'6'>
+1 #GET-ALL          (A) DYNAMIC CONST <'GET-ALL'>
+1 #CC-MODE          (A1/4) CONST <'0','1','2','4'>
+1 #EZPAY-MODE       (A1)   CONST <'E'>
+1 #PENDING-CAP      (A1/3) CONST <'E','C','L'>
+1 #ACTIVE           (A) DYNAMIC CONST <'D'>
+1 #EZ-PAY           (A) DYNAMIC CONST <'EZ-Pay'>
+1 #CC               (A) DYNAMIC CONST <'Credit Card'>
+1 #Allotment        (A) DYNAMIC CONST <'Allotment'>
+1 #DirectBill       (A) DYNAMIC CONST <'Direct Bill'>
+1 #AllotmentMessage (A) DYNAMIC CONST <'Paid by Government Allotment'>
+1 #InterestOnlyMessage (A) DYNAMIC CONST <'Capitalized Interest Only'>
+1 #Loan             (A) DYNAMIC CONST <'Loan'>
+1 #SERVICE-PLAN     (A) DYNAMIC CONST <'Service Plan'>
+1 #SERV-PAYABLE     (A3/2) CONST <'PSM'>                   /* YK4
+1 #LAST-CN          (N6)
+1 #length           (N2)
+1 #OwnerPayer       (N2) CONST <0>                         /* YK1
+1 #END-OF-MONTH-BILL-CYCLE (A1) CONST <'3'>                /* YK4
+*
+END-DEFINE
+*
+XML_PARSER_INPUT := REQUEST-DATA
+INCLUDE PARSER_X 'XML_PARSER_INPUT' /* XML file to be parsed
+  'XML_PARSER_XPATH'                /* XPATH to represent element...
+  'XML_PARSER_XPATH_TYPE'           /* Type of callback
+  'XML_PARSER_CONTENT'              /* Content of element found
+  'XML_PARSER_CONTENT_IS_EMPTY'     /* Is TRUE if element is empty
+  'XML_PARSER_ERROR_TEXT'           /* error Message
+  'XML_PARSER_RESPONSE'             /* Error NR; 0 = OK
+*
+* Input verify
+DECIDE FOR FIRST CONDITION
+  WHEN PaymentSettings.ViewCN = 0
+    #ErrorCode  := #MISSING-CN
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN NOT (#ActionType = #Get OR #ActionType = #Add OR #ActionType = #Update OR #ActionType = #Delete OR = #ChangePayer)
+    #ErrorCode  := #ACTION-INVALID
+    PERFORM COMPOSE-RESPONSE-DATA
+  WHEN NONE
+    IGNORE
+END-DECIDE
+*
+DECIDE ON FIRST VALUE #ActionType
+  VALUE #Get
+* Get All policies own
+    PERFORM GET-POLICIES-DATA
+* Get Bank Accounts / Credit Cards
+    PERFORM GET-PAYMENT-ACCOUNTS
+* GET Auto Pay settings
+    PERFORM GET-AUTOPAY-SETTINGS
+  VALUE #Add
+    IGNORE
+  VALUE #Update
+    PaymentSettings.C@AutoPay := #I1
+    PERFORM UPDATE-AUTOPAY-SETTINGS
+  VALUE #Delete
+    IGNORE
+  VALUE #ChangePayer
+    PaymentSettings.C@AutoPay := #I1
+    PERFORM CHANGE-PAYER
+  NONE VALUE
+    IGNORE
+END-DECIDE
+*
+* PERFORM SET-RECURRING-PAYMENTS-FLAG
+PERFORM COMPOSE-RESPONSE-DATA
+*
+***********************************
+DEFINE SUBROUTINE GET-POLICIES-DATA
+***********************************
+*
+PARM-CN := PaymentSettings.ViewCN
+CALLNAT 'GPRN006N' PARM-CN PARM-MEMBER-CN PARM-POLICIES(*) #OwnerPayer      /* YK1
+C@Polices := *OCCURRENCE(PARM-POLICIES.ID-NUMBER)
+* Add services if exist
+FIND SVC-MEMBER-V WITH SVC-ID-NUMBER = PARM-CN
+  ACCEPT IF SVC-MEMBER-V.SVC-PLAN = #SERV-PAYABLE(*)
+  IF SVC-STATUS = 'A'
+*     OR SVC-PLAN = 'SAS' AND SVC-STATUS = 'P' OR= 'F'
+    C@Polices := C@Polices + 1
+    EXPAND ARRAY PARM-POLICIES TO (*:C@Polices)
+    PARM-POLICIES.ID-NUMBER(C@Polices)     := PARM-CN
+    PARM-POLICIES.OWNER-CN(C@Polices)      := PARM-CN
+    PARM-POLICIES.PAYER-CN(C@Polices)      := PARM-CN
+    PARM-POLICIES.CONTACT-ID(C@Polices)    := F-GET-CONTACT-ID(<PARM-CN>)
+    PARM-POLICIES.POLICY-NUMBER(C@Polices) := #SERVICE-PLAN
+    PARM-POLICIES.POLICY-MODE(C@Polices)   := SVC-MEMBER-V.SVC-MODE
+    PARM-POLICIES.POLICY-PLAN(C@Polices)   := SVC-MEMBER-V.SVC-PLAN
+    PARM-POLICIES.POLICY-STATUS(C@Polices) := #ACTIVE
+    PARM-POLICIES.MONTHLY-PREM(C@Polices)  := SVC-MEMBER-V.SVC-MONTHLY-RATE
+    PARM-POLICIES.PAID-TO-DATE(C@Polices)  := SVC-MEMBER-V.SVC-PAID-TO-DATE
+    PARM-POLICIES.BILL-CYCLE(C@Polices)    := #END-OF-MONTH-BILL-CYCLE               /* YK4
+  END-IF
+END-FIND
+*
+IF C@Polices <> 0
+  EXPAND ARRAY Policies TO (*:C@Polices)
+  FOR #I = 1 TO C@Polices
+    PaymentSettings.IdNumber(#I) := PARM-POLICIES.ID-NUMBER(#I)
+    PaymentSettings.ContactId(#I):= PARM-POLICIES.CONTACT-ID(#I)
+    PaymentSettings.OwnerCN(#I):= PARM-POLICIES.OWNER-CN(#I)
+    PaymentSettings.PayerCN(#I):= PARM-POLICIES.PAYER-CN(#I)
+    PaymentSettings.PayerContactId(#I):= PARM-POLICIES.PAYER-CONTACT-ID(#I)
+    PaymentSettings.PolicyIndex(#I) := PARM-POLICIES.POLICY-INDEX(#I)
+    PaymentSettings.PolicyNumber(#I):= PARM-POLICIES.POLICY-NUMBER(#I)
+    PaymentSettings.PolicyMode(#I)  := PARM-POLICIES.POLICY-MODE(#I)
+    PaymentSettings.PolicyBillCycle(#I)  := PARM-POLICIES.BILL-CYCLE(#I)              /* YK4
+    PaymentSettings.PolicyDescription(#I) := PARM-POLICIES.POLICY-PLAN(#I)
+    PaymentSettings.PolicyFaceAmount(#I) := PARM-POLICIES.FACE-AMOUNT(#I)
+    PaymentSettings.PolicyStatus(#I):= PARM-POLICIES.POLICY-STATUS(#I)
+    PaymentSettings.PolicyPayStatus(#I) := PARM-POLICIES.POLICY-PAY-STATUS(#I)
+    PaymentSettings.PolicyMonthlyPayment(#I) := PARM-POLICIES.MONTHLY-PREM(#I)
+    PaymentSettings.PolicyPaidToDate(#I) := PARM-POLICIES.PAID-TO-DATE(#I)
+    PaymentSettings.PolicyIssueDate(#I)  := PARM-POLICIES.ISSUE-DATE(#I)
+    PaymentSettings.LinkedLoanPayMode(#I,1):= PARM-POLICIES.LOAN-PAY-MODE(#I,1)
+    PaymentSettings.LinkedLoanPayMode(#I,2):= PARM-POLICIES.LOAN-PAY-MODE(#I,2)
+    PaymentSettings.LoanMonthlyPayment(#I,1) := PARM-POLICIES.MONTHLY-PAYMENT(#I,1)
+    PaymentSettings.LoanMonthlyPayment(#I,2) := PARM-POLICIES.MONTHLY-PAYMENT(#I,2)
+*   IF PARM-POLICIES.MONTHLY-PAYMENT(#I,1) <> 0 AND PARM-POLICIES.CONV-DURATION(#I) = 999
+    IF PARM-POLICIES.CONV-DURATION(#I) = 999 OR
+        (PARM-POLICIES.LOAN-PAY-MODE(#I,1) = #PENDING-CAP(*) AND PARM-POLICIES.MONTHLY-PAYMENT(#I,1) <> 0)
+      PaymentSettings.CapLoan(#I) := true
+      PaymentSettings.CapBillDate(#I) := PARM-POLICIES.CAP-BILL-DATE(#I)           /* YK5
+    END-IF
+  END-FOR
+END-IF
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE GET-PAYMENT-ACCOUNTS
+**************************************
+* Get all accounts (eCheck and EZPay for PayerCN)
+EXPAND ARRAY BankAccounts.Account TO (*:1)
+BankAccounts.ActionType := #GET-ALL
+BankAccounts.ViewCN := PaymentSettings.ViewCN
+#ErrorCode := '0'
+CALLNAT 'MBCNEC51' BankAccounts #ErrorCode
+*
+* Get all Credit Cards for the ViewCN and recurring card if Payers are different
+EXPAND ARRAY CreditCards.Account TO (*:1)
+CreditCards.ActionType := #GET-ALL
+CreditCards.ViewCN := PaymentSettings.ViewCN
+#ErrorCode := '0'
+CALLNAT 'MBCNCC41' CreditCards #ErrorCode
+*
+END-SUBROUTINE
+*
+**************************************
+DEFINE SUBROUTINE GET-AUTOPAY-SETTINGS
+**************************************
+*
+CALLNAT 'MBCNEP31' PaymentSettings #ErrorCode
+* Get Auto-Pay description
+FOR #I = 1 TO PaymentSettings.C@AutoPay
+  DECIDE FOR FIRST CONDITION
+    WHEN PaymentSettings.AutoPayMethod(#I) = #EZ-Pay
+      FOR #II = 1 TO BankAccounts.C@Account
+        IF BankAccounts.AccountCN(#II) = PaymentSettings.AutoPayPayerCN(#I) AND BankAccounts.CheckType(#II) = #EZ-Pay
+          BankAccounts.Recurring(#II) := 'true'
+          #value := BankAccounts.AccountNumber(#II)
+          #value := *trim(#value)
+          #length := *LENGTH(#value)
+          #length := #length - 3
+          IF #length > 0
+            #value := SUBSTR(#value,#LENGTH)
+          END-IF
+          COMPRESS '(Ending in' #value INTO #value
+          COMPRESS #value ')' INTO #value LEAVING NO
+          COMPRESS BankAccounts.BankName(#II) #value INTO PaymentSettings.AutoPayDescription(#I)
+        END-IF
+      END-FOR
+    WHEN PaymentSettings.AutoPayMethod(#I) = #CC
+      FOR #II = 1 TO CreditCards.C@Account
+        IF CreditCards.AccountCN(#II) = PaymentSettings.AutoPayPayerCN(#I) AND CreditCards.DefaultInd(#II) = 'true'
+          PaymentSettings.AutoPayDescription(#I) := CreditCards.CardNumber(#II)
+          CreditCards.Recurring(#II) := 'true'
+        END-IF
+      END-FOR
+    WHEN PaymentSettings.AutoPayMethod(#I) = #Allotment
+      PaymentSettings.AutoPayDescription(#I) := #AllotmentMessage
+    WHEN PaymentSettings.AutoPayMethod(#I) = #DirectBill AND PaymentSettings.AutoPayFrequency(#I) = 'Annually' AND
+        PaymentSettings.AutoPayPaymentType(#I) = #Loan AND PaymentSettings.AutoPayAmount(#I) = '$0.00'
+      PaymentSettings.AutoPayDescription(#I) := #InterestOnlyMessage
+      PaymentSettings.AutoPayAmount(#I) := 'N/A'
+    WHEN NONE
+      IGNORE
+  END-DECIDE
+END-FOR
+*
+END-SUBROUTINE
+*
+*****************************************
+DEFINE SUBROUTINE UPDATE-AUTOPAY-SETTINGS
+*****************************************
+*
+CALLNAT 'MBCNEP32' PaymentSettings #ErrorCode #ErrorDescription
+IF #ErrorCode = '0'
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+*
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE CHANGE-PAYER          /* YK2
+******************************
+*
+CALLNAT 'MBCNEP33' PaymentSettings #ErrorCode #ErrorDescription
+IF #ErrorCode = '0'
+  END TRANSACTION
+ELSE
+  BACKOUT TRANSACTION
+END-IF
+*
+END-SUBROUTINE
+*
+**************************
+DEFINE SUBROUTINE CALLBACK
+**************************
+*
+DECIDE ON FIRST XML_PARSER_XPATH
+  VALUE 'PaymentSettings/CN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      PaymentSettings.ViewCN := VAL(#value)
+    END-IF
+  VALUE 'PaymentSettings/UserID/$'
+    PaymentSettings.UserID := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/SystemSource/$'
+    PaymentSettings.SystemSource := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/ActionType/$'
+    #ActionType := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/CreditCardDisclaimerConfirmed/$'
+    PaymentSettings.CreditCardDisclaimerConfirmed := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/BankAccountDisclaimerConfirmed/$'
+    PaymentSettings.BankAccountDisclaimerConfirmed := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay'
+    #I1 := #I1 + 1
+    EXPAND ARRAY AutoPay TO (*:#I1)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayCN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      PaymentSettings.AutoPayCN(#I1) := VAL(#value)
+    END-IF
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayPolicyNumber/$'
+    PaymentSettings.AutoPayPolicyNumber(#I1) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayPolicy/$'
+    PaymentSettings.AutoPayPolicy(#I1) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayPayerCN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      PaymentSettings.AutoPayPayerCN(#I1) := VAL(#value)
+    END-IF
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayOwnerCN/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N6)
+      PaymentSettings.AutoPayOwnerCN(#I1) := VAL(#value)
+    END-IF
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayMethod/$'
+    PaymentSettings.AutoPayMethod(#I1) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayFrequency/$'
+    PaymentSettings.AutoPayFrequency(#I1) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayPaymentType/$'
+    PaymentSettings.AutoPayPaymentType(#I1) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayAmount/$'
+    PaymentSettings.AutoPayAmount(#I1) := *TRIM(XML_PARSER_CONTENT)
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayPaidToDate/$'         /* YK3
+    PaymentSettings.AutoPayPaidToDate(#I1) := *TRIM(XML_PARSER_CONTENT)       /* YK3
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/AutoPayBillCycle/$'          /* YK4
+    PaymentSettings.AutoPayBillCycle(#I1) := *TRIM(XML_PARSER_CONTENT)        /* YK4
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/LastUpdatedDate/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N8)
+      PaymentSettings.LastUpdatedDate(#I1) := VAL(#value)
+    END-IF
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/LastUpdatedTime/$'
+    #value := *TRIM(XML_PARSER_CONTENT)
+    IF #value IS (N7)
+      PaymentSettings.LastUpdatedTime(#I1) := VAL(#value)
+    END-IF
+  VALUE 'PaymentSettings/AutoPaySettings/AutoPay/LastUpdatedUser/$'
+    PaymentSettings.LastUpdatedUser(#I1) := *TRIM(XML_PARSER_CONTENT)
+  NONE VALUE
+    IGNORE
+END-DECIDE
+END-SUBROUTINE
+*
+******************************
+DEFINE SUBROUTINE PARSER_ERROR
+******************************
+*
+COMPRESS XML_PARSER_RESPONSE XML_PARSER_ERROR_TEXT INTO RESPONSE-DATA
+ESCAPE MODULE
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE COMPOSE-GET-BA-XML
+************************************
+*
+FOR #I = 1 TO BankAccounts.C@Account
+  IF BankAccounts.AccountCN(#I) = PaymentSettings.ViewCN
+    #MethodID := #I
+    COMPRESS #XML
+      '<BankAccount>'
+      '<MethodID>' #MethodID '</MethodID>'
+      '<AccountCN>' BankAccounts.AccountCN(#I) '</AccountCN>'
+      '<CheckID>'BankAccounts.CheckId(#I)'</CheckID>'
+      '<CheckType>'BankAccounts.CheckType(#I)'</CheckType>'
+      '<UsedForRecurringPayments>'BankAccounts.Recurring(#I)'</UsedForRecurringPayments>'
+      '<IsModifiable>'BankAccounts.Modifiable(#I)'</IsModifiable>'
+      '<RoutingNumber>'BankAccounts.RoutingNumber(#I)'</RoutingNumber>'
+      '<BankName><![CDATA[' BankAccounts.BankName(#I) ']]></BankName>'
+      '<AccountNumber>'BankAccounts.AccountNumber(#I)'</AccountNumber>'
+      '<AccountType>'BankAccounts.AccountType(#I)'</AccountType>'
+      '<AccountHolderFirstName>'BankAccounts.AccountHolderFirstName(#I)'</AccountHolderFirstName>'
+      '<AccountHolderLastName>'BankAccounts.AccountHolderLastName(#I)'</AccountHolderLastName>'
+      '<AccountStreet>'BankAccounts.AccountStreet(#I)'</AccountStreet>'
+      '<AccountCity>'BankAccounts.AccountCity(#I)'</AccountCity>'
+      '<AccountState>'BankAccounts.AccountState(#I)'</AccountState>'
+      '<AccountZipCode>'BankAccounts.AccountZipCode(#I)'</AccountZipCode>'
+      '<LastUpdatedDate>' BankAccounts.LastUpdatedDate(#I) '</LastUpdatedDate>'
+      '<LastUpdatedTime>' BankAccounts.LastUpdatedTime(#I) '</LastUpdatedTime>'
+      '<LastUpdatedUser>' BankAccounts.LastUpdatedUser(#I) '</LastUpdatedUser>'
+      '</BankAccount>'
+      INTO #XML LEAVING NO
+  END-IF
+END-FOR
+COMPRESS  '<BankAccounts>' #XML '</BankAccounts>' INTO #XML LEAVING NO
+END-SUBROUTINE
+*
+************************************
+DEFINE SUBROUTINE COMPOSE-GET-CC-XML
+************************************
+*
+RESET #XML
+FOR #I = 1 TO CreditCards.C@Account
+  IF CreditCards.AccountCN(#I) = PaymentSettings.ViewCN
+    #MethodID := #MethodId + 1
+    #CardID   := #CardID + 1
+    COMPRESS CreditCards.Street(#I) CreditCards.Street2(#I) INTO CreditCards.Street(#I)
+    COMPRESS #XML
+      '<CreditCard>'
+      '<MethodID>' #MethodId '</MethodID>'
+      '<CardID>' #CardId '</CardID>'
+      '<AccountCN>'CreditCards.AccountCN(#I)'</AccountCN>'
+      '<CardHolder>'CreditCards.CardHolder(#I)'</CardHolder>'
+      '<CardNumber>'CreditCards.CardNumber(#I)'</CardNumber>'
+      '<CardGUID>'CreditCards.CardGUID(#I)'</CardGUID>'
+      '<DefaultInd>'CreditCards.DefaultInd(#I)'</DefaultInd>'
+      '<UsedForRecurringPayments>'CreditCards.Recurring(#I)'</UsedForRecurringPayments>'
+      '<IsModifiable>'CreditCards.Modifiable(#I)'</IsModifiable>'
+      '<CardType>'CreditCards.CardType(#I)'</CardType>'
+      '<ExMonth>'CreditCards.ExMonth(#I)'</ExMonth>'
+      '<ExYear>'CreditCards.ExYear(#I)'</ExYear>'
+      '<Street>'CreditCards.Street(#I)'</Street>'
+      '<City>'CreditCards.City(#I)'</City>'
+      '<StateProvinceRegion>'CreditCards.StateProvinceRegion(#I)'</StateProvinceRegion>'
+      '<ZipCode>'CreditCards.ZipCode(#I)'</ZipCode>'
+      '<CountryCode>'CreditCards.CountryCode(#I)'</CountryCode>'
+      '<LastUpdatedDate>' CreditCards.LastUpdatedDate(#I) '</LastUpdatedDate>'
+      '<LastUpdatedTime>' CreditCards.LastUpdatedTime(#I) '</LastUpdatedTime>'
+      '<LastUpdatedUser>' CreditCards.LastUpdatedUser(#I) '</LastUpdatedUser>'
+      '</CreditCard>'
+      INTO #XML LEAVING NO
+  END-IF
+END-FOR
+COMPRESS  '<CreditCards>' #XML '</CreditCards>' INTO #XML LEAVING NO
+END-SUBROUTINE
+*
+*******************************************
+DEFINE SUBROUTINE COMPOSE-AUTO-PAY-DATA-XML
+*******************************************
+*
+RESET #XML
+FOR #I1 = 1 TO C@AutoPay
+  COMPRESS #XML
+    '<AutoPay>'
+    '<AutoPayCN>' PaymentSettings.AutoPayCN(#I1) '</AutoPayCN>'
+    '<AutoPayPolicyNumber>' PaymentSettings.AutoPayPolicyNumber(#I1) '</AutoPayPolicyNumber>'
+    '<LastUpdatedDate>' PaymentSettings.LastUpdatedDate(#I1) '</LastUpdatedDate>'
+    '<LastUpdatedTime>' PaymentSettings.LastUpdatedTime(#I1) '</LastUpdatedTime>'
+    '<LastUpdatedUser>' PaymentSettings.LastUpdatedUser(#I1) '</LastUpdatedUser>'
+    '<AutoPayPayerCN>' PaymentSettings.AutoPayPayerCN(#I1) '</AutoPayPayerCN>'
+    '<AutoPayPayerName>' PaymentSettings.AutoPayPayerName(#I1) '</AutoPayPayerName>'
+    '<AutoPayOwnerCN>' PaymentSettings.AutoPayOwnerCN(#I1) '</AutoPayOwnerCN>'
+    '<IsPayer>' PaymentSettings.IsPayer(#I1) '</IsPayer>'
+    '<IsOwner>' PaymentSettings.IsOwner(#I1) '</IsOwner>'
+    '<AutoPayInsuredName>' PaymentSettings.AutoPayInsuredName(#I1) '</AutoPayInsuredName>'
+    '<AutoPayPolicy>' PaymentSettings.AutoPayPolicy(#I1) '</AutoPayPolicy>'
+    '<AutoPayMethod>' PaymentSettings.AutoPayMethod(#I1) '</AutoPayMethod>'
+    '<AutoPayFrequency>' PaymentSettings.AutoPayFrequency(#I1) '</AutoPayFrequency>'
+    '<AutoPayModify>' PaymentSettings.AutoPayModify(#I1) '</AutoPayModify>'
+    '<AutoPayPaymentType>' PaymentSettings.AutoPayPaymentType(#I1) '</AutoPayPaymentType>'
+    '<AutoPayDescription><![CDATA[' PaymentSettings.AutoPayDescription(#I1) ']]></AutoPayDescription>'
+    '<AutoPayMonthlyAmount>' PaymentSettings.AutoPayMonthlyAmount(#I1) '</AutoPayMonthlyAmount>'
+    '<AutoPayAmount>' PaymentSettings.AutoPayAmount(#I1) '</AutoPayAmount>'
+    '<AutoPayPaidToDate>' PaymentSettings.AutoPayPaidToDate(#I1) '</AutoPayPaidToDate>'
+    '<AutoPayNextDate>' PaymentSettings.AutoPayNextDate(#I1) '</AutoPayNextDate>'
+    '<AutoPayBillCycle>' PaymentSettings.AutoPayBillCycle(#I1) '</AutoPayBillCycle>'  /* YK4
+    '<AutoPayPolicyPaidUp>' PaymentSettings.AutoPayPolicyPaidUp(#I1) '</AutoPayPolicyPaidUp>'   /* YK4
+    '<AutoPayBillCycle1NextDate>' PaymentSettings.AutoPayBillCycleNextDate(#I1,1) '</AutoPayBillCycle1NextDate>'  /* YK4
+    '<AutoPayBillCycle2NextDate>' PaymentSettings.AutoPayBillCycleNextDate(#I1,2) '</AutoPayBillCycle2NextDate>'  /* YK4
+    '<AutoPayBillCycle3NextDate>' PaymentSettings.AutoPayBillCycleNextDate(#I1,3) '</AutoPayBillCycle3NextDate>'  /* YK4
+    '<AutoPayAmountOverdue>' PaymentSettings.AutoPayAmountOverdue(#I1) '</AutoPayAmountOverdue>'                  /* YK4
+    '</AutoPay>' INTO #XML LEAVING NO
+END-FOR
+COMPRESS   '<AutoPaySettings>' #XML   '</AutoPaySettings>' INTO #XML LEAVING NO
+END-SUBROUTINE
+*
+***************************************
+DEFINE SUBROUTINE COMPOSE-RESPONSE-DATA
+***************************************
+*
+IF #ErrorCode <> '0' AND #ErrorDescription = ' '
+  #ErrorDescription := F-ERROR-DESCRIPTION(<#ErrorCode>)
+END-IF
+*
+COMPRESS
+  '<PaymentSettings>'
+  '<CN>' PaymentSettings.ViewCN '</CN>' INTO RESPONSE-DATA LEAVING NO
+IF #ActionType = #Get
+  PERFORM COMPOSE-GET-BA-XML
+  COMPRESS RESPONSE-DATA #XML INTO RESPONSE-DATA LEAVING NO
+  PERFORM COMPOSE-GET-CC-XML
+  COMPRESS RESPONSE-DATA #XML INTO RESPONSE-DATA LEAVING NO
+  PERFORM COMPOSE-AUTO-PAY-DATA-XML
+  COMPRESS RESPONSE-DATA #XML INTO RESPONSE-DATA LEAVING NO
+END-IF
+*
+COMPRESS
+  RESPONSE-DATA
+  '<ErrorCode>' #ErrorCode '</ErrorCode>'
+  '<ErrorDescription>' #ErrorDescription '</ErrorDescription>'
+  '</PaymentSettings>' INTO RESPONSE-DATA LEAVING NO
+*
+ESCAPE MODULE
+*  '<ErrorCode>999</ErrorCode>'
+*  '<ErrorDescription>Payment Setting Update is unavailable at this time. Please, try later</ErrorDescription>'
+END-SUBROUTINE
+*
+END
